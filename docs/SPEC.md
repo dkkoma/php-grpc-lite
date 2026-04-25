@@ -152,13 +152,13 @@
 
 ### 5.1 対応 PHP バージョン
 
-- PHP **8.3+**(NTS 主軸)
+- PHP **8.4+**(NTS 主軸)
 - ZTS は将来検討(現時点では非対象)
 
 ### 5.2 開発環境
 
 - Debian **Trixie** ベースのコンテナ
-- ベースイメージ: `php:8.3-cli-trixie`
+- ベースイメージ: `php:8.4-cli-trixie`
 - ホスト OS 非依存(macOS の LibreSSL/Homebrew には依存しない)
 - 起動方法: `docker compose run --rm dev`
 - 同梱ツール: build-essential, autoconf, pkg-config, libcurl4-openssl-dev, libssl-dev, libnghttp2-dev, protobuf-compiler, composer, pecl protobuf 拡張
@@ -194,3 +194,5 @@
 - **2026-04-25**: server streaming Generator 戦略を `curl_multi_*` ベースに決定(`poc/client/server_streaming_multi.php` で incremental yield を実機検証)。§4.2 に Call 種別ごとの libcurl 利用パターン表を追加。
 - **2026-04-25**: **Phase 0 完了**。`src/Grpc/` 配下に純 PHP 実装を配置: `BaseStub` / `Channel` / `ChannelCredentials` / `AbstractCall` / `UnaryCall` / `ServerStreamingCall` / `Interceptor` / `InterceptorChannel` / `Timeval` / `STATUS_*` 17 定数 / `ClientStreamingCall`(stub)/ `BidiStreamingCall`(stub)。統合テスト 5 件すべてパス(unary 2 + server streaming 2 + interceptor chain 1)。Interceptor の chain order(outer:before → inner:before → 実行 → inner:after → outer:after)も検証済み。
 - **2026-04-25**: TLS 経路を実機検証。test-server に h2-tls listener (port 50052) を追加、自己署名 CA を `poc/test-server/certs/` に配置。`AbstractCall::applyTlsOptions()` で `CURLOPT_CAINFO_BLOB` / `CURLOPT_SSLCERT_BLOB` / `CURLOPT_SSLKEY_BLOB` 優先 + temp file fallback。統合テストは計 8 件(TLS 系 3 件: 正常系 unary、正常系 server streaming、不正 CA で `STATUS_UNAVAILABLE` 拒否)。
+- **2026-04-26**: Spanner emulator (`gcr.io/cloud-spanner-emulator/emulator`) を compose に追加し、本物の `google/cloud-spanner` 生成 protobuf 型と我々の BaseStub の組み合わせで `ListInstances` unary を実機検証。新しい `google/cloud-spanner` v2.x は GAPIC 専用で direct gRPC stub を出さないため、Phase 0 では手書きの `*GrpcClient` fixture(`tests/Integration/Fixtures/Spanner/`)を経由。ext-grpc 要件は `composer.json` の `provide.ext-grpc` + `config.platform.ext-grpc` の二段で吸収。
+- **2026-04-26**: PHP 8.4 を最低バージョンに引き上げ(composer + Dockerfile)。
