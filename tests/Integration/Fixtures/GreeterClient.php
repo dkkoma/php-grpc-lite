@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace PhpGrpcLite\Tests\Integration\Fixtures;
 
 use Grpc\BaseStub;
+use Grpc\ServerStreamingCall;
 use Grpc\UnaryCall;
 use Helloworld\HelloReply;
 use Helloworld\HelloRequest;
@@ -22,6 +23,20 @@ class GreeterClient extends BaseStub
     ): UnaryCall {
         return $this->_simpleRequest(
             '/helloworld.Greeter/SayHello',
+            $argument,
+            [HelloReply::class, 'decode'],
+            $metadata,
+            $options,
+        );
+    }
+
+    public function SayManyHellos(
+        HelloRequest $argument,
+        array $metadata = [],
+        array $options = [],
+    ): ServerStreamingCall {
+        return $this->_serverStreamRequest(
+            '/helloworld.Greeter/SayManyHellos',
             $argument,
             [HelloReply::class, 'decode'],
             $metadata,

@@ -51,6 +51,27 @@ abstract class BaseStub
         return $call;
     }
 
+    /**
+     * Dispatch a server-streaming RPC.
+     *
+     * @param string $method e.g. '/helloworld.Greeter/SayManyHellos'
+     * @param object $argument message instance with serializeToString()
+     * @param callable|array{class-string, string} $deserialize see _simpleRequest
+     * @param array<string, string|list<string>> $metadata
+     * @param array<string, mixed> $options
+     */
+    protected function _serverStreamRequest(
+        string $method,
+        object $argument,
+        $deserialize,
+        array $metadata = [],
+        array $options = [],
+    ): ServerStreamingCall {
+        $call = new ServerStreamingCall($this->channel, $method, $deserialize, $metadata, $options);
+        $call->start($argument);
+        return $call;
+    }
+
     public function close(): void
     {
         $this->channel->close();
