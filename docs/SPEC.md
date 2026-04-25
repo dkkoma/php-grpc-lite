@@ -97,25 +97,42 @@
 ### 4.5 API 互換性
 
 `google/gax` および `google/cloud-*` が利用する `Grpc\` 名前空間 API を網羅する。
+詳細な呼び出し仕様は [`docs/api-surface.md`](./api-surface.md) を参照(2026-04-25 にソース調査で裏取り済み)。
 
-#### 互換必須クラス/定数(現時点の見立て)
+#### 拡張モジュール名(重要)
+
+本拡張は **`grpc`** という名前で登録する。`gax-php` が `extension_loaded('grpc')` でサポート可否を判定するため。これにより `ext-grpc` と同居不可になるが、ドロップイン代替の定義そのものなので妥当。
+
+#### 互換シンボル分類(調査結果反映後)
 
 | 種別 | シンボル | 互換必須度 | 備考 |
 |---|---|---|---|
-| Channel | `Grpc\Channel` | 必須 | hostname, opts |
-| Channel | `Grpc\ChannelCredentials` | 必須 | `createSsl`, `createInsecure`, `createDefault` |
-| Call | `Grpc\BaseStub` | 必須 | `_simpleRequest`, `_serverStreamRequest` 等 |
-| Call | `Grpc\UnaryCall` | 必須 | `start`, `wait`, `cancel`, `getMetadata`, `getTrailingMetadata` |
-| Call | `Grpc\ServerStreamingCall` | 必須 | `start`, `responses`, `getStatus` |
-| Call | `Grpc\ClientStreamingCall` | 後回し | |
-| Call | `Grpc\BidiStreamingCall` | 後回し | |
-| Auth | `Grpc\CallCredentials` | 必須 | `createFromPlugin` が gax で使われる |
-| 時刻 | `Grpc\Timeval` | 必須 | deadline 表現 |
-| Status | `Grpc\STATUS_*` 定数 | 必須 | OK/CANCELLED/UNKNOWN/... の 17 種 |
-| Interceptor | `Grpc\Interceptor`, `Grpc\Intercept` | 必須 | gax が触る |
-| 内部 | `Grpc\CallInvoker` | 観測振る舞いのみ | 直接の API 互換は不要 |
+| Stub 基底 | `Grpc\BaseStub` | 必須 | 4 protected メソッド: `_simpleRequest`, `_serverStreamRequest`, `_clientStreamRequest`, `_bidiRequest`(後 2 つは Phase 0 では未対応エラーで可) |
+| Channel | `Grpc\Channel` | 必須 | `__construct(string $hostname, array $opts)` |
+| Channel | `Grpc\ChannelCredentials` | 必須 | static `createSsl`, `createInsecure`, `createDefault` |
+| Call | `Grpc\AbstractCall` | 必須 | 共通親クラス |
+| Call | `Grpc\UnaryCall` | 必須 | `wait()`, `cancel()`, `getMetadata()`, `getTrailingMetadata()` |
+| Call | `Grpc\ServerStreamingCall` | 必須 | `responses()`, `getStatus()`, `getMetadata()`, `getTrailingMetadata()`, `cancel()` |
+| Call | `Grpc\ClientStreamingCall` | 後回し | スコープ外。BaseStub のスタブだけ用意し未対応エラーを投げる |
+| Call | `Grpc\BidiStreamingCall` | 後回し | 同上 |
+| Interceptor | `Grpc\Interceptor` | 必須 | static `intercept()` + 派生クラスのフック 4 種 |
+| Status | `Grpc\STATUS_*` 定数 17 個 | 必須 | 値は 0–16(`google.rpc.Code` と同じ) |
+| 内部 | `Grpc\CallInvoker` | 観測振る舞いのみ | grpc-gcp 連携時のみ実体が必要 |
+| 範囲外 | `Grpc\Gcp\*` | — | 別 Composer パッケージ `grpc/grpc-gcp` の責務 |
+| 範囲外 | `Grpc\Timeval` | — | gax は使わず `'timeout'` を μs で渡す。当面実装しない(必要が出たら追加) |
 
-> 各シンボルの正確な互換要件は `google/gax` のソースから抽出した一覧を別表(TBD: `docs/api-surface.md`)で管理する。
+#### Status オブジェクトの形
+
+`UnaryCall::wait()` の第 2 戻り値、および `ServerStreamingCall::getStatus()` の返り値は **stdClass 互換** で以下のプロパティを持つ:
+
+- `code`: `int`(`Grpc\STATUS_*` のいずれか)
+- `details`: `string`(trailer の `grpc-message` をデコード)
+- `metadata`: `array`(trailing metadata)
+
+#### per-call options(`_simpleRequest` 等の第 5 引数)
+
+- `call_credentials_callback`: `callable(string $serviceUrl, string $methodName): array<string, string>` — ADC 統合に必須
+- `timeout`: `int` — マイクロ秒単位
 
 ---
 
@@ -143,11 +160,12 @@
 
 ## 6. 未決事項
 
-- [ ] `google/gax` から呼ばれる `Grpc\` API の正確な一覧化(grep ベースで `docs/api-surface.md` に出力)
+- [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/api-surface.md` で完了(2026-04-25)
+- [ ] `Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)
+- [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
 - [ ] テスト用 gRPC サーバーの選定(Go の helloworld を `compose.yaml` に並べる案が有力)
 - [ ] ベンチマーク手法とターゲット環境(計測対象、繰り返し回数、コンパレータ)
 - [ ] Persistent channel pool の互換要件(ext-grpc は `grpc.use_local_subchannel_pool` 等の INI で制御)
-- [ ] Interceptor の API 形状の精査(`Grpc\Intercept` は静的メソッド形)
 - [ ] マルチアーキテクチャ対応(arm64 / amd64)
 - [ ] エラーログ/デバッグ出力の方式
 
@@ -157,3 +175,4 @@
 
 - **2026-04-25**: 初版作成。目的・スコープ・段階戦略・TLS/HTTP/2 方針・API 互換目標・開発環境を確定。
 - **2026-04-25**: Dockerfile および compose.yaml を追加。開発環境セクションに起動方法と同梱ツールを追記。
+- **2026-04-25**: API サーフェス調査(`docs/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、`Grpc\Timeval` は当面実装不要、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。

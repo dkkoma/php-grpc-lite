@@ -7,6 +7,9 @@
 vendor/
 composer.lock
 
+# Research scratch (cloned upstream sources for surveying)
+_research/
+
 # PHP extension build artifacts (populated once phpize runs)
 *.o
 *.lo
