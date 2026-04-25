@@ -12,61 +12,11 @@ declare(strict_types=1);
  *   php poc/client/unary.php [name]
  */
 
+require __DIR__ . '/lib.php';
+
 const HOST = 'test-server';
 const PORT = 50051;
 const SERVICE_METHOD = '/helloworld.Greeter/SayHello';
-
-/** Encode a single proto3 length-delimited field (wire type 2). */
-function pb_encode_string_field(int $tag, string $value): string
-{
-    $key = ($tag << 3) | 2;
-    return chr($key) . pb_encode_varint(strlen($value)) . $value;
-}
-
-function pb_encode_varint(int $n): string
-{
-    $bytes = '';
-    while ($n > 0x7f) {
-        $bytes .= chr(($n & 0x7f) | 0x80);
-        $n >>= 7;
-    }
-    $bytes .= chr($n & 0x7f);
-    return $bytes;
-}
-
-function pb_decode_varint(string $buf, int &$pos): int
-{
-    $n = 0;
-    $shift = 0;
-    while (true) {
-        $b = ord($buf[$pos++]);
-        $n |= ($b & 0x7f) << $shift;
-        if (($b & 0x80) === 0) {
-            return $n;
-        }
-        $shift += 7;
-    }
-}
-
-/** Wrap a payload in a gRPC frame: 1-byte flag + 4-byte BE length + payload. */
-function grpc_frame(string $payload): string
-{
-    return "\x00" . pack('N', strlen($payload)) . $payload;
-}
-
-/** Parse a single gRPC frame from $buf starting at $pos. Returns the payload, advances $pos. */
-function grpc_unframe(string $buf, int &$pos): string
-{
-    $flag = ord($buf[$pos]);
-    $len = unpack('N', substr($buf, $pos + 1, 4))[1];
-    $pos += 5;
-    if ($flag !== 0) {
-        throw new RuntimeException("compressed frames are not supported in this PoC");
-    }
-    $payload = substr($buf, $pos, $len);
-    $pos += $len;
-    return $payload;
-}
 
 // --- Build request -----------------------------------------------------------
 $name = $argv[1] ?? 'World';
@@ -125,25 +75,18 @@ foreach ($headers as $k => $vals) {
 echo "=== response body (raw) ===\n";
 echo bin2hex($body) . "\n";
 
-$pos = 0;
-$reply = grpc_unframe($body, $pos);
+if (strlen($body) < 5) {
+    fwrite(STDERR, "response too short to contain a frame\n");
+    exit(1);
+}
+$flag = ord($body[0]);
+$len  = unpack('N', substr($body, 1, 4))[1];
+$reply = substr($body, 5, $len);
 echo "=== unframed payload ===\n";
 echo bin2hex($reply) . "\n";
 
-// HelloReply { message = string at field 1 }
-$rpos = 0;
-$key = pb_decode_varint($reply, $rpos);
-$tag = $key >> 3;
-$wire = $key & 0x07;
-if ($tag !== 1 || $wire !== 2) {
-    fwrite(STDERR, "unexpected proto field: tag=$tag wire=$wire\n");
-    exit(1);
-}
-$len = pb_decode_varint($reply, $rpos);
-$message = substr($reply, $rpos, $len);
-
 echo "=== decoded HelloReply ===\n";
-echo "  message: $message\n";
+echo "  message: " . decode_hello_reply($reply) . "\n";
 
 $grpcStatus = (int)($headers['grpc-status'][0] ?? -1);
 $grpcMessage = $headers['grpc-message'][0] ?? '';

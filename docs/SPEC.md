@@ -75,11 +75,12 @@
 | 2   | libcurl(C から呼ぶ) |
 | 3   | nghttp2 + 自前ソケット(条件付き) |
 
-#### 重要な前提
+#### 重要な前提(2026-04-25 PoC で検証済み)
 
-- gRPC は status を **HTTP/2 trailers**(`grpc-status`, `grpc-message`)で返す。libcurl では `CURLOPT_HEADERFUNCTION` で trailer も含めて受け取れる(要 PoC で検証)。
+- gRPC は status を **HTTP/2 trailers**(`grpc-status`, `grpc-message`)で返す。libcurl では `CURLOPT_HEADERFUNCTION` に通常ヘッダと同じチャネルで流れてくる(順序は body chunks の後)。
 - gRPC framing は `1 byte compressed-flag + 4 byte big-endian length + payload`。
-- ALPN で `h2` を広告する必要がある。OpenSSL 1.0.2+ で対応(Trixie の OpenSSL 3.5 で要件十分)。
+- ALPN で `h2` を広告する必要がある。OpenSSL 1.0.2+ で対応(Trixie の OpenSSL 3.5 で要件十分)。h2c(plaintext)は `CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE` で接続。
+- `CURLOPT_WRITEFUNCTION` は HTTP/2 DATA フレーム到着のたびにインクリメンタルに呼ばれる(server streaming で 100ms 間隔の送信が 100ms 間隔で到着することを確認)。
 
 ### 4.3 TLS 戦略
 
@@ -163,6 +164,7 @@
 - [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/api-surface.md` で完了(2026-04-25)
 - [ ] `Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)
 - [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
+- [ ] `ServerStreamingCall::responses()` Generator の実装戦略 — (A) `curl_exec` ブロック完結 → 配列イテレーション(単純だが長時間ストリームでユーザーが早期処理できない) vs (B) `curl_multi_*` で非ブロッキング Generator(真の streaming)。Pubsub StreamingPull のような長時間ストリームを使うかで選択が分かれる
 - [ ] テスト用 gRPC サーバーの選定(Go の helloworld を `compose.yaml` に並べる案が有力)
 - [ ] ベンチマーク手法とターゲット環境(計測対象、繰り返し回数、コンパレータ)
 - [ ] Persistent channel pool の互換要件(ext-grpc は `grpc.use_local_subchannel_pool` 等の INI で制御)
@@ -177,3 +179,4 @@
 - **2026-04-25**: Dockerfile および compose.yaml を追加。開発環境セクションに起動方法と同梱ツールを追記。
 - **2026-04-25**: API サーフェス調査(`docs/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。
 - **2026-04-25**: `Grpc\Timeval` をレガシーユーザーコード互換のため Phase 0 から薄く実装する方針に変更(API サーフェス §2.3 の補足参照)。
+- **2026-04-25**: PoC スパイク完了(`poc/`)。unary・server streaming ともに libcurl + HTTP/2 prior knowledge で疎通成功。`§4.2 重要な前提`を実機検証結果で更新し、`responses()` Generator の実装戦略を未決事項に追加。
