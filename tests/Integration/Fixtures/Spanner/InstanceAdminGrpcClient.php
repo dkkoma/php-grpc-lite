@@ -3,8 +3,12 @@ declare(strict_types=1);
 
 namespace PhpGrpcLite\Tests\Integration\Fixtures\Spanner;
 
+use Google\Cloud\Spanner\Admin\Instance\V1\CreateInstanceRequest;
+use Google\Cloud\Spanner\Admin\Instance\V1\DeleteInstanceRequest;
 use Google\Cloud\Spanner\Admin\Instance\V1\ListInstancesRequest;
 use Google\Cloud\Spanner\Admin\Instance\V1\ListInstancesResponse;
+use Google\LongRunning\Operation;
+use Google\Protobuf\GPBEmpty;
 use Grpc\BaseStub;
 use Grpc\UnaryCall;
 
@@ -28,6 +32,34 @@ final class InstanceAdminGrpcClient extends BaseStub
             '/google.spanner.admin.instance.v1.InstanceAdmin/ListInstances',
             $argument,
             [ListInstancesResponse::class, 'decode'],
+            $metadata,
+            $options,
+        );
+    }
+
+    public function CreateInstance(
+        CreateInstanceRequest $argument,
+        array $metadata = [],
+        array $options = [],
+    ): UnaryCall {
+        return $this->_simpleRequest(
+            '/google.spanner.admin.instance.v1.InstanceAdmin/CreateInstance',
+            $argument,
+            [Operation::class, 'decode'],
+            $metadata,
+            $options,
+        );
+    }
+
+    public function DeleteInstance(
+        DeleteInstanceRequest $argument,
+        array $metadata = [],
+        array $options = [],
+    ): UnaryCall {
+        return $this->_simpleRequest(
+            '/google.spanner.admin.instance.v1.InstanceAdmin/DeleteInstance',
+            $argument,
+            [GPBEmpty::class, 'decode'],
             $metadata,
             $options,
         );
