@@ -7,9 +7,13 @@
         "php": ">=8.3",
         "ext-curl": "*"
     },
+    "provide": {
+        "ext-grpc": "1.62.0"
+    },
     "require-dev": {
-        "phpunit/phpunit": "^11.0",
-        "google/protobuf": "^4.0"
+        "google/cloud-spanner": "^2.6",
+        "google/protobuf": "^4.0",
+        "phpunit/phpunit": "^11.0"
     },
     "suggest": {
         "ext-protobuf": "Use the protobuf C extension for faster serialization"
@@ -31,6 +35,9 @@
     },
     "config": {
         "sort-packages": true,
-        "preferred-install": "dist"
+        "preferred-install": "dist",
+        "platform": {
+            "ext-grpc": "1.62.0"
+        }
     }
 }

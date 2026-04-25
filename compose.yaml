@@ -9,9 +9,13 @@ services:
     tty: true
     depends_on:
       - test-server
+      - spanner-emulator
 
   test-server:
     build:
       context: ./poc
       dockerfile: test-server/Dockerfile
     image: php-grpc-lite-test-server
+
+  spanner-emulator:
+    image: gcr.io/cloud-spanner-emulator/emulator
