@@ -58,12 +58,12 @@
 
 ### 4.1 段階的実装
 
-| Phase | 内容 | 完了条件 |
-|---|---|---|
-| 0 | 純 PHP PoC。libcurl + ext-curl で HTTP/2 を喋り、gRPC framing を PHP で実装。`Grpc\` 互換 API を提供 | unary と server streaming の sample が動く |
-| 1 | ベンチマーク基盤整備 | レイテンシ/スループット/メモリ計測を CI で回せる |
-| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い |
-| 3 | nghttp2 直接呼び出しに置き換え(必要と判断された場合のみ) | libcurl 依存除去 |
+| Phase | 内容 | 完了条件 | 状態 |
+|---|---|---|---|
+| 0 | 純 PHP PoC。libcurl + ext-curl で HTTP/2 を喋り、gRPC framing を PHP で実装。`Grpc\` 互換 API を提供 | unary と server streaming の sample が動く | **2026-04-25 完了** |
+| 1 | ベンチマーク基盤整備 | レイテンシ/スループット/メモリ計測を CI で回せる | 未着手 |
+| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | 未着手 |
+| 3 | nghttp2 直接呼び出しに置き換え(必要と判断された場合のみ) | libcurl 依存除去 | 未着手 |
 
 各フェーズの遷移はベンチマーク結果で判断する。Phase 3 は未確定(libcurl のままで十分かもしれない)。
 
@@ -190,3 +190,4 @@
 - **2026-04-25**: `Grpc\Timeval` をレガシーユーザーコード互換のため Phase 0 から薄く実装する方針に変更(API サーフェス §2.3 の補足参照)。
 - **2026-04-25**: PoC スパイク完了(`poc/`)。unary・server streaming ともに libcurl + HTTP/2 prior knowledge で疎通成功。`§4.2 重要な前提`を実機検証結果で更新し、`responses()` Generator の実装戦略を未決事項に追加。
 - **2026-04-25**: server streaming Generator 戦略を `curl_multi_*` ベースに決定(`poc/client/server_streaming_multi.php` で incremental yield を実機検証)。§4.2 に Call 種別ごとの libcurl 利用パターン表を追加。
+- **2026-04-25**: **Phase 0 完了**。`src/Grpc/` 配下に純 PHP 実装を配置: `BaseStub` / `Channel` / `ChannelCredentials` / `AbstractCall` / `UnaryCall` / `ServerStreamingCall` / `Interceptor` / `InterceptorChannel` / `Timeval` / `STATUS_*` 17 定数 / `ClientStreamingCall`(stub)/ `BidiStreamingCall`(stub)。統合テスト 5 件すべてパス(unary 2 + server streaming 2 + interceptor chain 1)。Interceptor の chain order(outer:before → inner:before → 実行 → inner:after → outer:after)も検証済み。

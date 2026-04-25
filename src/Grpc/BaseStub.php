@@ -46,9 +46,16 @@ abstract class BaseStub
         array $metadata = [],
         array $options = [],
     ): UnaryCall {
-        $call = new UnaryCall($this->channel, $method, $deserialize, $metadata, $options);
-        $call->start($argument);
-        return $call;
+        $continuation = function (string $m, object $a, $d, array $md, array $o): UnaryCall {
+            $call = new UnaryCall($this->getInnerChannel(), $m, $d, $md, $o);
+            $call->start($a);
+            return $call;
+        };
+        if ($this->channel instanceof InterceptorChannel) {
+            $chained = $this->buildUnaryChain($this->channel->getInterceptors(), $continuation);
+            return $chained($method, $argument, $deserialize, $metadata, $options);
+        }
+        return $continuation($method, $argument, $deserialize, $metadata, $options);
     }
 
     /**
@@ -67,9 +74,95 @@ abstract class BaseStub
         array $metadata = [],
         array $options = [],
     ): ServerStreamingCall {
-        $call = new ServerStreamingCall($this->channel, $method, $deserialize, $metadata, $options);
-        $call->start($argument);
-        return $call;
+        $continuation = function (string $m, object $a, $d, array $md, array $o): ServerStreamingCall {
+            $call = new ServerStreamingCall($this->getInnerChannel(), $m, $d, $md, $o);
+            $call->start($a);
+            return $call;
+        };
+        if ($this->channel instanceof InterceptorChannel) {
+            $chained = $this->buildServerStreamChain($this->channel->getInterceptors(), $continuation);
+            return $chained($method, $argument, $deserialize, $metadata, $options);
+        }
+        return $continuation($method, $argument, $deserialize, $metadata, $options);
+    }
+
+    /**
+     * Stub for Phase 0 — client streaming is not yet implemented.
+     *
+     * @param array<string, string|list<string>> $metadata
+     * @param array<string, mixed> $options
+     */
+    protected function _clientStreamRequest(
+        string $method,
+        $deserialize,
+        array $metadata = [],
+        array $options = [],
+    ): ClientStreamingCall {
+        throw new \BadMethodCallException(
+            'client streaming is not yet implemented in php-grpc-lite Phase 0'
+        );
+    }
+
+    /**
+     * Stub for Phase 0 — bidirectional streaming is not yet implemented.
+     *
+     * @param array<string, string|list<string>> $metadata
+     * @param array<string, mixed> $options
+     */
+    protected function _bidiRequest(
+        string $method,
+        $deserialize,
+        array $metadata = [],
+        array $options = [],
+    ): BidiStreamingCall {
+        throw new \BadMethodCallException(
+            'bidirectional streaming is not yet implemented in php-grpc-lite Phase 0'
+        );
+    }
+
+    private function getInnerChannel(): Channel
+    {
+        return $this->channel instanceof InterceptorChannel
+            ? $this->channel->getInnerChannel()
+            : $this->channel;
+    }
+
+    /**
+     * @param list<Interceptor> $interceptors outermost first
+     * @param callable(string, object, mixed, array, array): UnaryCall $innermost
+     * @return callable(string, object, mixed, array, array): UnaryCall
+     */
+    private function buildUnaryChain(array $interceptors, callable $innermost): callable
+    {
+        $next = $innermost;
+        foreach (array_reverse($interceptors) as $interceptor) {
+            $captured = $next;
+            $next = static function (
+                string $m, object $a, $d, array $md, array $o,
+            ) use ($interceptor, $captured): UnaryCall {
+                return $interceptor->interceptUnaryUnary($m, $a, $d, $captured, $md, $o);
+            };
+        }
+        return $next;
+    }
+
+    /**
+     * @param list<Interceptor> $interceptors
+     * @param callable(string, object, mixed, array, array): ServerStreamingCall $innermost
+     * @return callable(string, object, mixed, array, array): ServerStreamingCall
+     */
+    private function buildServerStreamChain(array $interceptors, callable $innermost): callable
+    {
+        $next = $innermost;
+        foreach (array_reverse($interceptors) as $interceptor) {
+            $captured = $next;
+            $next = static function (
+                string $m, object $a, $d, array $md, array $o,
+            ) use ($interceptor, $captured): ServerStreamingCall {
+                return $interceptor->interceptUnaryStream($m, $a, $d, $captured, $md, $o);
+            };
+        }
+        return $next;
     }
 
     public function close(): void
