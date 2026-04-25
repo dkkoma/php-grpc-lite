@@ -7,6 +7,13 @@ services:
     working_dir: /workspace
     stdin_open: true
     tty: true
+    depends_on:
+      - test-server
 
-# テスト用 gRPC サーバーは未決(docs/SPEC.md §6 参照)。
-# 選定後にここへ追加する。
+  test-server:
+    build:
+      context: ./poc
+      dockerfile: test-server/Dockerfile
+    image: php-grpc-lite-test-server
+    ports:
+      - "50051:50051"
