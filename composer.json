@@ -24,7 +24,9 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "PhpGrpcLite\\Tests\\": "tests/"
+            "PhpGrpcLite\\Tests\\": "tests/",
+            "Helloworld\\": "tests/fixtures/Generated/Helloworld/",
+            "GPBMetadata\\": "tests/fixtures/Generated/GPBMetadata/"
         }
     },
     "config": {
