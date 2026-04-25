@@ -1,0 +1,34 @@
+{
+    "name": "php-grpc-lite/php-grpc-lite",
+    "description": "ext-grpc drop-in replacement: pure PHP gRPC client (Phase 0)",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "ext-curl": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0",
+        "google/protobuf": "^4.0"
+    },
+    "suggest": {
+        "ext-protobuf": "Use the protobuf C extension for faster serialization"
+    },
+    "autoload": {
+        "psr-4": {
+            "Grpc\\": "src/Grpc/"
+        },
+        "files": [
+            "src/Grpc/constants.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "PhpGrpcLite\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "preferred-install": "dist"
+    }
+}
