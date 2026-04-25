@@ -131,6 +131,8 @@
 - Debian **Trixie** ベースのコンテナ
 - ベースイメージ: `php:8.3-cli-trixie`
 - ホスト OS 非依存(macOS の LibreSSL/Homebrew には依存しない)
+- 起動方法: `docker compose run --rm dev`
+- 同梱ツール: build-essential, autoconf, pkg-config, libcurl4-openssl-dev, libssl-dev, libnghttp2-dev, protobuf-compiler, composer, pecl protobuf 拡張
 
 ### 5.3 ビルド/配布
 
@@ -154,3 +156,4 @@
 ## 変更履歴
 
 - **2026-04-25**: 初版作成。目的・スコープ・段階戦略・TLS/HTTP/2 方針・API 互換目標・開発環境を確定。
+- **2026-04-25**: Dockerfile および compose.yaml を追加。開発環境セクションに起動方法と同梱ツールを追記。

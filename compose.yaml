@@ -1,0 +1,12 @@
+services:
+  dev:
+    build: .
+    image: php-grpc-lite-dev
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+# テスト用 gRPC サーバーは未決(docs/SPEC.md §6 参照)。
+# 選定後にここへ追加する。
