@@ -24,5 +24,7 @@ RUN mkdir -p pb \
 
 FROM debian:trixie-slim
 COPY --from=build /server /server
-EXPOSE 50051
+COPY test-server/certs/server.crt /certs/server.crt
+COPY test-server/certs/server.key /certs/server.key
+EXPOSE 50051 50052
 ENTRYPOINT ["/server"]

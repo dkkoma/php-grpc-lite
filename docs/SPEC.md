@@ -97,6 +97,8 @@
 - BoringSSL は同梱しない。
 - 拡張フェーズ(Phase 2 以降)で nghttp2 を使う場合も nghttp2 は TLS を含まないため、OpenSSL を直接使えばよい。
 - mTLS(client cert)、CallCredentials によるトークン付与は OpenSSL の機能で完全に実現可能。
+- **PEM の渡し方**: `CURLOPT_CAINFO_BLOB` / `CURLOPT_SSLCERT_BLOB` / `CURLOPT_SSLKEY_BLOB`(libcurl 7.77+, PHP 8.1+ で公開)を優先利用。古い環境向けに content-hash で keying した temp file fallback を実装。
+- **Phase 0 で実機検証済**: Trixie の OpenSSL 3.5 + libcurl 8.14 で h2 ALPN ネゴシエーション、自己署名 CA 経由の cert verification、cert mismatch 時の `STATUS_UNAVAILABLE` エラー伝播を確認。
 
 ### 4.4 Protobuf
 
@@ -191,3 +193,4 @@
 - **2026-04-25**: PoC スパイク完了(`poc/`)。unary・server streaming ともに libcurl + HTTP/2 prior knowledge で疎通成功。`§4.2 重要な前提`を実機検証結果で更新し、`responses()` Generator の実装戦略を未決事項に追加。
 - **2026-04-25**: server streaming Generator 戦略を `curl_multi_*` ベースに決定(`poc/client/server_streaming_multi.php` で incremental yield を実機検証)。§4.2 に Call 種別ごとの libcurl 利用パターン表を追加。
 - **2026-04-25**: **Phase 0 完了**。`src/Grpc/` 配下に純 PHP 実装を配置: `BaseStub` / `Channel` / `ChannelCredentials` / `AbstractCall` / `UnaryCall` / `ServerStreamingCall` / `Interceptor` / `InterceptorChannel` / `Timeval` / `STATUS_*` 17 定数 / `ClientStreamingCall`(stub)/ `BidiStreamingCall`(stub)。統合テスト 5 件すべてパス(unary 2 + server streaming 2 + interceptor chain 1)。Interceptor の chain order(outer:before → inner:before → 実行 → inner:after → outer:after)も検証済み。
+- **2026-04-25**: TLS 経路を実機検証。test-server に h2-tls listener (port 50052) を追加、自己署名 CA を `poc/test-server/certs/` に配置。`AbstractCall::applyTlsOptions()` で `CURLOPT_CAINFO_BLOB` / `CURLOPT_SSLCERT_BLOB` / `CURLOPT_SSLKEY_BLOB` 優先 + temp file fallback。統合テストは計 8 件(TLS 系 3 件: 正常系 unary、正常系 server streaming、不正 CA で `STATUS_UNAVAILABLE` 拒否)。

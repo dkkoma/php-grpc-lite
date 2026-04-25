@@ -9,6 +9,7 @@ import (
 
 	pb "example.com/helloworld/pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -34,16 +35,41 @@ func (s *server) SayManyHellos(req *pb.HelloRequest, stream pb.Greeter_SayManyHe
 	return nil
 }
 
-func main() {
-	lis, err := net.Listen("tcp", ":50051")
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
+func newServer() *grpc.Server {
 	s := grpc.NewServer()
 	pb.RegisterGreeterServer(s, &server{})
 	reflection.Register(s)
-	log.Printf("listening on :50051 (h2c, reflection enabled)")
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+	return s
+}
+
+func main() {
+	// h2c plaintext on :50051
+	go func() {
+		lis, err := net.Listen("tcp", ":50051")
+		if err != nil {
+			log.Fatalf("failed to listen :50051: %v", err)
+		}
+		log.Printf("listening on :50051 (h2c, reflection enabled)")
+		if err := newServer().Serve(lis); err != nil {
+			log.Fatalf("h2c serve error: %v", err)
+		}
+	}()
+
+	// h2 over TLS on :50052
+	creds, err := credentials.NewServerTLSFromFile("/certs/server.crt", "/certs/server.key")
+	if err != nil {
+		log.Fatalf("failed to load TLS keys: %v", err)
+	}
+	tlsServer := grpc.NewServer(grpc.Creds(creds))
+	pb.RegisterGreeterServer(tlsServer, &server{})
+	reflection.Register(tlsServer)
+
+	lis, err := net.Listen("tcp", ":50052")
+	if err != nil {
+		log.Fatalf("failed to listen :50052: %v", err)
+	}
+	log.Printf("listening on :50052 (h2 over TLS)")
+	if err := tlsServer.Serve(lis); err != nil {
+		log.Fatalf("tls serve error: %v", err)
 	}
 }

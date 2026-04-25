@@ -46,6 +46,7 @@ class UnaryCall extends AbstractCall
             CURLOPT_HEADERFUNCTION => $this->onHeader(...),
             CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),
         ]);
+        $this->applyTlsOptions($this->ch);
     }
 
     /**

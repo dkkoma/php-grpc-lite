@@ -123,4 +123,50 @@ abstract class AbstractCall
         }
         return $ch;
     }
+
+    /**
+     * Apply TLS-specific curl options based on the channel's credentials.
+     * No-op for insecure channels.
+     */
+    protected function applyTlsOptions(\CurlHandle $ch): void
+    {
+        $creds = $this->channel->credentials;
+        if ($creds->isInsecure()) {
+            return;
+        }
+
+        if ($creds->rootCerts !== null) {
+            if (defined('CURLOPT_CAINFO_BLOB')) {
+                curl_setopt($ch, \CURLOPT_CAINFO_BLOB, $creds->rootCerts);
+            } else {
+                curl_setopt($ch, CURLOPT_CAINFO, self::writeTempPem($creds->rootCerts, 'ca'));
+            }
+        }
+
+        if ($creds->certChain !== null && $creds->privateKey !== null) {
+            if (defined('CURLOPT_SSLCERT_BLOB')) {
+                curl_setopt($ch, \CURLOPT_SSLCERT_BLOB, $creds->certChain);
+                curl_setopt($ch, \CURLOPT_SSLKEY_BLOB, $creds->privateKey);
+            } else {
+                curl_setopt($ch, CURLOPT_SSLCERT, self::writeTempPem($creds->certChain, 'cert'));
+                curl_setopt($ch, CURLOPT_SSLKEY, self::writeTempPem($creds->privateKey, 'key'));
+            }
+        }
+    }
+
+    /**
+     * Cache PEM material to a tmpfile keyed by content hash so that identical
+     * inputs reuse the same file across calls.
+     */
+    private static function writeTempPem(string $pem, string $kind): string
+    {
+        $path = sys_get_temp_dir()
+            . '/php-grpc-lite-' . $kind . '-'
+            . substr(sha1($pem), 0, 16) . '.pem';
+        if (!file_exists($path)) {
+            file_put_contents($path, $pem);
+            @chmod($path, 0600);
+        }
+        return $path;
+    }
 }
