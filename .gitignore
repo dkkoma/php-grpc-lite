@@ -9,6 +9,10 @@ composer.lock
 .phpunit.cache/
 .phpunit.result.cache
 
+# Benchmark transient outputs
+var/bench-results/
+.phpbench/
+
 # Research scratch (cloned upstream sources for surveying)
 _research/
 

@@ -13,6 +13,7 @@
     "require-dev": {
         "google/cloud-spanner": "^2.6",
         "google/protobuf": "^4.0",
+        "phpbench/phpbench": "^1.6",
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
@@ -29,6 +30,7 @@
     "autoload-dev": {
         "psr-4": {
             "PhpGrpcLite\\Tests\\": "tests/",
+            "PhpGrpcLite\\Bench\\": "bench/",
             "Helloworld\\": "tests/fixtures/Generated/Helloworld/",
             "GPBMetadata\\": "tests/fixtures/Generated/GPBMetadata/"
         }
