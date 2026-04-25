@@ -15,6 +15,3 @@ services:
       context: ./poc
       dockerfile: test-server/Dockerfile
     image: php-grpc-lite-test-server
-    ports:
-      - "50051:50051"
-      - "50052:50052"
