@@ -117,9 +117,9 @@
 | Call | `Grpc\BidiStreamingCall` | 後回し | 同上 |
 | Interceptor | `Grpc\Interceptor` | 必須 | static `intercept()` + 派生クラスのフック 4 種 |
 | Status | `Grpc\STATUS_*` 定数 17 個 | 必須 | 値は 0–16(`google.rpc.Code` と同じ) |
+| 時刻 | `Grpc\Timeval` | 必須(薄実装) | gax は使わないが、レガシーユーザーコード互換のため `__construct(int $microseconds)` / `infFuture()` / `infPast()` / `now()` / `microtime()` を提供 |
 | 内部 | `Grpc\CallInvoker` | 観測振る舞いのみ | grpc-gcp 連携時のみ実体が必要 |
 | 範囲外 | `Grpc\Gcp\*` | — | 別 Composer パッケージ `grpc/grpc-gcp` の責務 |
-| 範囲外 | `Grpc\Timeval` | — | gax は使わず `'timeout'` を μs で渡す。当面実装しない(必要が出たら追加) |
 
 #### Status オブジェクトの形
 
@@ -175,4 +175,5 @@
 
 - **2026-04-25**: 初版作成。目的・スコープ・段階戦略・TLS/HTTP/2 方針・API 互換目標・開発環境を確定。
 - **2026-04-25**: Dockerfile および compose.yaml を追加。開発環境セクションに起動方法と同梱ツールを追記。
-- **2026-04-25**: API サーフェス調査(`docs/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、`Grpc\Timeval` は当面実装不要、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。
+- **2026-04-25**: API サーフェス調査(`docs/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。
+- **2026-04-25**: `Grpc\Timeval` をレガシーユーザーコード互換のため Phase 0 から薄く実装する方針に変更(API サーフェス §2.3 の補足参照)。

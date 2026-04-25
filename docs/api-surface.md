@@ -43,7 +43,21 @@ php-grpc-lite が `ext-grpc` のドロップイン代替として満たすべき
 |---|---|---|
 | `Grpc\Gcp\Config` | `grpc/grpc-gcp` (Composer パッケージ) | gax は `extension_loaded('sysvshm')` かつ `gcpApiConfigPath` 指定時にのみ使用。本拡張の API ではない |
 | `Grpc\Gcp\ApiConfig` | 同上 | 同上 |
-| `Grpc\Timeval` | 旧 ext-grpc | gax は使わず `'timeout'` を μs で渡すのみ。互換のため残すかは TBD |
+
+#### 補足: `Grpc\Timeval` の扱い
+
+gax は `'timeout' => int(microseconds)` を options で渡すだけで Timeval オブジェクトを構築しない(`gax-php/src/Transport/GrpcTransport.php:357`)。拡張内部の deadline 表現も Timeval である必要はなく、monotonic 時刻 + offset で十分。
+
+ただしレガシーな ext-grpc 利用コードが `new Grpc\Timeval(...)` や `Grpc\Timeval::infFuture()` を直接使っている可能性があるため、**Phase 0 で薄く実装**する方針。提供する API は値オブジェクトと数本のファクトリのみ:
+
+- `__construct(int $microseconds)`
+- `static infFuture(): Timeval`
+- `static infPast(): Timeval`
+- `static now(): Timeval`(monotonic clock)
+- `microtime(bool $absolute = false): string` — `'timeout'` への変換用
+- `add(Timeval $other): Timeval` / `subtract(Timeval $other): Timeval`(必要に応じて)
+
+ワイヤ送出では HTTP/2 ヘッダ `grpc-timeout`(例: `30S`, `30000m`, `30000000u`)に変換する。Timeval はあくまで PHP 側の値型。
 
 ### 2.4 deprecated(対応不要)
 
