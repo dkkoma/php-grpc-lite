@@ -75,6 +75,15 @@
 | 2   | libcurl(C から呼ぶ) |
 | 3   | nghttp2 + 自前ソケット(条件付き) |
 
+#### Call 種別ごとの libcurl 利用パターン
+
+| Call 種別 | 関数 | 理由 |
+|---|---|---|
+| Unary | `curl_exec`(ブロッキング) | 単発往復のため非同期化不要 |
+| Server streaming | `curl_multi_exec` ループ + Generator | 真の incremental yield(長時間ストリーム対応) |
+| Client streaming(後回し) | `curl_multi_exec` + 進行中の write | 送信側を進ませながら受信側を待つ |
+| Bidi streaming(後回し) | 同上 | |
+
 #### 重要な前提(2026-04-25 PoC で検証済み)
 
 - gRPC は status を **HTTP/2 trailers**(`grpc-status`, `grpc-message`)で返す。libcurl では `CURLOPT_HEADERFUNCTION` に通常ヘッダと同じチャネルで流れてくる(順序は body chunks の後)。
@@ -164,7 +173,7 @@
 - [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/api-surface.md` で完了(2026-04-25)
 - [ ] `Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)
 - [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
-- [ ] `ServerStreamingCall::responses()` Generator の実装戦略 — (A) `curl_exec` ブロック完結 → 配列イテレーション(単純だが長時間ストリームでユーザーが早期処理できない) vs (B) `curl_multi_*` で非ブロッキング Generator(真の streaming)。Pubsub StreamingPull のような長時間ストリームを使うかで選択が分かれる
+- [x] ~~`ServerStreamingCall::responses()` Generator の実装戦略~~ → **(B) `curl_multi_*` で真の incremental streaming** に決定(2026-04-25 PoC で実機検証 `poc/client/server_streaming_multi.php`)。実装パターン: WRITEFUNCTION で完成したフレームを queue に push、Generator 関数本体が `curl_multi_exec` → queue 排出 → yield → `curl_multi_select` のループ。長時間ストリーム(Pubsub StreamingPull 等)対応に必須
 - [ ] テスト用 gRPC サーバーの選定(Go の helloworld を `compose.yaml` に並べる案が有力)
 - [ ] ベンチマーク手法とターゲット環境(計測対象、繰り返し回数、コンパレータ)
 - [ ] Persistent channel pool の互換要件(ext-grpc は `grpc.use_local_subchannel_pool` 等の INI で制御)
@@ -180,3 +189,4 @@
 - **2026-04-25**: API サーフェス調査(`docs/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。
 - **2026-04-25**: `Grpc\Timeval` をレガシーユーザーコード互換のため Phase 0 から薄く実装する方針に変更(API サーフェス §2.3 の補足参照)。
 - **2026-04-25**: PoC スパイク完了(`poc/`)。unary・server streaming ともに libcurl + HTTP/2 prior knowledge で疎通成功。`§4.2 重要な前提`を実機検証結果で更新し、`responses()` Generator の実装戦略を未決事項に追加。
+- **2026-04-25**: server streaming Generator 戦略を `curl_multi_*` ベースに決定(`poc/client/server_streaming_multi.php` で incremental yield を実機検証)。§4.2 に Call 種別ごとの libcurl 利用パターン表を追加。
