@@ -7,6 +7,12 @@ option go_package = "example.com/helloworld/pb";
 service Greeter {
   rpc SayHello (HelloRequest) returns (HelloReply) {}
   rpc SayManyHellos (HelloRequest) returns (stream HelloReply) {}
+
+  // Parameterized bench RPCs. Lets the client dial in payload size,
+  // message count, and per-message server delay so all benchmarks live on
+  // a stable, controllable surface (no emulator-state noise).
+  rpc BenchUnary (BenchRequest) returns (BenchReply) {}
+  rpc BenchServerStream (BenchRequest) returns (stream BenchReply) {}
 }
 
 message HelloRequest {
@@ -18,4 +24,22 @@ message HelloRequest {
 
 message HelloReply {
   string message = 1;
+}
+
+message BenchRequest {
+  // For BenchServerStream: number of BenchReply messages to send.
+  // Ignored by BenchUnary.
+  int32 message_count = 1;
+
+  // Size in bytes of each reply's `payload` field. Server pads with zero bytes.
+  int32 payload_bytes = 2;
+
+  // For BenchUnary: sleep this long before responding.
+  // For BenchServerStream: sleep between consecutive messages
+  // (no sleep before the first one).
+  int32 server_delay_ms = 3;
+}
+
+message BenchReply {
+  bytes payload = 1;
 }

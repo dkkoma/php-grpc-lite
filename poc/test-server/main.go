@@ -40,6 +40,28 @@ func (s *server) SayManyHellos(req *pb.HelloRequest, stream pb.Greeter_SayManyHe
 	return nil
 }
 
+func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.BenchReply, error) {
+	if d := req.GetServerDelayMs(); d > 0 {
+		time.Sleep(time.Duration(d) * time.Millisecond)
+	}
+	return &pb.BenchReply{Payload: make([]byte, req.GetPayloadBytes())}, nil
+}
+
+func (s *server) BenchServerStream(req *pb.BenchRequest, stream pb.Greeter_BenchServerStreamServer) error {
+	payload := make([]byte, req.GetPayloadBytes())
+	delay := time.Duration(req.GetServerDelayMs()) * time.Millisecond
+	count := int(req.GetMessageCount())
+	for i := 0; i < count; i++ {
+		if i > 0 && delay > 0 {
+			time.Sleep(delay)
+		}
+		if err := stream.Send(&pb.BenchReply{Payload: payload}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func newServer() *grpc.Server {
 	s := grpc.NewServer()
 	pb.RegisterGreeterServer(s, &server{})

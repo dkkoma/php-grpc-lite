@@ -6,6 +6,8 @@ namespace PhpGrpcLite\Tests\Integration\Fixtures;
 use Grpc\BaseStub;
 use Grpc\ServerStreamingCall;
 use Grpc\UnaryCall;
+use Helloworld\BenchReply;
+use Helloworld\BenchRequest;
 use Helloworld\HelloReply;
 use Helloworld\HelloRequest;
 
@@ -39,6 +41,34 @@ class GreeterClient extends BaseStub
             '/helloworld.Greeter/SayManyHellos',
             $argument,
             [HelloReply::class, 'decode'],
+            $metadata,
+            $options,
+        );
+    }
+
+    public function BenchUnary(
+        BenchRequest $argument,
+        array $metadata = [],
+        array $options = [],
+    ): UnaryCall {
+        return $this->_simpleRequest(
+            '/helloworld.Greeter/BenchUnary',
+            $argument,
+            [BenchReply::class, 'decode'],
+            $metadata,
+            $options,
+        );
+    }
+
+    public function BenchServerStream(
+        BenchRequest $argument,
+        array $metadata = [],
+        array $options = [],
+    ): ServerStreamingCall {
+        return $this->_serverStreamRequest(
+            '/helloworld.Greeter/BenchServerStream',
+            $argument,
+            [BenchReply::class, 'decode'],
             $metadata,
             $options,
         );
