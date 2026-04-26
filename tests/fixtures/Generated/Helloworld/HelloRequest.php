@@ -17,6 +17,13 @@ class HelloRequest extends \Google\Protobuf\Internal\Message
      * Generated from protobuf field <code>string name = 1;</code>
      */
     protected $name = '';
+    /**
+     * If > 0, server sleeps this many milliseconds before responding.
+     * Used by latency benchmarks to simulate realistic server-side processing time.
+     *
+     * Generated from protobuf field <code>int32 delay_ms = 2;</code>
+     */
+    protected $delay_ms = 0;
 
     /**
      * Constructor.
@@ -25,6 +32,9 @@ class HelloRequest extends \Google\Protobuf\Internal\Message
      *     Optional. Data for populating the Message object.
      *
      *     @type string $name
+     *     @type int $delay_ms
+     *           If > 0, server sleeps this many milliseconds before responding.
+     *           Used by latency benchmarks to simulate realistic server-side processing time.
      * }
      */
     public function __construct($data = NULL) {
@@ -50,6 +60,34 @@ class HelloRequest extends \Google\Protobuf\Internal\Message
     {
         GPBUtil::checkString($var, True);
         $this->name = $var;
+
+        return $this;
+    }
+
+    /**
+     * If > 0, server sleeps this many milliseconds before responding.
+     * Used by latency benchmarks to simulate realistic server-side processing time.
+     *
+     * Generated from protobuf field <code>int32 delay_ms = 2;</code>
+     * @return int
+     */
+    public function getDelayMs()
+    {
+        return $this->delay_ms;
+    }
+
+    /**
+     * If > 0, server sleeps this many milliseconds before responding.
+     * Used by latency benchmarks to simulate realistic server-side processing time.
+     *
+     * Generated from protobuf field <code>int32 delay_ms = 2;</code>
+     * @param int $var
+     * @return $this
+     */
+    public function setDelayMs($var)
+    {
+        GPBUtil::checkInt32($var);
+        $this->delay_ms = $var;
 
         return $this;
     }

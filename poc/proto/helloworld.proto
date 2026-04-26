@@ -11,6 +11,9 @@ service Greeter {
 
 message HelloRequest {
   string name = 1;
+  // If > 0, server sleeps this many milliseconds before responding.
+  // Used by latency benchmarks to simulate realistic server-side processing time.
+  int32 delay_ms = 2;
 }
 
 message HelloReply {

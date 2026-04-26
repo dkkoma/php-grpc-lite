@@ -18,7 +18,9 @@ type server struct {
 }
 
 func (s *server) SayHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloReply, error) {
-	log.Printf("SayHello: name=%q", req.GetName())
+	if d := req.GetDelayMs(); d > 0 {
+		time.Sleep(time.Duration(d) * time.Millisecond)
+	}
 	return &pb.HelloReply{Message: "Hello, " + req.GetName()}, nil
 }
 

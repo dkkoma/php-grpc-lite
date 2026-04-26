@@ -68,7 +68,33 @@ docker compose run --rm dev-ext-grpc bash -c \
 
 → ストリーム配信中の **per-row ホットパス** で php-grpc-lite が **1.7× 速い**。curl_multi の I/O ループ + フレーム再構成 + protobuf decode + Generator yield 一式が、ext-grpc の completion-queue 経由ループより軽い。
 
-### 2.2 リアル・ペイロードでの追加計測
+### 2.2 サーバ待ちが支配的なケース(threading model の影響を見る)
+
+`UnaryDelayBench`: `HelloRequest.delay_ms` を 10 にして、test-server 側で `time.Sleep(10ms)` してから応答する。実プロダクション API のように **server 処理が wall-clock の支配項になるケース** を再現。
+
+| シナリオ | **php-grpc-lite** | **ext-grpc** | Δ | Δ% |
+|---|---:|---:|---:|---:|
+| 1 call, server delay 10ms | 14.6 ms | 12.9 ms | +1.7 ms | +13% |
+| 10 calls 逐次, 各 server delay 10ms | 149.3 ms | 128.9 ms | +20.4 ms | +16% |
+
+**観察**: 当初の予測(差は ~150μs = helloworld の per-call gap)を大きく上回る ~1.7 ms / call の差が出た。これは **接続管理の差が露呈** したもの:
+
+- **ext-grpc**: setUp で作った channel を 50 revs で再利用 → per-call ~0.1ms
+- **我々**: 各 call で `curl_init` → 接続確立 → `curl_close`(50 revs で 50 接続)→ per-call ~2ms(主に HTTP/2 negotiation 等)
+
+`delay=0` の helloworld bench(88μs vs 240μs)では他のオーバヘッドに埋もれていたが、server delay で他の要素が落ち着いた結果、**接続コストそのものが顕在化** した。
+
+**実用シナリオへの含意**:
+
+| call の典型時間 | 我々の overhead 比率 | 実用上の差 |
+|---|---|---|
+| 数 ms(短い)| 13-20% | 体感できる |
+| 数十 ms(GCP の RPC 平均) | 2-5% | わずか |
+| 100 ms 超(複雑な query) | <2% | 実質無視できる |
+
+**Phase 1 の優先順位を明確化**:接続プーリング(libcurl handle 再利用 + `CURLOPT_FORBID_REUSE` オフ)を入れれば、この gap は ext-grpc に近づくはず。
+
+### 2.3 リアル・ペイロードでの追加計測
 
 `SpannerRealisticStreamingBench`: 4 カラム(STRING ×2, TIMESTAMP ×2)、行あたり ~140 bytes シリアライズ、`UNNEST` + Spanner 関数で生成(wire format は実テーブル SELECT と同一)。
 
