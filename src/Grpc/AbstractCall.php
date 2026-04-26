@@ -117,11 +117,17 @@ abstract class AbstractCall
 
     protected function initCurl(): \CurlHandle
     {
-        $ch = curl_init();
-        if ($ch === false) {
-            throw new \RuntimeException('failed to initialize curl handle');
-        }
-        return $ch;
+        return $this->channel->acquireCurlHandle();
+    }
+
+    protected function releaseCurl(\CurlHandle $ch): void
+    {
+        $this->channel->releaseCurlHandle($ch);
+    }
+
+    protected function discardCurl(\CurlHandle $ch): void
+    {
+        $this->channel->discardCurlHandle($ch);
     }
 
     /**

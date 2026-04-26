@@ -79,8 +79,8 @@
 
 | Call 種別 | 関数 | 理由 |
 |---|---|---|
-| Unary | `curl_exec`(ブロッキング) | 単発往復のため非同期化不要 |
-| Server streaming | `curl_multi_exec` ループ + Generator | 真の incremental yield(長時間ストリーム対応) |
+| Unary | Channel-scoped easy handle + `curl_exec`(ブロッキング) | 単発往復のため非同期化不要。正常完了後は `curl_reset()` して Channel に返す |
+| Server streaming | Channel-scoped easy handle + `curl_multi_exec` ループ + Generator | 真の incremental yield(長時間ストリーム対応)。完走時だけ Channel に返し、途中終了・エラーは破棄 |
 | Client streaming(後回し) | `curl_multi_exec` + 進行中の write | 送信側を進ませながら受信側を待つ |
 | Bidi streaming(後回し) | 同上 | |
 
@@ -199,3 +199,4 @@
 - **2026-04-26**: Spanner emulator 検証 Steps 2-5 完了。`CreateInstance`(LRO)、`CreateDatabase`(DDL 付き LRO)、`CreateSession` + `ExecuteSql`(unary `SELECT 1`)、**`ExecuteStreamingSql`**(server streaming、UNNEST(GENERATE_ARRAY(1,1000)) で 1000 行受信)を全て実機検証。これで「自分の helloworld を超えて、本物の googleapis 生成 protobuf 型 × 本物の C++ Spanner 実装 × 我々の BaseStub」の全層が unary + server streaming で動くことが確定。テスト合計 14 件。
 - **2026-04-26**: ベンチマーク基盤と ext-grpc 比較環境を整備。`bench/`(PHPBench 1.6, シナリオ群)、`Dockerfile.ext-grpc` + `bench-comparison/`(独立 Composer プロジェクト、`grpc/grpc` 経由)、`bench/compare.sh`(両環境計測の自動化)。Spanner emulator は内部状態で run 間変動が大きいためベンチ対象から外し、Go test-server に `BenchUnary` / `BenchServerStream` を追加して payload bytes、message count、server delay を制御可能にした。安定指標では ext-grpc が軽量 unary で ~3× 速い一方、server streaming 1000 件では php-grpc-lite が ~1.8× 速い。Phase 1 の最初の観測対象が「接続プーリング(libcurl handle 再利用)で unary 固定費がどれだけ下がるか」に定まった。詳細: `docs/benchmarks/baseline-2026-04-26.md`、`docs/benchmarks/comparison-ext-grpc-2026-04-26.md`。
 - **2026-04-26**: mTLS 経路を実機検証。test-server に mTLS listener (port 50053, `RequireAndVerifyClientCert`) を追加、自己署名 client cert を `poc/test-server/certs/client.{crt,key}` に配置。`ChannelCredentials::createSsl($rootCerts, $privateKey, $certChain)` の `certChain` / `privateKey` 経路(`CURLOPT_SSLCERT_BLOB` / `CURLOPT_SSLKEY_BLOB`)が実際に動くことを確認(統合テスト 2 件: client cert 付きで成功、無しで `STATUS_UNAVAILABLE` 拒否)。テスト合計 16 件。
+- **2026-04-27**: Channel-scoped curl handle reuse を実装。`Channel` が idle easy handle を保持し、unary / server streaming の正常完了時に `curl_reset()` して再利用する。curl error、`cancel()`、server streaming の途中終了は接続状態が不明なため `curl_close()` で破棄する。Go test-server bench では軽量 unary が約 228 μs → 38 μs に下がり、ext-grpc の同条件 68 μs を下回った。server delay 10ms の unary は php-grpc-lite 11.6 ms / ext-grpc 11.8 ms でほぼ同等。詳細: `docs/benchmarks/connection-reuse-2026-04-27.md`。

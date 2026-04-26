@@ -60,23 +60,25 @@ class UnaryCall extends AbstractCall
             throw new \RuntimeException('UnaryCall::wait() called before start()');
         }
 
-        curl_exec($this->ch);
-        $errno = curl_errno($this->ch);
-        $errMsg = curl_error($this->ch);
-        curl_close($this->ch);
+        $ch = $this->ch;
+        curl_exec($ch);
+        $errno = curl_errno($ch);
+        $errMsg = curl_error($ch);
         $this->ch = null;
 
         if ($errno !== 0) {
+            $this->discardCurl($ch);
             return [null, $this->makeStatus(STATUS_UNAVAILABLE, "curl error ($errno): $errMsg")];
         }
 
+        $this->releaseCurl($ch);
         return [$this->parseResponseFrame(), $this->buildStatusFromTrailers()];
     }
 
     public function cancel(): void
     {
         if ($this->ch !== null) {
-            curl_close($this->ch);
+            $this->discardCurl($this->ch);
             $this->ch = null;
         }
     }

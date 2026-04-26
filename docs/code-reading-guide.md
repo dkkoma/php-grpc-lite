@@ -188,13 +188,16 @@ $this->applyTlsOptions($this->ch);
 ```php
 curl_exec($this->ch);  // ← ここで完全にブロックして I/O が走る
 $errno = curl_errno($this->ch);
-curl_close($this->ch);
 
 if ($errno !== 0) {
+    $this->discardCurl($this->ch);
     return [null, $this->makeStatus(STATUS_UNAVAILABLE, "curl error ($errno): $errMsg")];
 }
+$this->releaseCurl($this->ch);
 return [$this->parseResponseFrame(), $this->buildStatusFromTrailers()];
 ```
+
+正常完了した easy handle は `curl_reset()` して `Channel` に返す。これにより libcurl の connection cache を Channel lifetime に寄せ、連続 unary の固定費を観測可能な形で下げる。curl error や `cancel()` は接続状態が不明なので破棄する。
 
 `curl_exec` の中で起きること:
 

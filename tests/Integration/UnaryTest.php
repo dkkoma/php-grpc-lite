@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace PhpGrpcLite\Tests\Integration;
 
 use Grpc\ChannelCredentials;
+use Grpc\Channel;
 use Helloworld\HelloReply;
 use Helloworld\HelloRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
@@ -53,5 +54,25 @@ final class UnaryTest extends TestCase
 
         self::assertArrayHasKey('grpc-status', $trailers);
         self::assertSame('0', $trailers['grpc-status'][0]);
+    }
+
+    public function testSequentialUnaryCallsKeepOneReusableChannelHandle(): void
+    {
+        $opts = ['credentials' => ChannelCredentials::createInsecure()];
+        $channel = new Channel(self::TARGET, $opts);
+        $client = new GreeterClient(self::TARGET, $opts, $channel);
+
+        foreach (['ReuseA', 'ReuseB'] as $name) {
+            $request = new HelloRequest();
+            $request->setName($name);
+
+            [$response, $status] = $client->SayHello($request)->wait();
+
+            self::assertSame(\Grpc\STATUS_OK, $status->code);
+            self::assertSame("Hello, $name", $response->getMessage());
+        }
+
+        $idleHandles = new \ReflectionProperty($channel, 'idleCurlHandles');
+        self::assertCount(1, $idleHandles->getValue($channel));
     }
 }

@@ -72,6 +72,7 @@ class ServerStreamingCall extends AbstractCall
         $mh = curl_multi_init();
         curl_multi_add_handle($mh, $this->ch);
         $errCode = null;
+        $completed = false;
 
         try {
             do {
@@ -106,14 +107,20 @@ class ServerStreamingCall extends AbstractCall
             } else {
                 $this->finalStatus = $this->buildStatusFromTrailers();
             }
+            $completed = true;
         } finally {
-            curl_multi_remove_handle($mh, $this->ch);
-            curl_close($this->ch);
+            $ch = $this->ch;
+            curl_multi_remove_handle($mh, $ch);
             $this->ch = null;
             curl_multi_close($mh);
 
             if ($this->finalStatus === null) {
                 $this->finalStatus = $this->buildStatusFromTrailers();
+            }
+            if ($completed && $errCode === null) {
+                $this->releaseCurl($ch);
+            } else {
+                $this->discardCurl($ch);
             }
         }
     }
@@ -131,7 +138,7 @@ class ServerStreamingCall extends AbstractCall
     public function cancel(): void
     {
         if ($this->ch !== null) {
-            curl_close($this->ch);
+            $this->discardCurl($this->ch);
             $this->ch = null;
         }
     }
