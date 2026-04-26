@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"time"
 
 	pb "example.com/helloworld/pb"
@@ -65,13 +68,53 @@ func main() {
 	tlsServer := grpc.NewServer(grpc.Creds(creds))
 	pb.RegisterGreeterServer(tlsServer, &server{})
 	reflection.Register(tlsServer)
+	go func() {
+		lis, err := net.Listen("tcp", ":50052")
+		if err != nil {
+			log.Fatalf("failed to listen :50052: %v", err)
+		}
+		log.Printf("listening on :50052 (h2 over TLS)")
+		if err := tlsServer.Serve(lis); err != nil {
+			log.Fatalf("tls serve error: %v", err)
+		}
+	}()
 
-	lis, err := net.Listen("tcp", ":50052")
+	// h2 over mTLS on :50053 — requires the client to present a cert signed
+	// by (or equal to) the cert in /certs/client.crt.
+	mtlsServer, err := newMtlsServer()
 	if err != nil {
-		log.Fatalf("failed to listen :50052: %v", err)
+		log.Fatalf("failed to set up mTLS: %v", err)
 	}
-	log.Printf("listening on :50052 (h2 over TLS)")
-	if err := tlsServer.Serve(lis); err != nil {
-		log.Fatalf("tls serve error: %v", err)
+	pb.RegisterGreeterServer(mtlsServer, &server{})
+	reflection.Register(mtlsServer)
+
+	lis, err := net.Listen("tcp", ":50053")
+	if err != nil {
+		log.Fatalf("failed to listen :50053: %v", err)
 	}
+	log.Printf("listening on :50053 (h2 over mTLS)")
+	if err := mtlsServer.Serve(lis); err != nil {
+		log.Fatalf("mtls serve error: %v", err)
+	}
+}
+
+func newMtlsServer() (*grpc.Server, error) {
+	serverCert, err := tls.LoadX509KeyPair("/certs/server.crt", "/certs/server.key")
+	if err != nil {
+		return nil, fmt.Errorf("load server keypair: %w", err)
+	}
+	clientCAPem, err := os.ReadFile("/certs/client.crt")
+	if err != nil {
+		return nil, fmt.Errorf("read client CA: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(clientCAPem) {
+		return nil, fmt.Errorf("failed to add client CA")
+	}
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientCAs:    clientCAs,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+	}
+	return grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg))), nil
 }

@@ -26,5 +26,6 @@ FROM debian:trixie-slim
 COPY --from=build /server /server
 COPY test-server/certs/server.crt /certs/server.crt
 COPY test-server/certs/server.key /certs/server.key
-EXPOSE 50051 50052
+COPY test-server/certs/client.crt /certs/client.crt
+EXPOSE 50051 50052 50053
 ENTRYPOINT ["/server"]
