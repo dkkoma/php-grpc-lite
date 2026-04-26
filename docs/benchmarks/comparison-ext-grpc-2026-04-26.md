@@ -5,7 +5,7 @@
 > **ext-grpc バージョン**: pecl で 2026-04-26 に取得した最新安定版
 > **目的**: ドロップイン代替対象である公式 `ext-grpc` に対して、現状の Phase 0 純 PHP 実装がどう位置するかを把握する
 
-> **注記**: この文書は curl handle reuse 前の Phase 0 比較。reuse 実装後の観測値は [connection-reuse-2026-04-27.md](./connection-reuse-2026-04-27.md) を参照。
+> **注記**: この文書は curl handle reuse 前の Phase 0 比較。reuse 実装後の warm / cold unary 観測値は [connection-reuse-2026-04-27.md](./connection-reuse-2026-04-27.md) を参照。
 
 ---
 

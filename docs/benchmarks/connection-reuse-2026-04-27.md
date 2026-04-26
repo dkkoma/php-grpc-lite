@@ -20,6 +20,16 @@
 
 同じ `./bench/compare.sh`、同じ Go test-server、同じ PHPBench 設定で計測した。
 
+### 2.0 Cold unary
+
+`ColdUnaryBench` は 1 rev ごとに client/channel を構築してから unary を 1 回発行し、最後に `unset($client)` + `gc_collect_cycles()` で PHP object を破棄する。PHP-FPM request 境界そのものではないが、php-grpc-lite 側で request 内 Channel reuse が効かないケースの近似として使う。
+
+| シナリオ | php-grpc-lite | ext-grpc | 観測 |
+|---|---:|---:|---|
+| client/channel construct + `SayHello` | 277 μs | **89.7 μs** | ext-grpc 3.1× |
+
+ext-grpc は PHP object を作り直しても C-core 側の channel / subchannel / connection pool が process lifetime 側に残るため、cold 近似でも 100 μs 前後に収まる。一方 php-grpc-lite は PHP request をまたぐ persistent resource を持たないため、この条件では毎回 TCP / HTTP/2 接続確立コストを払う。FPM worker で「1 HTTP request につき 1 gRPC unary」の形に近い workload では、この cold 差分を見る必要がある。
+
 ### 2.1 Unary
 
 | シナリオ | Phase 0 php-grpc-lite | reuse 後 php-grpc-lite | ext-grpc | 観測 |
@@ -60,6 +70,7 @@ server streaming は既に 1 call あたり 1 stream で、複数 message が同
 
 - Channel lifetime に libcurl connection cache を寄せるだけで、pure PHP の unary 固定費は ext-grpc 比較で十分低い水準まで下がった。
 - ext-grpc の数値に近づけること自体は目的ではないが、「Phase 0 の unary 差は C 実装差ではなく per-call connection setup が支配的」という仮説は支持された。
+- ただし PHP-FPM request をまたぐ reuse は純 PHP の `Channel` 保持だけではできない。request 内で複数 RPC を発行する workload は warm 値、request ごとに 1 RPC だけ発行する workload は cold 値を参照する。
 - 次に見るべき対象は、接続再利用後にも残る header/body callback、metadata 処理、protobuf decode のホットパス。
 
 ---
