@@ -6,6 +6,8 @@
 
 vendor/
 composer.lock
+bench-comparison/vendor/
+bench-comparison/composer.lock
 .phpunit.cache/
 .phpunit.result.cache
 

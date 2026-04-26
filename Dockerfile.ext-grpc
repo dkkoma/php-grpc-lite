@@ -1,0 +1,29 @@
+FROM php:8.4-cli-trixie
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        autoconf \
+        pkg-config \
+        git \
+        unzip \
+        libcurl4-openssl-dev \
+        libssl-dev \
+        libnghttp2-dev \
+        zlib1g-dev \
+        protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+# protobuf C extension (parity with the base dev image)
+RUN pecl install protobuf \
+    && docker-php-ext-enable protobuf
+
+# The thing under comparison: official grpc PHP extension. This compiles
+# gRPC C-core (with bundled BoringSSL) so the build is slow (~5-10 min).
+RUN pecl install grpc \
+    && docker-php-ext-enable grpc
+
+WORKDIR /workspace
+
+CMD ["bash"]

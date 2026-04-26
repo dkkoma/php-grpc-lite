@@ -19,3 +19,20 @@ services:
 
   spanner-emulator:
     image: gcr.io/cloud-spanner-emulator/emulator
+
+  # Comparison environment: same workspace, same servers, but with the
+  # official ext-grpc loaded. Our PSR-4 Grpc\* classes become dormant and
+  # all calls dispatch through the C extension.
+  dev-ext-grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile.ext-grpc
+    image: php-grpc-lite-dev-ext-grpc
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      - test-server
+      - spanner-emulator

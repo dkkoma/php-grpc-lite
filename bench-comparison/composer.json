@@ -1,0 +1,29 @@
+{
+    "name": "php-grpc-lite/bench-comparison-ext-grpc",
+    "description": "Run the same benchmarks against the official ext-grpc for A/B comparison",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.4",
+        "ext-curl": "*",
+        "ext-grpc": "*",
+        "grpc/grpc": "^1.0"
+    },
+    "require-dev": {
+        "google/cloud-spanner": "^2.6",
+        "google/protobuf": "^4.0",
+        "phpbench/phpbench": "^1.6"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "PhpGrpcLite\\Tests\\": "../tests/",
+            "PhpGrpcLite\\Bench\\": "../bench/",
+            "Helloworld\\": "../tests/fixtures/Generated/Helloworld/",
+            "GPBMetadata\\": "../tests/fixtures/Generated/GPBMetadata/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "preferred-install": "dist"
+    }
+}
