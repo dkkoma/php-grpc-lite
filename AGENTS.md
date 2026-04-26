@@ -30,6 +30,7 @@
 - 統合テスト: `docker compose run --rm dev vendor/bin/phpunit`
 - 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`
 - ext-grpc 比較: `./bench/compare.sh`
+- grpc-php-rs 任意比較: `./bench/compare-rs.sh`。通常比較はあくまで php-grpc-lite vs 公式 ext-grpc とし、grpc-php-rs は明示依頼がある場合だけ使う。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。
 
 ## ベンチ作業の注意

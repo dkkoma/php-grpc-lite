@@ -36,3 +36,19 @@ services:
     depends_on:
       - test-server
       - spanner-emulator
+
+  # Optional one-shot comparison environment for BSN4/grpc-php-rs. Normal
+  # benchmark comparisons should keep using dev vs dev-ext-grpc.
+  dev-grpc-rs:
+    build:
+      context: .
+      dockerfile: Dockerfile.grpc-php-rs
+    image: php-grpc-lite-dev-grpc-rs
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      - test-server
+      - spanner-emulator
