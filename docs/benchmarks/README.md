@@ -36,6 +36,23 @@ BENCH_OUTPUT_DIR=/tmp/php-grpc-lite-bench ./bench/run.sh cold
 | `./bench/run.sh stream-smoke` | `ServerStreamingCount1000Bench` 両環境 | server streaming count=1000 の回帰 smoke |
 | `./bench/run.sh hot-path` | `tools/bench-hot-path.php` | ネットワークなしの CPU 分解 |
 
+## 実用性能として押さえる軸
+
+ベンチマークの目的は HTTP/2 DATA frame や libcurl write callback の chunk 境界そのものを固定して比べることではなく、gRPC ライブラリの実利用で性能差になる条件を押さえること。chunk 境界は実装内部の診断対象であり、通常比較の主指標にはしない。
+
+| 軸 | 現在の対象 | 見たい差 |
+|---|---|---|
+| request 境界 / connection lifetime | `cold`, `warm` | PHP-FPM で request ごとに 1 RPC の場合と、request 内で Channel reuse できる場合の差 |
+| 軽量 unary 固定費 | `warm` | metadata / framing / curl dispatch / protobuf decode の最小固定費 |
+| unary payload size | `compare` の `UnaryPayloadBench` | payload が大きい場合の per-byte decode / copy cost |
+| server streaming message count | `stream`, `stream-smoke` | 1 stream 内で message 数が増えた場合の per-message overhead |
+| server streaming payload size | `stream` | streaming で payload が大きい場合の per-byte cost |
+| server-paced streaming | `stream` の `benchPacedDelivery` | サーバが message 間隔を空ける実運用寄りの cadence で Generator / `curl_multi_*` がどう振る舞うか |
+| server delay unary | `compare` の `UnaryDelayBench` | 実装固定費よりサーバ処理時間が支配的な場合に差がどれだけ残るか |
+| CPU hot path | `hot-path` | ネットワークを外した framing / header parse / protobuf merge の上限コスト |
+
+現時点で薄い実用軸は、TLS/mTLS 付き性能、call credentials / metadata が多いケース、複数 in-flight RPC、deadline / error path、HTTP/2 chunk 境界の診断ログ。これらは通常 smoke には入れず、必要な実装判断が出た時点で個別 suite として追加する。
+
 ## 生成物
 
 `./bench/run.sh cold` を `BENCH_TAG=local` で実行すると、以下のようなファイルができる。
