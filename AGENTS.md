@@ -39,3 +39,9 @@
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
 - ベンチ実行ログと抽出済み JSON/TSV は `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` で保存名と保存先を固定する。
 - regression baseline は `bench/baselines/regression.json`。明示的な性能変化を受け入れる時だけ更新し、通常は `BENCH_BASELINE=bench/baselines/regression.json ./bench/run.sh cold` / `warm` / `stream-smoke` のように比較する。
+
+## サブエージェントの利用と作業の継続について
+
+サブエージェントを展開して自律開発してください。
+各サブエージェントには高負荷の調査・設計・実装・テスト・レビューを担当させてください。サブエージェントを検索エンジンとして使わないでください。
+完了ごとに次のタスクを投げ続けて常に稼働させてください。
