@@ -31,6 +31,7 @@ class ServerStreamingCall extends AbstractCall
     private array $responseTrailers = [];
 
     private ?\stdClass $finalStatus = null;
+    private ?\stdClass $compressionStatus = null;
 
     /**
      * @param object $argument message instance with serializeToString()
@@ -87,8 +88,11 @@ class ServerStreamingCall extends AbstractCall
                     }
                 }
 
-                while (($payload = $this->nextPendingPayload()) !== null) {
-                    yield Internal\Deserialize::apply($this->deserialize, $payload);
+                $this->setUnsupportedEncodingStatus();
+                if ($this->compressionStatus === null) {
+                    while (($payload = $this->nextPendingPayload()) !== null) {
+                        yield Internal\Deserialize::apply($this->deserialize, $payload);
+                    }
                 }
 
                 if ($running > 0) {
@@ -96,11 +100,15 @@ class ServerStreamingCall extends AbstractCall
                 }
             } while ($running > 0);
 
-            while (($payload = $this->nextPendingPayload()) !== null) {
-                yield Internal\Deserialize::apply($this->deserialize, $payload);
+            if ($this->compressionStatus === null) {
+                while (($payload = $this->nextPendingPayload()) !== null) {
+                    yield Internal\Deserialize::apply($this->deserialize, $payload);
+                }
             }
 
-            if ($errCode !== null && $errCode !== CURLE_OK) {
+            if ($this->compressionStatus !== null) {
+                $this->finalStatus = $this->compressionStatus;
+            } elseif ($errCode !== null && $errCode !== CURLE_OK) {
                 $code = $errCode === CURLE_OPERATION_TIMEDOUT
                     ? STATUS_DEADLINE_EXCEEDED
                     : STATUS_UNAVAILABLE;
@@ -178,6 +186,21 @@ class ServerStreamingCall extends AbstractCall
         return $s;
     }
 
+    private function setUnsupportedEncodingStatus(): void
+    {
+        if ($this->compressionStatus !== null) {
+            return;
+        }
+
+        $encoding = $this->findUnsupportedGrpcEncoding($this->responseHeaders);
+        if ($encoding !== null) {
+            $this->compressionStatus = $this->makeStatus(
+                STATUS_UNIMPLEMENTED,
+                "unsupported grpc-encoding: $encoding",
+            );
+        }
+    }
+
     private function validateGrpcResponse(\CurlHandle $ch): ?\stdClass
     {
         if (isset($this->responseTrailers['grpc-status'])) {
@@ -235,11 +258,19 @@ class ServerStreamingCall extends AbstractCall
         $bufferLength = strlen($this->buffer);
 
         while ($bufferLength - $this->bufferOffset >= 5) {
+            $flag = ord($this->buffer[$this->bufferOffset]);
             $len = unpack('N', substr($this->buffer, $this->bufferOffset + 1, 4))[1];
             if ($bufferLength - $this->bufferOffset < 5 + $len) {
                 break;
             }
-            $this->pending[] = substr($this->buffer, $this->bufferOffset + 5, $len);
+            if ($flag !== 0) {
+                $this->compressionStatus ??= $this->makeStatus(
+                    STATUS_UNIMPLEMENTED,
+                    'compressed gRPC messages are not supported',
+                );
+            } elseif ($this->compressionStatus === null) {
+                $this->pending[] = substr($this->buffer, $this->bufferOffset + 5, $len);
+            }
             $this->bufferOffset += 5 + $len;
         }
 

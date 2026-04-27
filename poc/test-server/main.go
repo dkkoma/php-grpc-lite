@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -152,6 +153,19 @@ func newServer() *grpc.Server {
 
 func serveNonGrpcH2C() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-bench-grpc-response") == "compressed-flag" {
+			w.Header().Set("content-type", "application/grpc")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(1, nil))
+			return
+		}
+		if encoding := r.Header.Get("x-bench-grpc-encoding"); encoding != "" {
+			w.Header().Set("content-type", "application/grpc")
+			w.Header().Set("grpc-encoding", encoding)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			return
+		}
 		status := http.StatusOK
 		if raw := r.Header.Get("x-bench-http-status"); raw != "" {
 			if parsed, err := strconv.Atoi(raw); err == nil {
@@ -174,6 +188,14 @@ func serveNonGrpcH2C() {
 	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("non-grpc h2c serve error: %v", err)
 	}
+}
+
+func grpcFrame(flag byte, payload []byte) []byte {
+	frame := make([]byte, 5+len(payload))
+	frame[0] = flag
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+	copy(frame[5:], payload)
+	return frame
 }
 
 func main() {

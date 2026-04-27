@@ -80,6 +80,10 @@ class UnaryCall extends AbstractCall
         if ($protocolStatus !== null) {
             return [null, $protocolStatus];
         }
+        $compressionStatus = $this->validateCompression();
+        if ($compressionStatus !== null) {
+            return [null, $compressionStatus];
+        }
         return [$this->parseResponseFrame(), $this->buildStatusFromTrailers()];
     }
 
@@ -114,6 +118,26 @@ class UnaryCall extends AbstractCall
             return null;
         }
         return Internal\Deserialize::apply($this->deserialize, $payload);
+    }
+
+    private function validateCompression(): ?\stdClass
+    {
+        $encoding = $this->findUnsupportedGrpcEncoding($this->responseHeaders);
+        if ($encoding !== null) {
+            return $this->makeStatus(
+                STATUS_UNIMPLEMENTED,
+                "unsupported grpc-encoding: $encoding",
+            );
+        }
+
+        if ($this->body !== '' && ord($this->body[0]) !== 0) {
+            return $this->makeStatus(
+                STATUS_UNIMPLEMENTED,
+                'compressed gRPC messages are not supported',
+            );
+        }
+
+        return null;
     }
 
     private function buildStatusFromTrailers(): \stdClass

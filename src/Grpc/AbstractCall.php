@@ -189,6 +189,13 @@ abstract class AbstractCall
         };
     }
 
+    /** @param array<string, list<string>> $headers */
+    protected function findUnsupportedGrpcEncoding(array $headers): ?string
+    {
+        $encoding = strtolower($headers['grpc-encoding'][0] ?? 'identity');
+        return ($encoding === '' || $encoding === 'identity') ? null : $encoding;
+    }
+
     /**
      * Cache PEM material to a tmpfile keyed by content hash so that identical
      * inputs reuse the same file across calls.

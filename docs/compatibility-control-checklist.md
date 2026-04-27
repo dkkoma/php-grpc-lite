@@ -51,6 +51,8 @@
 
 ## 6. Compression / Encoding
 
+2026-04-28 時点で、未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` として明示エラー化済み。実際の gzip 対応は未実装。
+
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
 | unsupported response encoding | 未対応の `grpc-encoding` や compressed flag=1 を成功 decode しない | 明示的な non-OK / exception 方針 |
