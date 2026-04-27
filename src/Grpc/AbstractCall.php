@@ -160,6 +160,18 @@ abstract class AbstractCall
         }
     }
 
+    protected function applyTimeoutOptions(\CurlHandle $ch): void
+    {
+        if (!isset($this->options['timeout'])) {
+            return;
+        }
+
+        $timeoutMicros = max(1, (int) $this->options['timeout']);
+        $timeoutMillis = max(1, (int) ceil($timeoutMicros / 1000));
+        curl_setopt($ch, CURLOPT_TIMEOUT_MS, $timeoutMillis);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT_MS, $timeoutMillis);
+    }
+
     /**
      * Cache PEM material to a tmpfile keyed by content hash so that identical
      * inputs reuse the same file across calls.

@@ -47,6 +47,7 @@ class UnaryCall extends AbstractCall
             CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),
         ]);
         $this->applyTlsOptions($this->ch);
+        $this->applyTimeoutOptions($this->ch);
     }
 
     /**
@@ -68,7 +69,10 @@ class UnaryCall extends AbstractCall
 
         if ($errno !== 0) {
             $this->discardCurl($ch);
-            return [null, $this->makeStatus(STATUS_UNAVAILABLE, "curl error ($errno): $errMsg")];
+            $code = $errno === CURLE_OPERATION_TIMEDOUT
+                ? STATUS_DEADLINE_EXCEEDED
+                : STATUS_UNAVAILABLE;
+            return [null, $this->makeStatus($code, "curl error ($errno): $errMsg")];
         }
 
         $this->releaseCurl($ch);

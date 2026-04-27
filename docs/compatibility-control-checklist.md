@@ -8,6 +8,8 @@
 
 ## 2. Client Deadline / Timeout
 
+2026-04-27 時点で、unary / server streaming の client-side enforcement と `STATUS_DEADLINE_EXCEEDED` 変換は実装済み。`grpc-timeout` header の 8 桁制限や unit 丸めの厳密な ext-grpc 互換は引き続き確認対象。
+
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
 | `timeout` option → `grpc-timeout` | gax が渡す microseconds timeout を仕様の `grpc-timeout` header に変換する | header 値、unit 丸め、8桁制限 |

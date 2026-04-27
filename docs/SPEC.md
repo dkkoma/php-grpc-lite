@@ -184,7 +184,7 @@
 - [ ] trailers-only error response の扱い(`grpc-status` が body 前 header block に来るケース)
 - [ ] `grpc-message` の percent decode
 - [ ] HTTP status / `content-type: application/grpc` validation
-- [ ] client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなく libcurl timeout にも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)
+- [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなく libcurl timeout にも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともに `CURLOPT_TIMEOUT_MS` / `CURLOPT_CONNECTTIMEOUT_MS` を設定し、curl timeout を `STATUS_DEADLINE_EXCEEDED` に変換する(2026-04-27)
 - [ ] 圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化
 - [ ] binary metadata(`*-bin`)の ext-grpc 互換確認
 

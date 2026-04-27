@@ -56,6 +56,7 @@ class ServerStreamingCall extends AbstractCall
             CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),
         ]);
         $this->applyTlsOptions($this->ch);
+        $this->applyTimeoutOptions($this->ch);
     }
 
     /**
@@ -100,8 +101,11 @@ class ServerStreamingCall extends AbstractCall
             }
 
             if ($errCode !== null && $errCode !== CURLE_OK) {
+                $code = $errCode === CURLE_OPERATION_TIMEDOUT
+                    ? STATUS_DEADLINE_EXCEEDED
+                    : STATUS_UNAVAILABLE;
                 $this->finalStatus = $this->makeStatus(
-                    STATUS_UNAVAILABLE,
+                    $code,
                     "curl error ($errCode): " . curl_strerror($errCode),
                 );
             } else {
