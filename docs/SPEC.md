@@ -181,7 +181,7 @@
 - [ ] Persistent channel pool の互換要件(ext-grpc は `grpc.use_local_subchannel_pool` 等の INI で制御)
 - [ ] マルチアーキテクチャ対応(arm64 / amd64)
 - [ ] エラーログ/デバッグ出力の方式
-- [ ] trailers-only error response の扱い(`grpc-status` が body 前 header block に来るケース)
+- [x] ~~trailers-only error response の扱い(`grpc-status` が body 前 header block に来るケース)~~ → body 前でも `grpc-status` / `grpc-message` / `grpc-status-details-bin` は trailing status metadata として扱う(2026-04-27)
 - [ ] `grpc-message` の percent decode
 - [ ] HTTP status / `content-type: application/grpc` validation
 - [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなく libcurl timeout にも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともに `CURLOPT_TIMEOUT_MS` / `CURLOPT_CONNECTTIMEOUT_MS` を設定し、curl timeout を `STATUS_DEADLINE_EXCEEDED` に変換する(2026-04-27)

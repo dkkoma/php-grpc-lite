@@ -356,7 +356,6 @@ try {
 
 | 未達 / リスク | 影響 | 次に見るべきこと |
 |---|---|---|
-| trailers-only response の扱い | サーバが body なしで `grpc-status` を返すエラー応答では、現在の bodyStarted 判定だと trailers を initial headers に分類する可能性がある | `grpc-status` header を見たら trailers/status として扱う状態機械にする |
 | `grpc-message` percent decode 未実装 | エラーメッセージ中の escaped bytes がそのまま出る可能性 | gRPC spec の percent-encoding decode を追加 |
 | 圧縮未対応 | `grpc-encoding` / compressed flag=1 の応答を decode できない | まず unsupported encoding を明示エラー化。必要なら gzip 対応 |
 | HTTP status / content-type validation が薄い | gRPC でない HTTP 応答を status として誤解する可能性 | HTTP status と `content-type: application/grpc` の検証を追加 |
@@ -365,7 +364,7 @@ try {
 | client streaming / bidi streaming 未実装 | Pub/Sub StreamingPull 等は対象外 | SPEC 更新後に別フェーズで設計 |
 | request 跨ぎ persistent pool なし | PHP-FPM で ext-grpc と cold 性能差が残る | pure PHP で可能な範囲と拡張化が必要な範囲を分ける |
 
-このレビューから見ると、次にやるべき妥当性タスクは性能ではなく **エラー応答の gRPC semantics**。特に trailers-only、`grpc-message` decode、HTTP status/content-type validation は、通常成功系ベンチでは露出しないが、ライブラリとしての信頼性に直結する。client-side deadline enforcement は 2026-04-27 に unary / server streaming のローカル timeout と `DEADLINE_EXCEEDED` 変換まで実装済み。実装時に漏らさないための制御系チェックリストは `docs/compatibility-control-checklist.md` に分離する。
+このレビューから見ると、次にやるべき妥当性タスクは性能ではなく **エラー応答の gRPC semantics**。特に `grpc-message` decode、HTTP status/content-type validation は、通常成功系ベンチでは露出しないが、ライブラリとしての信頼性に直結する。client-side deadline enforcement と trailers-only response は 2026-04-27 に実装済み。実装時に漏らさないための制御系チェックリストは `docs/compatibility-control-checklist.md` に分離する。
 
 ### 6.2 「素の curl」 と 「extension の中の curl」
 

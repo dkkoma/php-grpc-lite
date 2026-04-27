@@ -28,6 +28,8 @@
 
 ## 4. Response Status / Error Semantics
 
+2026-04-27 時点で、unary / server streaming の trailers-only `grpc-status` 分類は実装済み。
+
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
 | trailers-only response | body なしで `grpc-status` が header block に来ても status として扱う | unary immediate error、server streaming immediate error |

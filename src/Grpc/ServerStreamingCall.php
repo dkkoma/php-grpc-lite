@@ -184,13 +184,22 @@ class ServerStreamingCall extends AbstractCall
             [$k, $v] = array_pad(explode(':', $trim, 2), 2, '');
             $key = strtolower(trim($k));
             $val = ltrim($v);
-            if (!$this->bodyStarted) {
+            if ($this->isStatusHeader($key)) {
+                $this->responseTrailers[$key][] = $val;
+            } elseif (!$this->bodyStarted) {
                 $this->responseHeaders[$key][] = $val;
             } else {
                 $this->responseTrailers[$key][] = $val;
             }
         }
         return strlen($line);
+    }
+
+    private function isStatusHeader(string $key): bool
+    {
+        return $key === 'grpc-status'
+            || $key === 'grpc-message'
+            || $key === 'grpc-status-details-bin';
     }
 
     private function onBodyChunk(\CurlHandle $ch, string $chunk): int

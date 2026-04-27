@@ -12,9 +12,11 @@ import (
 
 	pb "example.com/helloworld/pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 )
 
 type server struct {
@@ -42,11 +44,30 @@ func (s *server) SayManyHellos(req *pb.HelloRequest, stream pb.Greeter_SayManyHe
 }
 
 func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.BenchReply, error) {
+	if err := benchErrorFromContext(ctx); err != nil {
+		return nil, err
+	}
 	sendBenchMetadata(ctx)
 	if d := req.GetServerDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
 	return &pb.BenchReply{Payload: make([]byte, req.GetPayloadBytes())}, nil
+}
+
+func benchErrorFromContext(ctx context.Context) error {
+	incoming, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil
+	}
+	code := firstMetadataInt(incoming, "x-bench-error-code")
+	if code <= 0 {
+		return nil
+	}
+	message := "bench error"
+	if values := incoming.Get("x-bench-error-message"); len(values) > 0 && values[0] != "" {
+		message = values[0]
+	}
+	return status.Error(codes.Code(code), message)
 }
 
 func sendBenchMetadata(ctx context.Context) {
@@ -101,6 +122,9 @@ func makeMetadataValue(size int) string {
 }
 
 func (s *server) BenchServerStream(req *pb.BenchRequest, stream pb.Greeter_BenchServerStreamServer) error {
+	if err := benchErrorFromContext(stream.Context()); err != nil {
+		return err
+	}
 	payload := make([]byte, req.GetPayloadBytes())
 	delay := time.Duration(req.GetServerDelayMs()) * time.Millisecond
 	count := int(req.GetMessageCount())
