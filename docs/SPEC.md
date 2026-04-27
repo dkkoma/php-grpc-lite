@@ -181,6 +181,12 @@
 - [ ] Persistent channel pool の互換要件(ext-grpc は `grpc.use_local_subchannel_pool` 等の INI で制御)
 - [ ] マルチアーキテクチャ対応(arm64 / amd64)
 - [ ] エラーログ/デバッグ出力の方式
+- [ ] trailers-only error response の扱い(`grpc-status` が body 前 header block に来るケース)
+- [ ] `grpc-message` の percent decode
+- [ ] HTTP status / `content-type: application/grpc` validation
+- [ ] client-side deadline enforcement(`grpc-timeout` header だけでなく libcurl timeout も設定するか)
+- [ ] 圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化
+- [ ] binary metadata(`*-bin`)の ext-grpc 互換確認
 
 ---
 
@@ -204,3 +210,4 @@
 - **2026-04-27**: ホットパス分解スクリプトを追加し、通常 RPC ベンチを汚さずに framing / header parse / protobuf merge / streaming frame split をローカル CPU 計測できるようにした。結果、unary framing と header parse はサブ μs で主因ではなく、streaming frame split は buffer を message ごとに `substr()` で詰める実装が 1000 messages で 1.239 ms まで伸びることを確認。`ServerStreamingCall` を buffer offset + pending offset 方式に変更し、同じ分解計測では 1000 messages split が 54.422 μs まで下がった。実 RPC では count=1000 が 1.40 ms → 1.357 ms と小幅改善で、残る支配要因は libcurl callback / `curl_multi_*` / Generator / protobuf object 生成側。詳細: `docs/benchmarks/hot-path-breakdown-2026-04-27.md`。
 - **2026-04-27**: Phase 1 ベンチ基盤を再整理。`bench/run.sh` を通常入口として追加し、`lite` / `ext` / `compare` / `cold` / `warm` / `stream` / `stream-smoke` / `hot-path` の各スイートを Docker compose 内で実行して `var/bench-results/` にログ保存できるようにした。`bench/compare.sh` も互換入口として同じ実装へ委譲する。`tools/parse-phpbench-aggregate.php` で PHPBench aggregate ログを JSON/TSV に抽出し、`mode_ns`、`mem_peak_bytes`、`rstdev_percent` を機械比較できる形にした。`tools/compare-benchmark-baseline.php` と `bench/baselines/regression.json` を追加し、`cold` / `warm` / `stream-smoke` で php-grpc-lite 自身の回帰判定を実行できるようにした。Phase 1 はローカル再現基盤まで進行、CI のしきい値判定は残タスク。
 - **2026-04-27**: PHPBench artifact 生成を `bench/phpbench-with-artifacts.sh` に分離。PHPBench 実行、aggregate parse、JSON/TSV 保存、任意の regression baseline 比較を同一コンテナ内で完結させ、ホストに `tee` したログを直後に別コンテナから bind mount 経由で parse する構成を廃止した。これにより bind mount 反映待ちの retry と `bash -c` に埋め込んだ ext-grpc 実行処理を不要にした。
+- **2026-04-27**: `docs/code-reading-guide.md` を現行実装に合わせて更新。対象 commit を Phase 1 時点へ進め、server streaming の buffer offset / pending offset 実装、Channel-scoped curl handle reuse、mTLS/Spanner 検証、ベンチ基盤への参照を反映した。あわせて gRPC ライブラリとしての自己レビューを追加し、現状は非圧縮 unary + server streaming の最小実装として妥当だが、trailers-only error、`grpc-message` percent decode、HTTP status/content-type validation、client-side deadline、圧縮対応、binary metadata 互換は未達として明示した。
