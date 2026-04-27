@@ -49,6 +49,8 @@
 | initial/trailing split | body 前後で metadata を正しく分離する | normal response、trailers-only |
 | metadata size | 過大 metadata の扱いを決める | 明示エラーか libcurl/server に委ねるか |
 
+2026-04-28 時点で、単一 raw binary value の `*-bin` request / initial / trailing metadata round-trip は php-grpc-lite と ext-grpc で一致確認済み。同一 key の複数 binary values は ext-grpc 側で最後だけ見える挙動が観測されたため、追加確認対象として残す。
+
 ## 6. Compression / Encoding
 
 2026-04-28 時点で、未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` として明示エラー化済み。実際の gzip 対応は未実装。

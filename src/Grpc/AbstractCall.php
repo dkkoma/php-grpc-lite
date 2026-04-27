@@ -97,7 +97,10 @@ abstract class AbstractCall
 
         foreach ($metadata as $key => $values) {
             foreach ((array) $values as $v) {
-                $headers[] = $key . ': ' . $v;
+                $value = $this->isBinaryMetadataKey($key)
+                    ? base64_encode((string) $v)
+                    : (string) $v;
+                $headers[] = $key . ': ' . $value;
             }
         }
 
@@ -194,6 +197,34 @@ abstract class AbstractCall
     {
         $encoding = strtolower($headers['grpc-encoding'][0] ?? 'identity');
         return ($encoding === '' || $encoding === 'identity') ? null : $encoding;
+    }
+
+    protected function isBinaryMetadataKey(string $key): bool
+    {
+        return str_ends_with(strtolower($key), '-bin');
+    }
+
+    /** @param array<string, list<string>> $metadata */
+    protected function appendMetadataHeader(array &$metadata, string $key, string $value): void
+    {
+        foreach ($this->decodeMetadataHeader($key, $value) as $decoded) {
+            $metadata[$key][] = $decoded;
+        }
+    }
+
+    /** @return list<string> */
+    protected function decodeMetadataHeader(string $key, string $value): array
+    {
+        if (!$this->isBinaryMetadataKey($key)) {
+            return [$value];
+        }
+
+        $decoded = [];
+        foreach (explode(',', $value) as $part) {
+            $binary = base64_decode($part, true);
+            $decoded[] = $binary === false ? '' : $binary;
+        }
+        return $decoded;
     }
 
     /**

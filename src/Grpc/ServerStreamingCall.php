@@ -234,11 +234,11 @@ class ServerStreamingCall extends AbstractCall
             $key = strtolower(trim($k));
             $val = ltrim($v);
             if ($this->isStatusHeader($key)) {
-                $this->responseTrailers[$key][] = $val;
+                $this->appendMetadataHeader($this->responseTrailers, $key, $val);
             } elseif (!$this->bodyStarted) {
-                $this->responseHeaders[$key][] = $val;
+                $this->appendMetadataHeader($this->responseHeaders, $key, $val);
             } else {
-                $this->responseTrailers[$key][] = $val;
+                $this->appendMetadataHeader($this->responseTrailers, $key, $val);
             }
         }
         return strlen($line);

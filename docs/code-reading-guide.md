@@ -357,7 +357,7 @@ try {
 | 未達 / リスク | 影響 | 次に見るべきこと |
 |---|---|---|
 | trailers 欠落時の扱い | 現状は `STATUS_UNKNOWN` になるだけで詳細が薄い | HTTP status や curl info から details を補う |
-| binary metadata 正規化 | `*-bin` metadata の base64 取り扱いを ext-grpc と完全照合していない | metadata 互換テストを追加 |
+| binary metadata 複数 value | 単一 raw binary value の round-trip は ext-grpc と照合済みだが、同一 key の複数 value は ext-grpc 側で最後だけ見える挙動が観測された | 複数 value を API 互換対象に含めるか追加確認 |
 | client streaming / bidi streaming 未実装 | Pub/Sub StreamingPull 等は対象外 | SPEC 更新後に別フェーズで設計 |
 | request 跨ぎ persistent pool なし | PHP-FPM で ext-grpc と cold 性能差が残る | pure PHP で可能な範囲と拡張化が必要な範囲を分ける |
 

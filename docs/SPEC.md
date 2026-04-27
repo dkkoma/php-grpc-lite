@@ -186,7 +186,8 @@
 - [x] ~~HTTP status / `content-type: application/grpc` validation~~ → `grpc-status` が無い非 gRPC 応答は HTTP status から gRPC status を合成し、HTTP 200 でも `content-type` が `application/grpc` でなければ `STATUS_UNKNOWN` とする(2026-04-28)
 - [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなく libcurl timeout にも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともに `CURLOPT_TIMEOUT_MS` / `CURLOPT_CONNECTTIMEOUT_MS` を設定し、curl timeout を `STATUS_DEADLINE_EXCEEDED` に変換する(2026-04-27)
 - [x] ~~圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化~~ → 未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` にする(2026-04-28)
-- [ ] binary metadata(`*-bin`)の ext-grpc 互換確認
+- [x] ~~binary metadata(`*-bin`)の ext-grpc 互換確認~~ → PHP API の値は raw binary、HTTP/2 wire は base64 として扱う。単一 raw binary value の request/initial/trailing round-trip を ext-grpc と照合(2026-04-28)
+- [ ] binary metadata の同一 key 複数 value における ext-grpc 互換確認
 
 互換性・制御系の実装時チェックリストは `docs/compatibility-control-checklist.md` に集約する。性能ベンチに入れる項目は `docs/benchmarks/README.md` に置き、deadline/error/cancellation などの semantics 検証と混ぜない。
 

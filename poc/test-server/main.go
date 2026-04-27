@@ -53,6 +53,7 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 		return nil, err
 	}
 	sendBenchMetadata(ctx)
+	sendBenchBinaryMetadata(ctx)
 	if d := req.GetServerDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
@@ -99,6 +100,22 @@ func sendBenchMetadata(ctx context.Context) {
 		key = fmt.Sprintf("x-bench-trailing-%03d", i)
 		trailing.Append(key, value)
 	}
+	grpc.SendHeader(ctx, initial)
+	grpc.SetTrailer(ctx, trailing)
+}
+
+func sendBenchBinaryMetadata(ctx context.Context) {
+	incoming, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return
+	}
+	values := incoming.Get("x-bench-echo-bin")
+	if len(values) == 0 {
+		return
+	}
+
+	initial := metadata.MD{"x-bench-initial-bin": values}
+	trailing := metadata.MD{"x-bench-trailing-bin": values}
 	grpc.SendHeader(ctx, initial)
 	grpc.SetTrailer(ctx, trailing)
 }
