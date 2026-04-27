@@ -37,4 +37,4 @@
 
 - Spanner emulator は実機検証には有用だが、ベンチ指標としては内部状態の揺れが大きい。安定した性能観測は Go test-server の制御可能な RPC を優先する。
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
-- ベンチ実行ログは `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` で保存名と保存先を固定する。
+- ベンチ実行ログと抽出済み JSON/TSV は `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` で保存名と保存先を固定する。

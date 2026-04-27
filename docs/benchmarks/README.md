@@ -16,7 +16,7 @@
 ./bench/compare.sh
 ```
 
-どちらも `var/bench-results/` にログを保存する。保存名は `BENCH_TAG` と `BENCH_OUTPUT_DIR` で固定できる。
+どちらも `var/bench-results/` にログを保存し、PHPBench aggregate については同名の `.json` / `.tsv` も生成する。保存名は `BENCH_TAG` と `BENCH_OUTPUT_DIR` で固定できる。
 
 ```bash
 BENCH_TAG=20260427-local ./bench/run.sh compare
@@ -34,6 +34,28 @@ BENCH_OUTPUT_DIR=/tmp/php-grpc-lite-bench ./bench/run.sh cold
 | `./bench/run.sh stream` | `ServerStreamingBench` 両環境 | server streaming の per-message / per-byte / pacing |
 | `./bench/run.sh hot-path` | `tools/bench-hot-path.php` | ネットワークなしの CPU 分解 |
 
+## 生成物
+
+`./bench/run.sh cold` を `BENCH_TAG=local` で実行すると、以下のようなファイルができる。
+
+```text
+var/bench-results/cold-local-php-grpc-lite.log
+var/bench-results/cold-local-php-grpc-lite.json
+var/bench-results/cold-local-php-grpc-lite.tsv
+var/bench-results/cold-local-ext-grpc.log
+var/bench-results/cold-local-ext-grpc.json
+var/bench-results/cold-local-ext-grpc.tsv
+```
+
+手動で既存ログを変換する場合は以下を使う。
+
+```bash
+docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
+  --format=json \
+  --output=var/bench-results/result.json \
+  var/bench-results/result.log
+```
+
 ## ベンチ文書を書く基準
 
 - 対向サーバ、実行コマンド、代表値、揺れ幅を残す。
@@ -44,5 +66,5 @@ BENCH_OUTPUT_DIR=/tmp/php-grpc-lite-bench ./bench/run.sh cold
 ## Phase 1 の残り
 
 - CI で回すスモークベンチのしきい値を決める。
-- `var/bench-results/*.log` から代表値を抽出して機械比較する仕組みを追加する。
+- 抽出済み JSON/TSV と regression baseline を比較する仕組みを追加する。
 - メモリ指標は PHPBench aggregate の `mem_peak` を記録しているが、回帰判定にはまだ使っていない。

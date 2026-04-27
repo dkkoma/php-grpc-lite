@@ -19,6 +19,7 @@ suite="${1:-compare}"
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 mkdir -p "$output_dir"
+last_log_path=""
 
 run_logged() {
     local label="$1"
@@ -26,6 +27,7 @@ run_logged() {
     shift 2
 
     local log_path="$output_dir/$suite-$timestamp-$log_name.log"
+    last_log_path="$log_path"
 
     echo
     echo "==========================================="
@@ -33,6 +35,33 @@ run_logged() {
     echo "  LOG: $log_path"
     echo "==========================================="
     "$@" | tee "$log_path"
+}
+
+parse_phpbench_log() {
+    local log_path="$1"
+    local json_path="${log_path%.log}.json"
+    local tsv_path="${log_path%.log}.tsv"
+
+    for attempt in 1 2 3; do
+        if docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
+            --format=json \
+            --output="$json_path" \
+            "$log_path" >/dev/null; then
+            break
+        fi
+        if [[ "$attempt" == "3" ]]; then
+            return 1
+        fi
+        sleep 0.2
+    done
+
+    docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
+        --format=tsv \
+        --output="$tsv_path" \
+        "$log_path" >/dev/null
+
+    echo "  JSON: $json_path"
+    echo "  TSV: $tsv_path"
 }
 
 run_lite() {
@@ -44,6 +73,7 @@ run_lite() {
         run_logged "php-grpc-lite $target" "php-grpc-lite" \
             docker compose run --rm dev vendor/bin/phpbench run "$target" --report=aggregate
     fi
+    parse_phpbench_log "$last_log_path"
 }
 
 run_ext() {
@@ -57,6 +87,7 @@ run_ext() {
             docker compose run --rm dev-ext-grpc \
                 bash -c "cd bench-comparison && vendor/bin/phpbench run ../$target --report=aggregate"
     fi
+    parse_phpbench_log "$last_log_path"
 }
 
 case "$suite" in
