@@ -366,7 +366,7 @@ try {
 | client streaming / bidi streaming 未実装 | Pub/Sub StreamingPull 等は対象外 | SPEC 更新後に別フェーズで設計 |
 | request 跨ぎ persistent pool なし | PHP-FPM で ext-grpc と cold 性能差が残る | pure PHP で可能な範囲と拡張化が必要な範囲を分ける |
 
-このレビューから見ると、次にやるべき妥当性タスクは性能ではなく **エラー応答と deadline の gRPC semantics**。特に trailers-only、`grpc-message` decode、HTTP status/content-type validation、client-side deadline enforcement は、通常成功系ベンチでは露出しないが、ライブラリとしての信頼性に直結する。
+このレビューから見ると、次にやるべき妥当性タスクは性能ではなく **エラー応答と deadline の gRPC semantics**。特に trailers-only、`grpc-message` decode、HTTP status/content-type validation、client-side deadline enforcement は、通常成功系ベンチでは露出しないが、ライブラリとしての信頼性に直結する。実装時に漏らさないための制御系チェックリストは `docs/compatibility-control-checklist.md` に分離する。
 
 ### 6.2 「素の curl」 と 「extension の中の curl」
 

@@ -188,6 +188,8 @@
 - [ ] 圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化
 - [ ] binary metadata(`*-bin`)の ext-grpc 互換確認
 
+互換性・制御系の実装時チェックリストは `docs/compatibility-control-checklist.md` に集約する。性能ベンチに入れる項目は `docs/benchmarks/README.md` に置き、deadline/error/cancellation などの semantics 検証と混ぜない。
+
 ---
 
 ## 変更履歴
