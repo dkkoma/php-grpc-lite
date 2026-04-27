@@ -17,10 +17,12 @@ namespace Grpc;
 class ServerStreamingCall extends AbstractCall
 {
     private string $buffer = '';
+    private int $bufferOffset = 0;
     private bool $bodyStarted = false;
 
     /** @var list<string> complete gRPC frame payloads waiting to be yielded */
     private array $pending = [];
+    private int $pendingOffset = 0;
 
     /** @var array<string, list<string>> */
     private array $responseHeaders = [];
@@ -84,8 +86,7 @@ class ServerStreamingCall extends AbstractCall
                     }
                 }
 
-                while ($this->pending !== []) {
-                    $payload = array_shift($this->pending);
+                while (($payload = $this->nextPendingPayload()) !== null) {
                     yield Internal\Deserialize::apply($this->deserialize, $payload);
                 }
 
@@ -94,8 +95,7 @@ class ServerStreamingCall extends AbstractCall
                 }
             } while ($running > 0);
 
-            while ($this->pending !== []) {
-                $payload = array_shift($this->pending);
+            while (($payload = $this->nextPendingPayload()) !== null) {
                 yield Internal\Deserialize::apply($this->deserialize, $payload);
             }
 
@@ -193,15 +193,40 @@ class ServerStreamingCall extends AbstractCall
     {
         $this->bodyStarted = true;
         $this->buffer .= $chunk;
+        $bufferLength = strlen($this->buffer);
 
-        while (strlen($this->buffer) >= 5) {
-            $len = unpack('N', substr($this->buffer, 1, 4))[1];
-            if (strlen($this->buffer) < 5 + $len) {
+        while ($bufferLength - $this->bufferOffset >= 5) {
+            $len = unpack('N', substr($this->buffer, $this->bufferOffset + 1, 4))[1];
+            if ($bufferLength - $this->bufferOffset < 5 + $len) {
                 break;
             }
-            $this->pending[] = substr($this->buffer, 5, $len);
-            $this->buffer = substr($this->buffer, 5 + $len);
+            $this->pending[] = substr($this->buffer, $this->bufferOffset + 5, $len);
+            $this->bufferOffset += 5 + $len;
+        }
+
+        if ($this->bufferOffset > 0) {
+            $this->buffer = substr($this->buffer, $this->bufferOffset);
+            $this->bufferOffset = 0;
         }
         return strlen($chunk);
+    }
+
+    private function nextPendingPayload(): ?string
+    {
+        if ($this->pendingOffset >= count($this->pending)) {
+            $this->pending = [];
+            $this->pendingOffset = 0;
+            return null;
+        }
+
+        $payload = $this->pending[$this->pendingOffset];
+        $this->pendingOffset++;
+
+        if ($this->pendingOffset >= count($this->pending)) {
+            $this->pending = [];
+            $this->pendingOffset = 0;
+        }
+
+        return $payload;
     }
 }
