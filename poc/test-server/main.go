@@ -13,6 +13,7 @@ import (
 	pb "example.com/helloworld/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -41,10 +42,62 @@ func (s *server) SayManyHellos(req *pb.HelloRequest, stream pb.Greeter_SayManyHe
 }
 
 func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.BenchReply, error) {
+	sendBenchMetadata(ctx)
 	if d := req.GetServerDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
 	return &pb.BenchReply{Payload: make([]byte, req.GetPayloadBytes())}, nil
+}
+
+func sendBenchMetadata(ctx context.Context) {
+	incoming, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return
+	}
+
+	count := firstMetadataInt(incoming, "x-bench-response-metadata-count")
+	if count <= 0 {
+		return
+	}
+	valueBytes := firstMetadataInt(incoming, "x-bench-response-metadata-value-bytes")
+	if valueBytes < 0 {
+		valueBytes = 0
+	}
+	value := makeMetadataValue(valueBytes)
+
+	initial := metadata.New(nil)
+	trailing := metadata.New(nil)
+	for i := 0; i < count; i++ {
+		key := fmt.Sprintf("x-bench-initial-%03d", i)
+		initial.Append(key, value)
+		key = fmt.Sprintf("x-bench-trailing-%03d", i)
+		trailing.Append(key, value)
+	}
+	grpc.SendHeader(ctx, initial)
+	grpc.SetTrailer(ctx, trailing)
+}
+
+func firstMetadataInt(md metadata.MD, key string) int {
+	values := md.Get(key)
+	if len(values) == 0 {
+		return 0
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(values[0], "%d", &parsed); err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func makeMetadataValue(size int) string {
+	if size <= 0 {
+		return ""
+	}
+	buf := make([]byte, size)
+	for i := range buf {
+		buf[i] = byte('a' + (i % 26))
+	}
+	return string(buf)
 }
 
 func (s *server) BenchServerStream(req *pb.BenchRequest, stream pb.Greeter_BenchServerStreamServer) error {

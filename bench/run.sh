@@ -12,6 +12,7 @@
 #   ./bench/run.sh stream
 #   ./bench/run.sh stream-smoke
 #   ./bench/run.sh stream-slow
+#   ./bench/run.sh metadata
 #   ./bench/run.sh hot-path
 #
 set -euo pipefail
@@ -130,6 +131,10 @@ case "$suite" in
         run_lite "bench/ServerStreamingSlowConsumerBench.php"
         run_ext "bench/ServerStreamingSlowConsumerBench.php"
         ;;
+    metadata)
+        run_lite "bench/MetadataVolumeBench.php"
+        run_ext "bench/MetadataVolumeBench.php"
+        ;;
     hot-path)
         run_hot_path "php-grpc-lite local hot path split" "hot-path" \
             docker compose run --rm dev php tools/bench-hot-path.php
@@ -138,7 +143,7 @@ case "$suite" in
         cat >&2 <<EOF
 Unknown benchmark suite: $suite
 
-Usage: ./bench/run.sh [lite|ext|compare|cold|warm|stream|stream-smoke|stream-slow|hot-path]
+Usage: ./bench/run.sh [lite|ext|compare|cold|warm|stream|stream-smoke|stream-slow|metadata|hot-path]
 EOF
         exit 2
         ;;
