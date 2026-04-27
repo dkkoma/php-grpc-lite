@@ -36,6 +36,7 @@ BENCH_OUTPUT_DIR=/tmp/php-grpc-lite-bench ./bench/run.sh cold
 | `./bench/run.sh stream-smoke` | `ServerStreamingCount1000Bench` 両環境 | server streaming count=1000 の回帰 smoke |
 | `./bench/run.sh stream-slow` | `ServerStreamingSlowConsumerBench` 両環境 | slow consumer 時の elapsed / mem_peak |
 | `./bench/run.sh metadata` | `MetadataVolumeBench` 両環境 | request / response metadata volume の固定費 |
+| `./bench/run.sh tls` | `TlsUnaryBench` 両環境 | TLS / mTLS の cold/warm unary |
 | `./bench/run.sh hot-path` | `tools/bench-hot-path.php` | ネットワークなしの CPU 分解 |
 
 ## 実用性能として押さえる軸
@@ -61,7 +62,7 @@ gRPC 仕様や実運用から見て性能比較として追加する価値があ
 |---|---|---|
 | slow consumer streaming | `stream-slow`。server streaming を受け取り、各 response 後に client 側で固定 sleep する | elapsed time だけでなく peak memory を保存する。chunk 境界の診断ログは異常値の原因切り分け用 |
 | metadata volume | `metadata`。request metadata / initial metadata / trailing metadata の key 数と value サイズを増やす unary | ASCII metadata と `*-bin` metadata を分ける。auth/tracing に近い小さい metadata 多数を優先 |
-| TLS / mTLS | h2 TLS listener で cold/warm unary、必要なら server streaming count=1000 | handshake コストと warm call コストを混ぜない。mTLS は証明書読み込み方式も記録する |
+| TLS / mTLS | `tls`。h2 TLS / mTLS listener で cold/warm unary を測る | handshake コストと warm call コストを混ぜない。mTLS は証明書読み込み方式も記録する |
 | concurrent streams | 同一 Channel から複数 unary / streaming を in-flight にする専用 bench | 現行 API で自然に表現できる範囲を先に確認する。ext-grpc と比較する場合は同一 concurrency に固定 |
 | compression enabled | gzip 等を実装した後に compressed/uncompressed を比較 | 未対応の間は性能 bench ではなく互換性 smoke で明示エラーを確認する |
 
