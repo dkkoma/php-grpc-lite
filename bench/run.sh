@@ -8,7 +8,9 @@
 #   ./bench/run.sh ext
 #   ./bench/run.sh compare
 #   ./bench/run.sh cold
+#   ./bench/run.sh warm
 #   ./bench/run.sh stream
+#   ./bench/run.sh stream-smoke
 #   ./bench/run.sh hot-path
 #
 set -euo pipefail
@@ -45,10 +47,14 @@ parse_phpbench_log() {
     last_json_path="$json_path"
 
     for attempt in 1 2 3; do
+        local stderr_target="/dev/null"
+        if [[ "$attempt" == "3" ]]; then
+            stderr_target="/dev/stderr"
+        fi
         if docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
             --format=json \
             --output="$json_path" \
-            "$log_path" >/dev/null; then
+            "$log_path" >/dev/null 2>"$stderr_target"; then
             break
         fi
         if [[ "$attempt" == "3" ]]; then
@@ -122,9 +128,17 @@ case "$suite" in
         run_lite "bench/ColdUnaryBench.php"
         run_ext "bench/ColdUnaryBench.php"
         ;;
+    warm)
+        run_lite "bench/UnaryLatencyBench.php"
+        run_ext "bench/UnaryLatencyBench.php"
+        ;;
     stream)
         run_lite "bench/ServerStreamingBench.php"
         run_ext "bench/ServerStreamingBench.php"
+        ;;
+    stream-smoke)
+        run_lite "bench/ServerStreamingCount1000Bench.php"
+        run_ext "bench/ServerStreamingCount1000Bench.php"
         ;;
     hot-path)
         run_logged "php-grpc-lite local hot path split" "hot-path" \
@@ -134,7 +148,7 @@ case "$suite" in
         cat >&2 <<EOF
 Unknown benchmark suite: $suite
 
-Usage: ./bench/run.sh [lite|ext|compare|cold|stream|hot-path]
+Usage: ./bench/run.sh [lite|ext|compare|cold|warm|stream|stream-smoke|hot-path]
 EOF
         exit 2
         ;;

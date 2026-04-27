@@ -17,6 +17,26 @@
             "mode_ns": 235000,
             "mem_peak_bytes": 2036335,
             "source": "2026-04-27 local Docker cold runs after Channel-scoped curl handle reuse"
+        },
+        {
+            "suite": "warm",
+            "implementation": "php-grpc-lite",
+            "benchmark": "UnaryLatencyBench",
+            "subject": "benchSayHello",
+            "set": null,
+            "mode_ns": 37114,
+            "mem_peak_bytes": 2036335,
+            "source": "var/bench-results/warm-smoke-baseline-php-grpc-lite.json"
+        },
+        {
+            "suite": "stream-smoke",
+            "implementation": "php-grpc-lite",
+            "benchmark": "ServerStreamingCount1000Bench",
+            "subject": "benchServerStreamingCount1000",
+            "set": null,
+            "mode_ns": 1327000,
+            "mem_peak_bytes": 2037383,
+            "source": "var/bench-results/stream-smoke-smoke-baseline-php-grpc-lite.json"
         }
     ]
 }
