@@ -5,6 +5,8 @@
     "default_thresholds": {
         "mode_warn_percent": 15.0,
         "mode_fail_percent": 25.0,
+        "mem_peak_warn_percent": 5.0,
+        "mem_peak_fail_percent": 15.0,
         "max_rstdev_percent": 15.0
     },
     "entries": [

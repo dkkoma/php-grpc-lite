@@ -75,20 +75,21 @@ $warnings = 0;
 $matched = 0;
 
 printf(
-    "%-62s %12s %12s %9s %8s\n",
+    "%-62s %12s %12s %9s %9s %8s\n",
     'metric',
     'baseline',
     'current',
-    'delta',
+    'mode Δ',
+    'mem Δ',
     'status',
 );
-printf("%'-108s\n", '');
+printf("%'-118s\n", '');
 
 foreach ($currentRows as $row) {
     $key = rowKey($row);
     if (!isset($baselineByKey[$key])) {
         $warnings++;
-        printf("%-62s %12s %12s %9s %8s\n", metricLabel($row), '-', formatNs((int) $row['mode_ns']), '-', 'missing');
+        printf("%-62s %12s %12s %9s %9s %8s\n", metricLabel($row), '-', formatNs((int) $row['mode_ns']), '-', '-', 'missing');
         continue;
     }
 
@@ -96,6 +97,10 @@ foreach ($currentRows as $row) {
     $base = $baselineByKey[$key];
     $thresholds = array_merge($defaultThresholds, $base['thresholds'] ?? []);
     $modeDelta = percentDelta((int) $base['mode_ns'], (int) $row['mode_ns']);
+    $memDelta = null;
+    if (isset($base['mem_peak_bytes'], $row['mem_peak_bytes'])) {
+        $memDelta = percentDelta((int) $base['mem_peak_bytes'], (int) $row['mem_peak_bytes']);
+    }
     $rstdev = isset($row['rstdev_percent']) ? (float) $row['rstdev_percent'] : null;
     $status = 'ok';
 
@@ -107,6 +112,18 @@ foreach ($currentRows as $row) {
         $warnings++;
     }
 
+    if ($memDelta !== null) {
+        if ($memDelta > (float) ($thresholds['mem_peak_fail_percent'] ?? INF)) {
+            if ($status !== 'fail') {
+                $failures++;
+            }
+            $status = 'fail';
+        } elseif ($memDelta > (float) ($thresholds['mem_peak_warn_percent'] ?? INF) && $status === 'ok') {
+            $status = 'warn';
+            $warnings++;
+        }
+    }
+
     $maxRstdev = $thresholds['max_rstdev_percent'] ?? null;
     if ($maxRstdev !== null && $rstdev !== null && $rstdev > (float) $maxRstdev) {
         if ($status === 'ok') {
@@ -116,11 +133,12 @@ foreach ($currentRows as $row) {
     }
 
     printf(
-        "%-62s %12s %12s %+8.2f%% %8s\n",
+        "%-62s %12s %12s %+8.2f%% %8s %8s\n",
         metricLabel($row),
         formatNs((int) $base['mode_ns']),
         formatNs((int) $row['mode_ns']),
         $modeDelta,
+        $memDelta === null ? '-' : sprintf('%+7.2f%%', $memDelta),
         $status,
     );
 }
