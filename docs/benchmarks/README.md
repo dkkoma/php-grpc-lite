@@ -56,6 +56,28 @@ docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
   var/bench-results/result.log
 ```
 
+## Regression Baseline
+
+回帰判定用 baseline は `bench/baselines/regression.json` に置く。これは historical baseline ではなく、意図した改善や環境変更後に明示更新してコミットする基準値。
+
+`BENCH_BASELINE` を指定すると、php-grpc-lite 側の抽出済み JSON を baseline と比較する。
+
+```bash
+BENCH_BASELINE=bench/baselines/regression.json ./bench/run.sh cold
+```
+
+手動比較もできる。
+
+```bash
+docker compose run --rm dev php tools/compare-benchmark-baseline.php \
+  --baseline=bench/baselines/regression.json \
+  --current=var/bench-results/cold-local-php-grpc-lite.json \
+  --suite=cold \
+  --implementation=php-grpc-lite
+```
+
+baseline は php-grpc-lite 自身の回帰検知用で、公式 ext-grpc との差を fail 判定するためには使わない。ext-grpc は継続比較線として観測する。
+
 ## ベンチ文書を書く基準
 
 - 対向サーバ、実行コマンド、代表値、揺れ幅を残す。
@@ -66,5 +88,5 @@ docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
 ## Phase 1 の残り
 
 - CI で回すスモークベンチのしきい値を決める。
-- 抽出済み JSON/TSV と regression baseline を比較する仕組みを追加する。
+- regression baseline に載せるスモーク対象を cold 以外にも広げる。
 - メモリ指標は PHPBench aggregate の `mem_peak` を記録しているが、回帰判定にはまだ使っていない。

@@ -20,6 +20,7 @@ timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 mkdir -p "$output_dir"
 last_log_path=""
+last_json_path=""
 
 run_logged() {
     local label="$1"
@@ -41,6 +42,7 @@ parse_phpbench_log() {
     local log_path="$1"
     local json_path="${log_path%.log}.json"
     local tsv_path="${log_path%.log}.tsv"
+    last_json_path="$json_path"
 
     for attempt in 1 2 3; do
         if docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
@@ -64,6 +66,20 @@ parse_phpbench_log() {
     echo "  TSV: $tsv_path"
 }
 
+compare_baseline() {
+    local implementation="$1"
+
+    if [[ "${BENCH_BASELINE:-}" == "" ]]; then
+        return
+    fi
+
+    docker compose run --rm dev php tools/compare-benchmark-baseline.php \
+        --baseline="$BENCH_BASELINE" \
+        --current="$last_json_path" \
+        --suite="$suite" \
+        --implementation="$implementation"
+}
+
 run_lite() {
     local target="${1:-}"
     if [[ "$target" == "" ]]; then
@@ -74,6 +90,7 @@ run_lite() {
             docker compose run --rm dev vendor/bin/phpbench run "$target" --report=aggregate
     fi
     parse_phpbench_log "$last_log_path"
+    compare_baseline "php-grpc-lite"
 }
 
 run_ext() {
