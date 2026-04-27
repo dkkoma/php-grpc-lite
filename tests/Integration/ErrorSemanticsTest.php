@@ -28,6 +28,7 @@ final class ErrorSemanticsTest extends TestCase
 
         self::assertNull($response);
         self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $status->code);
+        self::assertSame('bench error with spaces', $status->details);
         self::assertArrayHasKey('grpc-status', $status->metadata);
     }
 
@@ -44,8 +45,10 @@ final class ErrorSemanticsTest extends TestCase
         }
 
         self::assertSame(0, $count);
-        self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $call->getStatus()->code);
-        self::assertArrayHasKey('grpc-status', $call->getStatus()->metadata);
+        $status = $call->getStatus();
+        self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $status->code);
+        self::assertSame('bench error with spaces', $status->details);
+        self::assertArrayHasKey('grpc-status', $status->metadata);
     }
 
     /** @return array<string, list<string>> */
@@ -53,7 +56,7 @@ final class ErrorSemanticsTest extends TestCase
     {
         return [
             'x-bench-error-code' => [(string) \Grpc\STATUS_INVALID_ARGUMENT],
-            'x-bench-error-message' => ['bench error'],
+            'x-bench-error-message' => ['bench error with spaces'],
         ];
     }
 }

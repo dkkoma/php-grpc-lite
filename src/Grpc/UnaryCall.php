@@ -117,7 +117,7 @@ class UnaryCall extends AbstractCall
         $code = isset($this->responseTrailers['grpc-status'])
             ? (int) $this->responseTrailers['grpc-status'][0]
             : STATUS_UNKNOWN;
-        $message = $this->responseTrailers['grpc-message'][0] ?? '';
+        $message = $this->decodeGrpcMessage($this->responseTrailers['grpc-message'][0] ?? '');
         return $this->makeStatus($code, $message);
     }
 

@@ -172,6 +172,11 @@ abstract class AbstractCall
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT_MS, $timeoutMillis);
     }
 
+    protected function decodeGrpcMessage(string $message): string
+    {
+        return rawurldecode($message);
+    }
+
     /**
      * Cache PEM material to a tmpfile keyed by content hash so that identical
      * inputs reuse the same file across calls.

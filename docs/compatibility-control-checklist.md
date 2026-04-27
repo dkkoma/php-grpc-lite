@@ -28,7 +28,7 @@
 
 ## 4. Response Status / Error Semantics
 
-2026-04-27 時点で、unary / server streaming の trailers-only `grpc-status` 分類は実装済み。
+2026-04-27 時点で、unary / server streaming の trailers-only `grpc-status` 分類と `grpc-message` percent decode は実装済み。
 
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
