@@ -29,7 +29,7 @@
 - ホストの PHP ではなく Docker compose 内で実行する。
 - 統合テスト: `docker compose run --rm dev vendor/bin/phpunit`
 - 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`
-- ext-grpc 比較: `./bench/compare.sh`
+- ext-grpc 比較: `./bench/run.sh compare` または互換入口の `./bench/compare.sh`
 - grpc-php-rs 任意比較: `./bench/compare-rs.sh`。通常比較はあくまで php-grpc-lite vs 公式 ext-grpc とし、grpc-php-rs は明示依頼がある場合だけ使う。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。
 
@@ -37,4 +37,4 @@
 
 - Spanner emulator は実機検証には有用だが、ベンチ指標としては内部状態の揺れが大きい。安定した性能観測は Go test-server の制御可能な RPC を優先する。
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
-- 次の主要テーマは Channel-scoped curl handle reuse。目的は libcurl / HTTP/2 の connection reuse が純 PHP 実装でどの程度効くかを観測すること。
+- ベンチ実行ログは `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` で保存名と保存先を固定する。
