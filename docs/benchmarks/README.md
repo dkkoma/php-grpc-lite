@@ -51,7 +51,24 @@ BENCH_OUTPUT_DIR=/tmp/php-grpc-lite-bench ./bench/run.sh cold
 | server delay unary | `compare` の `UnaryDelayBench` | 実装固定費よりサーバ処理時間が支配的な場合に差がどれだけ残るか |
 | CPU hot path | `hot-path` | ネットワークを外した framing / header parse / protobuf merge の上限コスト |
 
-現時点で薄い実用軸は、TLS/mTLS 付き性能、call credentials / metadata が多いケース、複数 in-flight RPC、deadline / error path、HTTP/2 chunk 境界の診断ログ。これらは通常 smoke には入れず、必要な実装判断が出た時点で個別 suite として追加する。
+### 仕様由来で追加検討すべき軸
+
+gRPC over HTTP/2 仕様や gRPC guide から見ると、現在の suite だけではまだ薄い実用性能軸がある。これらは「速い/遅い」だけでなく、gRPC ライブラリとして resource を正しく解放できるか、異常系で過剰に待たないか、metadata/encoding の仕様処理が固定費を増やさないかに直結する。
+
+| 軸 | なぜ必要か | 追加するなら |
+|---|---|---|
+| deadline / timeout | gRPC は deadline 超過を `DEADLINE_EXCEEDED` としてクライアント側でも終端させる必要がある。遅いサーバや詰まった通信で無限待ちしないことは実用上重要 | server delay が timeout を超える unary / server streaming。status と elapsed time を ext-grpc と比較 |
+| cancellation / early close | streaming consumer が途中で読むのをやめるケースは実アプリで起きる。接続を再利用してよいか、破棄すべきかの判断が性能と安全性に効く | server streaming を N 件だけ読んで `cancel()` / break。次の RPC が正常か、cold/warm にどう効くかを見る |
+| flow control / slow consumer | gRPC streaming は transport flow control の影響を受ける。PHP 側の Generator 消費が遅い場合、buffer が膨らむか、server pacing とどう相互作用するかを見る必要がある | client が各 response 後に sleep する slow-drain stream。peak memory と elapsed time を記録 |
+| trailers-only / error path | gRPC response は body なしの trailers-only error を許す。成功系だけ速くても、エラー応答の status synthesis が遅い/壊れると実用上困る | immediate error、non-OK status、trailers-only の unary / streaming smoke |
+| metadata volume / binary metadata | metadata は header/trailer として流れ、`*-bin` は base64 処理が入る。認証や tracing が多い実運用では固定費になる | request metadata 多数、response metadata 多数、`*-bin` ありの unary |
+| compression flag / grpc-encoding | gRPC frame は per-message compressed flag を持つ。未対応なら明示エラー、対応するなら CPU/byte cost が大きく変わる | gzip response を明示エラーにする smoke。対応後は compressed/uncompressed 比較 |
+| HTTP status / content-type mismatch | gRPC では非 gRPC HTTP/2 response から gRPC status を合成する必要がある。proxy/load balancer 経由の実運用で重要 | `content-type` 不正、HTTP non-200、`grpc-status` 欠落の error smoke |
+| concurrent streams | HTTP/2 上では同一 connection に複数 stream が乗る。今の PHP 実装は per-call `curl_exec`/`curl_multi` の使い方上、ext-grpc と差が出やすい | 同一 Channel から複数 unary / streaming を in-flight にする専用 bench |
+| keepalive / GOAWAY / connection failure | gRPC over HTTP/2 は GOAWAY、PING、connection failure を connection management として扱う。長生き Channel の実用性に効く | 長時間 idle 後の再利用、server restart 後の次 call、GOAWAY 相当の診断 |
+| TLS / mTLS | 本番は TLS が多く、mTLS は証明書処理も入る。現在は互換検証中心で性能比較軸としては薄い | warm TLS unary、cold TLS unary、mTLS unary の比較 |
+
+優先度は、現在の実装範囲では **deadline / cancellation / slow consumer / error path / metadata volume** が高い。HTTP/2 chunk 境界の観測は、これらで異常値が出たときに原因を切るための補助 instrumentation として扱う。
 
 ## 生成物
 
