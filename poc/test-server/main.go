@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	pb "example.com/helloworld/pb"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -146,6 +150,32 @@ func newServer() *grpc.Server {
 	return s
 }
 
+func serveNonGrpcH2C() {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := http.StatusOK
+		if raw := r.Header.Get("x-bench-http-status"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil {
+				status = parsed
+			}
+		}
+		contentType := r.Header.Get("x-bench-content-type")
+		if contentType == "" {
+			contentType = "text/plain"
+		}
+		w.Header().Set("content-type", contentType)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte("not a grpc response"))
+	})
+	httpServer := &http.Server{
+		Addr:    ":50054",
+		Handler: h2c.NewHandler(handler, &http2.Server{}),
+	}
+	log.Printf("listening on :50054 (h2c, non-gRPC)")
+	if err := httpServer.ListenAndServe(); err != nil {
+		log.Fatalf("non-grpc h2c serve error: %v", err)
+	}
+}
+
 func main() {
 	// h2c plaintext on :50051
 	go func() {
@@ -158,6 +188,8 @@ func main() {
 			log.Fatalf("h2c serve error: %v", err)
 		}
 	}()
+
+	go serveNonGrpcH2C()
 
 	// h2 over TLS on :50052
 	creds, err := credentials.NewServerTLSFromFile("/certs/server.crt", "/certs/server.key")

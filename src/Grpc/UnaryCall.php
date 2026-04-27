@@ -75,7 +75,11 @@ class UnaryCall extends AbstractCall
             return [null, $this->makeStatus($code, "curl error ($errno): $errMsg")];
         }
 
+        $protocolStatus = $this->validateGrpcResponse($ch);
         $this->releaseCurl($ch);
+        if ($protocolStatus !== null) {
+            return [null, $protocolStatus];
+        }
         return [$this->parseResponseFrame(), $this->buildStatusFromTrailers()];
     }
 
@@ -128,6 +132,31 @@ class UnaryCall extends AbstractCall
         $s->details = $details;
         $s->metadata = $this->responseTrailers;
         return $s;
+    }
+
+    private function validateGrpcResponse(\CurlHandle $ch): ?\stdClass
+    {
+        if (isset($this->responseTrailers['grpc-status'])) {
+            return null;
+        }
+
+        $httpStatus = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        if ($httpStatus !== 200) {
+            return $this->makeStatus(
+                $this->mapHttpStatusToGrpcStatus($httpStatus),
+                "HTTP status $httpStatus without grpc-status",
+            );
+        }
+
+        $contentType = strtolower($this->responseHeaders['content-type'][0] ?? '');
+        if (!str_starts_with($contentType, 'application/grpc')) {
+            return $this->makeStatus(
+                STATUS_UNKNOWN,
+                "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType),
+            );
+        }
+
+        return null;
     }
 
     private function onHeader(\CurlHandle $ch, string $line): int

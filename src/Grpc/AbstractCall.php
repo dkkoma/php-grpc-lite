@@ -177,6 +177,18 @@ abstract class AbstractCall
         return rawurldecode($message);
     }
 
+    protected function mapHttpStatusToGrpcStatus(int $httpStatus): int
+    {
+        return match ($httpStatus) {
+            400 => STATUS_INTERNAL,
+            401 => STATUS_UNAUTHENTICATED,
+            403 => STATUS_PERMISSION_DENIED,
+            404 => STATUS_UNIMPLEMENTED,
+            429, 502, 503, 504 => STATUS_UNAVAILABLE,
+            default => STATUS_UNKNOWN,
+        };
+    }
+
     /**
      * Cache PEM material to a tmpfile keyed by content hash so that identical
      * inputs reuse the same file across calls.
