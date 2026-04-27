@@ -11,6 +11,7 @@
 #   ./bench/run.sh warm
 #   ./bench/run.sh stream
 #   ./bench/run.sh stream-smoke
+#   ./bench/run.sh stream-slow
 #   ./bench/run.sh hot-path
 #
 set -euo pipefail
@@ -42,9 +43,16 @@ run_hot_path() {
 run_lite() {
     local bench_path="${1:-}"
     local log_path="$output_dir/$suite-$timestamp-php-grpc-lite.log"
-    local baseline_args=()
+    local cmd=(
+        docker compose run --rm dev bench/phpbench-with-artifacts.sh
+        --workdir=.
+        --log="$log_path"
+        --json="${log_path%.log}.json"
+        --tsv="${log_path%.log}.tsv"
+    )
+
     if [[ "${BENCH_BASELINE:-}" != "" ]]; then
-        baseline_args=(
+        cmd+=(
             --baseline="$BENCH_BASELINE"
             --suite="$suite"
             --implementation=php-grpc-lite
@@ -58,21 +66,9 @@ run_lite() {
     echo "==========================================="
 
     if [[ "$bench_path" == "" ]]; then
-        docker compose run --rm dev bench/phpbench-with-artifacts.sh \
-            --workdir=. \
-            --log="$log_path" \
-            --json="${log_path%.log}.json" \
-            --tsv="${log_path%.log}.tsv" \
-            "${baseline_args[@]}" \
-            -- vendor/bin/phpbench run --report=aggregate
+        "${cmd[@]}" -- vendor/bin/phpbench run --report=aggregate
     else
-        docker compose run --rm dev bench/phpbench-with-artifacts.sh \
-            --workdir=. \
-            --log="$log_path" \
-            --json="${log_path%.log}.json" \
-            --tsv="${log_path%.log}.tsv" \
-            "${baseline_args[@]}" \
-            -- vendor/bin/phpbench run "$bench_path" --report=aggregate
+        "${cmd[@]}" -- vendor/bin/phpbench run "$bench_path" --report=aggregate
     fi
 }
 
@@ -130,6 +126,10 @@ case "$suite" in
         run_lite "bench/ServerStreamingCount1000Bench.php"
         run_ext "bench/ServerStreamingCount1000Bench.php"
         ;;
+    stream-slow)
+        run_lite "bench/ServerStreamingSlowConsumerBench.php"
+        run_ext "bench/ServerStreamingSlowConsumerBench.php"
+        ;;
     hot-path)
         run_hot_path "php-grpc-lite local hot path split" "hot-path" \
             docker compose run --rm dev php tools/bench-hot-path.php
@@ -138,7 +138,7 @@ case "$suite" in
         cat >&2 <<EOF
 Unknown benchmark suite: $suite
 
-Usage: ./bench/run.sh [lite|ext|compare|cold|warm|stream|stream-smoke|hot-path]
+Usage: ./bench/run.sh [lite|ext|compare|cold|warm|stream|stream-smoke|stream-slow|hot-path]
 EOF
         exit 2
         ;;
