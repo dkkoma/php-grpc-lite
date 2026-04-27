@@ -22,9 +22,8 @@ timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 mkdir -p "$output_dir"
 last_log_path=""
-last_json_path=""
 
-run_logged() {
+run_hot_path() {
     local label="$1"
     local log_name="$2"
     shift 2
@@ -40,77 +39,68 @@ run_logged() {
     "$@" | tee "$log_path"
 }
 
-parse_phpbench_log() {
-    local log_path="$1"
-    local json_path="${log_path%.log}.json"
-    local tsv_path="${log_path%.log}.tsv"
-    last_json_path="$json_path"
-
-    for attempt in 1 2 3; do
-        local stderr_target="/dev/null"
-        if [[ "$attempt" == "3" ]]; then
-            stderr_target="/dev/stderr"
-        fi
-        if docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
-            --format=json \
-            --output="$json_path" \
-            "$log_path" >/dev/null 2>"$stderr_target"; then
-            break
-        fi
-        if [[ "$attempt" == "3" ]]; then
-            return 1
-        fi
-        sleep 0.2
-    done
-
-    docker compose run --rm dev php tools/parse-phpbench-aggregate.php \
-        --format=tsv \
-        --output="$tsv_path" \
-        "$log_path" >/dev/null
-
-    echo "  JSON: $json_path"
-    echo "  TSV: $tsv_path"
-}
-
-compare_baseline() {
-    local implementation="$1"
-
-    if [[ "${BENCH_BASELINE:-}" == "" ]]; then
-        return
-    fi
-
-    docker compose run --rm dev php tools/compare-benchmark-baseline.php \
-        --baseline="$BENCH_BASELINE" \
-        --current="$last_json_path" \
-        --suite="$suite" \
-        --implementation="$implementation"
-}
-
 run_lite() {
-    local target="${1:-}"
-    if [[ "$target" == "" ]]; then
-        run_logged "php-grpc-lite full" "php-grpc-lite" \
-            docker compose run --rm dev vendor/bin/phpbench run --report=aggregate
-    else
-        run_logged "php-grpc-lite $target" "php-grpc-lite" \
-            docker compose run --rm dev vendor/bin/phpbench run "$target" --report=aggregate
+    local bench_path="${1:-}"
+    local log_path="$output_dir/$suite-$timestamp-php-grpc-lite.log"
+    local baseline_args=()
+    if [[ "${BENCH_BASELINE:-}" != "" ]]; then
+        baseline_args=(
+            --baseline="$BENCH_BASELINE"
+            --suite="$suite"
+            --implementation=php-grpc-lite
+        )
     fi
-    parse_phpbench_log "$last_log_path"
-    compare_baseline "php-grpc-lite"
+
+    echo
+    echo "==========================================="
+    echo "  RUN: php-grpc-lite ${bench_path:-full}"
+    echo "  LOG: $log_path"
+    echo "==========================================="
+
+    if [[ "$bench_path" == "" ]]; then
+        docker compose run --rm dev bench/phpbench-with-artifacts.sh \
+            --workdir=. \
+            --log="$log_path" \
+            --json="${log_path%.log}.json" \
+            --tsv="${log_path%.log}.tsv" \
+            "${baseline_args[@]}" \
+            -- vendor/bin/phpbench run --report=aggregate
+    else
+        docker compose run --rm dev bench/phpbench-with-artifacts.sh \
+            --workdir=. \
+            --log="$log_path" \
+            --json="${log_path%.log}.json" \
+            --tsv="${log_path%.log}.tsv" \
+            "${baseline_args[@]}" \
+            -- vendor/bin/phpbench run "$bench_path" --report=aggregate
+    fi
 }
 
 run_ext() {
-    local target="${1:-}"
-    if [[ "$target" == "" ]]; then
-        run_logged "official ext-grpc full" "ext-grpc" \
-            docker compose run --rm dev-ext-grpc \
-                bash -c 'cd bench-comparison && vendor/bin/phpbench run --report=aggregate'
+    local bench_path="${1:-}"
+    local log_path="$output_dir/$suite-$timestamp-ext-grpc.log"
+
+    echo
+    echo "==========================================="
+    echo "  RUN: official ext-grpc ${bench_path:-full}"
+    echo "  LOG: $log_path"
+    echo "==========================================="
+
+    if [[ "$bench_path" == "" ]]; then
+        docker compose run --rm dev-ext-grpc bench/phpbench-with-artifacts.sh \
+            --workdir=bench-comparison \
+            --log="$log_path" \
+            --json="${log_path%.log}.json" \
+            --tsv="${log_path%.log}.tsv" \
+            -- vendor/bin/phpbench run --report=aggregate
     else
-        run_logged "official ext-grpc $target" "ext-grpc" \
-            docker compose run --rm dev-ext-grpc \
-                bash -c "cd bench-comparison && vendor/bin/phpbench run ../$target --report=aggregate"
+        docker compose run --rm dev-ext-grpc bench/phpbench-with-artifacts.sh \
+            --workdir=bench-comparison \
+            --log="$log_path" \
+            --json="${log_path%.log}.json" \
+            --tsv="${log_path%.log}.tsv" \
+            -- vendor/bin/phpbench run "../$bench_path" --report=aggregate
     fi
-    parse_phpbench_log "$last_log_path"
 }
 
 case "$suite" in
@@ -141,7 +131,7 @@ case "$suite" in
         run_ext "bench/ServerStreamingCount1000Bench.php"
         ;;
     hot-path)
-        run_logged "php-grpc-lite local hot path split" "hot-path" \
+        run_hot_path "php-grpc-lite local hot path split" "hot-path" \
             docker compose run --rm dev php tools/bench-hot-path.php
         ;;
     *)

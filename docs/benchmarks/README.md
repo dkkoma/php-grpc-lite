@@ -16,7 +16,7 @@
 ./bench/compare.sh
 ```
 
-どちらも `var/bench-results/` にログを保存し、PHPBench aggregate については同名の `.json` / `.tsv` も生成する。保存名は `BENCH_TAG` と `BENCH_OUTPUT_DIR` で固定できる。
+どちらも `var/bench-results/` にログを保存し、PHPBench aggregate については同名の `.json` / `.tsv` も生成する。保存名は `BENCH_TAG` と `BENCH_OUTPUT_DIR` で固定できる。PHPBench 実行、aggregate parse、任意の baseline compare は同じコンテナ内の `bench/phpbench-with-artifacts.sh` で完結させ、ホストに書いたログを直後に別コンテナから読み直す構成にはしない。
 
 ```bash
 BENCH_TAG=20260427-local ./bench/run.sh compare
