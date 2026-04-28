@@ -238,18 +238,57 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 
 ---
 
-## 7. 実装の進め方(推奨順)
+## 7. 実装ロードマップ
 
-依存関係少ない順 + 価値高い順:
+実装順は「既存 bench に小さく足せるか」だけでは決めない。Phase 2 の目的は C 化候補の優先順位を決めることであり、計測構造を変えた方が判断しやすい場合はその時点で見直す。
 
-1. **CPU per call の取得を既存 bench 全部に足す**(infra 軽い、即追加価値)
-2. **Toxiproxy 追加 + RTT 軸の bench**(persistent pool 判断の核心)
-3. **Throughput / saturation ハーネス**(独立スクリプト、新規)
-4. **Header 数を振るための test-server 拡張 + bench**
-5. **大規模 streaming(10K / 100K msg)bench**(既存 ServerStreamingBench に param 追加)
-6. **Memory / GC の追跡を既存 bench に足す**
+### 7.1 最初に固定すること
 
-5 までで主要な C 化候補の justify/却下が定量化される。6 は補助。
+最初の実装コミットでは、計測値そのものよりも **出力形式と runner の責務分離** を固定する。
+
+| 項目 | 方針 |
+|---|---|
+| artifact | `var/bench-results/` に JSON を保存し、必要なら TSV / log を併置する |
+| docs | 結果を採用する時だけ `docs/benchmarks/multi-axis-2026-XX-XX.md` に環境、代表値、揺れ幅、判断を残す |
+| comparison | 通常比較は php-grpc-lite vs 公式 ext-grpc。C 化候補の判断材料として ext-grpc を観測線に使う |
+| baseline | regression baseline は Phase 1 と同じく php-grpc-lite 自身の回帰検知用。Phase 2 の探索結果を baseline に混ぜない |
+| script boundary | PHPBench で自然に表せるものは `bench/run.sh` 系、sustained / p99 / CPU 集計のような独立 runner が自然なものは専用 CLI に分ける |
+
+### 7.2 コミット単位の候補
+
+| 順 | 作業単位 | 主目的 | 構造 |
+|---:|---|---|---|
+| 1 | Phase 2 runner の出力 contract を定義 | 多軸計測の JSON schema、保存名、summary 表示を先に固める | 既存 `phpbench-with-artifacts.sh` を参考にするが、PHPBench 前提にしない |
+| 2 | CPU / memory sampling helper を追加 | wall-clock と CPU / memory を同じ JSON に載せる | 既存 bench に埋め込む前に、CLI helper と単体 smoke を作る |
+| 3 | unary / streaming の CPU per call smoke | C 化候補を比較できる最小の CPU 指標を取る | 既存 bench 拡張でも専用 runner でもよい。データ形を優先 |
+| 4 | Toxiproxy + RTT unary bench | persistent pool 判断に必要な 1/3/5ms RTT を取る | compose と proxy 初期化を含む独立スイートにする |
+| 5 | throughput / p99 harness | saturation、p50/p95/p99、calls/sec を測る | PHPBench から分離した専用 CLI を作る |
+| 6 | metadata/header parsing axis | header parser C 化の価値を分離する | test-server 拡張 + bench。既存 `MetadataVolumeBench` との重複を避ける |
+| 7 | large streaming axis | per-frame hot path と memory pressure を見る | 10K/100K msg を扱える専用スイート。長時間化するなら通常 suite から分ける |
+
+作業 1-3 で計測値の格納形式と CPU 指標の扱いを固める。作業 4-7 は各 C 化候補に対応する独立した観測軸として実装する。
+
+### 7.3 構造見直しゲート
+
+以下のどれかに当たったら、既存 bench への追記を止めて構造を見直す。
+
+| 条件 | 見直す内容 |
+|---|---|
+| PHPBench の aggregate から必要な CPU / p99 / throughput が自然に取れない | 専用 runner を主にし、PHPBench は latency smoke に限定する |
+| `bench/run.sh` の分岐が suite orchestration 以上の責務を持ち始める | `bench/phase2/*.sh` または PHP CLI runner に分離する |
+| JSON schema が PHPBench 抽出結果と sustained runner で乖離する | Phase 2 用 result schema を別に定義し、変換 layer を作る |
+| Toxiproxy / load generator / test-server 初期化が通常比較に影響する | Phase 2 専用 compose profile または専用 script に隔離する |
+| 1 suite が長時間化して regression baseline 運用に混ざる | exploratory suite と regression suite を明確に分ける |
+
+### 7.4 最初の着手候補
+
+最初は **CPU / memory sampling helper + Phase 2 result JSON** から入る。理由:
+
+- Toxiproxy や load generator より依存が軽い
+- 既存 latency ベンチの解釈にすぐ追加価値が出る
+- ただし既存 bench へ無理に埋め込まず、専用 runner が自然ならその形を優先できる
+
+この段階で「PHPBench に載せる方が自然か」「専用 runner を主にする方が自然か」を判断し、以後の構造を決める。
 
 ---
 
