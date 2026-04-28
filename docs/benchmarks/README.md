@@ -59,6 +59,8 @@ suite 固有の引数は suite 名の後ろに渡せる。
 
 Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。schema は `docs/benchmarks/schemas/phase2-result-v1.md` を参照する。探索結果は `bench/baselines/regression.json` に混ぜない。
 
+Phase 2 の primary metric は wall time、throughput、tail latency、memory とする。JSON に入る `diagnostic_cpu_*` は参考値であり、合否や優先度判断の主指標にはしない。
+
 `throughput-unary` は単一 PHP process / concurrency=1 で `BenchUnary` を duration 中に回し続け、calls/sec と p50/p95/p99 を保存する。
 
 `rtt-unary` は `toxiproxy` service を起動し、direct と downstream latency 1 / 3 / 5 ms の unary を測る。これは同一ホスト上での探索用近似であり、実ネットワーク RTT の完全再現ではない。

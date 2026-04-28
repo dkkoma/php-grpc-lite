@@ -51,9 +51,9 @@ Phase 2 の探索ベンチは、PHPBench aggregate JSON とは別に以下の co
 | `environment` | 実行環境。比較時の補助情報で、判定 key にはしない |
 | `measurements` | 計測行の配列 |
 
-`measurements[].metrics` は metric 名を key にした object とし、各 metric は `value` と任意の `unit` を持つ。Phase 2 では `wall_time_ns_*`、`cpu_*`、`memory_*`、`ops_per_second`、`p50/p95/p99` などを同じ形で追加する。
+`measurements[].metrics` は metric 名を key にした object とし、各 metric は `value` と任意の `unit` を持つ。Phase 2 では `wall_time_ns_*`、`latency_*`、`calls_per_second`、`memory_*`、`p50/p95/p99` などを primary metric として追加する。
 
-`cpu_*` は PHP の `getrusage()` から取り、短すぎる処理では分解能の影響を受ける。CPU per call を見る runner は、多数回の operation を 1 sample にまとめてから per-op 指標へ割り戻す。
+`diagnostic_cpu_*` は PHP の `getrusage()` から取る参考値で、primary metric にはしない。短すぎる処理では分解能やコンテナ/ホストスケジューリングの影響を受けるため、性能判断は wall time、throughput、tail latency、memory を主に見る。
 
 ## 運用
 

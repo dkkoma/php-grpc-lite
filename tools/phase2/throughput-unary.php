@@ -109,8 +109,8 @@ $metrics['wall_time_ns_per_call'] = [
     'value' => $metrics['wall_time_ns_total']['value'] / $calls,
     'unit' => 'ns/call',
 ];
-$metrics['cpu_total_us_per_call'] = [
-    'value' => $metrics['cpu_total_us_total']['value'] / $calls,
+$metrics['diagnostic_cpu_total_us_per_call'] = [
+    'value' => $metrics['diagnostic_cpu_total_us_total']['value'] / $calls,
     'unit' => 'us/call',
 ];
 foreach ($percentiles as $name => $value) {

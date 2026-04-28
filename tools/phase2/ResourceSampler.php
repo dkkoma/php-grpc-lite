@@ -26,8 +26,8 @@ final class ResourceSampler
         $memoryAfter = memory_get_usage(true);
         $usageAfter = getrusage();
 
-        $userCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_utime');
-        $systemCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_stime');
+        $diagnosticUserCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_utime');
+        $diagnosticSystemCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_stime');
 
         return [
             'result' => $result,
@@ -36,16 +36,16 @@ final class ResourceSampler
                     'value' => $elapsedNs,
                     'unit' => 'ns',
                 ],
-                'cpu_user_us_total' => [
-                    'value' => $userCpuUs,
+                'diagnostic_cpu_user_us_total' => [
+                    'value' => $diagnosticUserCpuUs,
                     'unit' => 'us',
                 ],
-                'cpu_system_us_total' => [
-                    'value' => $systemCpuUs,
+                'diagnostic_cpu_system_us_total' => [
+                    'value' => $diagnosticSystemCpuUs,
                     'unit' => 'us',
                 ],
-                'cpu_total_us_total' => [
-                    'value' => $userCpuUs + $systemCpuUs,
+                'diagnostic_cpu_total_us_total' => [
+                    'value' => $diagnosticUserCpuUs + $diagnosticSystemCpuUs,
                     'unit' => 'us',
                 ],
                 'memory_usage_delta_bytes' => [

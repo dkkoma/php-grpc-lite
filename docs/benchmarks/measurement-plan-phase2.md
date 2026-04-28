@@ -2,7 +2,7 @@
 
 > **目的**: C 拡張化候補(persistent pool / per-frame streaming / per-byte decode / header parser 等)の優先順位を、**多軸データ**で決定できる状態にする。
 >
-> **現状の問題**: 現在のベンチは ほぼ wall-clock latency 単軸 + RTT 0ms の同一ホスト内のみ。これだと per-call overhead 系(persistent pool)に有利で、throughput/CPU/sustained-streaming 系の C 化候補(per-frame、per-byte、header parser)の真の価値が見えない。
+> **現状の問題**: 現在のベンチは ほぼ wall-clock latency 単軸 + RTT 0ms の同一ホスト内のみ。これだと per-call overhead 系(persistent pool)に有利で、throughput / sustained-streaming / tail latency 系の C 化候補(per-frame、per-byte、header parser)の真の価値が見えない。
 >
 > **読者**: 本ドキュメントは Phase 2 着手前に追加計測を実装する CODEX 向けの作業仕様。
 
@@ -15,8 +15,8 @@ C 化の優先度は **想定ユーザのワークロード形** に依存する
 | ワークロード傾向 | 効く C 化 | 計測すべき指標 |
 |---|---|---|
 | 低 RPS、cold-start 多い(オンデマンド処理) | persistent pool | cold vs persistent at RTT > 0 |
-| 高 RPS、unary 中心(Cloud Run scale-out) | per-call overhead 全般 | sustained throughput, CPU per call |
-| sustained streaming(Pubsub、log tailing) | per-frame hot path | streaming msg/sec, CPU per msg |
+| 高 RPS、unary 中心(Cloud Run scale-out) | per-call overhead 全般 | sustained throughput, p95/p99 latency |
+| sustained streaming(Pubsub、log tailing) | per-frame hot path | streaming msg/sec, elapsed per msg |
 | payload-heavy(ML、画像) | per-byte decode | per-byte cost at varying payload size |
 | SLO シビア、p99 重視 | 総合 | p50/p95/p99 under load |
 
@@ -63,7 +63,7 @@ C 化の優先度は **想定ユーザのワークロード形** に依存する
 
 ### 3.2 Sustained Throughput 軸(★ per-call overhead 判断用)
 
-**目的**: 単一 PHP プロセスで「CPU 飽和まで投入したとき何 calls/sec 出るか」を測る。これが per-call overhead 改善の効き目の上限。
+**目的**: 単一 PHP プロセスで「一定時間に何 calls/sec 出るか」と tail latency を測る。これが per-call overhead 改善の効き目の上限を示す。
 
 **ケース**:
 
@@ -75,27 +75,27 @@ C 化の優先度は **想定ユーザのワークロード形** に依存する
 
 **判断材料**:
 - ext-grpc とのスループット比 → C 化で取り戻せる余地のサイズ
-- 100 K calls/sec オーダーで PHP overhead が ms 単位の CPU を食ってるかどうか
+- 高 throughput 時に p95/p99 がどこから悪化するか
 
-### 3.3 CPU per call 軸(★ クラウド課金直結)
+### 3.3 Diagnostic CPU 軸(参考)
 
-**目的**: 1 call あたりの user CPU + sys CPU を測る。Cloud Run 等の per-vCPU-second 課金で直接コストに効く。
+**目的**: 1 call あたりの user CPU + sys CPU を参考値として保存する。短い RPC では `getrusage()` の分解能とコンテナ/ホストスケジューリングの影響が大きいため、primary metric にはしない。
 
 **ケース**:
 
 | シナリオ | 計測 |
 |---|---|
-| 既存の各 unary bench | 各 iteration の前後で `getrusage()` を取って差分 |
-| 各 streaming bench | 同上 |
+| unary / throughput runner | sample の前後で `getrusage()` を取って差分 |
+| streaming runner | 同上 |
 
 **期待される観察**:
-- wall-clock = CPU + I/O wait の内訳が見える
-- I/O wait の割合が大きい(server delay / RTT 系)→ C 化メリット小
-- CPU 割合が大きい(streaming hot path、large payload decode)→ C 化メリット大
+- wall-clock / throughput / tail latency の変化と矛盾しないか確認する
+- 極端な CPU 増加や、latency は同等だが CPU だけ悪化する兆候を見る
+- C 化候補の優先度判断は CPU 単体ではなく、時間指標と合わせて行う
 
 ### 3.4 Per-frame streaming 軸(★ per-frame hot path 判断用)
 
-**目的**: 1 stream あたりの msg 数と CPU の関係を、現状より高い解像度で測る。
+**目的**: 1 stream あたりの msg 数と elapsed time / msg/sec の関係を、現状より高い解像度で測る。
 
 **ケース**(既存 ServerStreamingBench を拡張):
 
@@ -157,7 +157,7 @@ C 化の優先度は **想定ユーザのワークロード形** に依存する
 
 | 指標 | 取り方 | 既存指標との関係 |
 |---|---|---|
-| **CPU per call**(user / sys) | 各 iteration 前後で `getrusage()` の `ru_utime` / `ru_stime` を差分 | wall-clock latency の補完 |
+| **Diagnostic CPU per call**(user / sys) | 各 sample 前後で `getrusage()` の `ru_utime` / `ru_stime` を差分 | 参考値。primary metric にはしない |
 | **Sustained throughput**(calls/sec) | 1 PHP プロセスで N 秒間 call を投入し続け、完了数 / N | latency と独立 |
 | **Streaming sustained rate**(msg/sec) | 1 stream で N msg を受け切る時間 / N | per-frame cost の直接測定 |
 | **Memory peak**(bytes) | `memory_get_peak_usage(true)` | リーク・GC 圧 |
@@ -202,13 +202,13 @@ PHPBench は per-rev mode の計測なので、sustained throughput の計測に
 
 (将来的には `wrk` や `ghz` 相当を PHP 側で書く、または既存 OSS を使う)
 
-### 5.3 CPU per call の取り方
+### 5.3 Diagnostic CPU の取り方
 
-PHPBench の **executor extension** か **iteration callback** で `getrusage()` を差分計測する。または bench メソッドの先頭/末尾で `getrusage()` を呼んで差分を別変数に積む形。
+専用 runner の sample 前後で `getrusage()` を差分計測する。CPU は `diagnostic_cpu_*` metric として JSON に保存するが、比較・優先度判断の primary metric にはしない。
 
 調べどころ:
-- PhpBench のカスタム executor
-- PHP の `getrusage()` は current process の resource usage なので、bench iteration 単位で差分を取れば call 数で割れる
+- PHP の `getrusage()` は current process の resource usage なので、多数 operation を 1 sample にまとめれば per-op に割り戻せる
+- 短い RPC では分解能とスケジューリングの影響が大きいため、wall time / throughput / p95 / p99 を主指標にする
 
 ### 5.4 Memory / GC 計測
 
@@ -252,7 +252,7 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 | docs | 結果を採用する時だけ `docs/benchmarks/multi-axis-2026-XX-XX.md` に環境、代表値、揺れ幅、判断を残す |
 | comparison | 通常比較は php-grpc-lite vs 公式 ext-grpc。C 化候補の判断材料として ext-grpc を観測線に使う |
 | baseline | regression baseline は Phase 1 と同じく php-grpc-lite 自身の回帰検知用。Phase 2 の探索結果を baseline に混ぜない |
-| script boundary | PHPBench で自然に表せるものは `bench/run.sh` 系、sustained / p99 / CPU 集計のような独立 runner が自然なものは専用 CLI に分ける |
+| script boundary | PHPBench で自然に表せるものは `bench/run.sh` 系、sustained / p99 / diagnostic CPU 集計のような独立 runner が自然なものは専用 CLI に分ける |
 
 この contract は `docs/benchmarks/schemas/phase2-result-v1.md` に固定する。実行入口は通常比較の `bench/run.sh` ではなく `bench/phase2/run.sh` に分離する。
 
@@ -261,14 +261,14 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 | 順 | 作業単位 | 主目的 | 構造 |
 |---:|---|---|---|
 | 1 | Phase 2 runner の出力 contract を定義 | 多軸計測の JSON schema、保存名、summary 表示を先に固める | 既存 `phpbench-with-artifacts.sh` を参考にするが、PHPBench 前提にしない |
-| 2 | CPU / memory sampling helper を追加 | wall-clock と CPU / memory を同じ JSON に載せる | `ResourceSampler` と `cpu-memory-smoke` で helper 単体を検証する |
-| 3 | unary / streaming の CPU per call smoke | C 化候補を比較できる最小の CPU 指標を取る | 既存 bench 拡張でも専用 runner でもよい。データ形を優先 |
+| 2 | timing / memory / diagnostic CPU helper を追加 | wall-clock、memory、参考 CPU を同じ JSON に載せる | `ResourceSampler` と `cpu-memory-smoke` で helper 単体を検証する |
+| 3 | unary / streaming の時間指標 smoke | C 化候補を比較できる最小の latency / throughput 指標を取る | 既存 bench 拡張でも専用 runner でもよい。データ形を優先 |
 | 4 | Toxiproxy + RTT unary bench | persistent pool 判断に必要な 1/3/5ms latency 条件を取る | `rtt-unary` として compose の `toxiproxy` service と proxy 初期化を含む独立スイートにする |
 | 5 | throughput / p99 harness | saturation、p50/p95/p99、calls/sec を測る | `throughput-unary` として PHPBench から分離した専用 CLI を作る |
 | 6 | metadata/header parsing axis | header parser C 化の価値を分離する | test-server 拡張 + bench。既存 `MetadataVolumeBench` との重複を避ける |
 | 7 | large streaming axis | per-frame hot path と memory pressure を見る | 10K/100K msg を扱える専用スイート。長時間化するなら通常 suite から分ける |
 
-作業 1-3 で計測値の格納形式と CPU 指標の扱いを固める。作業 4-7 は各 C 化候補に対応する独立した観測軸として実装する。
+作業 1-3 で計測値の格納形式と primary / diagnostic 指標の扱いを固める。作業 4-7 は各 C 化候補に対応する独立した観測軸として実装する。
 
 ### 7.3 構造見直しゲート
 
@@ -276,7 +276,7 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 
 | 条件 | 見直す内容 |
 |---|---|
-| PHPBench の aggregate から必要な CPU / p99 / throughput が自然に取れない | 専用 runner を主にし、PHPBench は latency smoke に限定する |
+| PHPBench の aggregate から必要な p99 / throughput / diagnostic CPU が自然に取れない | 専用 runner を主にし、PHPBench は latency smoke に限定する |
 | `bench/run.sh` の分岐が suite orchestration 以上の責務を持ち始める | `bench/phase2/*.sh` または PHP CLI runner に分離する |
 | JSON schema が PHPBench 抽出結果と sustained runner で乖離する | Phase 2 用 result schema を別に定義し、変換 layer を作る |
 | Toxiproxy / load generator / test-server 初期化が通常比較に影響する | Phase 2 専用 compose profile または専用 script に隔離する |
@@ -284,7 +284,7 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 
 ### 7.4 最初の着手候補
 
-最初は **CPU / memory sampling helper + Phase 2 result JSON** から入る。理由:
+最初は **timing / memory / diagnostic CPU helper + Phase 2 result JSON** から入る。理由:
 
 - Toxiproxy や load generator より依存が軽い
 - 既存 latency ベンチの解釈にすぐ追加価値が出る
@@ -300,7 +300,7 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 - **Toxiproxy の負荷**: proxy 自体が CPU 食う。高 RPS で計測する時は toxiproxy 側がボトルネックにならないか確認(別コアに pin する等)
 - **PHP プロセスの CPU 上限**: コンテナの CPU shares を明示しないと、ホスト負荷で揺れる。`compose.yaml` で `cpus: 1.0` 等を pin すると再現性向上
 - **PHPBench の warmup**: streaming saturation の計測では JIT / OPcache が十分に温まっているか確認
-- **`getrusage` の精度**: Linux では 4ms quantum(BSD は 1ms)で、サブ ms call では正確に出ない。多数 iteration の合計で割る方式が必要
+- **`getrusage` の精度**: Linux では 4ms quantum(BSD は 1ms)で、サブ ms call では正確に出ない。多数 operation の合計で割る方式が必要
 - **gRPC TLS handshake のキャッシュ**: TLS session resumption が効くと cold 計測が persistent 寄りになる。session ticket / session ID 共有を切ると素の cold が見える
 - **Toxiproxy の TCP セッション再利用**: persistent pool 計測時は接続が切れていないこと(toxiproxy の close_delay = 0 確認)
 - **既存 spanner-emulator は変更しない**: 計測軸の追加で Spanner 経路を巻き込む必要なし(機能テストとして残す方針は AGENTS.md 通り)

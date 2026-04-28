@@ -62,16 +62,16 @@ $metrics['wall_time_ns_per_op'] = [
     'value' => $metrics['wall_time_ns_total']['value'] / $revs,
     'unit' => 'ns/op',
 ];
-$metrics['cpu_user_us_per_op'] = [
-    'value' => $metrics['cpu_user_us_total']['value'] / $revs,
+$metrics['diagnostic_cpu_user_us_per_op'] = [
+    'value' => $metrics['diagnostic_cpu_user_us_total']['value'] / $revs,
     'unit' => 'us/op',
 ];
-$metrics['cpu_system_us_per_op'] = [
-    'value' => $metrics['cpu_system_us_total']['value'] / $revs,
+$metrics['diagnostic_cpu_system_us_per_op'] = [
+    'value' => $metrics['diagnostic_cpu_system_us_total']['value'] / $revs,
     'unit' => 'us/op',
 ];
-$metrics['cpu_total_us_per_op'] = [
-    'value' => $metrics['cpu_total_us_total']['value'] / $revs,
+$metrics['diagnostic_cpu_total_us_per_op'] = [
+    'value' => $metrics['diagnostic_cpu_total_us_total']['value'] / $revs,
     'unit' => 'us/op',
 ];
 $metrics['ops_per_second'] = [
@@ -107,14 +107,14 @@ if (!is_dir($dir)) {
 }
 file_put_contents($output, $encoded);
 
-printf("%-32s %12s %12s %12s %12s\n", 'measurement', 'revs', 'wall/op', 'cpu/op', 'memΔ');
+printf("%-32s %12s %12s %12s %12s\n", 'measurement', 'revs', 'wall/op', 'diag cpu/op', 'memΔ');
 printf("%'-88s\n", '');
 printf(
     "%-32s %12d %11.1fns %11.4fus %11dB\n",
     'cpu_memory_smoke_loop',
     $revs,
     $metrics['wall_time_ns_per_op']['value'],
-    $metrics['cpu_total_us_per_op']['value'],
+    $metrics['diagnostic_cpu_total_us_per_op']['value'],
     $metrics['memory_usage_delta_bytes']['value'],
 );
 echo "JSON: $output\n";
