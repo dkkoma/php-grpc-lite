@@ -21,6 +21,7 @@ $durationSec = 1.0;
 $payloadSizes = [0, 100, 1024, 10 * 1024, 100 * 1024];
 $warmupCalls = 3;
 $diagnosticRpc = false;
+$serverCachedPayload = false;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -58,6 +59,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $warmupCalls = (int) substr($arg, strlen('--warmup-calls='));
     } elseif ($arg === '--diagnostic-rpc') {
         $diagnosticRpc = true;
+    } elseif ($arg === '--server-cached-payload') {
+        $serverCachedPayload = true;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -83,7 +86,7 @@ foreach ($payloadSizes as $payloadBytes) {
     $latenciesNs = [];
     $diagnosticSeries = [];
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $diagnosticRpc, $implementation, &$latenciesNs, &$diagnosticSeries): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $diagnosticRpc, $implementation, $serverCachedPayload, &$latenciesNs, &$diagnosticSeries): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
@@ -93,7 +96,7 @@ foreach ($payloadSizes as $payloadBytes) {
                 $details = UnaryBenchHelper::callDetailed(
                     $client,
                     $request,
-                    ['x-bench-server-timing' => ['1']],
+                    diagnosticMetadata($serverCachedPayload),
                     ['php_grpc_lite.diagnostics' => $diagnostics],
                 );
                 collectDiagnostics($diagnostics, $diagnosticSeries);
@@ -126,6 +129,7 @@ foreach ($payloadSizes as $payloadBytes) {
         'payload_bytes' => $payloadBytes,
         'warmup_calls' => $warmupCalls,
         'diagnostic_rpc' => $diagnosticRpc && $implementation === 'php-grpc-lite',
+        'server_cached_payload' => $serverCachedPayload,
     ], $metrics);
 }
 
@@ -172,6 +176,18 @@ function collectDiagnostics(\stdClass $diagnostics, array &$series): void
         }
         $series[$name][] = $value;
     }
+}
+
+/**
+ * @return array<string, list<string>>
+ */
+function diagnosticMetadata(bool $serverCachedPayload): array
+{
+    $metadata = ['x-bench-server-timing' => ['1']];
+    if ($serverCachedPayload) {
+        $metadata['x-bench-server-cached-payload'] = ['1'];
+    }
+    return $metadata;
 }
 
 /**
@@ -234,7 +250,7 @@ function diagnosticUnit(string $name): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--diagnostic-rpc]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--diagnostic-rpc] [--server-cached-payload]\n");
     exit(2);
 }
 

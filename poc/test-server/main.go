@@ -28,6 +28,14 @@ type server struct {
 	pb.UnimplementedGreeterServer
 }
 
+var benchPayloadCache = map[int][]byte{}
+
+func init() {
+	for _, size := range []int{0, 100, 1024, 10 * 1024, 100 * 1024} {
+		benchPayloadCache[size] = make([]byte, size)
+	}
+}
+
 func (s *server) SayHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloReply, error) {
 	if d := req.GetDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
@@ -59,8 +67,9 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 	if d := req.GetServerDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
+	payloadBytes := int(req.GetPayloadBytes())
 	payloadStarted := time.Now()
-	payload := make([]byte, req.GetPayloadBytes())
+	payload := benchPayload(payloadBytes, benchCachedPayloadEnabled(ctx))
 	payloadAllocDuration := time.Since(payloadStarted)
 	if serverTiming {
 		grpc.SetTrailer(ctx, metadata.Pairs(
@@ -72,12 +81,33 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 	return &pb.BenchReply{Payload: payload}, nil
 }
 
+func benchPayload(size int, cached bool) []byte {
+	if size <= 0 {
+		return nil
+	}
+	if cached {
+		if payload, ok := benchPayloadCache[size]; ok {
+			return payload
+		}
+	}
+	return make([]byte, size)
+}
+
 func benchServerTimingEnabled(ctx context.Context) bool {
 	incoming, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return false
 	}
 	values := incoming.Get("x-bench-server-timing")
+	return len(values) > 0 && values[0] == "1"
+}
+
+func benchCachedPayloadEnabled(ctx context.Context) bool {
+	incoming, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	values := incoming.Get("x-bench-server-cached-payload")
 	return len(values) > 0 && values[0] == "1"
 }
 

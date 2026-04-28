@@ -70,6 +70,26 @@ BENCH_TAG=phase2-server-timing-20260429 ./bench/phase2/run.sh payload-unary-diag
 
 この run では `curl starttransfer` p99 の一部は Go test-server 側の 100KB payload allocation tail で説明できる。ただし `starttransfer` p99 1684μs に対して server handler p99 585μs なので、残りは gRPC-Go marshal / HTTP/2 write、libcurl receive、または Docker scheduler の範囲に残る。
 
+server payload allocation を外すため、`x-bench-server-cached-payload: 1` で test-server の事前生成 payload を返す診断も追加した。
+
+```bash
+BENCH_TAG=phase2-server-cached-20260429 ./bench/phase2/run.sh payload-unary-diagnostic --duration=3 --payload-sizes=102400 --warmup-calls=10
+BENCH_TAG=phase2-server-cached-20260429 ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=3 --payload-sizes=102400 --warmup-calls=10
+```
+
+| metric | normal p99 | cached p99 |
+|---|---:|---:|
+| calls/sec | 5413.0 | 6877.7 |
+| total unary latency | 2157.9μs | 1605.4μs |
+| `curl_exec` | 2132.3μs | 1497.6μs |
+| curl starttransfer | 1882.0μs | 1106.0μs |
+| server handler | 827.2μs | 13.7μs |
+| server payload allocation | 682.9μs | 2.2μs |
+| body append total | 7.5μs | 9.5μs |
+| deserialize | 6.5μs | 7.9μs |
+
+cached payload では throughput が上がり、p99 tail も大きく下がる。100KB unary の悪化は client decode/copy ではなく、ベンチ server が毎回 100KB payload を allocate する条件に強く影響されていた。cached 条件でも `curl starttransfer` p99 は 1ms 程度残るため、残りは gRPC-Go marshal / HTTP/2 write / Docker scheduler / libcurl receive の複合として扱う。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
@@ -112,8 +132,8 @@ metadata が多いケースでは ext-grpc の p50 が優位。header parse / me
 |---|---|
 | curl handle / connection reuse | 接続確立は主因ではなさそう。reuse 済み前提で cold / RTT の観測線として扱う |
 | payload decode / copy | 現状の主犯ではない。C 化候補としての優先度は下げる |
-| Go test-server payload allocation | 100KB tail の一部を説明する。client 実装改善対象ではなく、ベンチ解釈上の注意点 |
+| Go test-server payload allocation | 100KB tail の大きな部分を説明する。client 実装改善対象ではなく、ベンチ解釈上の注意点 |
 | streaming hot path | 現状は大きな弱点ではない。改善より回帰監視を優先 |
 | metadata path | 多 metadata で固定費は見える。payload tail と reuse の後に見る |
 
-次は 100KB unary tail を client 実装の問題として扱いすぎないよう、server payload を事前生成した場合の比較、または test-server 側の payload allocation を固定した条件を作って再測する。
+次は通常の `payload-unary` と diagnostic の解釈を分ける。client 側の改善候補としては 100KB unary tail より、cold / RTT と metadata の固定費を見る方が妥当。
