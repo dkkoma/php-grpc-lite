@@ -7,6 +7,7 @@
 #
 # Usage:
 #   ./bench/phase2/run.sh contract-smoke
+#   ./bench/phase2/run.sh cpu-memory-smoke
 #
 set -euo pipefail
 
@@ -45,11 +46,17 @@ case "$suite" in
             "phase2-$suite-$timestamp-$implementation.json" \
             tools/phase2/contract-smoke.php
         ;;
+    cpu-memory-smoke)
+        run_phase2_php \
+            "Phase 2 CPU / memory sampling smoke" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/cpu-memory-smoke.php
+        ;;
     *)
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke]
 EOF
         exit 2
         ;;

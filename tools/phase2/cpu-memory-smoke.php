@@ -10,10 +10,10 @@ use PhpGrpcLite\Tools\Phase2\ResultContract;
 $args = $argv;
 array_shift($args);
 
-$suite = 'contract-smoke';
+$suite = 'cpu-memory-smoke';
 $implementation = 'php-grpc-lite';
 $output = null;
-$revs = 100_000;
+$revs = 1_000_000;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -56,10 +56,23 @@ $sample = ResourceSampler::measure(static function () use ($revs): int {
 
     return $accumulator;
 });
+
 $metrics = $sample['metrics'];
 $metrics['wall_time_ns_per_op'] = [
     'value' => $metrics['wall_time_ns_total']['value'] / $revs,
     'unit' => 'ns/op',
+];
+$metrics['cpu_user_us_per_op'] = [
+    'value' => $metrics['cpu_user_us_total']['value'] / $revs,
+    'unit' => 'us/op',
+];
+$metrics['cpu_system_us_per_op'] = [
+    'value' => $metrics['cpu_system_us_total']['value'] / $revs,
+    'unit' => 'us/op',
+];
+$metrics['cpu_total_us_per_op'] = [
+    'value' => $metrics['cpu_total_us_total']['value'] / $revs,
+    'unit' => 'us/op',
 ];
 $metrics['ops_per_second'] = [
     'value' => $revs / ($metrics['wall_time_ns_total']['value'] / 1_000_000_000),
@@ -75,12 +88,12 @@ $document = ResultContract::document(
     $implementation,
     [
         ResultContract::measurement(
-            'contract_smoke_loop',
-            'contract',
+            'cpu_memory_smoke_loop',
+            'cpu-memory',
             'integer_loop',
             [
                 'revs' => $revs,
-                'purpose' => 'exercise Phase 2 result JSON without network or PHPBench',
+                'purpose' => 'exercise ResourceSampler CPU and memory metrics without network or PHPBench',
             ],
             $metrics,
         ),
@@ -94,14 +107,21 @@ if (!is_dir($dir)) {
 }
 file_put_contents($output, $encoded);
 
-printf("%-32s %12s %12s\n", 'measurement', 'revs', 'avg');
-printf("%'-60s\n", '');
-printf("%-32s %12d %11.1fns\n", 'contract_smoke_loop', $revs, $metrics['wall_time_ns_per_op']['value']);
+printf("%-32s %12s %12s %12s %12s\n", 'measurement', 'revs', 'wall/op', 'cpu/op', 'memΔ');
+printf("%'-88s\n", '');
+printf(
+    "%-32s %12d %11.1fns %11.4fus %11dB\n",
+    'cpu_memory_smoke_loop',
+    $revs,
+    $metrics['wall_time_ns_per_op']['value'],
+    $metrics['cpu_total_us_per_op']['value'],
+    $metrics['memory_usage_delta_bytes']['value'],
+);
 echo "JSON: $output\n";
 
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/contract-smoke.php --suite=contract-smoke --implementation=php-grpc-lite --output=var/bench-results/result.json [--revs=100000]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/cpu-memory-smoke.php --suite=cpu-memory-smoke --implementation=php-grpc-lite --output=var/bench-results/result.json [--revs=1000000]\n");
     exit(2);
 }

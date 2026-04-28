@@ -45,6 +45,7 @@ Phase 2 の探索ベンチは、通常比較入口の `bench/run.sh` と regress
 
 ```bash
 ./bench/phase2/run.sh contract-smoke
+./bench/phase2/run.sh cpu-memory-smoke
 ```
 
 Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。schema は `docs/benchmarks/schemas/phase2-result-v1.md` を参照する。探索結果は `bench/baselines/regression.json` に混ぜない。

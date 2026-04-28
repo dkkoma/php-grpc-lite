@@ -1,0 +1,76 @@
+<?php
+declare(strict_types=1);
+
+namespace PhpGrpcLite\Tools\Phase2;
+
+final class ResourceSampler
+{
+    /**
+     * @template T
+     * @param callable(): T $subject
+     * @return array{result: T, metrics: array<string, array{value: int|float, unit: string}>}
+     */
+    public static function measure(callable $subject): array
+    {
+        gc_collect_cycles();
+
+        $usageBefore = getrusage();
+        $memoryBefore = memory_get_usage(true);
+        $peakBefore = memory_get_peak_usage(true);
+        $startNs = hrtime(true);
+
+        $result = $subject();
+
+        $elapsedNs = hrtime(true) - $startNs;
+        $peakAfter = memory_get_peak_usage(true);
+        $memoryAfter = memory_get_usage(true);
+        $usageAfter = getrusage();
+
+        $userCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_utime');
+        $systemCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_stime');
+
+        return [
+            'result' => $result,
+            'metrics' => [
+                'wall_time_ns_total' => [
+                    'value' => $elapsedNs,
+                    'unit' => 'ns',
+                ],
+                'cpu_user_us_total' => [
+                    'value' => $userCpuUs,
+                    'unit' => 'us',
+                ],
+                'cpu_system_us_total' => [
+                    'value' => $systemCpuUs,
+                    'unit' => 'us',
+                ],
+                'cpu_total_us_total' => [
+                    'value' => $userCpuUs + $systemCpuUs,
+                    'unit' => 'us',
+                ],
+                'memory_usage_delta_bytes' => [
+                    'value' => $memoryAfter - $memoryBefore,
+                    'unit' => 'bytes',
+                ],
+                'memory_peak_delta_bytes' => [
+                    'value' => max(0, $peakAfter - $peakBefore),
+                    'unit' => 'bytes',
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $before
+     * @param array<string, mixed> $after
+     */
+    private static function timevalDeltaUs(array $before, array $after, string $key): int
+    {
+        $beforeSec = (int) ($before[$key . '.tv_sec'] ?? 0);
+        $beforeUsec = (int) ($before[$key . '.tv_usec'] ?? 0);
+        $afterSec = (int) ($after[$key . '.tv_sec'] ?? 0);
+        $afterUsec = (int) ($after[$key . '.tv_usec'] ?? 0);
+
+        return (($afterSec - $beforeSec) * 1_000_000) + ($afterUsec - $beforeUsec);
+    }
+}

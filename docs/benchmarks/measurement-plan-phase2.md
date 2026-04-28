@@ -261,7 +261,7 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 | 順 | 作業単位 | 主目的 | 構造 |
 |---:|---|---|---|
 | 1 | Phase 2 runner の出力 contract を定義 | 多軸計測の JSON schema、保存名、summary 表示を先に固める | 既存 `phpbench-with-artifacts.sh` を参考にするが、PHPBench 前提にしない |
-| 2 | CPU / memory sampling helper を追加 | wall-clock と CPU / memory を同じ JSON に載せる | 既存 bench に埋め込む前に、CLI helper と単体 smoke を作る |
+| 2 | CPU / memory sampling helper を追加 | wall-clock と CPU / memory を同じ JSON に載せる | `ResourceSampler` と `cpu-memory-smoke` で helper 単体を検証する |
 | 3 | unary / streaming の CPU per call smoke | C 化候補を比較できる最小の CPU 指標を取る | 既存 bench 拡張でも専用 runner でもよい。データ形を優先 |
 | 4 | Toxiproxy + RTT unary bench | persistent pool 判断に必要な 1/3/5ms RTT を取る | compose と proxy 初期化を含む独立スイートにする |
 | 5 | throughput / p99 harness | saturation、p50/p95/p99、calls/sec を測る | PHPBench から分離した専用 CLI を作る |
