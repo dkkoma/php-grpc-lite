@@ -56,7 +56,7 @@ run_phase2_php() {
         --implementation="$implementation" \
         --autoload="$autoload_path" \
         --output="$output_path" \
-        "${extra_args[@]}"
+        "${extra_args[@]+"${extra_args[@]}"}"
 }
 
 case "$suite" in

@@ -70,6 +70,20 @@ suite 固有の引数は suite 名の後ろに渡せる。
 ./bench/phase2/compare.sh rtt-unary --calls=20
 ```
 
+複数 suite を目的別にまとめて実行する場合は preset 入口を使う。
+
+```bash
+./bench/phase2/preset.sh smoke
+./bench/phase2/preset.sh compare
+./bench/phase2/preset.sh decision
+```
+
+| preset | 用途 | 性質 |
+|---|---|---|
+| `smoke` | runner contract と代表比較の高速確認 | 短時間。壊れていないかを見る |
+| `compare` | Phase 2 軸を一通り ext-grpc と短時間比較 | preliminary な傾向確認 |
+| `decision` | 最適化判断に使う長めの比較 | p99 / large streaming / metadata の外れ値影響を下げる |
+
 単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `bench-comparison/vendor/autoload.php` を使う。
 
 Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。schema は `docs/benchmarks/schemas/phase2-result-v1.md` を参照する。探索結果は `bench/baselines/regression.json` に混ぜない。
@@ -202,6 +216,10 @@ baseline 更新時のルール:
 - ext-grpc は目標値ではなく比較線として扱う。
 - Spanner emulator は実機互換検証には使うが、性能比較では Go test-server を優先する。
 - cold と warm を混ぜない。request 内で Channel を再利用できる workload は warm、request ごとに 1 RPC の workload は cold を参照する。
+
+## 記録済みの比較
+
+- [Phase 2 preliminary comparison 2026-04-28](./phase2-preliminary-comparison-2026-04-28.md)
 
 ## Phase 1 の完了
 
