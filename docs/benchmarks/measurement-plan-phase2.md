@@ -254,6 +254,8 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 | baseline | regression baseline は Phase 1 と同じく php-grpc-lite 自身の回帰検知用。Phase 2 の探索結果を baseline に混ぜない |
 | script boundary | PHPBench で自然に表せるものは `bench/run.sh` 系、sustained / p99 / CPU 集計のような独立 runner が自然なものは専用 CLI に分ける |
 
+この contract は `docs/benchmarks/schemas/phase2-result-v1.md` に固定する。実行入口は通常比較の `bench/run.sh` ではなく `bench/phase2/run.sh` に分離する。
+
 ### 7.2 コミット単位の候補
 
 | 順 | 作業単位 | 主目的 | 構造 |

@@ -39,6 +39,16 @@ BENCH_OUTPUT_DIR=/tmp/php-grpc-lite-bench ./bench/run.sh cold
 | `./bench/run.sh tls` | `TlsUnaryBench` 両環境 | TLS / mTLS の cold/warm unary |
 | `./bench/run.sh hot-path` | `tools/bench-hot-path.php` | ネットワークなしの CPU 分解 |
 
+## Phase 2 探索ベンチ
+
+Phase 2 の探索ベンチは、通常比較入口の `bench/run.sh` と regression baseline 入口の `bench/baseline.sh` から分離し、`bench/phase2/run.sh` で実行する。
+
+```bash
+./bench/phase2/run.sh contract-smoke
+```
+
+Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。schema は `docs/benchmarks/schemas/phase2-result-v1.md` を参照する。探索結果は `bench/baselines/regression.json` に混ぜない。
+
 ## 実用性能として押さえる軸
 
 Phase 1 の手元運用・継続比較基盤は完了扱いとする。以後この文書で追加する作業は、原則として CI での実行方針に限定する。
