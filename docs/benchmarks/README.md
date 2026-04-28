@@ -222,6 +222,7 @@ baseline 更新時のルール:
 ## 記録済みの比較
 
 - [Phase 2 preliminary comparison 2026-04-28](./phase2-preliminary-comparison-2026-04-28.md)
+- [Phase 2 decision comparison 2026-04-29](./phase2-decision-comparison-2026-04-29.md)
 
 ## Phase 1 の完了
 

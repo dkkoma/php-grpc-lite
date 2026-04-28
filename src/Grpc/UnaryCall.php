@@ -78,6 +78,7 @@ class UnaryCall extends AbstractCall
         $curlStartedNs = hrtime(true);
         curl_exec($ch);
         $this->recordDiagnostic('curl_exec_ns', hrtime(true) - $curlStartedNs);
+        $this->recordCurlTimingDiagnostics($ch);
         $errno = curl_errno($ch);
         $errMsg = curl_error($ch);
         $this->ch = null;
@@ -280,5 +281,35 @@ class UnaryCall extends AbstractCall
         }
 
         $this->diagnostics->{$name} = max($this->diagnostics->{$name} ?? 0, $value);
+    }
+
+    private function recordCurlTimingDiagnostics(\CurlHandle $ch): void
+    {
+        if ($this->diagnostics === null) {
+            return;
+        }
+
+        foreach ($this->curlTimingInfoMap() as $metric => $infoConstant) {
+            $value = curl_getinfo($ch, $infoConstant);
+            if (is_int($value) || is_float($value)) {
+                $this->recordDiagnostic($metric, $value * 1000);
+            }
+        }
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function curlTimingInfoMap(): array
+    {
+        return [
+            'curl_total_time_ns' => \CURLINFO_TOTAL_TIME_T,
+            'curl_namelookup_time_ns' => \CURLINFO_NAMELOOKUP_TIME_T,
+            'curl_connect_time_ns' => \CURLINFO_CONNECT_TIME_T,
+            'curl_appconnect_time_ns' => \CURLINFO_APPCONNECT_TIME_T,
+            'curl_pretransfer_time_ns' => \CURLINFO_PRETRANSFER_TIME_T,
+            'curl_starttransfer_time_ns' => \CURLINFO_STARTTRANSFER_TIME_T,
+            'curl_redirect_time_ns' => \CURLINFO_REDIRECT_TIME_T,
+        ];
     }
 }
