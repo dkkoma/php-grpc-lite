@@ -10,6 +10,11 @@
 #   ./bench/phase2/run.sh cpu-memory-smoke
 #   ./bench/phase2/run.sh throughput-unary
 #   ./bench/phase2/run.sh rtt-unary
+#   ./bench/phase2/run.sh throughput-streaming
+#   ./bench/phase2/run.sh large-streaming
+#   ./bench/phase2/run.sh payload-unary
+#   ./bench/phase2/run.sh payload-streaming
+#   ./bench/phase2/run.sh metadata-header
 #
 set -euo pipefail
 
@@ -72,11 +77,41 @@ case "$suite" in
             "phase2-$suite-$timestamp-$implementation.json" \
             tools/phase2/rtt-unary.php
         ;;
+    throughput-streaming)
+        run_phase2_php \
+            "Phase 2 streaming throughput" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/throughput-streaming.php
+        ;;
+    large-streaming)
+        run_phase2_php \
+            "Phase 2 large streaming" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/large-streaming.php
+        ;;
+    payload-unary)
+        run_phase2_php \
+            "Phase 2 unary payload sweep" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/payload-unary.php
+        ;;
+    payload-streaming)
+        run_phase2_php \
+            "Phase 2 streaming payload sweep" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/payload-streaming.php
+        ;;
+    metadata-header)
+        run_phase2_php \
+            "Phase 2 metadata/header sweep" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/metadata-header.php
+        ;;
     *)
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header]
 EOF
         exit 2
         ;;

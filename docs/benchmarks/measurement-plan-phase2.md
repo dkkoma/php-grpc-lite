@@ -265,8 +265,8 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 | 3 | unary / streaming の時間指標 smoke | C 化候補を比較できる最小の latency / throughput 指標を取る | 既存 bench 拡張でも専用 runner でもよい。データ形を優先 |
 | 4 | Toxiproxy + RTT unary bench | persistent pool 判断に必要な 1/3/5ms latency 条件を取る | `rtt-unary` として compose の `toxiproxy` service と proxy 初期化を含む独立スイートにする |
 | 5 | throughput / p99 harness | saturation、p50/p95/p99、calls/sec を測る | `throughput-unary` として PHPBench から分離した専用 CLI を作る |
-| 6 | metadata/header parsing axis | header parser C 化の価値を分離する | test-server 拡張 + bench。既存 `MetadataVolumeBench` との重複を避ける |
-| 7 | large streaming axis | per-frame hot path と memory pressure を見る | 10K/100K msg を扱える専用スイート。長時間化するなら通常 suite から分ける |
+| 6 | metadata/header parsing axis | header parser C 化の価値を分離する | `metadata-header` で request / initial / trailing metadata 数を振る |
+| 7 | large streaming axis | per-frame hot path と memory pressure を見る | `throughput-streaming` / `large-streaming` / `payload-streaming` で通常 suite から分ける |
 
 作業 1-3 で計測値の格納形式と primary / diagnostic 指標の扱いを固める。作業 4-7 は各 C 化候補に対応する独立した観測軸として実装する。
 
