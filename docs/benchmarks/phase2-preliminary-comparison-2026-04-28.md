@@ -52,6 +52,28 @@ BENCH_TAG=phase2-compare-20260428 ./bench/phase2/compare.sh metadata-header --ca
 
 100KB では throughput がほぼ同等で、php-grpc-lite は p50 が低い一方 p99 が悪い。per-byte decode / copy と tail の分解が次の確認対象。
 
+### Payload breakdown
+
+`payload-breakdown` は RPC 全体ではなく、ネットワークを外した PHP 内 hot path の diagnostic。`payload-unary` の tail が悪い場合に、frame length read、payload slice、protobuf decode、deserialize adapter のどこが支配的かを見る。
+
+```bash
+BENCH_TAG=phase2-payload-breakdown-20260428 ./bench/phase2/run.sh payload-breakdown --payload-sizes=0,100,1024,10240,102400
+```
+
+| payload | operation | p50 | p95 | p99 |
+|---:|---|---:|---:|---:|
+| 0B | frame length | 0.0μs | 0.1μs | 0.2μs |
+| 0B | payload slice | 0.1μs | 0.1μs | 0.1μs |
+| 0B | decode only | 0.2μs | 0.3μs | 0.3μs |
+| 0B | slice + decode | 0.3μs | 0.4μs | 0.4μs |
+| 100KB | frame length | 0.0μs | 0.1μs | 0.1μs |
+| 100KB | payload slice | 1.6μs | 1.6μs | 2.0μs |
+| 100KB | decode only | 5.2μs | 5.4μs | 7.4μs |
+| 100KB | slice + decode | 5.6μs | 7.8μs | 8.1μs |
+| 100KB | deserialize apply | 5.2μs | 5.4μs | 7.1μs |
+
+この diagnostic では 100KB でも frame/slice/decode は p99 で 10μs 未満。`payload-unary` の 100KB p99 が ms 単位で悪い件は、protobuf decode 単体よりも RPC I/O、curl buffering、allocation / GC、または Docker scheduler の tail と見た方が妥当。
+
 ### RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
@@ -115,7 +137,7 @@ header 数の増加に対して両者とも p50 が上がる。calls=10 では p
 | 観測軸 | 暫定判断 | 次の確認 |
 |---|---|---|
 | 軽量 unary fixed cost | php-grpc-lite は既に良好 | curl handle reuse は cold/warm 差の変化を見る目的で実施 |
-| large unary payload | 100KB p99 が怪しい | per-byte decode / copy と tail を再測 |
+| large unary payload | 100KB p99 が怪しい | decode 単体は小さいため、RPC I/O / allocation / scheduler tail を確認 |
 | RTT / cold | direct cold は ext-grpc 優位 | persistent pool / request 境界の影響を decision run で確認 |
 | streaming throughput | count が大きいほど php-grpc-lite 優位に見える | 10K / 100K messages で長めに再測 |
 | streaming tail | php-grpc-lite p99 が悪いケースあり | stream latency distribution を確認 |
@@ -126,3 +148,5 @@ header 数の増加に対して両者とも p50 が上がる。calls=10 では p
 1. `bench/phase2/preset.sh compare` で今回相当の短時間比較を再現可能にする。
 2. `bench/phase2/preset.sh decision` で改善判断用の長めの比較を取る。
 3. decision 結果で `curl handle reuse` の効果を見る軸を決め、実装後に同じ preset で差分を見る。
+
+`payload-breakdown` の初回結果では decode 単体は支配的ではなかった。次に見るべきは、100KB の実 RPC で body accumulation と curl response handling が tail を作っているかどうか。

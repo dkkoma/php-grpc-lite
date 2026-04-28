@@ -13,6 +13,7 @@
 #   ./bench/phase2/run.sh throughput-streaming
 #   ./bench/phase2/run.sh large-streaming
 #   ./bench/phase2/run.sh payload-unary
+#   ./bench/phase2/run.sh payload-breakdown
 #   ./bench/phase2/run.sh payload-streaming
 #   ./bench/phase2/run.sh metadata-header
 #
@@ -103,6 +104,12 @@ case "$suite" in
             "phase2-$suite-$timestamp-$implementation.json" \
             tools/phase2/payload-unary.php
         ;;
+    payload-breakdown)
+        run_phase2_php \
+            "Phase 2 payload hot-path breakdown" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/payload-breakdown.php
+        ;;
     payload-streaming)
         run_phase2_php \
             "Phase 2 streaming payload sweep" \
@@ -119,7 +126,7 @@ case "$suite" in
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-breakdown|payload-streaming|metadata-header]
 EOF
         exit 2
         ;;
