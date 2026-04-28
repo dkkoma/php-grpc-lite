@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/../../vendor/autoload.php';
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/UnaryBenchHelper.php';
@@ -17,6 +16,7 @@ $suite = 'throughput-unary';
 $implementation = 'php-grpc-lite';
 $output = null;
 $target = 'test-server:50051';
+$autoload = 'vendor/autoload.php';
 $durationSec = 3.0;
 $payloadBytes = 100;
 $serverDelayMs = 0;
@@ -40,6 +40,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
         $target = substr($arg, strlen('--target='));
+    } elseif ($arg === '--autoload') {
+        $autoload = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--autoload=')) {
+        $autoload = substr($arg, strlen('--autoload='));
     } elseif ($arg === '--duration') {
         $durationSec = (float) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--duration=')) {
@@ -61,8 +65,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $target === '') {
-    usage('suite, implementation, and target are required');
+if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
+    usage('suite, implementation, target, and autoload are required');
 }
 if ($output === null || $output === '') {
     usage('output is required');
@@ -70,6 +74,8 @@ if ($output === null || $output === '') {
 if ($durationSec <= 0 || $payloadBytes < 0 || $serverDelayMs < 0 || $warmupCalls < 0) {
     usage('duration, payload-bytes, server-delay-ms, and warmup-calls must be non-negative');
 }
+
+requireAutoload($autoload);
 
 $client = UnaryBenchHelper::client($target);
 $request = UnaryBenchHelper::request($payloadBytes, $serverDelayMs);
@@ -169,4 +175,12 @@ function usage(string $message): never
         "Usage: php tools/phase2/throughput-unary.php --suite=throughput-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--target=test-server:50051] [--duration=3] [--payload-bytes=100] [--server-delay-ms=0]\n",
     );
     exit(2);
+}
+
+function requireAutoload(string $autoload): void
+{
+    if (!is_file($autoload)) {
+        throw new \RuntimeException("autoload file not found: $autoload");
+    }
+    require $autoload;
 }

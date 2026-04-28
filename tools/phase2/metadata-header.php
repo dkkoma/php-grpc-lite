@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/../../vendor/autoload.php';
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/UnaryBenchHelper.php';
@@ -18,6 +17,7 @@ $suite = 'metadata-header';
 $implementation = 'php-grpc-lite';
 $output = null;
 $target = 'test-server:50051';
+$autoload = 'vendor/autoload.php';
 $calls = 50;
 $cases = [
     [0, 0, 0],
@@ -45,6 +45,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
         $target = substr($arg, strlen('--target='));
+    } elseif ($arg === '--autoload') {
+        $autoload = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--autoload=')) {
+        $autoload = substr($arg, strlen('--autoload='));
     } elseif ($arg === '--calls') {
         $calls = (int) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--calls=')) {
@@ -54,12 +58,14 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $target === '' || $output === null || $output === '') {
-    usage('suite, implementation, target, and output are required');
+if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
+    usage('suite, implementation, target, autoload, and output are required');
 }
 if ($calls <= 0) {
     usage('calls must be greater than zero');
 }
+
+requireAutoload($autoload);
 
 $client = UnaryBenchHelper::client($target);
 $request = new BenchRequest();
@@ -170,4 +176,12 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(STDERR, "Usage: php tools/phase2/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=50]\n");
     exit(2);
+}
+
+function requireAutoload(string $autoload): void
+{
+    if (!is_file($autoload)) {
+        throw new \RuntimeException("autoload file not found: $autoload");
+    }
+    require $autoload;
 }

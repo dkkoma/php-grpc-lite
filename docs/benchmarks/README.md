@@ -63,6 +63,15 @@ suite 固有の引数は suite 名の後ろに渡せる。
 ./bench/phase2/run.sh large-streaming --message-counts=10000,100000
 ```
 
+同じ Phase 2 suite を php-grpc-lite と公式 ext-grpc の両方で実行する場合は比較入口を使う。
+
+```bash
+./bench/phase2/compare.sh throughput-unary --duration=3
+./bench/phase2/compare.sh rtt-unary --calls=20
+```
+
+単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `bench-comparison/vendor/autoload.php` を使う。
+
 Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。schema は `docs/benchmarks/schemas/phase2-result-v1.md` を参照する。探索結果は `bench/baselines/regression.json` に混ぜない。
 
 Phase 2 の primary metric は wall time、throughput、tail latency、memory とする。JSON に入る `diagnostic_cpu_*` は参考値であり、合否や優先度判断の主指標にはしない。

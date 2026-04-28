@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/../../vendor/autoload.php';
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/UnaryBenchHelper.php';
@@ -19,6 +18,7 @@ $implementation = 'php-grpc-lite';
 $output = null;
 $directTarget = 'test-server:50051';
 $toxiproxyAdmin = 'http://toxiproxy:8474';
+$autoload = 'vendor/autoload.php';
 $payloadBytes = 100;
 $serverDelayMs = 0;
 $calls = 20;
@@ -46,6 +46,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $toxiproxyAdmin = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--toxiproxy-admin=')) {
         $toxiproxyAdmin = substr($arg, strlen('--toxiproxy-admin='));
+    } elseif ($arg === '--autoload') {
+        $autoload = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--autoload=')) {
+        $autoload = substr($arg, strlen('--autoload='));
     } elseif ($arg === '--payload-bytes') {
         $payloadBytes = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--payload-bytes=')) {
@@ -67,8 +71,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $directTarget === '' || $toxiproxyAdmin === '') {
-    usage('suite, implementation, direct-target, and toxiproxy-admin are required');
+if ($suite === '' || $implementation === '' || $directTarget === '' || $toxiproxyAdmin === '' || $autoload === '') {
+    usage('suite, implementation, direct-target, toxiproxy-admin, and autoload are required');
 }
 if ($output === null || $output === '') {
     usage('output is required');
@@ -76,6 +80,8 @@ if ($output === null || $output === '') {
 if ($payloadBytes < 0 || $serverDelayMs < 0 || $calls <= 0 || $warmupCalls < 0) {
     usage('payload-bytes, server-delay-ms, calls, and warmup-calls must be valid');
 }
+
+requireAutoload($autoload);
 
 $proxyCases = [
     ['name' => 'direct', 'target' => $directTarget, 'downstream_latency_ms' => 0, 'proxy' => null],
@@ -274,4 +280,12 @@ function usage(string $message): never
         "Usage: php tools/phase2/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=20] [--payload-bytes=100]\n",
     );
     exit(2);
+}
+
+function requireAutoload(string $autoload): void
+{
+    if (!is_file($autoload)) {
+        throw new \RuntimeException("autoload file not found: $autoload");
+    }
+    require $autoload;
 }

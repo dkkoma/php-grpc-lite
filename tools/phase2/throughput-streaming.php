@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/../../vendor/autoload.php';
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/StreamingBenchHelper.php';
@@ -19,6 +18,7 @@ $suite = 'throughput-streaming';
 $implementation = 'php-grpc-lite';
 $output = null;
 $target = 'test-server:50051';
+$autoload = 'vendor/autoload.php';
 $durationSec = 3.0;
 $messageCount = 1000;
 $payloadBytes = 100;
@@ -43,6 +43,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
         $target = substr($arg, strlen('--target='));
+    } elseif ($arg === '--autoload') {
+        $autoload = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--autoload=')) {
+        $autoload = substr($arg, strlen('--autoload='));
     } elseif ($arg === '--duration') {
         $durationSec = (float) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--duration=')) {
@@ -68,12 +72,14 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $target === '' || $output === null || $output === '') {
-    usage('suite, implementation, target, and output are required');
+if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
+    usage('suite, implementation, target, autoload, and output are required');
 }
 if ($durationSec <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $serverDelayMs < 0 || $warmupStreams < 0) {
     usage('duration, message-count, payload-bytes, server-delay-ms, and warmup-streams must be valid');
 }
+
+requireAutoload($autoload);
 
 $client = StreamingBenchHelper::client($target);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes, $serverDelayMs);
@@ -142,4 +148,12 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(STDERR, "Usage: php tools/phase2/throughput-streaming.php --suite=throughput-streaming --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=3] [--message-count=1000] [--payload-bytes=100]\n");
     exit(2);
+}
+
+function requireAutoload(string $autoload): void
+{
+    if (!is_file($autoload)) {
+        throw new \RuntimeException("autoload file not found: $autoload");
+    }
+    require $autoload;
 }

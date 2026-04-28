@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/../../vendor/autoload.php';
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/UnaryBenchHelper.php';
@@ -17,6 +16,7 @@ $suite = 'payload-unary';
 $implementation = 'php-grpc-lite';
 $output = null;
 $target = 'test-server:50051';
+$autoload = 'vendor/autoload.php';
 $durationSec = 1.0;
 $payloadSizes = [0, 100, 1024, 10 * 1024, 100 * 1024];
 $warmupCalls = 3;
@@ -39,6 +39,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
         $target = substr($arg, strlen('--target='));
+    } elseif ($arg === '--autoload') {
+        $autoload = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--autoload=')) {
+        $autoload = substr($arg, strlen('--autoload='));
     } elseif ($arg === '--duration') {
         $durationSec = (float) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--duration=')) {
@@ -56,12 +60,14 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $target === '' || $output === null || $output === '') {
-    usage('suite, implementation, target, and output are required');
+if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
+    usage('suite, implementation, target, autoload, and output are required');
 }
 if ($durationSec <= 0 || $payloadSizes === [] || $warmupCalls < 0) {
     usage('duration, payload-sizes, and warmup-calls must be valid');
 }
+
+requireAutoload($autoload);
 
 $client = UnaryBenchHelper::client($target);
 $measurements = [];
@@ -140,4 +146,12 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400]\n");
     exit(2);
+}
+
+function requireAutoload(string $autoload): void
+{
+    if (!is_file($autoload)) {
+        throw new \RuntimeException("autoload file not found: $autoload");
+    }
+    require $autoload;
 }

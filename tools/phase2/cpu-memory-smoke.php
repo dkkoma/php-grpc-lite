@@ -13,6 +13,7 @@ array_shift($args);
 $suite = 'cpu-memory-smoke';
 $implementation = 'php-grpc-lite';
 $output = null;
+$autoload = null;
 $revs = 1_000_000;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
@@ -29,6 +30,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $output = $args[++$argIndex] ?? null;
     } elseif (str_starts_with($arg, '--output=')) {
         $output = substr($arg, strlen('--output='));
+    } elseif ($arg === '--autoload') {
+        $autoload = $args[++$argIndex] ?? null;
+    } elseif (str_starts_with($arg, '--autoload=')) {
+        $autoload = substr($arg, strlen('--autoload='));
     } elseif ($arg === '--revs') {
         $revs = (int) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--revs=')) {

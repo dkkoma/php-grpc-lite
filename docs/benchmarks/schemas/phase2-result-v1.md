@@ -58,5 +58,6 @@ Phase 2 の探索ベンチは、PHPBench aggregate JSON とは別に以下の co
 ## 運用
 
 - JSON は `var/bench-results/phase2-<suite>-<tag>-<implementation>.json` に保存する。
+- `./bench/phase2/compare.sh <suite>` は同じ `BENCH_TAG` で `php-grpc-lite` と `ext-grpc` の JSON を並べて保存する。
 - Phase 2 の探索結果は `bench/baselines/regression.json` に混ぜない。
 - 結果を採用する場合だけ、環境、代表値、揺れ幅、判断を `docs/benchmarks/multi-axis-2026-XX-XX.md` に記録する。

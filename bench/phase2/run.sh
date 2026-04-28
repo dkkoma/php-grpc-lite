@@ -28,6 +28,13 @@ extra_args=("$@")
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 implementation="${BENCH_IMPLEMENTATION:-php-grpc-lite}"
+container_service="${BENCH_CONTAINER_SERVICE:-dev}"
+autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
+
+if [[ "$implementation" == "ext-grpc" ]]; then
+    container_service="${BENCH_CONTAINER_SERVICE:-dev-ext-grpc}"
+    autoload_path="${BENCH_AUTOLOAD:-bench-comparison/vendor/autoload.php}"
+fi
 
 mkdir -p "$output_dir"
 
@@ -44,9 +51,10 @@ run_phase2_php() {
     echo "  JSON: $output_path"
     echo "==========================================="
 
-    docker compose run --rm dev php "$@" \
+    docker compose run --rm "$container_service" php "$@" \
         --suite="$suite" \
         --implementation="$implementation" \
+        --autoload="$autoload_path" \
         --output="$output_path" \
         "${extra_args[@]}"
 }
