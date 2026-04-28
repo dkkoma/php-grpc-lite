@@ -74,6 +74,30 @@ BENCH_TAG=phase2-payload-breakdown-20260428 ./bench/phase2/run.sh payload-breakd
 
 この diagnostic では 100KB でも frame/slice/decode は p99 で 10μs 未満。`payload-unary` の 100KB p99 が ms 単位で悪い件は、protobuf decode 単体よりも RPC I/O、curl buffering、allocation / GC、または Docker scheduler の tail と見た方が妥当。
 
+### Payload unary RPC diagnostic
+
+`payload-unary-diagnostic` は実 RPC の php-grpc-lite unary 経路に opt-in instrumentation を入れ、`curl_exec`、body append、frame parse、payload slice、deserialize の時間を call ごとに保存する。通常の比較値を壊さないよう、公式 ext-grpc との比較 suite ではなく php-grpc-lite 単独 diagnostic として実行する。
+
+```bash
+BENCH_TAG=phase2-payload-rpc-diagnostic-20260429 ./bench/phase2/run.sh payload-unary-diagnostic --duration=0.2 --payload-sizes=102400 --warmup-calls=1
+```
+
+| metric | p99 |
+|---|---:|
+| total unary latency | 2362.4μs |
+| `curl_exec` | 2350.9μs |
+| body chunks | 13 |
+| body append total | 8.2μs |
+| body append max | 4.2μs |
+| body bytes total | 102409B |
+| largest body chunk | 16375B |
+| response frame length read | 0.5μs |
+| response payload slice | 5.9μs |
+| response deserialize | 6.3μs |
+| status build | 1.1μs |
+
+この run では、100KB の p99 tail はほぼ `curl_exec` 内にある。body append、frame parse、payload slice、protobuf deserialize はいずれも μs 台で、ms 単位の tail を説明しない。次の確認対象は libcurl / HTTP/2 receive、connection reuse 状態、Docker scheduler、Go test-server 側の送信 pacing / buffering。
+
 ### RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
@@ -137,7 +161,7 @@ header 数の増加に対して両者とも p50 が上がる。calls=10 では p
 | 観測軸 | 暫定判断 | 次の確認 |
 |---|---|---|
 | 軽量 unary fixed cost | php-grpc-lite は既に良好 | curl handle reuse は cold/warm 差の変化を見る目的で実施 |
-| large unary payload | 100KB p99 が怪しい | decode 単体は小さいため、RPC I/O / allocation / scheduler tail を確認 |
+| large unary payload | 100KB p99 が怪しい | 実 RPC diagnostic では `curl_exec` 内 tail が支配的。libcurl / HTTP/2 receive と scheduler を確認 |
 | RTT / cold | direct cold は ext-grpc 優位 | persistent pool / request 境界の影響を decision run で確認 |
 | streaming throughput | count が大きいほど php-grpc-lite 優位に見える | 10K / 100K messages で長めに再測 |
 | streaming tail | php-grpc-lite p99 が悪いケースあり | stream latency distribution を確認 |
@@ -149,4 +173,4 @@ header 数の増加に対して両者とも p50 が上がる。calls=10 では p
 2. `bench/phase2/preset.sh decision` で改善判断用の長めの比較を取る。
 3. decision 結果で `curl handle reuse` の効果を見る軸を決め、実装後に同じ preset で差分を見る。
 
-`payload-breakdown` の初回結果では decode 単体は支配的ではなかった。次に見るべきは、100KB の実 RPC で body accumulation と curl response handling が tail を作っているかどうか。
+`payload-breakdown` と `payload-unary-diagnostic` の初回結果では、decode 単体と body accumulation は支配的ではなかった。次に見るべきは、100KB の実 RPC で libcurl / HTTP/2 receive と接続状態が tail を作っているかどうか。

@@ -14,6 +14,7 @@ class UnaryCall extends AbstractCall
 {
     private string $body = '';
     private bool $bodyStarted = false;
+    private ?object $diagnostics = null;
 
     /** @var array<string, list<string>> */
     private array $responseHeaders = [];
@@ -31,9 +32,21 @@ class UnaryCall extends AbstractCall
     public function start(object $argument, array $metadata = [], array $options = []): void
     {
         $this->mergeStartArgs($metadata, $options);
+        $diagnostics = $this->options['php_grpc_lite.diagnostics'] ?? null;
+        $this->diagnostics = is_object($diagnostics) ? $diagnostics : null;
+        if ($this->diagnostics !== null) {
+            $this->diagnostics->events = [];
+        }
 
+        $serializeStartedNs = hrtime(true);
         $serialized = $argument->serializeToString();
+        $this->recordDiagnostic('request_serialize_ns', hrtime(true) - $serializeStartedNs);
+
+        $frameStartedNs = hrtime(true);
         $frame = "\x00" . pack('N', strlen($serialized)) . $serialized;
+        $this->recordDiagnostic('request_frame_build_ns', hrtime(true) - $frameStartedNs);
+        $this->recordDiagnostic('request_payload_bytes', strlen($serialized));
+        $this->recordDiagnostic('request_frame_bytes', strlen($frame));
 
         $this->ch = $this->initCurl();
         curl_setopt_array($this->ch, [
@@ -62,7 +75,9 @@ class UnaryCall extends AbstractCall
         }
 
         $ch = $this->ch;
+        $curlStartedNs = hrtime(true);
         curl_exec($ch);
+        $this->recordDiagnostic('curl_exec_ns', hrtime(true) - $curlStartedNs);
         $errno = curl_errno($ch);
         $errMsg = curl_error($ch);
         $this->ch = null;
@@ -75,16 +90,24 @@ class UnaryCall extends AbstractCall
             return [null, $this->makeStatus($code, "curl error ($errno): $errMsg")];
         }
 
+        $validateStartedNs = hrtime(true);
         $protocolStatus = $this->validateGrpcResponse($ch);
+        $this->recordDiagnostic('validate_response_ns', hrtime(true) - $validateStartedNs);
         $this->releaseCurl($ch);
         if ($protocolStatus !== null) {
             return [null, $protocolStatus];
         }
+        $compressionStartedNs = hrtime(true);
         $compressionStatus = $this->validateCompression();
+        $this->recordDiagnostic('validate_compression_ns', hrtime(true) - $compressionStartedNs);
         if ($compressionStatus !== null) {
             return [null, $compressionStatus];
         }
-        return [$this->parseResponseFrame(), $this->buildStatusFromTrailers()];
+        $response = $this->parseResponseFrame();
+        $statusStartedNs = hrtime(true);
+        $status = $this->buildStatusFromTrailers();
+        $this->recordDiagnostic('status_build_ns', hrtime(true) - $statusStartedNs);
+        return [$response, $status];
     }
 
     public function cancel(): void
@@ -112,12 +135,22 @@ class UnaryCall extends AbstractCall
         if (strlen($this->body) < 5) {
             return null;
         }
+        $lengthStartedNs = hrtime(true);
         $len = unpack('N', substr($this->body, 1, 4))[1];
+        $this->recordDiagnostic('response_frame_length_ns', hrtime(true) - $lengthStartedNs);
+        $this->recordDiagnostic('response_body_bytes', strlen($this->body));
+        $this->recordDiagnostic('response_payload_bytes', $len);
+
+        $sliceStartedNs = hrtime(true);
         $payload = substr($this->body, 5, $len);
+        $this->recordDiagnostic('response_payload_slice_ns', hrtime(true) - $sliceStartedNs);
         if ($this->deserialize === null) {
             return null;
         }
-        return Internal\Deserialize::apply($this->deserialize, $payload);
+        $deserializeStartedNs = hrtime(true);
+        $response = Internal\Deserialize::apply($this->deserialize, $payload);
+        $this->recordDiagnostic('response_deserialize_ns', hrtime(true) - $deserializeStartedNs);
+        return $response;
     }
 
     private function validateCompression(): ?\stdClass
@@ -185,6 +218,7 @@ class UnaryCall extends AbstractCall
 
     private function onHeader(\CurlHandle $ch, string $line): int
     {
+        $startedNs = hrtime(true);
         $trim = rtrim($line, "\r\n");
         if ($trim !== '' && !str_starts_with($trim, 'HTTP/')) {
             [$k, $v] = array_pad(explode(':', $trim, 2), 2, '');
@@ -198,6 +232,8 @@ class UnaryCall extends AbstractCall
                 $this->appendMetadataHeader($this->responseTrailers, $key, $val);
             }
         }
+        $this->recordDiagnostic('header_callback_ns_total', hrtime(true) - $startedNs, true);
+        $this->recordDiagnostic('header_lines_total', 1, true);
         return strlen($line);
     }
 
@@ -210,8 +246,39 @@ class UnaryCall extends AbstractCall
 
     private function onBodyChunk(\CurlHandle $ch, string $chunk): int
     {
+        $startedNs = hrtime(true);
+        $chunkBytes = strlen($chunk);
         $this->bodyStarted = true;
         $this->body .= $chunk;
-        return strlen($chunk);
+        $appendNs = hrtime(true) - $startedNs;
+        $this->recordDiagnostic('body_append_ns_total', $appendNs, true);
+        $this->recordDiagnostic('body_chunks_total', 1, true);
+        $this->recordDiagnostic('body_chunk_bytes_total', $chunkBytes, true);
+        $this->recordDiagnosticMax('body_chunk_bytes_max', $chunkBytes);
+        $this->recordDiagnosticMax('body_append_ns_max', $appendNs);
+        return $chunkBytes;
+    }
+
+    private function recordDiagnostic(string $name, int|float $value, bool $add = false): void
+    {
+        if ($this->diagnostics === null) {
+            return;
+        }
+
+        if ($add) {
+            $this->diagnostics->{$name} = ($this->diagnostics->{$name} ?? 0) + $value;
+            return;
+        }
+
+        $this->diagnostics->{$name} = $value;
+    }
+
+    private function recordDiagnosticMax(string $name, int|float $value): void
+    {
+        if ($this->diagnostics === null) {
+            return;
+        }
+
+        $this->diagnostics->{$name} = max($this->diagnostics->{$name} ?? 0, $value);
     }
 }

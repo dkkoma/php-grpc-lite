@@ -20,6 +20,7 @@ $autoload = 'vendor/autoload.php';
 $durationSec = 1.0;
 $payloadSizes = [0, 100, 1024, 10 * 1024, 100 * 1024];
 $warmupCalls = 3;
+$diagnosticRpc = false;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -55,6 +56,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $warmupCalls = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--warmup-calls=')) {
         $warmupCalls = (int) substr($arg, strlen('--warmup-calls='));
+    } elseif ($arg === '--diagnostic-rpc') {
+        $diagnosticRpc = true;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -78,13 +81,22 @@ foreach ($payloadSizes as $payloadBytes) {
     }
 
     $latenciesNs = [];
+    $diagnosticSeries = [];
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, &$latenciesNs): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $diagnosticRpc, $implementation, &$latenciesNs, &$diagnosticSeries): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
             $callStartNs = hrtime(true);
-            UnaryBenchHelper::call($client, $request);
+            if ($diagnosticRpc && $implementation === 'php-grpc-lite') {
+                $diagnostics = new \stdClass();
+                UnaryBenchHelper::call($client, $request, [
+                    'php_grpc_lite.diagnostics' => $diagnostics,
+                ]);
+                collectDiagnostics($diagnostics, $diagnosticSeries);
+            } else {
+                UnaryBenchHelper::call($client, $request);
+            }
             $latenciesNs[] = hrtime(true) - $callStartNs;
             $calls++;
         } while (hrtime(true) - $startedNs < $deadlineNs);
@@ -100,12 +112,16 @@ foreach ($payloadSizes as $payloadBytes) {
     foreach (UnaryBenchHelper::percentiles($latenciesNs) as $name => $value) {
         $metrics['latency_' . $name . '_ns'] = ['value' => $value, 'unit' => 'ns'];
     }
+    foreach (summarizeDiagnostics($diagnosticSeries) as $name => $metric) {
+        $metrics[$name] = $metric;
+    }
 
     $measurements[] = ResultContract::measurement("payload_unary_{$payloadBytes}b", 'payload-unary', 'BenchUnary', [
         'target' => $target,
         'duration_sec' => $durationSec,
         'payload_bytes' => $payloadBytes,
         'warmup_calls' => $warmupCalls,
+        'diagnostic_rpc' => $diagnosticRpc && $implementation === 'php-grpc-lite',
     ], $metrics);
 }
 
@@ -141,10 +157,61 @@ function writeDocument(string $output, array $document): void
     file_put_contents($output, ResultContract::encode($document));
 }
 
+/**
+ * @param array<string, list<int|float>> $series
+ */
+function collectDiagnostics(\stdClass $diagnostics, array &$series): void
+{
+    foreach (get_object_vars($diagnostics) as $name => $value) {
+        if (!is_int($value) && !is_float($value)) {
+            continue;
+        }
+        $series[$name][] = $value;
+    }
+}
+
+/**
+ * @param array<string, list<int|float>> $series
+ * @return array<string, array{value: int|float, unit: string}>
+ */
+function summarizeDiagnostics(array $series): array
+{
+    $metrics = [];
+    foreach ($series as $name => $values) {
+        if ($values === []) {
+            continue;
+        }
+        $unit = diagnosticUnit($name);
+        foreach (UnaryBenchHelper::percentiles($values) as $percentile => $value) {
+            $metrics["diagnostic_rpc_{$name}_{$percentile}"] = [
+                'value' => $value,
+                'unit' => $unit,
+            ];
+        }
+    }
+
+    return $metrics;
+}
+
+function diagnosticUnit(string $name): string
+{
+    if (str_ends_with($name, '_ns') || str_ends_with($name, '_ns_total') || str_ends_with($name, '_ns_max')) {
+        return 'ns';
+    }
+    if (str_ends_with($name, '_bytes') || str_ends_with($name, '_bytes_total') || str_ends_with($name, '_bytes_max')) {
+        return 'bytes';
+    }
+    if (str_ends_with($name, '_total')) {
+        return 'count';
+    }
+
+    return 'value';
+}
+
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--diagnostic-rpc]\n");
     exit(2);
 }
 

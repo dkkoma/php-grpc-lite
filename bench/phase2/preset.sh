@@ -71,11 +71,13 @@ case "$preset" in
         run_compare throughput-streaming --duration=0.2 --message-count=100 --payload-bytes=100 --warmup-streams=1
         run_compare metadata-header --calls=2
         run_single payload-breakdown --payload-sizes=100,102400 --revs=100
+        run_single payload-unary-diagnostic --duration=0.1 --payload-sizes=102400 --warmup-calls=1
         ;;
     compare)
         run_compare throughput-unary --duration=1 --warmup-calls=3
         run_compare payload-unary --duration=0.5 --payload-sizes=0,100,1024,10240,102400 --warmup-calls=2
         run_single payload-breakdown --payload-sizes=0,100,1024,10240,102400
+        run_single payload-unary-diagnostic --duration=0.5 --payload-sizes=102400 --warmup-calls=2
         run_compare rtt-unary --calls=10 --warmup-calls=2
         run_compare throughput-streaming --duration=0.5 --message-count=100 --payload-bytes=100 --warmup-streams=1
         run_compare large-streaming --message-counts=1000,10000 --payload-bytes=100
@@ -86,6 +88,7 @@ case "$preset" in
         run_compare throughput-unary --duration=5 --warmup-calls=20
         run_compare payload-unary --duration=3 --payload-sizes=0,100,1024,10240,102400 --warmup-calls=10
         run_single payload-breakdown --payload-sizes=0,100,1024,10240,102400
+        run_single payload-unary-diagnostic --duration=3 --payload-sizes=102400 --warmup-calls=10
         run_compare rtt-unary --calls=50 --warmup-calls=10
         run_compare throughput-streaming --duration=5 --message-count=1000 --payload-bytes=100 --warmup-streams=3
         run_compare large-streaming --message-counts=10000,100000 --payload-bytes=100

@@ -25,9 +25,10 @@ final class UnaryBenchHelper
         return $request;
     }
 
-    public static function call(GreeterClient $client, BenchRequest $request): void
+    /** @param array<string, mixed> $options */
+    public static function call(GreeterClient $client, BenchRequest $request, array $options = []): void
     {
-        [$response, $status] = $client->BenchUnary($request)->wait();
+        [$response, $status] = $client->BenchUnary($request, [], $options)->wait();
         if ($status->code !== \Grpc\STATUS_OK || $response === null) {
             throw new \RuntimeException("BenchUnary failed: {$status->details}");
         }
