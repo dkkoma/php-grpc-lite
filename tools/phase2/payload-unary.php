@@ -90,10 +90,14 @@ foreach ($payloadSizes as $payloadBytes) {
             $callStartNs = hrtime(true);
             if ($diagnosticRpc && $implementation === 'php-grpc-lite') {
                 $diagnostics = new \stdClass();
-                UnaryBenchHelper::call($client, $request, [
-                    'php_grpc_lite.diagnostics' => $diagnostics,
-                ]);
+                $details = UnaryBenchHelper::callDetailed(
+                    $client,
+                    $request,
+                    ['x-bench-server-timing' => ['1']],
+                    ['php_grpc_lite.diagnostics' => $diagnostics],
+                );
                 collectDiagnostics($diagnostics, $diagnosticSeries);
+                collectServerTiming($details['trailing_metadata'], $diagnosticSeries);
             } else {
                 UnaryBenchHelper::call($client, $request);
             }
@@ -167,6 +171,25 @@ function collectDiagnostics(\stdClass $diagnostics, array &$series): void
             continue;
         }
         $series[$name][] = $value;
+    }
+}
+
+/**
+ * @param array<string, list<string>> $trailers
+ * @param array<string, list<int|float>> $series
+ */
+function collectServerTiming(array $trailers, array &$series): void
+{
+    foreach ([
+        'x-bench-server-handler-ns' => 'server_handler_ns',
+        'x-bench-server-payload-alloc-ns' => 'server_payload_alloc_ns',
+        'x-bench-server-payload-bytes' => 'server_payload_bytes',
+    ] as $header => $metric) {
+        $value = $trailers[$header][0] ?? null;
+        if ($value === null || !is_numeric($value)) {
+            continue;
+        }
+        $series[$metric][] = (int) $value;
     }
 }
 

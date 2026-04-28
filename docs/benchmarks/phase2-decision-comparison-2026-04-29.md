@@ -51,6 +51,25 @@ Phase 2 の最適化判断に使う長めの比較 run。`bench/phase2/preset.sh
 
 100KB tail は `curl_exec` / curl total time 内に集中している。body append、frame parse、payload slice、protobuf deserialize は tail の主因ではない。
 
+追加で `x-bench-server-timing: 1` を送った場合のみ、Go test-server が handler duration と payload allocation duration を trailers に載せるようにした。これにより `curl starttransfer` の内訳として、server handler 側の tail も観測できる。
+
+```bash
+BENCH_TAG=phase2-server-timing-20260429 ./bench/phase2/run.sh payload-unary-diagnostic --duration=3 --payload-sizes=102400 --warmup-calls=10
+```
+
+| metric | p50 | p99 |
+|---|---:|---:|
+| total unary latency | 93.0μs | 2028.1μs |
+| `curl_exec` | 83.0μs | 1960.5μs |
+| curl starttransfer | 37.0μs | 1684.0μs |
+| server handler | 2.4μs | 585.3μs |
+| server payload allocation | 0.9μs | 563.6μs |
+| body append total | - | 9.4μs |
+| payload slice | - | 5.0μs |
+| deserialize | - | 7.5μs |
+
+この run では `curl starttransfer` p99 の一部は Go test-server 側の 100KB payload allocation tail で説明できる。ただし `starttransfer` p99 1684μs に対して server handler p99 585μs なので、残りは gRPC-Go marshal / HTTP/2 write、libcurl receive、または Docker scheduler の範囲に残る。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
@@ -91,9 +110,10 @@ metadata が多いケースでは ext-grpc の p50 が優位。header parse / me
 
 | 対象 | 判断 |
 |---|---|
-| curl handle / connection reuse | 次の実装候補。cold / RTT / 100KB tail の解釈に直結する |
+| curl handle / connection reuse | 接続確立は主因ではなさそう。reuse 済み前提で cold / RTT の観測線として扱う |
 | payload decode / copy | 現状の主犯ではない。C 化候補としての優先度は下げる |
+| Go test-server payload allocation | 100KB tail の一部を説明する。client 実装改善対象ではなく、ベンチ解釈上の注意点 |
 | streaming hot path | 現状は大きな弱点ではない。改善より回帰監視を優先 |
 | metadata path | 多 metadata で固定費は見える。payload tail と reuse の後に見る |
 
-次は curl handle reuse を実装し、同じ `phase2-decision` 相当の `payload-unary-diagnostic` / `rtt-unary` / `payload-unary` を再実行して差分を見る。
+次は 100KB unary tail を client 実装の問題として扱いすぎないよう、server payload を事前生成した場合の比較、または test-server 側の payload allocation を固定した条件を作って再測する。

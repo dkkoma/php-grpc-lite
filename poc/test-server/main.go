@@ -49,6 +49,8 @@ func (s *server) SayManyHellos(req *pb.HelloRequest, stream pb.Greeter_SayManyHe
 }
 
 func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.BenchReply, error) {
+	started := time.Now()
+	serverTiming := benchServerTimingEnabled(ctx)
 	if err := benchErrorFromContext(ctx); err != nil {
 		return nil, err
 	}
@@ -57,7 +59,26 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 	if d := req.GetServerDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
-	return &pb.BenchReply{Payload: make([]byte, req.GetPayloadBytes())}, nil
+	payloadStarted := time.Now()
+	payload := make([]byte, req.GetPayloadBytes())
+	payloadAllocDuration := time.Since(payloadStarted)
+	if serverTiming {
+		grpc.SetTrailer(ctx, metadata.Pairs(
+			"x-bench-server-handler-ns", strconv.FormatInt(time.Since(started).Nanoseconds(), 10),
+			"x-bench-server-payload-alloc-ns", strconv.FormatInt(payloadAllocDuration.Nanoseconds(), 10),
+			"x-bench-server-payload-bytes", strconv.Itoa(len(payload)),
+		))
+	}
+	return &pb.BenchReply{Payload: payload}, nil
+}
+
+func benchServerTimingEnabled(ctx context.Context) bool {
+	incoming, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	values := incoming.Get("x-bench-server-timing")
+	return len(values) > 0 && values[0] == "1"
 }
 
 func benchErrorFromContext(ctx context.Context) error {

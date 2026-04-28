@@ -28,10 +28,30 @@ final class UnaryBenchHelper
     /** @param array<string, mixed> $options */
     public static function call(GreeterClient $client, BenchRequest $request, array $options = []): void
     {
-        [$response, $status] = $client->BenchUnary($request, [], $options)->wait();
+        self::callDetailed($client, $request, [], $options);
+    }
+
+    /**
+     * @param array<string, string|list<string>> $metadata
+     * @param array<string, mixed> $options
+     * @return array{metadata: array<string, list<string>>, trailing_metadata: array<string, list<string>>}
+     */
+    public static function callDetailed(
+        GreeterClient $client,
+        BenchRequest $request,
+        array $metadata = [],
+        array $options = [],
+    ): array {
+        $call = $client->BenchUnary($request, $metadata, $options);
+        [$response, $status] = $call->wait();
         if ($status->code !== \Grpc\STATUS_OK || $response === null) {
             throw new \RuntimeException("BenchUnary failed: {$status->details}");
         }
+
+        return [
+            'metadata' => $call->getMetadata(),
+            'trailing_metadata' => $call->getTrailingMetadata(),
+        ];
     }
 
     /**
