@@ -160,9 +160,10 @@ baseline 更新時のルール:
 - Spanner emulator は実機互換検証には使うが、性能比較では Go test-server を優先する。
 - cold と warm を混ぜない。request 内で Channel を再利用できる workload は warm、request ごとに 1 RPC の workload は cold を参照する。
 
-## Phase 1 の残り
+## Phase 1 の完了
 
-Phase 1 のベンチ追加は完了。残りは運用化だけに限定する。
+Phase 1 は 2026-04-28 時点で完了扱いとする。ローカルで再現可能な通常比較、公式 ext-grpc 比較、php-grpc-lite 自身の regression baseline check/update までを Phase 1 のスコープとする。
 
-- CI で回すスモークベンチのしきい値を決める。
-- CI 上で `./bench/baseline.sh check` をどのタイミングで実行するか決める。
+CI 上で `./bench/baseline.sh check` をどのタイミングで実行するかは、Phase 1 の残作業ではなく通常の保守運用タスクとして扱う。
+
+Phase 2 のスコープ決定に必要な追加計測は `docs/benchmarks/measurement-plan-phase2.md` にまとめる。

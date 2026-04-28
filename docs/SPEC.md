@@ -61,8 +61,8 @@
 | Phase | 内容 | 完了条件 | 状態 |
 |---|---|---|---|
 | 0 | 純 PHP PoC。libcurl + ext-curl で HTTP/2 を喋り、gRPC framing を PHP で実装。`Grpc\` 互換 API を提供 | unary と server streaming の sample が動く | **2026-04-25 完了** |
-| 1 | ベンチマーク基盤整備 | レイテンシ/スループット/メモリ計測を CI で回せる | **進行中**。Docker ローカル実行・ログ保存・JSON/TSV 抽出・baseline check/update・ext-grpc 比較入口は整備済み。CI 実行設定は未着手 |
-| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | 未着手 |
+| 1 | ベンチマーク基盤整備 | レイテンシ/スループット/メモリ計測を継続比較できる | **2026-04-28 完了**。Docker ローカル実行・ログ保存・JSON/TSV 抽出・baseline check/update・ext-grpc 比較入口を整備済み |
+| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | スコープ決定前。`docs/benchmarks/measurement-plan-phase2.md` の多軸計測で候補を選ぶ |
 | 3 | nghttp2 直接呼び出しに置き換え(必要と判断された場合のみ) | libcurl 依存除去 | 未着手 |
 
 各フェーズの遷移はベンチマーク結果で判断する。Phase 3 は未確定(libcurl のままで十分かもしれない)。
@@ -216,3 +216,4 @@
 - **2026-04-27**: `docs/code-reading-guide.md` を現行実装に合わせて更新。対象 commit を Phase 1 時点へ進め、server streaming の buffer offset / pending offset 実装、Channel-scoped curl handle reuse、mTLS/Spanner 検証、ベンチ基盤への参照を反映した。あわせて gRPC ライブラリとしての自己レビューを追加し、現状は非圧縮 unary + server streaming の最小実装として妥当だが、trailers-only error、`grpc-message` percent decode、HTTP status/content-type validation、client-side deadline、圧縮対応、binary metadata 互換は未達として明示した。
 - **2026-04-28**: Phase 1 のベンチ追加を完了扱いに整理。既存の `cold` / `warm` / `stream` / `stream-smoke` / `hot-path` に加え、実用性能軸として `stream-slow`、`metadata`、`tls` を追加し、php-grpc-lite vs 公式 ext-grpc の実測結果を `docs/benchmarks/` に記録した。手元運用・継続比較基盤は完成とし、残タスクは CI で回す smoke の選定、regression baseline 運用、`mem_peak` の回帰判定に限定する。
 - **2026-04-28**: regression baseline 運用入口として `bench/baseline.sh` を追加。`check` は `cold` / `warm` / `stream-smoke` の php-grpc-lite 側だけを実行して `bench/baselines/regression.json` と比較し、`mode_ns` と `mem_peak_bytes` の回帰を判定する。`update` は意図した性能変化や環境変更を受け入れる時だけ現在値から baseline を更新する。Phase 1 の残タスクは CI で `check` をどのタイミングで回すかの決定に絞る。
+- **2026-04-28**: Phase 1 を完了扱いに変更。CI 実行設定は通常の保守運用タスクとして残すが、Phase 1 の完了条件はローカルで再現可能な継続比較、公式 ext-grpc 比較、php-grpc-lite 自身の regression baseline 運用が揃った時点で満たしたと判断する。Phase 2 は C 拡張化へ直接入らず、`docs/benchmarks/measurement-plan-phase2.md` の多軸計測で persistent pool / per-frame streaming / per-byte decode / header parser などの優先順位を決める。
