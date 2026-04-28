@@ -46,9 +46,22 @@ Phase 2 の探索ベンチは、通常比較入口の `bench/run.sh` と regress
 ```bash
 ./bench/phase2/run.sh contract-smoke
 ./bench/phase2/run.sh cpu-memory-smoke
+./bench/phase2/run.sh throughput-unary
+./bench/phase2/run.sh rtt-unary
+```
+
+suite 固有の引数は suite 名の後ろに渡せる。
+
+```bash
+./bench/phase2/run.sh throughput-unary --duration=5 --payload-bytes=100
+./bench/phase2/run.sh rtt-unary --calls=30 --payload-bytes=100
 ```
 
 Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。schema は `docs/benchmarks/schemas/phase2-result-v1.md` を参照する。探索結果は `bench/baselines/regression.json` に混ぜない。
+
+`throughput-unary` は単一 PHP process / concurrency=1 で `BenchUnary` を duration 中に回し続け、calls/sec と p50/p95/p99 を保存する。
+
+`rtt-unary` は `toxiproxy` service を起動し、direct と downstream latency 1 / 3 / 5 ms の unary を測る。これは同一ホスト上での探索用近似であり、実ネットワーク RTT の完全再現ではない。
 
 ## 実用性能として押さえる軸
 

@@ -20,6 +20,9 @@ services:
   spanner-emulator:
     image: gcr.io/cloud-spanner-emulator/emulator
 
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:latest
+
   # Comparison environment: same workspace, same servers, but with the
   # official ext-grpc loaded. Our PSR-4 Grpc\* classes become dormant and
   # all calls dispatch through the C extension.

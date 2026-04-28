@@ -46,7 +46,7 @@ Phase 2 の探索ベンチは、PHPBench aggregate JSON とは別に以下の co
 |---|---|
 | `schema` | contract 名。互換性を壊す場合は suffix を上げる |
 | `generated_at` | UTC の生成時刻 |
-| `suite` | runner suite 名。例: `contract-smoke`, `cpu-memory-smoke`, `rtt-unary` |
+| `suite` | runner suite 名。例: `contract-smoke`, `cpu-memory-smoke`, `throughput-unary`, `rtt-unary` |
 | `implementation` | `php-grpc-lite` または `ext-grpc` |
 | `environment` | 実行環境。比較時の補助情報で、判定 key にはしない |
 | `measurements` | 計測行の配列 |
