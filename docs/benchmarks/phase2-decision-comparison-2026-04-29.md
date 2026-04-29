@@ -138,6 +138,28 @@ BENCH_TAG=phase2-server-stats-20260429 ./bench/phase2/run.sh payload-unary-diagn
 
 この追加分解で、normal 条件では payload allocation 後にも server 側の marshal / send path に p99 約690μsの tail が乗ることが見える。cached 条件では handler end が p99 8.2μs、`OutPayload` が p99 354.8μsなので、server 側 gRPC transport までで約350μs程度の tail が残る。client の `curl starttransfer` p99 926μsとの差分は、client request が server `Begin` に届くまでの時間、server `OutPayload` 後に実際の first byte が client に届くまでの HTTP/2 / Docker scheduling / libcurl receive の複合であり、PHP userland の body parse / protobuf decode ではない。
 
+client 側の libcurl event を見るため、`payload-unary-diagnostic*` に少数 call 限定の debug trace 出力も追加した。これは latency 計測値を歪めるため、通常比較には使わず、event 順序の確認だけに使う。
+
+```bash
+BENCH_TAG=phase2-curl-trace-smoke-20260429 ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=0.2 --payload-sizes=102400 --warmup-calls=3 --curl-trace-output=var/bench-results/phase2-curl-trace-smoke-20260429.log --curl-trace-calls=2
+```
+
+cached 100KB の trace では、2 call とも `Re-using existing http: connection` が出ており、connection reuse は libcurl trace 上でも確認できる。代表 call では HTTP/2 stream open、request headers、9B request body upload、response headers、100KB response DATA、trailers の順序で到着している。
+
+| event | call 2 elapsed |
+|---|---:|
+| reuse existing connection | 14.2μs |
+| HTTP/2 stream open | 23.1μs |
+| request headers out | 67.7μs |
+| request body out | 77.0μs |
+| upload complete | 80.1μs |
+| response `HTTP/2 200` | 140.5μs |
+| first response DATA | 155.4μs |
+| trailers start | 228.6μs |
+| connection kept alive | 287.4μs |
+
+この trace は tail sample ではないが、残区間を読む上で重要な確認点を与える。first byte 前に余分な connection setup はなく、100KB body は複数の `DATA_IN` callback に分割される。server stats trailer には `OutPayload` も含まれており、client trace と server stats を同じ call のイベント列として読める。ただし libcurl debug callback 自体の overhead があるため、p99 の定量判断は通常の `payload-unary-diagnostic*` JSON を使う。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |

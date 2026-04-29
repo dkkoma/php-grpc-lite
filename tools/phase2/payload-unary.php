@@ -22,6 +22,8 @@ $payloadSizes = [0, 100, 1024, 10 * 1024, 100 * 1024];
 $warmupCalls = 3;
 $diagnosticRpc = false;
 $serverCachedPayload = false;
+$curlTraceOutput = null;
+$curlTraceCalls = 0;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -61,6 +63,14 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $diagnosticRpc = true;
     } elseif ($arg === '--server-cached-payload') {
         $serverCachedPayload = true;
+    } elseif ($arg === '--curl-trace-output') {
+        $curlTraceOutput = $args[++$argIndex] ?? null;
+    } elseif (str_starts_with($arg, '--curl-trace-output=')) {
+        $curlTraceOutput = substr($arg, strlen('--curl-trace-output='));
+    } elseif ($arg === '--curl-trace-calls') {
+        $curlTraceCalls = (int) ($args[++$argIndex] ?? 0);
+    } elseif (str_starts_with($arg, '--curl-trace-calls=')) {
+        $curlTraceCalls = (int) substr($arg, strlen('--curl-trace-calls='));
     } else {
         usage("unexpected argument: $arg");
     }
@@ -72,8 +82,24 @@ if ($suite === '' || $implementation === '' || $target === '' || $autoload === '
 if ($durationSec <= 0 || $payloadSizes === [] || $warmupCalls < 0) {
     usage('duration, payload-sizes, and warmup-calls must be valid');
 }
+if ($curlTraceCalls < 0) {
+    usage('curl-trace-calls must be valid');
+}
 
 requireAutoload($autoload);
+
+$curlTraceHandle = null;
+if ($curlTraceOutput !== null && $curlTraceOutput !== '') {
+    $traceDir = dirname($curlTraceOutput);
+    if (!is_dir($traceDir)) {
+        mkdir($traceDir, 0777, true);
+    }
+    $curlTraceHandle = fopen($curlTraceOutput, 'wb');
+    if ($curlTraceHandle === false) {
+        throw new \RuntimeException("failed to open curl trace output: $curlTraceOutput");
+    }
+    fwrite($curlTraceHandle, "# curl debug trace; timing is relative to call option creation; latency is diagnostic only\n");
+}
 
 $client = UnaryBenchHelper::client($target);
 $measurements = [];
@@ -85,19 +111,25 @@ foreach ($payloadSizes as $payloadBytes) {
 
     $latenciesNs = [];
     $diagnosticSeries = [];
+    $curlTraceWritten = 0;
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $diagnosticRpc, $implementation, $serverCachedPayload, &$latenciesNs, &$diagnosticSeries): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $diagnosticRpc, $implementation, $serverCachedPayload, $payloadBytes, $curlTraceHandle, $curlTraceCalls, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
             $callStartNs = hrtime(true);
             if ($diagnosticRpc && $implementation === 'php-grpc-lite') {
                 $diagnostics = new \stdClass();
+                $options = ['php_grpc_lite.diagnostics' => $diagnostics];
+                if ($curlTraceHandle !== null && $curlTraceWritten < $curlTraceCalls) {
+                    $curlTraceWritten++;
+                    $options['php_grpc_lite.curl_trace'] = curlTraceCallback($curlTraceHandle, $payloadBytes, $curlTraceWritten);
+                }
                 $details = UnaryBenchHelper::callDetailed(
                     $client,
                     $request,
                     diagnosticMetadata($serverCachedPayload),
-                    ['php_grpc_lite.diagnostics' => $diagnostics],
+                    $options,
                 );
                 collectDiagnostics($diagnostics, $diagnosticSeries);
                 collectServerTiming($details['trailing_metadata'], $diagnosticSeries);
@@ -130,11 +162,16 @@ foreach ($payloadSizes as $payloadBytes) {
         'warmup_calls' => $warmupCalls,
         'diagnostic_rpc' => $diagnosticRpc && $implementation === 'php-grpc-lite',
         'server_cached_payload' => $serverCachedPayload,
+        'curl_trace_output' => $curlTraceOutput,
+        'curl_trace_calls' => $curlTraceCalls,
     ], $metrics);
 }
 
 $document = ResultContract::document($suite, $implementation, $measurements);
 writeDocument($output, $document);
+if (is_resource($curlTraceHandle)) {
+    fclose($curlTraceHandle);
+}
 
 printf("%-22s %10s %12s %12s %12s\n", 'scenario', 'calls', 'calls/s', 'p50', 'p99');
 printf("%'-72s\n", '');
@@ -176,6 +213,56 @@ function collectDiagnostics(\stdClass $diagnostics, array &$series): void
         }
         $series[$name][] = $value;
     }
+}
+
+/**
+ * @param resource $handle
+ * @return callable(int, string, int): void
+ */
+function curlTraceCallback($handle, int $payloadBytes, int $callNumber): callable
+{
+    $startedNs = hrtime(true);
+    fwrite($handle, sprintf("CALL\tpayload_bytes=%d\tcall=%d\n", $payloadBytes, $callNumber));
+
+    return static function (int $type, string $data, int $nowNs) use ($handle, $payloadBytes, $callNumber, $startedNs): void {
+        fwrite($handle, sprintf(
+            "TRACE\tpayload_bytes=%d\tcall=%d\telapsed_us=%.1f\ttype=%s\tbytes=%d\t%s\n",
+            $payloadBytes,
+            $callNumber,
+            ($nowNs - $startedNs) / 1_000,
+            curlTraceTypeName($type),
+            strlen($data),
+            curlTraceDataSummary($type, $data),
+        ));
+    };
+}
+
+function curlTraceTypeName(int $type): string
+{
+    return match ($type) {
+        \CURLINFO_TEXT => 'text',
+        \CURLINFO_HEADER_IN => 'header_in',
+        \CURLINFO_HEADER_OUT => 'header_out',
+        \CURLINFO_DATA_IN => 'data_in',
+        \CURLINFO_DATA_OUT => 'data_out',
+        \CURLINFO_SSL_DATA_IN => 'ssl_data_in',
+        \CURLINFO_SSL_DATA_OUT => 'ssl_data_out',
+        default => "type_$type",
+    };
+}
+
+function curlTraceDataSummary(int $type, string $data): string
+{
+    if ($type === \CURLINFO_DATA_IN || $type === \CURLINFO_DATA_OUT || $type === \CURLINFO_SSL_DATA_IN || $type === \CURLINFO_SSL_DATA_OUT) {
+        return 'hex_prefix=' . bin2hex(substr($data, 0, 32));
+    }
+
+    $text = preg_replace('/[^\P{C}\t]/u', '.', $data);
+    if (!is_string($text)) {
+        $text = '';
+    }
+    $text = str_replace(["\r", "\n"], ['\\r', '\\n'], $text);
+    return 'text=' . substr($text, 0, 500);
 }
 
 /**
@@ -261,7 +348,7 @@ function diagnosticUnit(string $name): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--diagnostic-rpc] [--server-cached-payload]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--diagnostic-rpc] [--server-cached-payload] [--curl-trace-output=var/bench-results/trace.log --curl-trace-calls=3]\n");
     exit(2);
 }
 

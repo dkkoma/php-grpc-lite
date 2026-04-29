@@ -63,6 +63,7 @@ class UnaryCall extends AbstractCall
             CURLOPT_HEADERFUNCTION => $this->onHeader(...),
             CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),
         ]);
+        $this->applyCurlTraceOptions($this->ch);
         $this->applyTlsOptions($this->ch);
         $this->applyTimeoutOptions($this->ch);
     }
@@ -262,6 +263,22 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnosticMax('body_chunk_bytes_max', $chunkBytes);
         $this->recordDiagnosticMax('body_append_ns_max', $appendNs);
         return $chunkBytes;
+    }
+
+    private function applyCurlTraceOptions(\CurlHandle $ch): void
+    {
+        $trace = $this->options['php_grpc_lite.curl_trace'] ?? null;
+        if (!is_callable($trace)) {
+            return;
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_VERBOSE => true,
+            CURLOPT_DEBUGFUNCTION => static function (\CurlHandle $handle, int $type, string $data) use ($trace): int {
+                $trace($type, $data, hrtime(true));
+                return 0;
+            },
+        ]);
     }
 
     private function recordDiagnostic(string $name, int|float $value, bool $add = false): void
