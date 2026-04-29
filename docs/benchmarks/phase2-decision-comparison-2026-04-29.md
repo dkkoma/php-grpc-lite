@@ -221,6 +221,16 @@ BENCH_TAG=phase2-chunk-list-1mb-1000-20260429 BENCH_IMPLEMENTATION=php-grpc-lite
 
 100KB では total はほぼ横ばいで、callback 内 append は軽くなるが `implode()` 分が後段に移るだけに近い。1MB では body append p99 が 48.0μs → 13.4μs に下がり、assemble p99 33.1μs を足しても同程度からやや改善、total p99 も 3659.2μs → 3541.1μs と小さく下がった。改善幅は限定的だが、低リスクで payload が大きい場合の累積コピーを避けられるため、採用する価値はある。
 
+同じ観点で server streaming の receive buffer も確認した。`bufferOffset` が buffer 全体を消費した場合は `substr($buffer, $bufferOffset)` せず空文字へ戻すことで、全消費済み buffer の不要コピーを避ける。metadata header parse の `explode` → `strpos/substr` 化も試したが、metadata-heavy 診断で改善が見えなかったため採用しない。
+
+```bash
+BENCH_TAG=phase2-stream-buffer-20260429 ./bench/phase2/run.sh throughput-streaming --duration=2 --message-count=1000 --payload-bytes=100 --warmup-streams=2
+```
+
+| scenario | msg/s | p50 stream | p99 stream |
+|---|---:|---:|---:|
+| throughput-streaming 1000x100B | 705312.9 | 1300.9μs | 3179.7μs |
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |

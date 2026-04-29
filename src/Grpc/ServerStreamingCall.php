@@ -275,7 +275,9 @@ class ServerStreamingCall extends AbstractCall
         }
 
         if ($this->bufferOffset > 0) {
-            $this->buffer = substr($this->buffer, $this->bufferOffset);
+            $this->buffer = $this->bufferOffset === $bufferLength
+                ? ''
+                : substr($this->buffer, $this->bufferOffset);
             $this->bufferOffset = 0;
         }
         return strlen($chunk);
