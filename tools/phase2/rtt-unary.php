@@ -23,6 +23,7 @@ $payloadBytes = 100;
 $serverDelayMs = 0;
 $calls = 20;
 $warmupCalls = 3;
+$diagnosticRpc = false;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -66,6 +67,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $warmupCalls = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--warmup-calls=')) {
         $warmupCalls = (int) substr($arg, strlen('--warmup-calls='));
+    } elseif ($arg === '--diagnostic-rpc') {
+        $diagnosticRpc = true;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -121,6 +124,7 @@ foreach ($proxyCases as $proxyCase) {
         $proxyCase,
         $payloadBytes,
         $serverDelayMs,
+        $diagnosticRpc && $implementation === 'php-grpc-lite',
     );
 
     $measurements[] = runMode(
@@ -133,6 +137,7 @@ foreach ($proxyCases as $proxyCase) {
         $proxyCase,
         $payloadBytes,
         $serverDelayMs,
+        $diagnosticRpc && $implementation === 'php-grpc-lite',
     );
 }
 
@@ -173,13 +178,23 @@ function runMode(
     array $proxyCase,
     int $payloadBytes,
     int $serverDelayMs,
+    bool $diagnosticRpc,
 ): array {
     $latenciesNs = [];
-    $sample = ResourceSampler::measure(static function () use ($clientFactory, $request, $calls, &$latenciesNs): int {
+    $diagnosticSeries = [];
+    $sample = ResourceSampler::measure(static function () use ($clientFactory, $request, $calls, $diagnosticRpc, &$latenciesNs, &$diagnosticSeries): int {
         for ($call = 0; $call < $calls; $call++) {
             $client = $clientFactory();
             $startedNs = hrtime(true);
-            UnaryBenchHelper::call($client, $request);
+            if ($diagnosticRpc) {
+                $diagnostics = new \stdClass();
+                UnaryBenchHelper::call($client, $request, [
+                    'php_grpc_lite.diagnostics' => $diagnostics,
+                ]);
+                collectDiagnostics($diagnostics, $diagnosticSeries);
+            } else {
+                UnaryBenchHelper::call($client, $request);
+            }
             $latenciesNs[] = hrtime(true) - $startedNs;
             unset($client);
         }
@@ -220,9 +235,59 @@ function runMode(
             'server_delay_ms' => $serverDelayMs,
             'toxiproxy_downstream_latency_ms' => $proxyCase['downstream_latency_ms'],
             'latency_model' => $proxyCase['proxy'] === null ? 'direct' : 'toxiproxy downstream latency only',
+            'diagnostic_rpc' => $diagnosticRpc,
         ],
-        $metrics,
+        $metrics + summarizeDiagnostics($diagnosticSeries),
     );
+}
+
+/**
+ * @param array<string, list<int|float>> $series
+ */
+function collectDiagnostics(\stdClass $diagnostics, array &$series): void
+{
+    foreach (get_object_vars($diagnostics) as $name => $value) {
+        if (!is_int($value) && !is_float($value)) {
+            continue;
+        }
+        $series[$name][] = $value;
+    }
+}
+
+/**
+ * @param array<string, list<int|float>> $series
+ * @return array<string, array{value: int|float, unit: string}>
+ */
+function summarizeDiagnostics(array $series): array
+{
+    $metrics = [];
+    foreach ($series as $name => $values) {
+        if ($values === []) {
+            continue;
+        }
+        $unit = diagnosticUnit($name);
+        foreach (UnaryBenchHelper::percentiles($values) as $percentile => $value) {
+            $metrics["diagnostic_rpc_{$name}_{$percentile}"] = [
+                'value' => $value,
+                'unit' => $unit,
+            ];
+        }
+    }
+    return $metrics;
+}
+
+function diagnosticUnit(string $name): string
+{
+    if (str_ends_with($name, '_ns') || str_ends_with($name, '_ns_total') || str_ends_with($name, '_ns_max')) {
+        return 'ns';
+    }
+    if (str_ends_with($name, '_bytes') || str_ends_with($name, '_bytes_total') || str_ends_with($name, '_bytes_max')) {
+        return 'bytes';
+    }
+    if (str_ends_with($name, '_total')) {
+        return 'count';
+    }
+    return 'value';
 }
 
 function configureProxy(string $adminUrl, string $name, string $listen, string $upstream, int $latencyMs): void
@@ -277,7 +342,7 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(
         STDERR,
-        "Usage: php tools/phase2/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=20] [--payload-bytes=100]\n",
+        "Usage: php tools/phase2/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=20] [--payload-bytes=100] [--diagnostic-rpc]\n",
     );
     exit(2);
 }

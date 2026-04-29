@@ -10,6 +10,7 @@
 #   ./bench/phase2/run.sh cpu-memory-smoke
 #   ./bench/phase2/run.sh throughput-unary
 #   ./bench/phase2/run.sh rtt-unary
+#   ./bench/phase2/run.sh rtt-unary-diagnostic
 #   ./bench/phase2/run.sh throughput-streaming
 #   ./bench/phase2/run.sh large-streaming
 #   ./bench/phase2/run.sh payload-unary
@@ -88,6 +89,14 @@ case "$suite" in
             "phase2-$suite-$timestamp-$implementation.json" \
             tools/phase2/rtt-unary.php
         ;;
+    rtt-unary-diagnostic)
+        docker compose up -d toxiproxy
+        run_phase2_php \
+            "Phase 2 RTT unary RPC diagnostic" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/rtt-unary.php \
+            --diagnostic-rpc
+        ;;
     throughput-streaming)
         run_phase2_php \
             "Phase 2 streaming throughput" \
@@ -143,7 +152,7 @@ case "$suite" in
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-breakdown|payload-streaming|metadata-header]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-breakdown|payload-streaming|metadata-header]
 EOF
         exit 2
         ;;
