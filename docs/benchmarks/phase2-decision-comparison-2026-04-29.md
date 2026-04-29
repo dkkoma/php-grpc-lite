@@ -186,6 +186,25 @@ BENCH_TAG=phase2-client-breakdown-20260429 ./bench/phase2/run.sh payload-unary-d
 
 この sweep では、クライアントが直接改善できる PHP userland work は 1MB でも p99 数十μsに収まる。payload size に比例するのは body append、payload slice、protobuf deserialize だが、1MB でも合計は概ね 100μs未満で、total p99 3.66ms の主因ではない。100KB / 1MB の tail は `curl_exec` 内、特に first byte 前と download 後半に残る。connection reuse は全 payload で `num_connects=0` なので、次の効率化候補は payload copy の C 化ではなく、metadata path の局所最適化、body buffer のコピー削減が小さい改善として成立するか、または libcurl / HTTP/2 境界を変更する大きな設計判断になる。
 
+同じ server stats を ext-grpc 側にも送れるようにし、1MB cached payload で比較した。ext-grpc では php-grpc-lite 固有の curl / userland diagnostics は取れないが、total latency と server `OutPayload` は同じ trailers から比較できる。
+
+```bash
+BENCH_TAG=phase2-ext-client-boundary-20260429 BENCH_IMPLEMENTATION=php-grpc-lite ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=5 --max-calls=1000 --payload-sizes=1048576 --warmup-calls=10
+BENCH_TAG=phase2-ext-client-boundary-20260429 BENCH_IMPLEMENTATION=ext-grpc ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=5 --max-calls=1000 --payload-sizes=1048576 --warmup-calls=10
+```
+
+| metric | php-grpc-lite | ext-grpc |
+|---|---:|---:|
+| calls/sec | 1261.8 | 1760.1 |
+| total p50 | 590.3μs | 401.2μs |
+| total p99 | 3907.0μs | 2488.1μs |
+| server handler end p99 | 44.5μs | 32.6μs |
+| server OutPayload p99 | 2282.1μs | 2047.9μs |
+| server payload allocation p99 | 2.1μs | 1.8μs |
+| response wire bytes p50 | 1048585B | 1048585B |
+
+この比較では、server 側の cached payload / `OutPayload` は両実装で近く、total p99 の差は約1.42msある。p99 同士の差分なので同一 request の厳密な内訳ではないが、1MB payload では server-side だけで php-grpc-lite の遅さを説明するのは弱い。ext-grpc が同じ server / 同じ payload で低い total p99 を出しているため、差分は client stack、つまり libcurl/nghttp2 receive、PHP callback 境界、buffering、または ext-grpc C-core の受信経路との差として扱うのが妥当。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |

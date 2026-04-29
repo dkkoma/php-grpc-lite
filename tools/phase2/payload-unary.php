@@ -123,10 +123,13 @@ foreach ($payloadSizes as $payloadBytes) {
         $calls = 0;
         do {
             $callStartNs = hrtime(true);
-            if ($diagnosticRpc && $implementation === 'php-grpc-lite') {
+            if ($diagnosticRpc) {
                 $diagnostics = new \stdClass();
-                $options = ['php_grpc_lite.diagnostics' => $diagnostics];
-                if ($curlTraceHandle !== null && $curlTraceWritten < $curlTraceCalls) {
+                $options = [];
+                if ($implementation === 'php-grpc-lite') {
+                    $options['php_grpc_lite.diagnostics'] = $diagnostics;
+                }
+                if ($implementation === 'php-grpc-lite' && $curlTraceHandle !== null && $curlTraceWritten < $curlTraceCalls) {
                     $curlTraceWritten++;
                     $options['php_grpc_lite.curl_trace'] = curlTraceCallback($curlTraceHandle, $payloadBytes, $curlTraceWritten);
                 }
@@ -136,7 +139,9 @@ foreach ($payloadSizes as $payloadBytes) {
                     diagnosticMetadata($serverCachedPayload),
                     $options,
                 );
-                collectDiagnostics($diagnostics, $diagnosticSeries);
+                if ($implementation === 'php-grpc-lite') {
+                    collectDiagnostics($diagnostics, $diagnosticSeries);
+                }
                 collectServerTiming($details['trailing_metadata'], $diagnosticSeries);
             } else {
                 UnaryBenchHelper::call($client, $request);
@@ -166,7 +171,8 @@ foreach ($payloadSizes as $payloadBytes) {
         'payload_bytes' => $payloadBytes,
         'warmup_calls' => $warmupCalls,
         'max_calls' => $maxCalls,
-        'diagnostic_rpc' => $diagnosticRpc && $implementation === 'php-grpc-lite',
+        'diagnostic_rpc' => $diagnosticRpc,
+        'client_internal_diagnostics' => $diagnosticRpc && $implementation === 'php-grpc-lite',
         'server_cached_payload' => $serverCachedPayload,
         'curl_trace_output' => $curlTraceOutput,
         'curl_trace_calls' => $curlTraceCalls,
