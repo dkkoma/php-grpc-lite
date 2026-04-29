@@ -160,6 +160,32 @@ cached 100KB の trace では、2 call とも `Re-using existing http: connectio
 
 この trace は tail sample ではないが、残区間を読む上で重要な確認点を与える。first byte 前に余分な connection setup はなく、100KB body は複数の `DATA_IN` callback に分割される。server stats trailer には `OutPayload` も含まれており、client trace と server stats を同じ call のイベント列として読める。ただし libcurl debug callback 自体の overhead があるため、p99 の定量判断は通常の `payload-unary-diagnostic*` JSON を使う。
 
+client 実装の効率化判断に使うため、cached payload の size sweep を取り直した。ここでは Go test-server 側の payload allocation を外し、php-grpc-lite が制御できる userland work と、libcurl 境界に残る work を分ける。1MB payload まで含めるため、test-server の cached payload に 1MB を追加し、runner は `--max-calls=1000` で sample 数を固定した。
+
+```bash
+BENCH_TAG=phase2-client-breakdown-20260429 ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=5 --max-calls=1000 --payload-sizes=0,100,1024,10240,102400,1048576 --warmup-calls=10
+```
+
+| payload | total p99 | curl exec p99 | starttransfer p99 | download after starttransfer p99 | server OutPayload p99 | body chunks p99 | max chunk p50 | connects p99 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0B | 404.9μs | 395.1μs | 345.0μs | 36.0μs | 17.6μs | 1 | 5B | 0 |
+| 100B | 285.5μs | 272.9μs | 187.0μs | 33.0μs | 15.2μs | 1 | 107B | 0 |
+| 1KB | 307.2μs | 296.8μs | 159.0μs | 37.0μs | 15.8μs | 1 | 1032B | 0 |
+| 10KB | 341.4μs | 332.0μs | 305.0μs | 33.0μs | 24.2μs | 1 | 10248B | 0 |
+| 100KB | 1175.8μs | 1162.1μs | 836.0μs | 521.0μs | 364.5μs | 13 | 16375B | 0 |
+| 1MB | 3659.2μs | 3605.7μs | 2748.0μs | 1574.0μs | 2402.2μs | 130 | 16375B | 0 |
+
+| payload | request serialize p99 | frame build p99 | init curl p99 | request header build p99 | curl setopt p99 | after-curl userland p99 | body append total p99 | payload slice p99 | protobuf deserialize p99 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0B | 0.3μs | 0.3μs | 0.4μs | 1.1μs | 2.4μs | 8.9μs | 0.3μs | 0.1μs | 2.1μs |
+| 100B | 0.2μs | 0.2μs | 0.2μs | 0.7μs | 1.3μs | 5.2μs | 0.2μs | 0.1μs | 1.0μs |
+| 1KB | 0.2μs | 0.2μs | 0.2μs | 0.7μs | 1.4μs | 6.6μs | 0.2μs | 0.1μs | 1.4μs |
+| 10KB | 0.2μs | 0.2μs | 0.2μs | 0.6μs | 1.3μs | 8.3μs | 0.2μs | 0.5μs | 1.5μs |
+| 100KB | 0.2μs | 0.2μs | 0.2μs | 0.6μs | 1.5μs | 11.5μs | 7.3μs | 2.6μs | 6.5μs |
+| 1MB | 0.4μs | 0.3μs | 0.3μs | 1.0μs | 2.1μs | 55.7μs | 48.0μs | 24.2μs | 28.3μs |
+
+この sweep では、クライアントが直接改善できる PHP userland work は 1MB でも p99 数十μsに収まる。payload size に比例するのは body append、payload slice、protobuf deserialize だが、1MB でも合計は概ね 100μs未満で、total p99 3.66ms の主因ではない。100KB / 1MB の tail は `curl_exec` 内、特に first byte 前と download 後半に残る。connection reuse は全 payload で `num_connects=0` なので、次の効率化候補は payload copy の C 化ではなく、metadata path の局所最適化、body buffer のコピー削減が小さい改善として成立するか、または libcurl / HTTP/2 境界を変更する大きな設計判断になる。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |

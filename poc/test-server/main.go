@@ -48,7 +48,7 @@ type benchStatsHandler struct{}
 var benchPayloadCache = map[int][]byte{}
 
 func init() {
-	for _, size := range []int{0, 100, 1024, 10 * 1024, 100 * 1024} {
+	for _, size := range []int{0, 100, 1024, 10 * 1024, 100 * 1024, 1024 * 1024} {
 		benchPayloadCache[size] = make([]byte, size)
 	}
 }

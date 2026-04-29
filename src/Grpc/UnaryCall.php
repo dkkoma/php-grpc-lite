@@ -15,6 +15,7 @@ class UnaryCall extends AbstractCall
     private string $body = '';
     private bool $bodyStarted = false;
     private ?object $diagnostics = null;
+    private int $curlExecStartedNs = 0;
 
     /** @var array<string, list<string>> */
     private array $responseHeaders = [];
@@ -48,11 +49,14 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnostic('request_payload_bytes', strlen($serialized));
         $this->recordDiagnostic('request_frame_bytes', strlen($frame));
 
+        $initCurlStartedNs = hrtime(true);
         $this->ch = $this->initCurl();
+        $this->recordDiagnostic('init_curl_ns', hrtime(true) - $initCurlStartedNs);
         $headersStartedNs = hrtime(true);
         $requestHeaders = $this->buildRequestHeaders();
         $this->recordDiagnostic('request_header_build_ns', hrtime(true) - $headersStartedNs);
         $this->recordDiagnostic('request_headers_total', count($requestHeaders));
+        $setoptStartedNs = hrtime(true);
         curl_setopt_array($this->ch, [
             CURLOPT_URL            => $this->buildUrl(),
             CURLOPT_HTTP_VERSION   => $this->getHttpVersion(),
@@ -63,6 +67,7 @@ class UnaryCall extends AbstractCall
             CURLOPT_HEADERFUNCTION => $this->onHeader(...),
             CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),
         ]);
+        $this->recordDiagnostic('curl_setopt_ns', hrtime(true) - $setoptStartedNs);
         $this->applyCurlTraceOptions($this->ch);
         $this->applyTlsOptions($this->ch);
         $this->applyTimeoutOptions($this->ch);
@@ -81,15 +86,18 @@ class UnaryCall extends AbstractCall
 
         $ch = $this->ch;
         $curlStartedNs = hrtime(true);
+        $this->curlExecStartedNs = $curlStartedNs;
         curl_exec($ch);
         $this->recordDiagnostic('curl_exec_ns', hrtime(true) - $curlStartedNs);
         $this->recordCurlTimingDiagnostics($ch);
         $errno = curl_errno($ch);
         $errMsg = curl_error($ch);
         $this->ch = null;
+        $afterCurlStartedNs = hrtime(true);
 
         if ($errno !== 0) {
             $this->discardCurl($ch);
+            $this->recordDiagnostic('wait_after_curl_userland_ns', hrtime(true) - $afterCurlStartedNs);
             $code = $errno === CURLE_OPERATION_TIMEDOUT
                 ? STATUS_DEADLINE_EXCEEDED
                 : STATUS_UNAVAILABLE;
@@ -99,20 +107,25 @@ class UnaryCall extends AbstractCall
         $validateStartedNs = hrtime(true);
         $protocolStatus = $this->validateGrpcResponse($ch);
         $this->recordDiagnostic('validate_response_ns', hrtime(true) - $validateStartedNs);
+        $releaseStartedNs = hrtime(true);
         $this->releaseCurl($ch);
+        $this->recordDiagnostic('release_curl_ns', hrtime(true) - $releaseStartedNs);
         if ($protocolStatus !== null) {
+            $this->recordDiagnostic('wait_after_curl_userland_ns', hrtime(true) - $afterCurlStartedNs);
             return [null, $protocolStatus];
         }
         $compressionStartedNs = hrtime(true);
         $compressionStatus = $this->validateCompression();
         $this->recordDiagnostic('validate_compression_ns', hrtime(true) - $compressionStartedNs);
         if ($compressionStatus !== null) {
+            $this->recordDiagnostic('wait_after_curl_userland_ns', hrtime(true) - $afterCurlStartedNs);
             return [null, $compressionStatus];
         }
         $response = $this->parseResponseFrame();
         $statusStartedNs = hrtime(true);
         $status = $this->buildStatusFromTrailers();
         $this->recordDiagnostic('status_build_ns', hrtime(true) - $statusStartedNs);
+        $this->recordDiagnostic('wait_after_curl_userland_ns', hrtime(true) - $afterCurlStartedNs);
         return [$response, $status];
     }
 
@@ -225,17 +238,27 @@ class UnaryCall extends AbstractCall
     private function onHeader(\CurlHandle $ch, string $line): int
     {
         $startedNs = hrtime(true);
+        $this->recordCallbackOffsetOnce('first_header_callback_ns');
         $trim = rtrim($line, "\r\n");
         if ($trim !== '' && !str_starts_with($trim, 'HTTP/')) {
             [$k, $v] = array_pad(explode(':', $trim, 2), 2, '');
             $key = strtolower(trim($k));
             $val = ltrim($v);
+            $appendStartedNs = hrtime(true);
             if ($this->isStatusHeader($key)) {
+                $this->recordCallbackOffsetOnce('first_trailer_callback_ns');
                 $this->appendMetadataHeader($this->responseTrailers, $key, $val);
+                $this->recordDiagnostic('response_trailing_metadata_append_ns_total', hrtime(true) - $appendStartedNs, true);
+                $this->recordDiagnostic('response_trailing_metadata_lines_total', 1, true);
             } elseif (!$this->bodyStarted) {
                 $this->appendMetadataHeader($this->responseHeaders, $key, $val);
+                $this->recordDiagnostic('response_initial_metadata_append_ns_total', hrtime(true) - $appendStartedNs, true);
+                $this->recordDiagnostic('response_initial_metadata_lines_total', 1, true);
             } else {
+                $this->recordCallbackOffsetOnce('first_trailer_callback_ns');
                 $this->appendMetadataHeader($this->responseTrailers, $key, $val);
+                $this->recordDiagnostic('response_trailing_metadata_append_ns_total', hrtime(true) - $appendStartedNs, true);
+                $this->recordDiagnostic('response_trailing_metadata_lines_total', 1, true);
             }
         }
         $this->recordDiagnostic('header_callback_ns_total', hrtime(true) - $startedNs, true);
@@ -253,6 +276,7 @@ class UnaryCall extends AbstractCall
     private function onBodyChunk(\CurlHandle $ch, string $chunk): int
     {
         $startedNs = hrtime(true);
+        $this->recordCallbackOffsetOnce('first_body_chunk_callback_ns');
         $chunkBytes = strlen($chunk);
         $this->bodyStarted = true;
         $this->body .= $chunk;
@@ -263,6 +287,15 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnosticMax('body_chunk_bytes_max', $chunkBytes);
         $this->recordDiagnosticMax('body_append_ns_max', $appendNs);
         return $chunkBytes;
+    }
+
+    private function recordCallbackOffsetOnce(string $name): void
+    {
+        if ($this->diagnostics === null || $this->curlExecStartedNs === 0 || isset($this->diagnostics->{$name})) {
+            return;
+        }
+
+        $this->diagnostics->{$name} = hrtime(true) - $this->curlExecStartedNs;
     }
 
     private function applyCurlTraceOptions(\CurlHandle $ch): void

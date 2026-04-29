@@ -20,6 +20,7 @@ $autoload = 'vendor/autoload.php';
 $durationSec = 1.0;
 $payloadSizes = [0, 100, 1024, 10 * 1024, 100 * 1024];
 $warmupCalls = 3;
+$maxCalls = 0;
 $diagnosticRpc = false;
 $serverCachedPayload = false;
 $curlTraceOutput = null;
@@ -59,6 +60,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $warmupCalls = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--warmup-calls=')) {
         $warmupCalls = (int) substr($arg, strlen('--warmup-calls='));
+    } elseif ($arg === '--max-calls') {
+        $maxCalls = (int) ($args[++$argIndex] ?? 0);
+    } elseif (str_starts_with($arg, '--max-calls=')) {
+        $maxCalls = (int) substr($arg, strlen('--max-calls='));
     } elseif ($arg === '--diagnostic-rpc') {
         $diagnosticRpc = true;
     } elseif ($arg === '--server-cached-payload') {
@@ -79,8 +84,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
 if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
     usage('suite, implementation, target, autoload, and output are required');
 }
-if ($durationSec <= 0 || $payloadSizes === [] || $warmupCalls < 0) {
-    usage('duration, payload-sizes, and warmup-calls must be valid');
+if ($durationSec <= 0 || $payloadSizes === [] || $warmupCalls < 0 || $maxCalls < 0) {
+    usage('duration, payload-sizes, warmup-calls, and max-calls must be valid');
 }
 if ($curlTraceCalls < 0) {
     usage('curl-trace-calls must be valid');
@@ -113,7 +118,7 @@ foreach ($payloadSizes as $payloadBytes) {
     $diagnosticSeries = [];
     $curlTraceWritten = 0;
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $diagnosticRpc, $implementation, $serverCachedPayload, $payloadBytes, $curlTraceHandle, $curlTraceCalls, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $serverCachedPayload, $payloadBytes, $curlTraceHandle, $curlTraceCalls, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
@@ -138,7 +143,7 @@ foreach ($payloadSizes as $payloadBytes) {
             }
             $latenciesNs[] = hrtime(true) - $callStartNs;
             $calls++;
-        } while (hrtime(true) - $startedNs < $deadlineNs);
+        } while (hrtime(true) - $startedNs < $deadlineNs && ($maxCalls === 0 || $calls < $maxCalls));
         return $calls;
     });
 
@@ -160,6 +165,7 @@ foreach ($payloadSizes as $payloadBytes) {
         'duration_sec' => $durationSec,
         'payload_bytes' => $payloadBytes,
         'warmup_calls' => $warmupCalls,
+        'max_calls' => $maxCalls,
         'diagnostic_rpc' => $diagnosticRpc && $implementation === 'php-grpc-lite',
         'server_cached_payload' => $serverCachedPayload,
         'curl_trace_output' => $curlTraceOutput,
@@ -348,7 +354,7 @@ function diagnosticUnit(string $name): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--diagnostic-rpc] [--server-cached-payload] [--curl-trace-output=var/bench-results/trace.log --curl-trace-calls=3]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--warmup-calls=3] [--max-calls=0] [--diagnostic-rpc] [--server-cached-payload] [--curl-trace-output=var/bench-results/trace.log --curl-trace-calls=3]\n");
     exit(2);
 }
 
