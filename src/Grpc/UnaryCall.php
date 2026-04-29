@@ -16,6 +16,8 @@ class UnaryCall extends AbstractCall
     private int $bodyBytes = 0;
     private ?object $diagnostics = null;
     private int $curlExecStartedNs = 0;
+    private bool $returnTransferFastPath = false;
+    private string $returnedBody = '';
 
     /** @var list<string> */
     private array $bodyChunks = [];
@@ -38,6 +40,8 @@ class UnaryCall extends AbstractCall
         $this->mergeStartArgs($metadata, $options);
         $diagnostics = $this->options['php_grpc_lite.diagnostics'] ?? null;
         $this->diagnostics = is_object($diagnostics) ? $diagnostics : null;
+        $this->returnTransferFastPath = ($this->options['php_grpc_lite.return_transfer_fast_path'] ?? false) === true;
+        $this->recordDiagnostic('return_transfer_fast_path', $this->returnTransferFastPath ? 1 : 0);
         if ($this->diagnostics !== null) {
             $this->diagnostics->events = [];
         }
@@ -60,7 +64,7 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnostic('request_header_build_ns', hrtime(true) - $headersStartedNs);
         $this->recordDiagnostic('request_headers_total', count($requestHeaders));
         $setoptStartedNs = hrtime(true);
-        curl_setopt_array($this->ch, [
+        $curlOptions = [
             CURLOPT_URL            => $this->buildUrl(),
             CURLOPT_HTTP_VERSION   => $this->getHttpVersion(),
             CURLOPT_POST           => true,
@@ -68,8 +72,11 @@ class UnaryCall extends AbstractCall
             CURLOPT_HTTPHEADER     => $requestHeaders,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADERFUNCTION => $this->onHeader(...),
-            CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),
-        ]);
+        ];
+        if (!$this->returnTransferFastPath) {
+            $curlOptions[CURLOPT_WRITEFUNCTION] = $this->onBodyChunk(...);
+        }
+        curl_setopt_array($this->ch, $curlOptions);
         $this->recordDiagnostic('curl_setopt_ns', hrtime(true) - $setoptStartedNs);
         $this->applyCurlTraceOptions($this->ch);
         $this->applyTlsOptions($this->ch);
@@ -90,8 +97,14 @@ class UnaryCall extends AbstractCall
         $ch = $this->ch;
         $curlStartedNs = hrtime(true);
         $this->curlExecStartedNs = $curlStartedNs;
-        curl_exec($ch);
+        $curlResult = curl_exec($ch);
         $this->recordDiagnostic('curl_exec_ns', hrtime(true) - $curlStartedNs);
+        if ($this->returnTransferFastPath && is_string($curlResult)) {
+            $this->returnedBody = $curlResult;
+            $this->bodyBytes = strlen($curlResult);
+            $this->bodyStarted = $this->bodyBytes > 0;
+            $this->recordDiagnostic('return_transfer_body_bytes', $this->bodyBytes);
+        }
         $this->recordCurlTimingDiagnostics($ch);
         $errno = curl_errno($ch);
         $errMsg = curl_error($ch);
@@ -187,6 +200,9 @@ class UnaryCall extends AbstractCall
         }
 
         $firstChunk = $this->bodyChunks[0] ?? '';
+        if ($this->returnTransferFastPath) {
+            $firstChunk = $this->returnedBody;
+        }
         if ($firstChunk !== '' && ord($firstChunk[0]) !== 0) {
             return $this->makeStatus(
                 STATUS_UNIMPLEMENTED,
@@ -297,6 +313,10 @@ class UnaryCall extends AbstractCall
 
     private function assembleResponseBody(): string
     {
+        if ($this->returnTransferFastPath) {
+            return $this->returnedBody;
+        }
+
         if (count($this->bodyChunks) === 1) {
             return $this->bodyChunks[0];
         }

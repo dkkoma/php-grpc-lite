@@ -25,6 +25,7 @@ $diagnosticRpc = false;
 $serverCachedPayload = false;
 $curlTraceOutput = null;
 $curlTraceCalls = 0;
+$returnTransferFastPath = false;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -68,6 +69,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $diagnosticRpc = true;
     } elseif ($arg === '--server-cached-payload') {
         $serverCachedPayload = true;
+    } elseif ($arg === '--return-transfer-fast-path') {
+        $returnTransferFastPath = true;
     } elseif ($arg === '--curl-trace-output') {
         $curlTraceOutput = $args[++$argIndex] ?? null;
     } elseif (str_starts_with($arg, '--curl-trace-output=')) {
@@ -118,7 +121,7 @@ foreach ($payloadSizes as $payloadBytes) {
     $diagnosticSeries = [];
     $curlTraceWritten = 0;
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $serverCachedPayload, $payloadBytes, $curlTraceHandle, $curlTraceCalls, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $serverCachedPayload, $returnTransferFastPath, $payloadBytes, $curlTraceHandle, $curlTraceCalls, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
@@ -128,6 +131,9 @@ foreach ($payloadSizes as $payloadBytes) {
                 $options = [];
                 if ($implementation === 'php-grpc-lite') {
                     $options['php_grpc_lite.diagnostics'] = $diagnostics;
+                    if ($returnTransferFastPath) {
+                        $options['php_grpc_lite.return_transfer_fast_path'] = true;
+                    }
                 }
                 if ($implementation === 'php-grpc-lite' && $curlTraceHandle !== null && $curlTraceWritten < $curlTraceCalls) {
                     $curlTraceWritten++;
@@ -174,6 +180,7 @@ foreach ($payloadSizes as $payloadBytes) {
         'diagnostic_rpc' => $diagnosticRpc,
         'client_internal_diagnostics' => $diagnosticRpc && $implementation === 'php-grpc-lite',
         'server_cached_payload' => $serverCachedPayload,
+        'return_transfer_fast_path' => $returnTransferFastPath,
         'curl_trace_output' => $curlTraceOutput,
         'curl_trace_calls' => $curlTraceCalls,
     ], $metrics);
@@ -360,7 +367,7 @@ function diagnosticUnit(string $name): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--warmup-calls=3] [--max-calls=0] [--diagnostic-rpc] [--server-cached-payload] [--curl-trace-output=var/bench-results/trace.log --curl-trace-calls=3]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--warmup-calls=3] [--max-calls=0] [--diagnostic-rpc] [--server-cached-payload] [--return-transfer-fast-path] [--curl-trace-output=var/bench-results/trace.log --curl-trace-calls=3]\n");
     exit(2);
 }
 
