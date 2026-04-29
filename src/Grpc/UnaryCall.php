@@ -12,10 +12,13 @@ namespace Grpc;
  */
 class UnaryCall extends AbstractCall
 {
-    private string $body = '';
     private bool $bodyStarted = false;
+    private int $bodyBytes = 0;
     private ?object $diagnostics = null;
     private int $curlExecStartedNs = 0;
+
+    /** @var list<string> */
+    private array $bodyChunks = [];
 
     /** @var array<string, list<string>> */
     private array $responseHeaders = [];
@@ -151,17 +154,18 @@ class UnaryCall extends AbstractCall
 
     private function parseResponseFrame(): ?object
     {
-        if (strlen($this->body) < 5) {
+        if ($this->bodyBytes < 5) {
             return null;
         }
+        $body = $this->assembleResponseBody();
         $lengthStartedNs = hrtime(true);
-        $len = unpack('N', substr($this->body, 1, 4))[1];
+        $len = unpack('N', substr($body, 1, 4))[1];
         $this->recordDiagnostic('response_frame_length_ns', hrtime(true) - $lengthStartedNs);
-        $this->recordDiagnostic('response_body_bytes', strlen($this->body));
+        $this->recordDiagnostic('response_body_bytes', strlen($body));
         $this->recordDiagnostic('response_payload_bytes', $len);
 
         $sliceStartedNs = hrtime(true);
-        $payload = substr($this->body, 5, $len);
+        $payload = substr($body, 5, $len);
         $this->recordDiagnostic('response_payload_slice_ns', hrtime(true) - $sliceStartedNs);
         if ($this->deserialize === null) {
             return null;
@@ -182,7 +186,8 @@ class UnaryCall extends AbstractCall
             );
         }
 
-        if ($this->body !== '' && ord($this->body[0]) !== 0) {
+        $firstChunk = $this->bodyChunks[0] ?? '';
+        if ($firstChunk !== '' && ord($firstChunk[0]) !== 0) {
             return $this->makeStatus(
                 STATUS_UNIMPLEMENTED,
                 'compressed gRPC messages are not supported',
@@ -279,7 +284,8 @@ class UnaryCall extends AbstractCall
         $this->recordCallbackOffsetOnce('first_body_chunk_callback_ns');
         $chunkBytes = strlen($chunk);
         $this->bodyStarted = true;
-        $this->body .= $chunk;
+        $this->bodyChunks[] = $chunk;
+        $this->bodyBytes += $chunkBytes;
         $appendNs = hrtime(true) - $startedNs;
         $this->recordDiagnostic('body_append_ns_total', $appendNs, true);
         $this->recordDiagnostic('body_chunks_total', 1, true);
@@ -287,6 +293,18 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnosticMax('body_chunk_bytes_max', $chunkBytes);
         $this->recordDiagnosticMax('body_append_ns_max', $appendNs);
         return $chunkBytes;
+    }
+
+    private function assembleResponseBody(): string
+    {
+        if (count($this->bodyChunks) === 1) {
+            return $this->bodyChunks[0];
+        }
+
+        $startedNs = hrtime(true);
+        $body = implode('', $this->bodyChunks);
+        $this->recordDiagnostic('response_body_assemble_ns', hrtime(true) - $startedNs);
+        return $body;
     }
 
     private function recordCallbackOffsetOnce(string $name): void

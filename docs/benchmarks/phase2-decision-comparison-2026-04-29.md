@@ -205,6 +205,22 @@ BENCH_TAG=phase2-ext-client-boundary-20260429 BENCH_IMPLEMENTATION=ext-grpc ./be
 
 この比較では、server 側の cached payload / `OutPayload` は両実装で近く、total p99 の差は約1.42msある。p99 同士の差分なので同一 request の厳密な内訳ではないが、1MB payload では server-side だけで php-grpc-lite の遅さを説明するのは弱い。ext-grpc が同じ server / 同じ payload で低い total p99 を出しているため、差分は client stack、つまり libcurl/nghttp2 receive、PHP callback 境界、buffering、または ext-grpc C-core の受信経路との差として扱うのが妥当。
 
+client 側で制御できる小さい改善として、unary response body の受信を `body .= $chunk` から chunk list + parse 前 `implode()` に変更して試した。これにより write callback 内の累積コピーを避け、parse 前に一度だけ連結する。
+
+```bash
+BENCH_TAG=phase2-chunk-list-20260429 BENCH_IMPLEMENTATION=php-grpc-lite ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=5 --max-calls=2000 --payload-sizes=102400,1048576 --warmup-calls=10
+BENCH_TAG=phase2-chunk-list-1mb-1000-20260429 BENCH_IMPLEMENTATION=php-grpc-lite ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=5 --max-calls=1000 --payload-sizes=1048576 --warmup-calls=10
+```
+
+| payload | implementation | total p50 | total p99 | curl exec p50 | curl exec p99 | body append p50 | body append p99 | assemble p50 | assemble p99 | after-curl userland p50 | after-curl userland p99 |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100KB | append string | 111.6μs | 1606.5μs | 99.0μs | 1530.4μs | 3.7μs | 7.8μs | - | - | 5.8μs | 12.9μs |
+| 100KB | chunk list | 112.1μs | 1597.4μs | 96.7μs | 1560.7μs | 1.1μs | 2.1μs | 2.1μs | 8.1μs | 7.8μs | 20.1μs |
+| 1MB | append string | 548.4μs | 3659.2μs | 501.3μs | 3605.7μs | 30.6μs | 48.0μs | - | - | 38.0μs | 55.7μs |
+| 1MB | chunk list | 540.1μs | 3541.1μs | 471.1μs | 3476.1μs | 9.3μs | 13.4μs | 19.9μs | 33.1μs | 57.6μs | 86.7μs |
+
+100KB では total はほぼ横ばいで、callback 内 append は軽くなるが `implode()` 分が後段に移るだけに近い。1MB では body append p99 が 48.0μs → 13.4μs に下がり、assemble p99 33.1μs を足しても同程度からやや改善、total p99 も 3659.2μs → 3541.1μs と小さく下がった。改善幅は限定的だが、低リスクで payload が大きい場合の累積コピーを避けられるため、採用する価値はある。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
