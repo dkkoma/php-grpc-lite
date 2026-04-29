@@ -299,6 +299,17 @@ class UnaryCall extends AbstractCall
                 $this->recordDiagnostic($metric, $value * 1000);
             }
         }
+        foreach ($this->curlTransferInfoMap() as $metric => $infoConstant) {
+            $value = curl_getinfo($ch, $infoConstant);
+            if (is_int($value) || is_float($value)) {
+                $this->recordDiagnostic($metric, $value);
+            }
+        }
+        $totalTimeNs = $this->diagnostics->curl_total_time_ns ?? null;
+        $startTransferTimeNs = $this->diagnostics->curl_starttransfer_time_ns ?? null;
+        if ((is_int($totalTimeNs) || is_float($totalTimeNs)) && (is_int($startTransferTimeNs) || is_float($startTransferTimeNs))) {
+            $this->recordDiagnostic('curl_download_after_starttransfer_ns', max(0, $totalTimeNs - $startTransferTimeNs));
+        }
     }
 
     /**
@@ -314,6 +325,23 @@ class UnaryCall extends AbstractCall
             'curl_pretransfer_time_ns' => \CURLINFO_PRETRANSFER_TIME_T,
             'curl_starttransfer_time_ns' => \CURLINFO_STARTTRANSFER_TIME_T,
             'curl_redirect_time_ns' => \CURLINFO_REDIRECT_TIME_T,
+        ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function curlTransferInfoMap(): array
+    {
+        return [
+            'curl_size_upload_bytes' => \CURLINFO_SIZE_UPLOAD_T,
+            'curl_size_download_bytes' => \CURLINFO_SIZE_DOWNLOAD_T,
+            'curl_speed_download_bytes_per_second' => \CURLINFO_SPEED_DOWNLOAD_T,
+            'curl_request_size_bytes' => \CURLINFO_REQUEST_SIZE,
+            'curl_header_size_bytes' => \CURLINFO_HEADER_SIZE,
+            'curl_num_connects_total' => \CURLINFO_NUM_CONNECTS,
+            'curl_primary_port' => \CURLINFO_PRIMARY_PORT,
+            'curl_local_port' => \CURLINFO_LOCAL_PORT,
         ];
     }
 }

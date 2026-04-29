@@ -90,6 +90,31 @@ BENCH_TAG=phase2-server-cached-20260429 ./bench/phase2/run.sh payload-unary-diag
 
 cached payload では throughput が上がり、p99 tail も大きく下がる。100KB unary の悪化は client decode/copy ではなく、ベンチ server が毎回 100KB payload を allocate する条件に強く影響されていた。cached 条件でも `curl starttransfer` p99 は 1ms 程度残るため、残りは gRPC-Go marshal / HTTP/2 write / Docker scheduler / libcurl receive の複合として扱う。
 
+さらに client 側で取れる範囲を分解するため、curl transfer stats と `total - starttransfer` を追加した。
+
+```bash
+BENCH_TAG=phase2-transfer-breakdown-20260429 ./bench/phase2/run.sh payload-unary-diagnostic --duration=3 --payload-sizes=102400 --warmup-calls=10
+BENCH_TAG=phase2-transfer-breakdown-20260429 ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=3 --payload-sizes=102400 --warmup-calls=10
+```
+
+| metric | normal p99 | cached p99 |
+|---|---:|---:|
+| calls/sec | 5254.8 | 7200.8 |
+| total unary latency | 2269.8μs | 1337.8μs |
+| `curl_exec` | 2126.1μs | 1233.1μs |
+| curl starttransfer | 1812.0μs | 1057.0μs |
+| curl download after starttransfer | 440.0μs | 88.0μs |
+| server handler | 793.3μs | 10.9μs |
+| server payload allocation | 666.3μs | 1.9μs |
+| downloaded bytes | 102409B | 102409B |
+| num connects | 0 | 0 |
+| body chunks | 13 | 13 |
+| largest chunk | 16375B | 16375B |
+| body append total | 12.2μs | 9.5μs |
+| deserialize | 6.6μs | 8.0μs |
+
+クライアント側で分解できる範囲では、connection reuse は維持され、100KB download 後半は cached 条件で p99 88μsまで下がる。残る cached p99 の大半は `starttransfer`、つまり first byte 到着前にある。server handler も小さいため、残りは gRPC-Go marshal / HTTP/2 write / Docker scheduler / libcurl が first byte を受けるまでの区間であり、PHP userland の改善対象ではない。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
@@ -164,6 +189,7 @@ response metadata 50 initial + 50 trailing では header callback が p50 26.4μ
 | curl handle / connection reuse | Channel 内 reuse は効いている。cold / RTT は request 境界のコストとして扱う |
 | payload decode / copy | 現状の主犯ではない。C 化候補としての優先度は下げる |
 | Go test-server payload allocation | 100KB tail の大きな部分を説明する。client 実装改善対象ではなく、ベンチ解釈上の注意点 |
+| 100KB transfer after first byte | cached 条件では p99 88μs。PHP body append / decode も小さく、主犯ではない |
 | streaming hot path | 現状は大きな弱点ではない。改善より回帰監視を優先 |
 | metadata path | response metadata で header callback 固定費が見える。改善候補は response header parse / metadata append |
 
