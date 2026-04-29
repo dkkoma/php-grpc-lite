@@ -255,6 +255,23 @@ BENCH_TAG=phase2-large-request-20260429 BENCH_IMPLEMENTATION=ext-grpc ./bench/ph
 
 php-grpc-lite 固有の client diagnostics では、1MB request の request serialize p50/p99 が 73.2μs / 700.6μs、frame build p50/p99 が 58.8μs / 195.6μs、curl upload bytes は 1048585B だった。100KB は p50 では ext-grpc とほぼ同等だが p99 は php-grpc-lite が重い。1MB では p50/p99 と throughput の差が明確で、server `InPayload` に到達する時刻からも client upload path の差が見える。large request は Spanner insert/commit に近い軸なので、1MB 級 request を重視するなら response payload とは別に client upload path の最適化判断が必要。
 
+PHP userland で frame string の追加コピーを避けるため、`CURLOPT_POSTFIELDS` を使わず `CURLOPT_READFUNCTION` で 5B gRPC header と serialized protobuf body を分割 upload する案も試した。PHP/curl には `CURLOPT_POSTFIELDSIZE` が無かったため、POST のまま `CURLOPT_INFILESIZE` と read callback を使った。
+
+```bash
+BENCH_TAG=phase2-upload-callback-20260429 BENCH_IMPLEMENTATION=php-grpc-lite ./bench/phase2/run.sh request-unary-diagnostic --duration=5 --max-calls=1000 --request-payload-sizes=102400,1048576 --warmup-calls=10
+BENCH_TAG=phase2-upload-callback-repeat-20260429 BENCH_IMPLEMENTATION=php-grpc-lite ./bench/phase2/run.sh request-unary-diagnostic --duration=5 --max-calls=1000 --request-payload-sizes=1048576 --warmup-calls=10
+```
+
+| request payload | implementation | calls/sec | total p50 | total p99 | frame build p99 | read callback p99 | curl exec p99 | server InPayload p99 |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 100KB | `POSTFIELDS` | 4254.2 | 126.3μs | 2151.1μs | 7.5μs | - | 2132.1μs | 1317.6μs |
+| 100KB | read callback | 3676.1 | 131.4μs | 2578.4μs | 0.4μs | 9.1μs | 2558.7μs | 2096.0μs |
+| 1MB | `POSTFIELDS` | 833.7 | 912.7μs | 4318.7μs | 195.6μs | - | 4118.0μs | 3844.0μs |
+| 1MB | read callback | 976.3 | 787.5μs | 4436.0μs | 0.4μs | 80.0μs | 4386.2μs | 3957.8μs |
+| 1MB | read callback repeat | 964.0 | 738.0μs | 4530.7μs | - | - | - | - |
+
+read callback 化は frame build の大きい string copy を消し、1MB の p50 / throughput は改善した。一方で 100KB は悪化し、1MB も p99 が再現して悪化した。tail latency を重視するため、この案は採用しない。PHP userland だけで upload path を大きく改善する余地は限定的で、large request の p99 改善には libcurl/nghttp2 upload path か ext-grpc C-core 相当の送信経路差を扱う必要がある。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
