@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	pb "example.com/helloworld/pb"
@@ -21,12 +22,28 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
 
 type server struct {
 	pb.UnimplementedGreeterServer
 }
+
+type benchStatsContextKey struct{}
+
+type benchRPCStats struct {
+	mu                        sync.Mutex
+	beginAt                   time.Time
+	inPayloadSinceBeginNs     int64
+	outHeaderSinceBeginNs     int64
+	outPayloadSinceBeginNs    int64
+	outPayloadLengthBytes     int
+	outPayloadWireLengthBytes int
+	outPayloadCompressedBytes int
+}
+
+type benchStatsHandler struct{}
 
 var benchPayloadCache = map[int][]byte{}
 
@@ -72,11 +89,18 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 	payload := benchPayload(payloadBytes, benchCachedPayloadEnabled(ctx))
 	payloadAllocDuration := time.Since(payloadStarted)
 	if serverTiming {
-		grpc.SetTrailer(ctx, metadata.Pairs(
+		pairs := []string{
 			"x-bench-server-handler-ns", strconv.FormatInt(time.Since(started).Nanoseconds(), 10),
 			"x-bench-server-payload-alloc-ns", strconv.FormatInt(payloadAllocDuration.Nanoseconds(), 10),
 			"x-bench-server-payload-bytes", strconv.Itoa(len(payload)),
-		))
+		}
+		if rpcStats := benchRPCStatsFromContext(ctx); rpcStats != nil {
+			pairs = append(pairs,
+				"x-bench-server-stats-handler-start-ns", strconv.FormatInt(rpcStats.sinceBegin(started), 10),
+				"x-bench-server-stats-handler-end-ns", strconv.FormatInt(rpcStats.sinceBegin(time.Now()), 10),
+			)
+		}
+		grpc.SetTrailer(ctx, metadata.Pairs(pairs...))
 	}
 	return &pb.BenchReply{Payload: payload}, nil
 }
@@ -99,6 +123,15 @@ func benchServerTimingEnabled(ctx context.Context) bool {
 		return false
 	}
 	values := incoming.Get("x-bench-server-timing")
+	return len(values) > 0 && values[0] == "1"
+}
+
+func benchServerStatsEnabled(ctx context.Context) bool {
+	incoming, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	values := incoming.Get("x-bench-server-stats")
 	return len(values) > 0 && values[0] == "1"
 }
 
@@ -126,6 +159,85 @@ func benchErrorFromContext(ctx context.Context) error {
 	}
 	return status.Error(codes.Code(code), message)
 }
+
+func benchRPCStatsFromContext(ctx context.Context) *benchRPCStats {
+	value, ok := ctx.Value(benchStatsContextKey{}).(*benchRPCStats)
+	if !ok {
+		return nil
+	}
+	return value
+}
+
+func (s *benchRPCStats) sinceBegin(t time.Time) int64 {
+	if s == nil || s.beginAt.IsZero() || t.IsZero() {
+		return 0
+	}
+	return t.Sub(s.beginAt).Nanoseconds()
+}
+
+func (s *benchRPCStats) setInPayload(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inPayloadSinceBeginNs = s.sinceBegin(t)
+}
+
+func (s *benchRPCStats) setOutHeader(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.outHeaderSinceBeginNs = s.sinceBegin(t)
+}
+
+func (s *benchRPCStats) setOutPayload(t time.Time, lengthBytes int, wireLengthBytes int, compressedBytes int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.outPayloadSinceBeginNs = s.sinceBegin(t)
+	s.outPayloadLengthBytes = lengthBytes
+	s.outPayloadWireLengthBytes = wireLengthBytes
+	s.outPayloadCompressedBytes = compressedBytes
+}
+
+func (s *benchRPCStats) trailerPairs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return []string{
+		"x-bench-server-stats-in-payload-ns", strconv.FormatInt(s.inPayloadSinceBeginNs, 10),
+		"x-bench-server-stats-out-header-ns", strconv.FormatInt(s.outHeaderSinceBeginNs, 10),
+		"x-bench-server-stats-out-payload-ns", strconv.FormatInt(s.outPayloadSinceBeginNs, 10),
+		"x-bench-server-stats-out-payload-bytes", strconv.Itoa(s.outPayloadLengthBytes),
+		"x-bench-server-stats-out-payload-wire-bytes", strconv.Itoa(s.outPayloadWireLengthBytes),
+		"x-bench-server-stats-out-payload-compressed-bytes", strconv.Itoa(s.outPayloadCompressedBytes),
+	}
+}
+
+func (h benchStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	if !benchServerStatsEnabled(ctx) {
+		return ctx
+	}
+	return context.WithValue(ctx, benchStatsContextKey{}, &benchRPCStats{beginAt: time.Now()})
+}
+
+func (h benchStatsHandler) HandleRPC(ctx context.Context, rpcStats stats.RPCStats) {
+	collector := benchRPCStatsFromContext(ctx)
+	if collector == nil {
+		return
+	}
+
+	switch event := rpcStats.(type) {
+	case *stats.InPayload:
+		collector.setInPayload(event.RecvTime)
+	case *stats.OutHeader:
+		collector.setOutHeader(time.Now())
+	case *stats.OutPayload:
+		collector.setOutPayload(event.SentTime, event.Length, event.WireLength, event.CompressedLength)
+		grpc.SetTrailer(ctx, metadata.Pairs(collector.trailerPairs()...))
+	}
+}
+
+func (h benchStatsHandler) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+func (h benchStatsHandler) HandleConn(ctx context.Context, connStats stats.ConnStats) {}
 
 func sendBenchMetadata(ctx context.Context) {
 	incoming, ok := metadata.FromIncomingContext(ctx)
@@ -213,7 +325,7 @@ func (s *server) BenchServerStream(req *pb.BenchRequest, stream pb.Greeter_Bench
 }
 
 func newServer() *grpc.Server {
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.StatsHandler(benchStatsHandler{}))
 	pb.RegisterGreeterServer(s, &server{})
 	reflection.Register(s)
 	return s

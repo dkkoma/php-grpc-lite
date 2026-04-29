@@ -183,7 +183,10 @@ function collectDiagnostics(\stdClass $diagnostics, array &$series): void
  */
 function diagnosticMetadata(bool $serverCachedPayload): array
 {
-    $metadata = ['x-bench-server-timing' => ['1']];
+    $metadata = [
+        'x-bench-server-timing' => ['1'],
+        'x-bench-server-stats' => ['1'],
+    ];
     if ($serverCachedPayload) {
         $metadata['x-bench-server-cached-payload'] = ['1'];
     }
@@ -200,6 +203,14 @@ function collectServerTiming(array $trailers, array &$series): void
         'x-bench-server-handler-ns' => 'server_handler_ns',
         'x-bench-server-payload-alloc-ns' => 'server_payload_alloc_ns',
         'x-bench-server-payload-bytes' => 'server_payload_bytes',
+        'x-bench-server-stats-handler-start-ns' => 'server_stats_handler_start_ns',
+        'x-bench-server-stats-handler-end-ns' => 'server_stats_handler_end_ns',
+        'x-bench-server-stats-in-payload-ns' => 'server_stats_in_payload_ns',
+        'x-bench-server-stats-out-header-ns' => 'server_stats_out_header_ns',
+        'x-bench-server-stats-out-payload-ns' => 'server_stats_out_payload_ns',
+        'x-bench-server-stats-out-payload-bytes' => 'server_stats_out_payload_bytes',
+        'x-bench-server-stats-out-payload-wire-bytes' => 'server_stats_out_payload_wire_bytes',
+        'x-bench-server-stats-out-payload-compressed-bytes' => 'server_stats_out_payload_compressed_bytes',
     ] as $header => $metric) {
         $value = $trailers[$header][0] ?? null;
         if ($value === null || !is_numeric($value)) {

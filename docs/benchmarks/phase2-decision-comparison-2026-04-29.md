@@ -115,6 +115,29 @@ BENCH_TAG=phase2-transfer-breakdown-20260429 ./bench/phase2/run.sh payload-unary
 
 クライアント側で分解できる範囲では、connection reuse は維持され、100KB download 後半は cached 条件で p99 88μsまで下がる。残る cached p99 の大半は `starttransfer`、つまり first byte 到着前にある。server handler も小さいため、残りは gRPC-Go marshal / HTTP/2 write / Docker scheduler / libcurl が first byte を受けるまでの区間であり、PHP userland の改善対象ではない。
 
+server 側をさらに分解するため、Go test-server に opt-in の grpc-go `stats.Handler` を追加した。`payload-unary-diagnostic*` は `x-bench-server-stats: 1` を送り、handler entry/exit、`InPayload`、`OutHeader`、`OutPayload`、response wire bytes を trailers 経由で保存する。`End` は trailer 送出後のため、この用途の metric には含めない。
+
+```bash
+BENCH_TAG=phase2-server-stats-20260429 ./bench/phase2/run.sh payload-unary-diagnostic --duration=3 --payload-sizes=102400 --warmup-calls=10
+BENCH_TAG=phase2-server-stats-20260429 ./bench/phase2/run.sh payload-unary-diagnostic-cached --duration=3 --payload-sizes=102400 --warmup-calls=10
+```
+
+| metric | normal p99 | cached p99 |
+|---|---:|---:|
+| calls/sec | 4967.9 | 6450.1 |
+| total unary latency | 2187.4μs | 1541.4μs |
+| `curl_exec` | 2110.5μs | 1412.1μs |
+| curl starttransfer | 1772.0μs | 926.0μs |
+| curl download after starttransfer | 593.0μs | 131.0μs |
+| server handler | 580.0μs | 5.6μs |
+| server payload allocation | 546.5μs | 1.0μs |
+| server stats handler end | 654.2μs | 8.2μs |
+| server stats out header | 1343.3μs | 354.5μs |
+| server stats out payload | 1343.5μs | 354.8μs |
+| response wire bytes | 102409B | 102409B |
+
+この追加分解で、normal 条件では payload allocation 後にも server 側の marshal / send path に p99 約690μsの tail が乗ることが見える。cached 条件では handler end が p99 8.2μs、`OutPayload` が p99 354.8μsなので、server 側 gRPC transport までで約350μs程度の tail が残る。client の `curl starttransfer` p99 926μsとの差分は、client request が server `Begin` に届くまでの時間、server `OutPayload` 後に実際の first byte が client に届くまでの HTTP/2 / Docker scheduling / libcurl receive の複合であり、PHP userland の body parse / protobuf decode ではない。
+
 ## RTT
 
 | scenario | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 |
