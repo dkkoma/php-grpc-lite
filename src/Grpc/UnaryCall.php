@@ -49,12 +49,16 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnostic('request_frame_bytes', strlen($frame));
 
         $this->ch = $this->initCurl();
+        $headersStartedNs = hrtime(true);
+        $requestHeaders = $this->buildRequestHeaders();
+        $this->recordDiagnostic('request_header_build_ns', hrtime(true) - $headersStartedNs);
+        $this->recordDiagnostic('request_headers_total', count($requestHeaders));
         curl_setopt_array($this->ch, [
             CURLOPT_URL            => $this->buildUrl(),
             CURLOPT_HTTP_VERSION   => $this->getHttpVersion(),
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $frame,
-            CURLOPT_HTTPHEADER     => $this->buildRequestHeaders(),
+            CURLOPT_HTTPHEADER     => $requestHeaders,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADERFUNCTION => $this->onHeader(...),
             CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),

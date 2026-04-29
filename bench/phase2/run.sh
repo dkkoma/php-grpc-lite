@@ -19,6 +19,7 @@
 #   ./bench/phase2/run.sh payload-breakdown
 #   ./bench/phase2/run.sh payload-streaming
 #   ./bench/phase2/run.sh metadata-header
+#   ./bench/phase2/run.sh metadata-header-diagnostic
 #
 set -euo pipefail
 
@@ -148,11 +149,18 @@ case "$suite" in
             "phase2-$suite-$timestamp-$implementation.json" \
             tools/phase2/metadata-header.php
         ;;
+    metadata-header-diagnostic)
+        run_phase2_php \
+            "Phase 2 metadata/header RPC diagnostic" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/metadata-header.php \
+            --diagnostic-rpc
+        ;;
     *)
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-breakdown|payload-streaming|metadata-header]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic]
 EOF
         exit 2
         ;;

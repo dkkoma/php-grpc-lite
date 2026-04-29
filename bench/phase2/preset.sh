@@ -70,6 +70,7 @@ case "$preset" in
         run_compare throughput-unary --duration=0.2 --warmup-calls=1
         run_compare throughput-streaming --duration=0.2 --message-count=100 --payload-bytes=100 --warmup-streams=1
         run_compare metadata-header --calls=2
+        run_single metadata-header-diagnostic --calls=2
         run_single payload-breakdown --payload-sizes=100,102400 --revs=100
         run_single payload-unary-diagnostic --duration=0.1 --payload-sizes=102400 --warmup-calls=1
         run_single payload-unary-diagnostic-cached --duration=0.1 --payload-sizes=102400 --warmup-calls=1
@@ -87,6 +88,7 @@ case "$preset" in
         run_compare large-streaming --message-counts=1000,10000 --payload-bytes=100
         run_compare payload-streaming --streams=5 --message-count=100 --payload-sizes=0,100,1024,10240
         run_compare metadata-header --calls=10
+        run_single metadata-header-diagnostic --calls=10
         ;;
     decision)
         run_compare throughput-unary --duration=5 --warmup-calls=20
@@ -100,6 +102,7 @@ case "$preset" in
         run_compare large-streaming --message-counts=10000,100000 --payload-bytes=100
         run_compare payload-streaming --streams=30 --message-count=100 --payload-sizes=0,100,1024,10240
         run_compare metadata-header --calls=100
+        run_single metadata-header-diagnostic --calls=100
         ;;
     *)
         cat >&2 <<EOF

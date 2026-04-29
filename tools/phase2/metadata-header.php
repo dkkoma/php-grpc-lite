@@ -19,6 +19,7 @@ $output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $calls = 50;
+$diagnosticRpc = false;
 $cases = [
     [0, 0, 0],
     [10, 0, 32],
@@ -53,6 +54,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $calls = (int) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--calls=')) {
         $calls = (int) substr($arg, strlen('--calls='));
+    } elseif ($arg === '--diagnostic-rpc') {
+        $diagnosticRpc = true;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -74,10 +77,16 @@ $measurements = [];
 foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     $metadata = buildMetadata($requestKeys, $responseKeys, $valueBytes);
     $latenciesNs = [];
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $metadata, $calls, $responseKeys, &$latenciesNs): int {
+    $diagnosticSeries = [];
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $metadata, $calls, $responseKeys, $diagnosticRpc, $implementation, &$latenciesNs, &$diagnosticSeries): int {
         for ($callIndex = 0; $callIndex < $calls; $callIndex++) {
             $startedNs = hrtime(true);
-            $call = $client->BenchUnary($request, $metadata);
+            $options = [];
+            if ($diagnosticRpc && $implementation === 'php-grpc-lite') {
+                $diagnostics = new \stdClass();
+                $options['php_grpc_lite.diagnostics'] = $diagnostics;
+            }
+            $call = $client->BenchUnary($request, $metadata, $options);
             [, $status] = $call->wait();
             if ($status->code !== \Grpc\STATUS_OK) {
                 throw new \RuntimeException("BenchUnary failed: {$status->details}");
@@ -86,6 +95,9 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
             $trailingCount = countPrefix($call->getTrailingMetadata(), 'x-bench-trailing-');
             if ($initialCount !== $responseKeys || $trailingCount !== $responseKeys) {
                 throw new \RuntimeException("expected $responseKeys response metadata pairs, got $initialCount/$trailingCount");
+            }
+            if (isset($diagnostics)) {
+                collectDiagnostics($diagnostics, $diagnosticSeries);
             }
             $latenciesNs[] = hrtime(true) - $startedNs;
         }
@@ -101,6 +113,9 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     foreach (UnaryBenchHelper::percentiles($latenciesNs) as $name => $value) {
         $metrics['latency_' . $name . '_ns'] = ['value' => $value, 'unit' => 'ns'];
     }
+    foreach (summarizeDiagnostics($diagnosticSeries) as $name => $metric) {
+        $metrics[$name] = $metric;
+    }
 
     $measurements[] = ResultContract::measurement(
         sprintf('metadata_header_req_%d_resp_%d_value_%db', $requestKeys, $responseKeys, $valueBytes),
@@ -113,6 +128,7 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
             'response_initial_keys' => $responseKeys,
             'response_trailing_keys' => $responseKeys,
             'value_bytes' => $valueBytes,
+            'diagnostic_rpc' => $diagnosticRpc && $implementation === 'php-grpc-lite',
         ],
         $metrics,
     );
@@ -162,6 +178,55 @@ function countPrefix(array $metadata, string $prefix): int
     return $count;
 }
 
+/**
+ * @param array<string, list<int|float>> $series
+ */
+function collectDiagnostics(\stdClass $diagnostics, array &$series): void
+{
+    foreach (get_object_vars($diagnostics) as $name => $value) {
+        if (!is_int($value) && !is_float($value)) {
+            continue;
+        }
+        $series[$name][] = $value;
+    }
+}
+
+/**
+ * @param array<string, list<int|float>> $series
+ * @return array<string, array{value: int|float, unit: string}>
+ */
+function summarizeDiagnostics(array $series): array
+{
+    $metrics = [];
+    foreach ($series as $name => $values) {
+        if ($values === []) {
+            continue;
+        }
+        $unit = diagnosticUnit($name);
+        foreach (UnaryBenchHelper::percentiles($values) as $percentile => $value) {
+            $metrics["diagnostic_rpc_{$name}_{$percentile}"] = [
+                'value' => $value,
+                'unit' => $unit,
+            ];
+        }
+    }
+    return $metrics;
+}
+
+function diagnosticUnit(string $name): string
+{
+    if (str_ends_with($name, '_ns') || str_ends_with($name, '_ns_total') || str_ends_with($name, '_ns_max')) {
+        return 'ns';
+    }
+    if (str_ends_with($name, '_bytes') || str_ends_with($name, '_bytes_total') || str_ends_with($name, '_bytes_max')) {
+        return 'bytes';
+    }
+    if (str_ends_with($name, '_total')) {
+        return 'count';
+    }
+    return 'value';
+}
+
 function writeDocument(string $output, array $document): void
 {
     $dir = dirname($output);
@@ -174,7 +239,7 @@ function writeDocument(string $output, array $document): void
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=50]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=50] [--diagnostic-rpc]\n");
     exit(2);
 }
 

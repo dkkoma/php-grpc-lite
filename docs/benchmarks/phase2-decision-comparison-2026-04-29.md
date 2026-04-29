@@ -141,6 +141,22 @@ streaming は全体として php-grpc-lite が強い。payload が大きい stre
 
 metadata が多いケースでは ext-grpc の p50 が優位。header parse / metadata append は将来の改善候補だが、100KB payload tail より優先度は低い。
 
+追加で `metadata-header-diagnostic` を実行し、request header build と response header callback の内訳を確認した。
+
+```bash
+BENCH_TAG=phase2-metadata-diagnostic-20260429 ./bench/phase2/run.sh metadata-header-diagnostic --calls=100
+```
+
+| scenario | latency p50 | latency p99 | request header build p50 | request header build p99 | header callback p50 | header callback p99 | header lines |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| req 0 / resp 0 | 47.0μs | 151.3μs | 0.3μs | 2.4μs | 1.4μs | 8.0μs | 5 |
+| req 50 / resp 0 | 120.7μs | 1230.9μs | 3.3μs | 10.7μs | 1.2μs | 2.3μs | 5 |
+| req 50 / resp 50 | 277.2μs | 809.3μs | 3.5μs | 5.4μs | 26.4μs | 37.8μs | 105 |
+
+request metadata 50 keys の header build は p99 でも 10μs 程度で、php-grpc-lite 側の request header construction は主因ではない。request metadata が多い時の tail は `curl starttransfer` 側に出ており、server / gRPC-Go 側の request metadata 処理や scheduler の影響を含む。
+
+response metadata 50 initial + 50 trailing では header callback が p50 26.4μs / p99 37.8μs まで増える。全体 p50 277.2μsに対して支配的ではないが、php-grpc-lite 内で明確に増える固定費としてはここが見える。metadata path を改善するなら response header parse / metadata append が候補になる。
+
 ## 判断
 
 | 対象 | 判断 |
@@ -149,6 +165,6 @@ metadata が多いケースでは ext-grpc の p50 が優位。header parse / me
 | payload decode / copy | 現状の主犯ではない。C 化候補としての優先度は下げる |
 | Go test-server payload allocation | 100KB tail の大きな部分を説明する。client 実装改善対象ではなく、ベンチ解釈上の注意点 |
 | streaming hot path | 現状は大きな弱点ではない。改善より回帰監視を優先 |
-| metadata path | 多 metadata で固定費は見える。payload tail と reuse の後に見る |
+| metadata path | response metadata で header callback 固定費が見える。改善候補は response header parse / metadata append |
 
-次は通常の `payload-unary` と diagnostic の解釈を分ける。client 側の改善候補としては 100KB unary tail より、metadata の固定費と、php-fpm request 境界での cold コストの説明を優先する。
+次は通常の `payload-unary` と diagnostic の解釈を分ける。client 側の改善候補としては 100KB unary tail より、response metadata parse / append の局所改善、または php-fpm request 境界での cold コストの説明を優先する。
