@@ -85,6 +85,7 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
 	payloadBytes := int(req.GetPayloadBytes())
+	requestPayloadBytes := len(req.GetRequestPayload())
 	payloadStarted := time.Now()
 	payload := benchPayload(payloadBytes, benchCachedPayloadEnabled(ctx))
 	payloadAllocDuration := time.Since(payloadStarted)
@@ -93,6 +94,7 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 			"x-bench-server-handler-ns", strconv.FormatInt(time.Since(started).Nanoseconds(), 10),
 			"x-bench-server-payload-alloc-ns", strconv.FormatInt(payloadAllocDuration.Nanoseconds(), 10),
 			"x-bench-server-payload-bytes", strconv.Itoa(len(payload)),
+			"x-bench-server-request-payload-bytes", strconv.Itoa(requestPayloadBytes),
 		}
 		if rpcStats := benchRPCStatsFromContext(ctx); rpcStats != nil {
 			pairs = append(pairs,

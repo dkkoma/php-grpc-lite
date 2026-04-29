@@ -34,6 +34,13 @@ class BenchRequest extends \Google\Protobuf\Internal\Message
      * Generated from protobuf field <code>int32 server_delay_ms = 3;</code>
      */
     protected $server_delay_ms = 0;
+    /**
+     * Request-side payload for upload / large request benchmarks.
+     * BenchUnary reads its length so the bytes are part of the decoded request.
+     *
+     * Generated from protobuf field <code>bytes request_payload = 4;</code>
+     */
+    protected $request_payload = '';
 
     /**
      * Constructor.
@@ -50,6 +57,9 @@ class BenchRequest extends \Google\Protobuf\Internal\Message
      *           For BenchUnary: sleep this long before responding.
      *           For BenchServerStream: sleep between consecutive messages
      *           (no sleep before the first one).
+     *     @type string $request_payload
+     *           Request-side payload for upload / large request benchmarks.
+     *           BenchUnary reads its length so the bytes are part of the decoded request.
      * }
      */
     public function __construct($data = NULL) {
@@ -137,6 +147,34 @@ class BenchRequest extends \Google\Protobuf\Internal\Message
     {
         GPBUtil::checkInt32($var);
         $this->server_delay_ms = $var;
+
+        return $this;
+    }
+
+    /**
+     * Request-side payload for upload / large request benchmarks.
+     * BenchUnary reads its length so the bytes are part of the decoded request.
+     *
+     * Generated from protobuf field <code>bytes request_payload = 4;</code>
+     * @return string
+     */
+    public function getRequestPayload()
+    {
+        return $this->request_payload;
+    }
+
+    /**
+     * Request-side payload for upload / large request benchmarks.
+     * BenchUnary reads its length so the bytes are part of the decoded request.
+     *
+     * Generated from protobuf field <code>bytes request_payload = 4;</code>
+     * @param string $var
+     * @return $this
+     */
+    public function setRequestPayload($var)
+    {
+        GPBUtil::checkString($var, False);
+        $this->request_payload = $var;
 
         return $this;
     }

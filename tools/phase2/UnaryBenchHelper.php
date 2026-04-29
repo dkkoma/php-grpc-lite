@@ -16,11 +16,14 @@ final class UnaryBenchHelper
         ]);
     }
 
-    public static function request(int $payloadBytes = 100, int $serverDelayMs = 0): BenchRequest
+    public static function request(int $payloadBytes = 100, int $serverDelayMs = 0, string $requestPayload = ''): BenchRequest
     {
         $request = new BenchRequest();
         $request->setPayloadBytes($payloadBytes);
         $request->setServerDelayMs($serverDelayMs);
+        if ($requestPayload !== '') {
+            $request->setRequestPayload($requestPayload);
+        }
 
         return $request;
     }

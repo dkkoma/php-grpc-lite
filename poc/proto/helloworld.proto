@@ -38,6 +38,10 @@ message BenchRequest {
   // For BenchServerStream: sleep between consecutive messages
   // (no sleep before the first one).
   int32 server_delay_ms = 3;
+
+  // Request-side payload for upload / large request benchmarks.
+  // BenchUnary reads its length so the bytes are part of the decoded request.
+  bytes request_payload = 4;
 }
 
 message BenchReply {
