@@ -87,6 +87,17 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 
 同一 call sample でも、遅い call は `client_upload_complete_us` より `server_stats_in_payload_ns` / `client_response_header_us` 側が大きい。つまり PoC の no-copy 後に残る p99 は、client が最後の DATA を socket に書き終えるまでというより、server が request payload を受け終えるまで、またはその後 response header が返るまでの区間に寄っている。
 
+この傾向が payload size に対して安定しているかを見るため、`split + no-copy + server stats` で 100KB / 512KB / 1MB / 2MB を各 3 run 測った。各 run は 1000 calls。表は中央値で、p99 range は 3 run の最小〜最大。
+
+| request | calls/s median | p50 median | p99 median | p99 range | upload done p99 median | response header p99 median | server InPayload p99 median | WINDOW_UPDATE median | DATA frames median | min remote window |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100KB | 5577.1 | 61μs | 1920μs | 1829-2139μs | 66μs | 1916μs | 1389μs | 3029 | 7000 | 12274 |
+| 512KB | 2100.7 | 185μs | 3449μs | 3040-3556μs | 231μs | 3447μs | 2756μs | 3048 | 33001 | 30 |
+| 1MB | 1433.7 | 352μs | 4176μs | 4044-4743μs | 592μs | 4175μs | 3767μs | 3041 | 65001 | 16342 |
+| 2MB | 966.2 | 759μs | 4269μs | 4241-4711μs | 1709μs | 4267μs | 4033μs | 5311 | 129056 | 2 |
+
+100KB でも total p99 は upload done p99 より response header / server InPayload p99 に寄る。512KB 以上では upload done p99 も増えるが、total p99 の主成分は引き続き response header / server InPayload 側にある。2MB では upload done p99 が 1.7ms まで伸びるため client送信側の比率も上がるが、それでも response header p99 4.27msとの差が残る。
+
 ## 観察
 
 - direct nghttp2 は 100KB response の p50 で libcurl 通常経路より明確に低い。直近の libcurl 通常経路は 100KB response p50 120.1μs / p99 1976.8μs だったため、transport 境界に改善余地がある。
@@ -98,6 +109,7 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 - min remote connection window は 2B まで落ちており、1MB upload は connection-level flow control を踏んでいる。no-copy でも p99 が ext-grpc に届かない残差は、copyよりも flow-control / send-recv loop / scheduler 側に残る可能性が高い。
 - poll loop は copy 経路では p50 がほぼ同等、throughput が少し上がった一方で p99 は 4162μs に悪化した。`recv wouldblock` と `poll calls` が増えており、この単純な poll 駆動は tail 改善にならない。
 - 同一 call 時刻対応では、1MB no-copy の client upload done p99 は 573μs、client response header p99 は 3186μs、server InPayload p99 は 3004μsだった。残る tail は client内のpayload copyや最後のDATA write完了前ではなく、wire / server受信 / flow-control / schedulerを含む区間に寄っている。
+- request size sweepでも同じ傾向だった。100KB〜2MBの全サイズで、total p99はclient upload done p99ではなくresponse header / server InPayload p99に近い。2MBではclient upload done p99も大きくなるが、まだ全体tailの主因ではない。
 - ただしこの PoC は互換実装ではない。metadata / trailer / error semantics / deadline / TLS を満たすにはかなり追加実装が必要。
 
 ## 判断
@@ -107,6 +119,7 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 - large request upload は no-copy DATA 送信まで入れると ext-grpc の throughput / p50 に到達する。ただし p99 は残る。
 - copy 経路の単純な nonblocking poll loop は p99 を改善しなかった。次に tail を追うなら、no-copy 経路でpartial writeを安全に扱う状態機械を作るか、client側だけでなく server stats と同一 call 対応した upload完了時刻を取る必要がある。
 - 同一 call 時刻対応後の優先度は、client側copy削減よりも、server InPayload 到達までの tail をpayload size sweep / repeated runで確認すること。ここが安定して残るなら、client C拡張だけでext-grpc p99へ完全に寄せるのは難しく、server側gRPC-Go / Docker scheduler / HTTP/2 flow-controlの影響として扱う。
+- size sweep後の判断として、large request p99をさらに詰める主戦場は client側のcopy削減ではない。no-copyでp50/throughputは十分詰まっており、残るtailはserver受信完了までの区間にある。次にやるなら ext-grpc でも同じ server stats size sweep を取り、ext-grpcとの差が「server InPayloadまで」にも出るのか、「server InPayload後〜client response header」だけに出るのかを比較する。
 - ただし現時点で php-grpc-lite 本体を C extension 前提に切り替える判断材料としては不足。drop-in replacement の価値は互換性が主で、C transport は別フェーズの候補に留める。
 - 次に進めるなら、C extension を本体化する前に `php-grpc-lite` の PHP userland 側で削れる固定費を先に潰し、その後に「native transport を入れるならどの surface を C に落とすか」を決める。
 
