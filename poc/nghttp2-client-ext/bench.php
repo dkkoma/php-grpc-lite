@@ -15,6 +15,7 @@ $options = getopt('', [
     'split-grpc-frame',
     'no-copy',
     'data-frame-size::',
+    'poll-loop',
 ]);
 
 $iterations = (int) ($options['iterations'] ?? 1000);
@@ -23,6 +24,7 @@ $requestBytes = (int) ($options['request-bytes'] ?? 0);
 $splitGrpcFrame = array_key_exists('split-grpc-frame', $options);
 $noCopy = array_key_exists('no-copy', $options);
 $dataFrameSize = (int) ($options['data-frame-size'] ?? 0);
+$pollLoop = array_key_exists('poll-loop', $options);
 
 $request = new Helloworld\BenchRequest();
 $request->setPayloadBytes($responseBytes);
@@ -35,7 +37,7 @@ $requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) .
 
 $result = nghttp2_poc_unary_batch('test-server', 50051, '/helloworld.Greeter/BenchUnary', $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop);
 
 $latencies = $result['latencies_us'];
 sort($latencies);
@@ -52,6 +54,7 @@ $result += [
     'split_grpc_frame' => $splitGrpcFrame,
     'no_copy' => $noCopy,
     'data_frame_size' => $dataFrameSize,
+    'poll_loop' => $pollLoop,
     'p50_us' => $p50,
     'p99_us' => $p99,
     'calls_per_second' => $callsPerSecond,

@@ -30,6 +30,7 @@ docker compose run --rm dev sh -lc 'cd poc/nghttp2-client-ext && phpize && ./con
 docker compose run --rm dev php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so poc/nghttp2-client-ext/bench.php --iterations=1000 --response-bytes=102400
 docker compose run --rm dev php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so poc/nghttp2-client-ext/bench.php --iterations=1000 --response-bytes=100 --request-bytes=1048576 --split-grpc-frame
 docker compose run --rm dev php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so poc/nghttp2-client-ext/bench.php --iterations=1000 --response-bytes=100 --request-bytes=1048576 --split-grpc-frame --no-copy
+docker compose run --rm dev php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so poc/nghttp2-client-ext/bench.php --iterations=1000 --response-bytes=100 --request-bytes=1048576 --split-grpc-frame --poll-loop
 ```
 
 ## 参考計測
@@ -69,6 +70,14 @@ docker compose run --rm dev php -d extension=/workspace/poc/nghttp2-client-ext/m
 
 この run の ext-grpc 既存値は 1387.0 calls/s、p50 456.8μs、p99 3073.9μs。no-copy PoC は throughput と p50 では ext-grpc を超えたが、p99 はまだ約550μs遅い。
 
+blocking `send()` / `recv()` の単純ループを外すため、copy 経路で socket を nonblocking にし、`nghttp2_session_want_read/write` と `poll()` で駆動する `--poll-loop` も試した。`NGHTTP2_DATA_FLAG_NO_COPY` の send data callback は complete DATA frame 送信が契約で、partial write 後の `EAGAIN` を安全に扱えないため、この PoC では poll loop と no-copy は併用しない。
+
+| case | implementation | iterations | calls/s | p50 | p99 | poll calls | send wouldblock | recv wouldblock |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| request 1MB / response 100B | split + copy | 1000 | 1390.2 | 378μs | 3779μs | 0 | 0 | 0 |
+| request 1MB / response 100B | split + poll loop | 1000 | 1432.8 | 375μs | 4162μs | 2420 | 1 | 3420 |
+| request 1MB / response 100B | split + no-copy | 1000 | 1475.7 | 348μs | 3681μs | 0 | 0 | 0 |
+
 ## 観察
 
 - direct nghttp2 は 100KB response の p50 で libcurl 通常経路より明確に低い。直近の libcurl 通常経路は 100KB response p50 120.1μs / p99 1976.8μs だったため、transport 境界に改善余地がある。
@@ -78,12 +87,14 @@ docker compose run --rm dev php -d extension=/workspace/poc/nghttp2-client-ext/m
 - no-copy 送信は 1MB request で throughput 1390.2 → 1499.3 calls/s、p50 378 → 342μs、p99 3779 → 3623μs に改善した。nghttp2 の内部 DATA buffer copy を避ける効果はある。
 - 8KB DATA cap は DATA frame / syscall 数をほぼ倍増させ、throughput と latency を悪化させた。peer `remote_max_frame_size` は 16KB なので、PoC側で小さく切る意味はない。
 - min remote connection window は 2B まで落ちており、1MB upload は connection-level flow control を踏んでいる。no-copy でも p99 が ext-grpc に届かない残差は、copyよりも flow-control / send-recv loop / scheduler 側に残る可能性が高い。
+- poll loop は copy 経路では p50 がほぼ同等、throughput が少し上がった一方で p99 は 4162μs に悪化した。`recv wouldblock` と `poll calls` が増えており、この単純な poll 駆動は tail 改善にならない。
 - ただしこの PoC は互換実装ではない。metadata / trailer / error semantics / deadline / TLS を満たすにはかなり追加実装が必要。
 
 ## 判断
 
 - C extension PoC は transport decision の材料として有効。特に small / medium unary では libcurl + PHP ext/curl の固定費を外す余地が見える。
 - large request は C 側で gRPC frame を分割送信する余地がある。改善幅は限定的だが、現行 libcurl の `POSTFIELDS` copy / PHP frame concat を避ける方向性としては筋が良い。
-- large request upload は no-copy DATA 送信まで入れると ext-grpc の throughput / p50 に到達する。ただし p99 は残るため、次に見るべきは blocking `send()` と `recv()` の単純交互ループを、`poll()` + `nghttp2_session_want_read/write` の駆動に寄せた場合の tail。
+- large request upload は no-copy DATA 送信まで入れると ext-grpc の throughput / p50 に到達する。ただし p99 は残る。
+- copy 経路の単純な nonblocking poll loop は p99 を改善しなかった。次に tail を追うなら、no-copy 経路でpartial writeを安全に扱う状態機械を作るか、client側だけでなく server stats と同一 call 対応した upload完了時刻を取る必要がある。
 - ただし現時点で php-grpc-lite 本体を C extension 前提に切り替える判断材料としては不足。drop-in replacement の価値は互換性が主で、C transport は別フェーズの候補に留める。
 - 次に進めるなら、C extension を本体化する前に `php-grpc-lite` の PHP userland 側で削れる固定費を先に潰し、その後に「native transport を入れるならどの surface を C に落とすか」を決める。

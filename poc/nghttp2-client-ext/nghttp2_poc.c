@@ -8,8 +8,11 @@
 #include <Zend/zend_smart_str.h>
 #include <nghttp2/nghttp2.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -50,6 +53,11 @@ typedef struct {
     size_t send_callback_calls;
     size_t send_data_callback_calls;
     size_t write_syscalls;
+    size_t send_wouldblock_calls;
+    size_t recv_wouldblock_calls;
+    size_t poll_calls;
+    size_t poll_timeouts;
+    size_t poll_errors;
     size_t max_send_callback_len;
     size_t max_data_frame_len;
     size_t min_data_frame_len;
@@ -60,6 +68,8 @@ typedef struct {
     int32_t min_stream_remote_window;
     uint32_t remote_max_frame_size;
     bool no_copy;
+    bool poll_loop;
+    bool last_send_wouldblock;
     smart_str body;
     uint8_t grpc_header[5];
     size_t grpc_header_len;
@@ -104,6 +114,15 @@ static int connect_tcp(const char *host, zend_long port)
     return fd;
 }
 
+static int set_nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return -1;
+    }
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
 {
     poc_client *client = (poc_client *) user_data;
@@ -114,6 +133,26 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     client->send_callback_calls++;
     if (length > client->max_send_callback_len) {
         client->max_send_callback_len = length;
+    }
+
+    if (client->poll_loop) {
+        ssize_t written = send(client->fd, data, length, 0);
+        if (written < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                client->last_send_wouldblock = true;
+                client->send_wouldblock_calls++;
+                return NGHTTP2_ERR_WOULDBLOCK;
+            }
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if (written == 0) {
+            client->last_send_wouldblock = true;
+            client->send_wouldblock_calls++;
+            return NGHTTP2_ERR_WOULDBLOCK;
+        }
+        client->write_syscalls++;
+        client->bytes_sent += (size_t) written;
+        return written;
     }
 
     while (total_written < length) {
@@ -459,6 +498,87 @@ static uint64_t monotonic_us(void)
     return ((uint64_t) ts.tv_sec * 1000000ULL) + ((uint64_t) ts.tv_nsec / 1000ULL);
 }
 
+static int receive_available(nghttp2_session *session, poc_client *client, char *recv_buf, size_t recv_buf_len)
+{
+    for (;;) {
+        ssize_t nread = recv(client->fd, recv_buf, recv_buf_len, 0);
+        if (nread > 0) {
+            int rv;
+            client->bytes_received += (size_t) nread;
+            rv = nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread);
+            if (rv < 0) {
+                return rv;
+            }
+            continue;
+        }
+        if (nread == 0) {
+            return NGHTTP2_ERR_EOF;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            client->recv_wouldblock_calls++;
+            return 0;
+        }
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+}
+
+static int drive_stream_poll(nghttp2_session *session, poc_client *client, char *recv_buf, size_t recv_buf_len)
+{
+    while (!client->stream_closed && (nghttp2_session_want_read(session) || nghttp2_session_want_write(session))) {
+        int rv;
+
+        do {
+            client->last_send_wouldblock = false;
+            rv = nghttp2_session_send(session);
+            if (rv < 0) {
+                return rv;
+            }
+        } while (!client->last_send_wouldblock && nghttp2_session_want_write(session));
+
+        rv = receive_available(session, client, recv_buf, recv_buf_len);
+        if (rv < 0) {
+            return rv;
+        }
+        if (client->stream_closed) {
+            return 0;
+        }
+
+        short events = 0;
+        if (nghttp2_session_want_read(session)) {
+            events |= POLLIN;
+        }
+        if (nghttp2_session_want_write(session)) {
+            events |= POLLOUT;
+        }
+        if (events == 0) {
+            break;
+        }
+
+        struct pollfd pfd;
+        pfd.fd = client->fd;
+        pfd.events = events;
+        pfd.revents = 0;
+        client->poll_calls++;
+        rv = poll(&pfd, 1, 5000);
+        if (rv == 0) {
+            client->poll_timeouts++;
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if (rv < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            client->poll_errors++;
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+    }
+
+    return client->stream_closed ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
+}
+
 PHP_FUNCTION(nghttp2_poc_unary)
 {
     char *host = NULL;
@@ -634,6 +754,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zval *headers_zv = NULL;
     bool split_grpc_frame = false;
     bool no_copy = false;
+    bool poll_loop = false;
     zend_long data_frame_size = 0;
     poc_client client;
     nghttp2_session_callbacks *callbacks = NULL;
@@ -652,7 +773,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     uint64_t total_elapsed;
     zval latencies;
 
-    ZEND_PARSE_PARAMETERS_START(5, 9)
+    ZEND_PARSE_PARAMETERS_START(5, 10)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -663,10 +784,15 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         Z_PARAM_BOOL(split_grpc_frame)
         Z_PARAM_BOOL(no_copy)
         Z_PARAM_LONG(data_frame_size)
+        Z_PARAM_BOOL(poll_loop)
     ZEND_PARSE_PARAMETERS_END();
 
     if (iterations < 1) {
         zend_throw_exception(NULL, "iterations must be positive", 0);
+        RETURN_THROWS();
+    }
+    if (poll_loop && no_copy) {
+        zend_throw_exception(NULL, "poll loop is not supported with no-copy DATA callback", 0);
         RETURN_THROWS();
     }
 
@@ -677,6 +803,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     client.request = (const uint8_t *) request;
     client.request_len = request_len;
     client.no_copy = no_copy;
+    client.poll_loop = poll_loop;
     if (data_frame_size > 0) {
         client.data_frame_size_cap = (uint32_t) data_frame_size;
     }
@@ -687,6 +814,11 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     client.fd = connect_tcp(host, port);
     if (client.fd < 0) {
         zend_throw_exception(NULL, "failed to connect", 0);
+        RETURN_THROWS();
+    }
+    if (poll_loop && set_nonblocking(client.fd) != 0) {
+        close(client.fd);
+        zend_throw_exception(NULL, "failed to set nonblocking", 0);
         RETURN_THROWS();
     }
 
@@ -756,30 +888,38 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
             break;
         }
 
-        rv = nghttp2_session_send(session);
-        if (rv != 0) {
-            failed++;
-            break;
-        }
-
-        while (!client.stream_closed) {
-            ssize_t nread = recv(client.fd, recv_buf, sizeof(recv_buf), 0);
-            if (nread <= 0) {
+        if (poll_loop) {
+            rv = drive_stream_poll(session, &client, recv_buf, sizeof(recv_buf));
+            if (rv != 0) {
                 failed++;
                 break;
             }
-            client.bytes_received += (size_t) nread;
-            rv = nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread);
-            if (rv < 0) {
-                failed++;
-                break;
-            }
+        } else {
             rv = nghttp2_session_send(session);
             if (rv != 0) {
                 failed++;
                 break;
             }
-            client.last_session_error = rv;
+
+            while (!client.stream_closed) {
+                ssize_t nread = recv(client.fd, recv_buf, sizeof(recv_buf), 0);
+                if (nread <= 0) {
+                    failed++;
+                    break;
+                }
+                client.bytes_received += (size_t) nread;
+                rv = nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread);
+                if (rv < 0) {
+                    failed++;
+                    break;
+                }
+                rv = nghttp2_session_send(session);
+                if (rv != 0) {
+                    failed++;
+                    break;
+                }
+                client.last_session_error = rv;
+            }
         }
 
         add_next_index_long(&latencies, (zend_long) (monotonic_us() - started));
@@ -808,6 +948,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_bool(return_value, "split_grpc_frame", split_grpc_frame);
     add_assoc_bool(return_value, "no_copy", no_copy);
+    add_assoc_bool(return_value, "poll_loop", poll_loop);
     add_assoc_long(return_value, "request_wire_bytes", client.grpc_header_len + client.request_len);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
     add_assoc_long(return_value, "bytes_received", client.bytes_received);
@@ -819,6 +960,11 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_long(return_value, "send_callback_calls", client.send_callback_calls);
     add_assoc_long(return_value, "send_data_callback_calls", client.send_data_callback_calls);
     add_assoc_long(return_value, "write_syscalls", client.write_syscalls);
+    add_assoc_long(return_value, "send_wouldblock_calls", client.send_wouldblock_calls);
+    add_assoc_long(return_value, "recv_wouldblock_calls", client.recv_wouldblock_calls);
+    add_assoc_long(return_value, "poll_calls", client.poll_calls);
+    add_assoc_long(return_value, "poll_timeouts", client.poll_timeouts);
+    add_assoc_long(return_value, "poll_errors", client.poll_errors);
     add_assoc_long(return_value, "data_read_calls", client.data_read_calls);
     add_assoc_long(return_value, "data_read_length_calls", client.data_read_length_calls);
     add_assoc_long(return_value, "max_send_callback_len", client.max_send_callback_len);
@@ -864,6 +1010,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, split_grpc_frame, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, no_copy, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, data_frame_size, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, poll_loop, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {
