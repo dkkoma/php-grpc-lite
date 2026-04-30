@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -32,6 +33,7 @@ typedef struct {
     size_t bytes_received;
     size_t data_read_calls;
     size_t data_recv_calls;
+    size_t data_read_length_calls;
     int last_session_error;
     int last_sent_frame_type;
     int last_recv_frame_type;
@@ -42,12 +44,29 @@ typedef struct {
     size_t sent_frames;
     size_t recv_frames;
     size_t not_sent_frames;
+    size_t data_frames_sent;
+    size_t data_bytes_sent;
+    size_t window_update_frames_recv;
+    size_t send_callback_calls;
+    size_t send_data_callback_calls;
+    size_t write_syscalls;
+    size_t max_send_callback_len;
+    size_t max_data_frame_len;
+    size_t min_data_frame_len;
+    size_t max_read_len;
+    size_t min_read_len;
+    uint32_t data_frame_size_cap;
+    int32_t min_session_remote_window;
+    int32_t min_stream_remote_window;
+    uint32_t remote_max_frame_size;
+    bool no_copy;
     smart_str body;
     uint8_t grpc_header[5];
     size_t grpc_header_len;
     const uint8_t *request;
     size_t request_len;
     size_t request_offset;
+    size_t pending_data_len;
 } poc_client;
 
 static int connect_tcp(const char *host, zend_long port)
@@ -92,28 +111,36 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     (void) session;
     (void) flags;
 
+    client->send_callback_calls++;
+    if (length > client->max_send_callback_len) {
+        client->max_send_callback_len = length;
+    }
+
     while (total_written < length) {
         ssize_t written = send(client->fd, data + total_written, length - total_written, 0);
         if (written <= 0) {
             return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
+        client->write_syscalls++;
         total_written += (size_t) written;
     }
     client->bytes_sent += total_written;
     return (ssize_t) total_written;
 }
 
-static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+static size_t remaining_request_bytes(poc_client *client)
 {
-    poc_client *client = (poc_client *) user_data;
     size_t total_len = client->grpc_header_len + client->request_len;
-    size_t copied = 0;
-    (void) session;
-    (void) stream_id;
-    (void) source;
+    if (client->request_offset >= total_len) {
+        return 0;
+    }
+    return total_len - client->request_offset;
+}
 
-    *data_flags = 0;
-    client->data_read_calls++;
+static size_t copy_request_bytes(poc_client *client, uint8_t *buf, size_t length)
+{
+    size_t copied = 0;
+    size_t total_len = client->grpc_header_len + client->request_len;
 
     while (copied < length && client->request_offset < total_len) {
         if (client->request_offset < client->grpc_header_len) {
@@ -134,10 +161,75 @@ static ssize_t data_source_read_callback(nghttp2_session *session, int32_t strea
         client->request_offset += to_copy;
     }
 
+    return copied;
+}
+
+static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+{
+    poc_client *client = (poc_client *) user_data;
+    size_t total_len = client->grpc_header_len + client->request_len;
+    size_t remaining = remaining_request_bytes(client);
+    size_t to_send = remaining < length ? remaining : length;
+    (void) session;
+    (void) stream_id;
+    (void) source;
+
+    *data_flags = 0;
+    client->data_read_calls++;
+
+    if (client->no_copy && to_send > 0) {
+        client->pending_data_len = to_send;
+        *data_flags = NGHTTP2_DATA_FLAG_NO_COPY;
+        if (client->request_offset + to_send >= total_len) {
+            *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        }
+        return (ssize_t) to_send;
+    }
+
+    size_t copied = copy_request_bytes(client, buf, to_send);
     if (client->request_offset >= total_len) {
         *data_flags = NGHTTP2_DATA_FLAG_EOF;
     }
     return (ssize_t) copied;
+}
+
+static ssize_t data_source_read_length_callback(nghttp2_session *session, uint8_t frame_type, int32_t stream_id, int32_t session_remote_window_size, int32_t stream_remote_window_size, uint32_t remote_max_frame_size, void *user_data)
+{
+    poc_client *client = (poc_client *) user_data;
+    size_t allowed = (size_t) session_remote_window_size;
+    (void) session;
+    (void) frame_type;
+    (void) stream_id;
+
+    if (stream_remote_window_size < session_remote_window_size) {
+        allowed = (size_t) stream_remote_window_size;
+    }
+    if (remote_max_frame_size < allowed) {
+        allowed = remote_max_frame_size;
+    }
+    if (client->data_frame_size_cap > 0 && client->data_frame_size_cap < allowed) {
+        allowed = client->data_frame_size_cap;
+    }
+    if (allowed == 0) {
+        return NGHTTP2_ERR_PAUSE;
+    }
+
+    client->data_read_length_calls++;
+    client->remote_max_frame_size = remote_max_frame_size;
+    if (client->min_session_remote_window == 0 || session_remote_window_size < client->min_session_remote_window) {
+        client->min_session_remote_window = session_remote_window_size;
+    }
+    if (client->min_stream_remote_window == 0 || stream_remote_window_size < client->min_stream_remote_window) {
+        client->min_stream_remote_window = stream_remote_window_size;
+    }
+    if (allowed > client->max_read_len) {
+        client->max_read_len = allowed;
+    }
+    if (client->min_read_len == 0 || allowed < client->min_read_len) {
+        client->min_read_len = allowed;
+    }
+
+    return (ssize_t) allowed;
 }
 
 static void set_grpc_header(poc_client *client, size_t payload_len)
@@ -148,6 +240,125 @@ static void set_grpc_header(poc_client *client, size_t payload_len)
     client->grpc_header[3] = (uint8_t) ((payload_len >> 8) & 0xff);
     client->grpc_header[4] = (uint8_t) (payload_len & 0xff);
     client->grpc_header_len = 5;
+}
+
+static int write_all(poc_client *client, const uint8_t *data, size_t length)
+{
+    size_t total_written = 0;
+    while (total_written < length) {
+        ssize_t written = send(client->fd, data + total_written, length - total_written, 0);
+        if (written <= 0) {
+            return -1;
+        }
+        client->write_syscalls++;
+        total_written += (size_t) written;
+    }
+    client->bytes_sent += total_written;
+    return 0;
+}
+
+static size_t fill_request_iov(poc_client *client, struct iovec *iov, size_t iov_offset, size_t length, size_t *filled_len)
+{
+    size_t filled = 0;
+    size_t total_len = client->grpc_header_len + client->request_len;
+    size_t request_offset = client->request_offset;
+
+    while (filled < length && request_offset < total_len && iov_offset < 4) {
+        if (request_offset < client->grpc_header_len) {
+            size_t header_offset = request_offset;
+            size_t remaining = client->grpc_header_len - header_offset;
+            size_t to_write = remaining < (length - filled) ? remaining : (length - filled);
+            iov[iov_offset].iov_base = client->grpc_header + header_offset;
+            iov[iov_offset].iov_len = to_write;
+            iov_offset++;
+            filled += to_write;
+            request_offset += to_write;
+            continue;
+        }
+
+        size_t payload_offset = request_offset - client->grpc_header_len;
+        size_t remaining = client->request_len - payload_offset;
+        size_t to_write = remaining < (length - filled) ? remaining : (length - filled);
+        iov[iov_offset].iov_base = (void *) (client->request + payload_offset);
+        iov[iov_offset].iov_len = to_write;
+        iov_offset++;
+        filled += to_write;
+        request_offset += to_write;
+    }
+
+    *filled_len = filled;
+    return iov_offset;
+}
+
+static int write_data_frame(poc_client *client, const uint8_t *framehd, size_t length)
+{
+    struct iovec iov[4];
+    size_t iovcnt = 1;
+    size_t filled_len = 0;
+    size_t total_len = 9 + length;
+    size_t total_written = 0;
+
+    iov[0].iov_base = (void *) framehd;
+    iov[0].iov_len = 9;
+    iovcnt = fill_request_iov(client, iov, iovcnt, length, &filled_len);
+    if (filled_len != length) {
+        return -1;
+    }
+
+    while (total_written < total_len) {
+        ssize_t written = writev(client->fd, iov, (int) iovcnt);
+        if (written <= 0) {
+            return -1;
+        }
+        client->write_syscalls++;
+        total_written += (size_t) written;
+
+        size_t consumed = (size_t) written;
+        for (size_t i = 0; i < iovcnt && consumed > 0; i++) {
+            if (consumed >= iov[i].iov_len) {
+                consumed -= iov[i].iov_len;
+                iov[i].iov_base = (uint8_t *) iov[i].iov_base + iov[i].iov_len;
+                iov[i].iov_len = 0;
+                continue;
+            }
+            iov[i].iov_base = (uint8_t *) iov[i].iov_base + consumed;
+            iov[i].iov_len -= consumed;
+            consumed = 0;
+        }
+        while (iovcnt > 0 && iov[0].iov_len == 0) {
+            memmove(&iov[0], &iov[1], sizeof(struct iovec) * (iovcnt - 1));
+            iovcnt--;
+        }
+    }
+
+    client->request_offset += length;
+    client->bytes_sent += total_len;
+    return 0;
+}
+
+static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data)
+{
+    poc_client *client = (poc_client *) user_data;
+    (void) session;
+    (void) frame;
+    (void) source;
+
+    client->send_data_callback_calls++;
+    client->data_frames_sent++;
+    client->data_bytes_sent += length;
+    if (length > client->max_data_frame_len) {
+        client->max_data_frame_len = length;
+    }
+    if (client->min_data_frame_len == 0 || length < client->min_data_frame_len) {
+        client->min_data_frame_len = length;
+    }
+
+    if (write_data_frame(client, framehd, length) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    client->pending_data_len = 0;
+
+    return 0;
 }
 
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
@@ -205,6 +416,16 @@ static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame 
     client->sent_frames++;
     client->last_sent_frame_type = frame->hd.type;
     client->last_sent_frame_flags = frame->hd.flags;
+    if (frame->hd.type == NGHTTP2_DATA && !client->no_copy) {
+        client->data_frames_sent++;
+        client->data_bytes_sent += frame->hd.length;
+        if (frame->hd.length > client->max_data_frame_len) {
+            client->max_data_frame_len = frame->hd.length;
+        }
+        if (client->min_data_frame_len == 0 || frame->hd.length < client->min_data_frame_len) {
+            client->min_data_frame_len = frame->hd.length;
+        }
+    }
     return 0;
 }
 
@@ -215,6 +436,9 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     client->recv_frames++;
     client->last_recv_frame_type = frame->hd.type;
     client->last_recv_frame_flags = frame->hd.flags;
+    if (frame->hd.type == NGHTTP2_WINDOW_UPDATE) {
+        client->window_update_frames_recv++;
+    }
     return 0;
 }
 
@@ -409,6 +633,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zend_long iterations = 0;
     zval *headers_zv = NULL;
     bool split_grpc_frame = false;
+    bool no_copy = false;
+    zend_long data_frame_size = 0;
     poc_client client;
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session *session = NULL;
@@ -426,7 +652,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     uint64_t total_elapsed;
     zval latencies;
 
-    ZEND_PARSE_PARAMETERS_START(5, 7)
+    ZEND_PARSE_PARAMETERS_START(5, 9)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -435,6 +661,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         Z_PARAM_OPTIONAL
         Z_PARAM_ARRAY(headers_zv)
         Z_PARAM_BOOL(split_grpc_frame)
+        Z_PARAM_BOOL(no_copy)
+        Z_PARAM_LONG(data_frame_size)
     ZEND_PARSE_PARAMETERS_END();
 
     if (iterations < 1) {
@@ -448,6 +676,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     client.http_status = -1;
     client.request = (const uint8_t *) request;
     client.request_len = request_len;
+    client.no_copy = no_copy;
+    if (data_frame_size > 0) {
+        client.data_frame_size_cap = (uint32_t) data_frame_size;
+    }
     if (split_grpc_frame) {
         set_grpc_header(&client, request_len);
     }
@@ -466,6 +698,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     nghttp2_session_callbacks_set_on_frame_send_callback(callbacks, on_frame_send_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, on_frame_recv_callback);
     nghttp2_session_callbacks_set_on_frame_not_send_callback(callbacks, on_frame_not_send_callback);
+    nghttp2_session_callbacks_set_data_source_read_length_callback(callbacks, data_source_read_length_callback);
+    nghttp2_session_callbacks_set_send_data_callback(callbacks, send_data_callback);
     nghttp2_session_client_new(&session, callbacks, &client);
     nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0);
 
@@ -512,8 +746,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         client.http_status = -1;
         client.stream_error_code = 0;
         client.request_offset = 0;
-        client.data_read_calls = 0;
-        client.data_recv_calls = 0;
+        client.pending_data_len = 0;
         smart_str_free(&client.body);
         memset(&client.body, 0, sizeof(client.body));
 
@@ -574,11 +807,29 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_bool(return_value, "split_grpc_frame", split_grpc_frame);
+    add_assoc_bool(return_value, "no_copy", no_copy);
     add_assoc_long(return_value, "request_wire_bytes", client.grpc_header_len + client.request_len);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
     add_assoc_long(return_value, "bytes_received", client.bytes_received);
     add_assoc_long(return_value, "sent_frames", client.sent_frames);
     add_assoc_long(return_value, "recv_frames", client.recv_frames);
+    add_assoc_long(return_value, "data_frames_sent", client.data_frames_sent);
+    add_assoc_long(return_value, "data_bytes_sent", client.data_bytes_sent);
+    add_assoc_long(return_value, "window_update_frames_recv", client.window_update_frames_recv);
+    add_assoc_long(return_value, "send_callback_calls", client.send_callback_calls);
+    add_assoc_long(return_value, "send_data_callback_calls", client.send_data_callback_calls);
+    add_assoc_long(return_value, "write_syscalls", client.write_syscalls);
+    add_assoc_long(return_value, "data_read_calls", client.data_read_calls);
+    add_assoc_long(return_value, "data_read_length_calls", client.data_read_length_calls);
+    add_assoc_long(return_value, "max_send_callback_len", client.max_send_callback_len);
+    add_assoc_long(return_value, "max_data_frame_len", client.max_data_frame_len);
+    add_assoc_long(return_value, "min_data_frame_len", client.min_data_frame_len);
+    add_assoc_long(return_value, "max_read_len", client.max_read_len);
+    add_assoc_long(return_value, "min_read_len", client.min_read_len);
+    add_assoc_long(return_value, "data_frame_size_cap", client.data_frame_size_cap);
+    add_assoc_long(return_value, "min_session_remote_window", client.min_session_remote_window);
+    add_assoc_long(return_value, "min_stream_remote_window", client.min_stream_remote_window);
+    add_assoc_long(return_value, "remote_max_frame_size", client.remote_max_frame_size);
     add_assoc_zval(return_value, "latencies_us", &latencies);
     smart_str_free(&client.body);
 }
@@ -611,6 +862,8 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO(0, iterations, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, split_grpc_frame, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, no_copy, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, data_frame_size, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {
