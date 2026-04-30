@@ -98,3 +98,46 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 - copy 経路の単純な nonblocking poll loop は p99 を改善しなかった。次に tail を追うなら、no-copy 経路でpartial writeを安全に扱う状態機械を作るか、client側だけでなく server stats と同一 call 対応した upload完了時刻を取る必要がある。
 - ただし現時点で php-grpc-lite 本体を C extension 前提に切り替える判断材料としては不足。drop-in replacement の価値は互換性が主で、C transport は別フェーズの候補に留める。
 - 次に進めるなら、C extension を本体化する前に `php-grpc-lite` の PHP userland 側で削れる固定費を先に潰し、その後に「native transport を入れるならどの surface を C に落とすか」を決める。
+
+## 候補一覧と期待値
+
+PoC で見た候補、まだ見ていない候補、期待できる改善を分ける。
+
+### 実施済み
+
+| 候補 | 狙い | 期待した効果 | 結果 | 判断 |
+|---|---|---|---|---|
+| client initial SETTINGS 明示送信 | h2c prior knowledge として正しく Go gRPC server に接続する | HTTP response 前 close の解消 | `nghttp2_submit_settings()` で unary が通るようになった | 必須 |
+| `TCP_NODELAY` | small sequential unary の Nagle / delayed ACK を避ける | 小さい RPC の数十ms tail を消す | 10 calls が約406msから約0.8msに改善 | 必須 |
+| C側 split gRPC frame | PHP 側の `5B header . payload` large concat を避ける | large request p50 / throughput 改善 | 1MB request で throughput 1370.2 → 1461.2 calls/s、p99 3866 → 3772μs | 有効だが決定打ではない |
+| DATA no-copy + `writev()` | nghttp2 内部 DATA buffer への payload copy を避ける | large request p50 / throughput と一部 p99 改善 | 1MB request で throughput 1390.2 → 1499.3 calls/s、p99 3779 → 3623μs | large request では有効 |
+| DATA frame size cap 8KB | 小さい DATA frame で flow-control / scheduler tail が減るか確認 | p99 改善の可能性 | DATA frame / syscall が倍増し、throughput 1255.0 calls/s、p99 3979μsに悪化 | 不採用 |
+| copy経路の nonblocking `poll()` loop | blocking `send()` / `recv()` の詰まりを避ける | p99改善、flow-control待ちの平準化 | throughput は少し上がるが p99 4162μsに悪化 | 単純実装は不採用 |
+
+### 未実施または追加検証候補
+
+| 候補 | 期待できること | 見るべき指標 | リスク / 注意 |
+|---|---|---|---|
+| no-copy 経路のpartial write対応状態機械 | no-copy のcopy削減を維持しつつ、nonblockingでsocket backpressureを安全に扱う | p99、send wouldblock、partial write回数、DATA frame破損なし | `send_data_callback` は complete DATA frame 送信契約。途中まで書いた後の再開状態を自前で持つ必要があり、PoCとしては重い |
+| client/server同一call時刻対応 | p99残差が client upload、server read/decode、server response のどこにあるか分ける | client first/last DATA sent、server `InPayload`、server `OutPayload`、client response header | 現在のbatch集計だけではp99同士の比較で、同一callの因果が弱い |
+| upload完了時刻のclient内分解 | p99が「最後のDATA送信前」か「送信後のresponse待ち」か切る | first DATA sent、last DATA sent、first response header、stream close | 計測点を増やすだけでは改善しないが、次の判断材料として重要 |
+| remote window / WINDOW_UPDATE時刻の時系列化 | connection-level flow control 枯渇がtailに効いているか見る | window 0/near-zero回数、WINDOW_UPDATE間隔、last DATAまでのstall時間 | aggregateのmin windowだけではtail sampleとの対応がない |
+| initial window / connection window tuning | 1MB uploadでwindow枯渇を減らせるか確認する | DATA frame数、WINDOW_UPDATE数、p99、server互換性 | clientから増やせるのは主に受信window。送信側はserver設定に依存するため効かない可能性がある |
+| `nghttp2_session_mem_send2` 駆動 | libnghttp2に送信bufferを作らせ、アプリ側でwrite順序を制御する | write syscall数、p50/p99、WOULDBLOCK処理 | no-copy DATAとの組み合わせでは結局partial frame状態管理が必要 |
+| response body discard | large request比較でresponse 100Bの受信処理ノイズを消す | p50/p99、body append回数 | 100B responseなので効果は小さいはず。確認用 |
+| request size sweep | 100KB〜2MBでflow-control起因の段差を探す | size別 p50/p99、WINDOW_UPDATE数、min window | 実装改善ではなく、適用領域の特定 |
+| repeated run / confidence | Docker scheduler等の揺れと真の改善を分ける | 複数runの中央値、p99分散 | 時間がかかるが、p99判断には必要 |
+| TLS/mTLS版native transport | 実運用に近いtransport overheadを見る | TLS handshake除外のwarm p50/p99、large request | PoC実装量が増える。Phase 2 transport判断では後回しでよい |
+| C側 response assembler | large responseでchunkごとのPHP callback/appendを消す | 100KB/1MB response p50/p99、copy回数 | 互換実装にはtrailer/metadata/error handlingが必要 |
+| persistent PHP resource API | batchではなく実利用形に近いconnection reuseを測る | per-call p50/p99、request間reuse、cleanup安全性 | 実装量が増え、PoCから本体設計に近づく |
+
+### 優先順位
+
+| 優先 | 候補 | 理由 |
+|---:|---|---|
+| 1 | client/server同一call時刻対応 | p99残差の場所がまだ曖昧。次の実装判断に必要 |
+| 2 | upload完了時刻のclient内分解 | C側だけで簡単に足せて、last DATA送信後の待ちを分けられる |
+| 3 | request size sweep + repeated run | no-copy改善がどのpayload領域で安定するか確認できる |
+| 4 | no-copy partial write状態機械 | 効く可能性はあるが実装が重い。時刻分解後でよい |
+| 5 | C側 response assembler | large response側の本命だが、互換性論点が大きい |
+| 6 | persistent resource API | 本体化判断が近づいた段階で必要 |
