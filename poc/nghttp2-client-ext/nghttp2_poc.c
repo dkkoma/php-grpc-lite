@@ -70,6 +70,23 @@ typedef struct {
     bool no_copy;
     bool poll_loop;
     bool last_send_wouldblock;
+    uint64_t call_started_us;
+    uint64_t first_data_sent_us;
+    uint64_t last_data_sent_us;
+    uint64_t first_response_header_us;
+    uint64_t stream_closed_us;
+    zend_long server_handler_ns;
+    zend_long server_payload_alloc_ns;
+    zend_long server_payload_bytes;
+    zend_long server_request_payload_bytes;
+    zend_long server_stats_handler_start_ns;
+    zend_long server_stats_handler_end_ns;
+    zend_long server_stats_in_payload_ns;
+    zend_long server_stats_out_header_ns;
+    zend_long server_stats_out_payload_ns;
+    zend_long server_stats_out_payload_bytes;
+    zend_long server_stats_out_payload_wire_bytes;
+    zend_long server_stats_out_payload_compressed_bytes;
     smart_str body;
     uint8_t grpc_header[5];
     size_t grpc_header_len;
@@ -78,6 +95,10 @@ typedef struct {
     size_t request_offset;
     size_t pending_data_len;
 } poc_client;
+
+static uint64_t monotonic_us(void);
+static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
+static void record_data_sent(poc_client *client);
 
 static int connect_tcp(const char *host, zend_long port)
 {
@@ -395,6 +416,7 @@ static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, co
     if (write_data_frame(client, framehd, length) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
+    record_data_sent(client);
     client->pending_data_len = 0;
 
     return 0;
@@ -427,11 +449,38 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         status_buf[copy_len] = '\0';
         client->grpc_status = atoi(status_buf);
     } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
+        if (client->first_response_header_us == 0) {
+            client->first_response_header_us = monotonic_us() - client->call_started_us;
+        }
         char status_buf[16];
         size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
         memcpy(status_buf, value, copy_len);
         status_buf[copy_len] = '\0';
         client->http_status = atoi(status_buf);
+    } else if (namelen == sizeof("x-bench-server-handler-ns") - 1 && memcmp(name, "x-bench-server-handler-ns", namelen) == 0) {
+        client->server_handler_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-payload-alloc-ns") - 1 && memcmp(name, "x-bench-server-payload-alloc-ns", namelen) == 0) {
+        client->server_payload_alloc_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-payload-bytes") - 1 && memcmp(name, "x-bench-server-payload-bytes", namelen) == 0) {
+        client->server_payload_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-request-payload-bytes") - 1 && memcmp(name, "x-bench-server-request-payload-bytes", namelen) == 0) {
+        client->server_request_payload_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-handler-start-ns") - 1 && memcmp(name, "x-bench-server-stats-handler-start-ns", namelen) == 0) {
+        client->server_stats_handler_start_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-handler-end-ns") - 1 && memcmp(name, "x-bench-server-stats-handler-end-ns", namelen) == 0) {
+        client->server_stats_handler_end_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-in-payload-ns") - 1 && memcmp(name, "x-bench-server-stats-in-payload-ns", namelen) == 0) {
+        client->server_stats_in_payload_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-header-ns") - 1 && memcmp(name, "x-bench-server-stats-out-header-ns", namelen) == 0) {
+        client->server_stats_out_header_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-ns") - 1 && memcmp(name, "x-bench-server-stats-out-payload-ns", namelen) == 0) {
+        client->server_stats_out_payload_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-bytes", namelen) == 0) {
+        client->server_stats_out_payload_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-wire-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-wire-bytes", namelen) == 0) {
+        client->server_stats_out_payload_wire_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-compressed-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-compressed-bytes", namelen) == 0) {
+        client->server_stats_out_payload_compressed_bytes = header_value_to_long(value, valuelen);
     }
     return 0;
 }
@@ -444,6 +493,7 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     if (stream_id == client->stream_id) {
         client->stream_closed = true;
         client->stream_error_code = error_code;
+        client->stream_closed_us = monotonic_us() - client->call_started_us;
     }
     return 0;
 }
@@ -458,6 +508,7 @@ static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame 
     if (frame->hd.type == NGHTTP2_DATA && !client->no_copy) {
         client->data_frames_sent++;
         client->data_bytes_sent += frame->hd.length;
+        record_data_sent(client);
         if (frame->hd.length > client->max_data_frame_len) {
             client->max_data_frame_len = frame->hd.length;
         }
@@ -496,6 +547,24 @@ static uint64_t monotonic_us(void)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ((uint64_t) ts.tv_sec * 1000000ULL) + ((uint64_t) ts.tv_nsec / 1000ULL);
+}
+
+static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
+{
+    char buf[32];
+    size_t copy_len = valuelen < sizeof(buf) - 1 ? valuelen : sizeof(buf) - 1;
+    memcpy(buf, value, copy_len);
+    buf[copy_len] = '\0';
+    return (zend_long) atoll(buf);
+}
+
+static void record_data_sent(poc_client *client)
+{
+    uint64_t elapsed = monotonic_us() - client->call_started_us;
+    if (client->first_data_sent_us == 0) {
+        client->first_data_sent_us = elapsed;
+    }
+    client->last_data_sent_us = elapsed;
 }
 
 static int receive_available(nghttp2_session *session, poc_client *client, char *recv_buf, size_t recv_buf_len)
@@ -772,6 +841,22 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     uint64_t total_started;
     uint64_t total_elapsed;
     zval latencies;
+    zval client_first_data_sent_us;
+    zval client_upload_complete_us;
+    zval client_response_header_us;
+    zval client_stream_close_us;
+    zval server_handler_ns;
+    zval server_payload_alloc_ns;
+    zval server_payload_bytes;
+    zval server_request_payload_bytes;
+    zval server_stats_handler_start_ns;
+    zval server_stats_handler_end_ns;
+    zval server_stats_in_payload_ns;
+    zval server_stats_out_header_ns;
+    zval server_stats_out_payload_ns;
+    zval server_stats_out_payload_bytes;
+    zval server_stats_out_payload_wire_bytes;
+    zval server_stats_out_payload_compressed_bytes;
 
     ZEND_PARSE_PARAMETERS_START(5, 10)
         Z_PARAM_STRING(host, host_len)
@@ -869,16 +954,49 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
     array_init(&latencies);
+    array_init(&client_first_data_sent_us);
+    array_init(&client_upload_complete_us);
+    array_init(&client_response_header_us);
+    array_init(&client_stream_close_us);
+    array_init(&server_handler_ns);
+    array_init(&server_payload_alloc_ns);
+    array_init(&server_payload_bytes);
+    array_init(&server_request_payload_bytes);
+    array_init(&server_stats_handler_start_ns);
+    array_init(&server_stats_handler_end_ns);
+    array_init(&server_stats_in_payload_ns);
+    array_init(&server_stats_out_header_ns);
+    array_init(&server_stats_out_payload_ns);
+    array_init(&server_stats_out_payload_bytes);
+    array_init(&server_stats_out_payload_wire_bytes);
+    array_init(&server_stats_out_payload_compressed_bytes);
     total_started = monotonic_us();
 
     for (zend_long i = 0; i < iterations; i++) {
         uint64_t started = monotonic_us();
+        client.call_started_us = started;
         client.stream_closed = false;
         client.grpc_status = -1;
         client.http_status = -1;
         client.stream_error_code = 0;
         client.request_offset = 0;
         client.pending_data_len = 0;
+        client.first_data_sent_us = 0;
+        client.last_data_sent_us = 0;
+        client.first_response_header_us = 0;
+        client.stream_closed_us = 0;
+        client.server_handler_ns = 0;
+        client.server_payload_alloc_ns = 0;
+        client.server_payload_bytes = 0;
+        client.server_request_payload_bytes = 0;
+        client.server_stats_handler_start_ns = 0;
+        client.server_stats_handler_end_ns = 0;
+        client.server_stats_in_payload_ns = 0;
+        client.server_stats_out_header_ns = 0;
+        client.server_stats_out_payload_ns = 0;
+        client.server_stats_out_payload_bytes = 0;
+        client.server_stats_out_payload_wire_bytes = 0;
+        client.server_stats_out_payload_compressed_bytes = 0;
         smart_str_free(&client.body);
         memset(&client.body, 0, sizeof(client.body));
 
@@ -923,6 +1041,22 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         }
 
         add_next_index_long(&latencies, (zend_long) (monotonic_us() - started));
+        add_next_index_long(&client_first_data_sent_us, (zend_long) client.first_data_sent_us);
+        add_next_index_long(&client_upload_complete_us, (zend_long) client.last_data_sent_us);
+        add_next_index_long(&client_response_header_us, (zend_long) client.first_response_header_us);
+        add_next_index_long(&client_stream_close_us, (zend_long) client.stream_closed_us);
+        add_next_index_long(&server_handler_ns, client.server_handler_ns);
+        add_next_index_long(&server_payload_alloc_ns, client.server_payload_alloc_ns);
+        add_next_index_long(&server_payload_bytes, client.server_payload_bytes);
+        add_next_index_long(&server_request_payload_bytes, client.server_request_payload_bytes);
+        add_next_index_long(&server_stats_handler_start_ns, client.server_stats_handler_start_ns);
+        add_next_index_long(&server_stats_handler_end_ns, client.server_stats_handler_end_ns);
+        add_next_index_long(&server_stats_in_payload_ns, client.server_stats_in_payload_ns);
+        add_next_index_long(&server_stats_out_header_ns, client.server_stats_out_header_ns);
+        add_next_index_long(&server_stats_out_payload_ns, client.server_stats_out_payload_ns);
+        add_next_index_long(&server_stats_out_payload_bytes, client.server_stats_out_payload_bytes);
+        add_next_index_long(&server_stats_out_payload_wire_bytes, client.server_stats_out_payload_wire_bytes);
+        add_next_index_long(&server_stats_out_payload_compressed_bytes, client.server_stats_out_payload_compressed_bytes);
         if (client.stream_closed && client.grpc_status == 0 && client.http_status == 200) {
             ok++;
         } else {
@@ -977,6 +1111,22 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_long(return_value, "min_stream_remote_window", client.min_stream_remote_window);
     add_assoc_long(return_value, "remote_max_frame_size", client.remote_max_frame_size);
     add_assoc_zval(return_value, "latencies_us", &latencies);
+    add_assoc_zval(return_value, "client_first_data_sent_us", &client_first_data_sent_us);
+    add_assoc_zval(return_value, "client_upload_complete_us", &client_upload_complete_us);
+    add_assoc_zval(return_value, "client_response_header_us", &client_response_header_us);
+    add_assoc_zval(return_value, "client_stream_close_us", &client_stream_close_us);
+    add_assoc_zval(return_value, "server_handler_ns", &server_handler_ns);
+    add_assoc_zval(return_value, "server_payload_alloc_ns", &server_payload_alloc_ns);
+    add_assoc_zval(return_value, "server_payload_bytes", &server_payload_bytes);
+    add_assoc_zval(return_value, "server_request_payload_bytes", &server_request_payload_bytes);
+    add_assoc_zval(return_value, "server_stats_handler_start_ns", &server_stats_handler_start_ns);
+    add_assoc_zval(return_value, "server_stats_handler_end_ns", &server_stats_handler_end_ns);
+    add_assoc_zval(return_value, "server_stats_in_payload_ns", &server_stats_in_payload_ns);
+    add_assoc_zval(return_value, "server_stats_out_header_ns", &server_stats_out_header_ns);
+    add_assoc_zval(return_value, "server_stats_out_payload_ns", &server_stats_out_payload_ns);
+    add_assoc_zval(return_value, "server_stats_out_payload_bytes", &server_stats_out_payload_bytes);
+    add_assoc_zval(return_value, "server_stats_out_payload_wire_bytes", &server_stats_out_payload_wire_bytes);
+    add_assoc_zval(return_value, "server_stats_out_payload_compressed_bytes", &server_stats_out_payload_compressed_bytes);
     smart_str_free(&client.body);
 }
 

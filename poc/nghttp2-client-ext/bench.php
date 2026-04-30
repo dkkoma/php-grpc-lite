@@ -37,16 +37,52 @@ $requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) .
 
 $result = nghttp2_poc_unary_batch('test-server', 50051, '/helloworld.Greeter/BenchUnary', $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
+    'x-bench-server-timing' => '1',
+    'x-bench-server-stats' => '1',
 ], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop);
 
-$latencies = $result['latencies_us'];
+$rawLatencies = $result['latencies_us'];
+$latencies = $rawLatencies;
 sort($latencies);
 $count = count($latencies);
 $p50 = percentile($latencies, 0.50);
 $p99 = percentile($latencies, 0.99);
 $callsPerSecond = $result['total_us'] > 0 ? ($result['ok'] / ($result['total_us'] / 1_000_000)) : 0.0;
 
-unset($result['latencies_us']);
+$series = [
+    'client_first_data_sent_us',
+    'client_upload_complete_us',
+    'client_response_header_us',
+    'client_stream_close_us',
+    'server_handler_ns',
+    'server_payload_alloc_ns',
+    'server_payload_bytes',
+    'server_request_payload_bytes',
+    'server_stats_handler_start_ns',
+    'server_stats_handler_end_ns',
+    'server_stats_in_payload_ns',
+    'server_stats_out_header_ns',
+    'server_stats_out_payload_ns',
+    'server_stats_out_payload_bytes',
+    'server_stats_out_payload_wire_bytes',
+    'server_stats_out_payload_compressed_bytes',
+];
+
+foreach ($series as $key) {
+    if (!isset($result[$key]) || !is_array($result[$key])) {
+        continue;
+    }
+    $values = $result[$key];
+    sort($values);
+    $result[$key . '_p50'] = percentile($values, 0.50);
+    $result[$key . '_p99'] = percentile($values, 0.99);
+}
+
+$result['sample_calls'] = sampleCalls($result, $rawLatencies, min(5, $count));
+
+foreach (array_merge(['latencies_us'], $series) as $key) {
+    unset($result[$key]);
+}
 $result += [
     'response_bytes' => $responseBytes,
     'request_bytes' => $requestBytes,
@@ -71,4 +107,25 @@ function percentile(array $values, float $percentile): float
     $index = (int) ceil($percentile * $count) - 1;
     $index = max(0, min($count - 1, $index));
     return (float) $values[$index];
+}
+
+/**
+ * @param array<string, mixed> $result
+ * @return list<array<string, int|float>>
+ */
+function sampleCalls(array $result, array $latencies, int $limit): array
+{
+    $samples = [];
+    for ($i = 0; $i < $limit; $i++) {
+        $samples[] = [
+            'latency_us' => (int) ($latencies[$i] ?? 0),
+            'client_upload_complete_us' => (int) ($result['client_upload_complete_us'][$i] ?? 0),
+            'client_response_header_us' => (int) ($result['client_response_header_us'][$i] ?? 0),
+            'client_stream_close_us' => (int) ($result['client_stream_close_us'][$i] ?? 0),
+            'server_stats_in_payload_ns' => (int) ($result['server_stats_in_payload_ns'][$i] ?? 0),
+            'server_stats_out_header_ns' => (int) ($result['server_stats_out_header_ns'][$i] ?? 0),
+            'server_stats_out_payload_ns' => (int) ($result['server_stats_out_payload_ns'][$i] ?? 0),
+        ];
+    }
+    return $samples;
 }
