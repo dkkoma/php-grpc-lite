@@ -43,6 +43,8 @@ typedef struct {
     size_t recv_frames;
     size_t not_sent_frames;
     smart_str body;
+    uint8_t grpc_header[5];
+    size_t grpc_header_len;
     const uint8_t *request;
     size_t request_len;
     size_t request_offset;
@@ -104,22 +106,48 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
     poc_client *client = (poc_client *) user_data;
-    size_t remaining = client->request_len - client->request_offset;
-    size_t to_copy = remaining < length ? remaining : length;
+    size_t total_len = client->grpc_header_len + client->request_len;
+    size_t copied = 0;
     (void) session;
     (void) stream_id;
     (void) source;
 
     *data_flags = 0;
     client->data_read_calls++;
-    if (to_copy > 0) {
-        memcpy(buf, client->request + client->request_offset, to_copy);
+
+    while (copied < length && client->request_offset < total_len) {
+        if (client->request_offset < client->grpc_header_len) {
+            size_t header_offset = client->request_offset;
+            size_t remaining = client->grpc_header_len - header_offset;
+            size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
+            memcpy(buf + copied, client->grpc_header + header_offset, to_copy);
+            copied += to_copy;
+            client->request_offset += to_copy;
+            continue;
+        }
+
+        size_t payload_offset = client->request_offset - client->grpc_header_len;
+        size_t remaining = client->request_len - payload_offset;
+        size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
+        memcpy(buf + copied, client->request + payload_offset, to_copy);
+        copied += to_copy;
         client->request_offset += to_copy;
     }
-    if (client->request_offset >= client->request_len) {
+
+    if (client->request_offset >= total_len) {
         *data_flags = NGHTTP2_DATA_FLAG_EOF;
     }
-    return (ssize_t) to_copy;
+    return (ssize_t) copied;
+}
+
+static void set_grpc_header(poc_client *client, size_t payload_len)
+{
+    client->grpc_header[0] = 0;
+    client->grpc_header[1] = (uint8_t) ((payload_len >> 24) & 0xff);
+    client->grpc_header[2] = (uint8_t) ((payload_len >> 16) & 0xff);
+    client->grpc_header[3] = (uint8_t) ((payload_len >> 8) & 0xff);
+    client->grpc_header[4] = (uint8_t) (payload_len & 0xff);
+    client->grpc_header_len = 5;
 }
 
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
@@ -380,6 +408,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     size_t request_len = 0;
     zend_long iterations = 0;
     zval *headers_zv = NULL;
+    bool split_grpc_frame = false;
     poc_client client;
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session *session = NULL;
@@ -397,7 +426,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     uint64_t total_elapsed;
     zval latencies;
 
-    ZEND_PARSE_PARAMETERS_START(5, 6)
+    ZEND_PARSE_PARAMETERS_START(5, 7)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -405,6 +434,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         Z_PARAM_LONG(iterations)
         Z_PARAM_OPTIONAL
         Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_BOOL(split_grpc_frame)
     ZEND_PARSE_PARAMETERS_END();
 
     if (iterations < 1) {
@@ -418,6 +448,9 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     client.http_status = -1;
     client.request = (const uint8_t *) request;
     client.request_len = request_len;
+    if (split_grpc_frame) {
+        set_grpc_header(&client, request_len);
+    }
 
     client.fd = connect_tcp(host, port);
     if (client.fd < 0) {
@@ -540,6 +573,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_long(return_value, "http_status", client.http_status);
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
+    add_assoc_bool(return_value, "split_grpc_frame", split_grpc_frame);
+    add_assoc_long(return_value, "request_wire_bytes", client.grpc_header_len + client.request_len);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
     add_assoc_long(return_value, "bytes_received", client.bytes_received);
     add_assoc_long(return_value, "sent_frames", client.sent_frames);
@@ -575,6 +610,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, iterations, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, split_grpc_frame, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {

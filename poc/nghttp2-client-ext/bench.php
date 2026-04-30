@@ -12,11 +12,13 @@ $options = getopt('', [
     'iterations::',
     'response-bytes::',
     'request-bytes::',
+    'split-grpc-frame',
 ]);
 
 $iterations = (int) ($options['iterations'] ?? 1000);
 $responseBytes = (int) ($options['response-bytes'] ?? 100);
 $requestBytes = (int) ($options['request-bytes'] ?? 0);
+$splitGrpcFrame = array_key_exists('split-grpc-frame', $options);
 
 $request = new Helloworld\BenchRequest();
 $request->setPayloadBytes($responseBytes);
@@ -25,11 +27,11 @@ if ($requestBytes > 0) {
 }
 
 $payload = $request->serializeToString();
-$frame = "\0" . pack('N', strlen($payload)) . $payload;
+$requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) . $payload;
 
-$result = nghttp2_poc_unary_batch('test-server', 50051, '/helloworld.Greeter/BenchUnary', $frame, $iterations, [
+$result = nghttp2_poc_unary_batch('test-server', 50051, '/helloworld.Greeter/BenchUnary', $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
-]);
+], $splitGrpcFrame);
 
 $latencies = $result['latencies_us'];
 sort($latencies);
@@ -42,6 +44,8 @@ unset($result['latencies_us']);
 $result += [
     'response_bytes' => $responseBytes,
     'request_bytes' => $requestBytes,
+    'serialized_payload_bytes' => strlen($payload),
+    'split_grpc_frame' => $splitGrpcFrame,
     'p50_us' => $p50,
     'p99_us' => $p99,
     'calls_per_second' => $callsPerSecond,
