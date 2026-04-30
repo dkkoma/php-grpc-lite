@@ -98,6 +98,26 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 
 100KB でも total p99 は upload done p99 より response header / server InPayload p99 に寄る。512KB 以上では upload done p99 も増えるが、total p99 の主成分は引き続き response header / server InPayload 側にある。2MB では upload done p99 が 1.7ms まで伸びるため client送信側の比率も上がるが、それでも response header p99 4.27msとの差が残る。
 
+同じ Go test-server / server stats 条件で ext-grpc も 100KB / 512KB / 1MB / 2MB を各 3 run 測った。実行入口は `bench/phase2/run.sh request-unary-diagnostic`、各 run は warmup 10 calls 後に最大 1000 calls。
+
+| request | calls/s median | p50 median | p99 median | p99 range | server InPayload p99 median | server OutHeader p99 median |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100KB | 4379.4 | 125μs | 2043μs | 1504-2087μs | 1182μs | 1204μs |
+| 512KB | 2088.1 | 246μs | 2908μs | 2734-2937μs | 2490μs | 2504μs |
+| 1MB | 1455.7 | 436μs | 3433μs | 2806-3886μs | 3165μs | 3175μs |
+| 2MB | 907.9 | 908μs | 3602μs | 3158-3783μs | 3111μs | 3117μs |
+
+PoC の request size sweep と並べると、512KB 以上では ext-grpc の server InPayload p99 が PoC より低い。つまり PoC / ext-grpc の p99 差は、server が request payload を受け終わった後だけで発生しているわけではなく、server InPayload までの upload / wire / flow-control / scheduler を含む区間にも既に出ている。
+
+| request | PoC p99 | ext-grpc p99 | PoC server InPayload p99 | ext-grpc server InPayload p99 | PoC response header p99 | ext-grpc server OutHeader p99 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100KB | 1920μs | 2043μs | 1389μs | 1182μs | 1916μs | 1204μs |
+| 512KB | 3449μs | 2908μs | 2756μs | 2490μs | 3447μs | 2504μs |
+| 1MB | 4176μs | 3433μs | 3767μs | 3165μs | 4175μs | 3175μs |
+| 2MB | 4269μs | 3602μs | 4033μs | 3111μs | 4267μs | 3117μs |
+
+ただし `client_upload_complete_us` は client が最後の DATA を socket buffer に書き終えた時刻であり、server が受信完了した時刻ではない。PoC の upload done p99 が小さくても server InPayload p99 が大きいのは矛盾ではなく、kernel buffer 以降の送出、HTTP/2 flow control、server側受信処理、Docker scheduler を含む区間が残っていることを示す。
+
 ## 観察
 
 - direct nghttp2 は 100KB response の p50 で libcurl 通常経路より明確に低い。直近の libcurl 通常経路は 100KB response p50 120.1μs / p99 1976.8μs だったため、transport 境界に改善余地がある。
@@ -110,6 +130,7 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 - poll loop は copy 経路では p50 がほぼ同等、throughput が少し上がった一方で p99 は 4162μs に悪化した。`recv wouldblock` と `poll calls` が増えており、この単純な poll 駆動は tail 改善にならない。
 - 同一 call 時刻対応では、1MB no-copy の client upload done p99 は 573μs、client response header p99 は 3186μs、server InPayload p99 は 3004μsだった。残る tail は client内のpayload copyや最後のDATA write完了前ではなく、wire / server受信 / flow-control / schedulerを含む区間に寄っている。
 - request size sweepでも同じ傾向だった。100KB〜2MBの全サイズで、total p99はclient upload done p99ではなくresponse header / server InPayload p99に近い。2MBではclient upload done p99も大きくなるが、まだ全体tailの主因ではない。
+- ext-grpc の server stats size sweep でも、p99 は server InPayload / OutHeader に寄る。PoCとの差は512KB以上で server InPayload までに既に出ており、response parse や post-handler response path だけを詰めても large request p99 差は消えない。
 - ただしこの PoC は互換実装ではない。metadata / trailer / error semantics / deadline / TLS を満たすにはかなり追加実装が必要。
 
 ## 判断
@@ -119,7 +140,7 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 - large request upload は no-copy DATA 送信まで入れると ext-grpc の throughput / p50 に到達する。ただし p99 は残る。
 - copy 経路の単純な nonblocking poll loop は p99 を改善しなかった。次に tail を追うなら、no-copy 経路でpartial writeを安全に扱う状態機械を作るか、client側だけでなく server stats と同一 call 対応した upload完了時刻を取る必要がある。
 - 同一 call 時刻対応後の優先度は、client側copy削減よりも、server InPayload 到達までの tail をpayload size sweep / repeated runで確認すること。ここが安定して残るなら、client C拡張だけでext-grpc p99へ完全に寄せるのは難しく、server側gRPC-Go / Docker scheduler / HTTP/2 flow-controlの影響として扱う。
-- size sweep後の判断として、large request p99をさらに詰める主戦場は client側のcopy削減ではない。no-copyでp50/throughputは十分詰まっており、残るtailはserver受信完了までの区間にある。次にやるなら ext-grpc でも同じ server stats size sweep を取り、ext-grpcとの差が「server InPayloadまで」にも出るのか、「server InPayload後〜client response header」だけに出るのかを比較する。
+- ext-grpc の server stats size sweep と比較すると、large request p99差は「server InPayload後〜client response header」だけではなく「server InPayloadまで」にも出る。no-copyでp50/throughputは十分詰まっているため、次に詰めるなら client側copy削減より、送信駆動、HTTP/2 flow-control、server受信完了までのtailを分ける必要がある。
 - ただし現時点で php-grpc-lite 本体を C extension 前提に切り替える判断材料としては不足。drop-in replacement の価値は互換性が主で、C transport は別フェーズの候補に留める。
 - 次に進めるなら、C extension を本体化する前に `php-grpc-lite` の PHP userland 側で削れる固定費を先に潰し、その後に「native transport を入れるならどの surface を C に落とすか」を決める。
 
