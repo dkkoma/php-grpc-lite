@@ -131,6 +131,27 @@ flow-control / scheduler 側をさらに見るため、PoC に call 単位の `W
 
 したがって、現時点で見えている問題を「client側でremote windowが0になり、DATA readがPAUSEしている」とは言い切れない。より正確には、kernel buffer へ早く書き終わった後、server側HTTP/2 read loopがrequest全体をgRPC payloadとして引き上げるまで、またはhandler後にresponse headerを返すまでの区間でtailが出ている。HTTP/2 flow-controlは関与しているが、nghttp2 client API上の単純なwindow枯渇待ちではなく、gRPC-Go transport、Docker network、OS scheduler、Go scheduler を含む境界として扱うべき。
 
+同じ test-server container を `--force-recreate` してから、php-grpc-lite / ext-grpc / nghttp2 PoC を続けて測る入口として `bench/phase2/compare-request-upload-transports.sh` を追加した。この比較は server 条件を揃え、client実装差とserver側tailの混入を分けるためのもの。下表は `BENCH_TAG=same-server-upload-20260501` の単発 run。
+
+| impl | request | calls/s | p50 | p99 | server InPayload p99 | server OutHeader p99 |
+|---|---:|---:|---:|---:|---:|---:|
+| php-grpc-lite | 100KB | 4264 | 124μs | 1672μs | 1416μs | 1463μs |
+| ext-grpc | 100KB | 4280 | 119μs | 1640μs | 1210μs | 1231μs |
+| nghttp2-poc | 100KB | 5474 | 64μs | 1835μs | 1561μs | 1582μs |
+| php-grpc-lite | 512KB | 1611 | 352μs | 3828μs | 3667μs | 3698μs |
+| ext-grpc | 512KB | 2090 | 242μs | 2728μs | 2260μs | 2266μs |
+| nghttp2-poc | 512KB | 2040 | 191μs | 3453μs | 3255μs | 3285μs |
+| php-grpc-lite | 1MB | 869 | 898μs | 4307μs | 3806μs | 3817μs |
+| ext-grpc | 1MB | 1430 | 436μs | 3019μs | 2231μs | 2240μs |
+| nghttp2-poc | 1MB | 1444 | 368μs | 3543μs | 3277μs | 3320μs |
+| php-grpc-lite | 2MB | 532 | 1566μs | 5739μs | 4727μs | 4924μs |
+| ext-grpc | 2MB | 883 | 904μs | 3404μs | 2872μs | 2879μs |
+| nghttp2-poc | 2MB | 947 | 757μs | 4414μs | 3933μs | 4155μs |
+
+同じ server 条件で並べても、各実装の p99 は `server InPayload` / `server OutHeader` と強く連動する。ext-grpc は512KB以上で server InPayload p99 自体が低く、PoC はp50/throughputではext-grpcに近いがp99では server InPayload 側に残差がある。php-grpc-lite は 1MB 以上で p50 も大きく悪化しており、client側のframe build / libcurl upload pathの固定費も残っている。
+
+この結果から、比較は必ず同じ server container / 同じ env 条件で取る必要がある。server側tailがms単位で混ざるため、別タイミングのrunを単純に引くと client実装差とserver/scheduler差を取り違える。今後 scheduler / window 条件を振る場合も、`compare-request-upload-transports.sh` で三実装を同じ条件に揃えてから判断する。
+
 ## 観察
 
 - direct nghttp2 は 100KB response の p50 で libcurl 通常経路より明確に低い。直近の libcurl 通常経路は 100KB response p50 120.1μs / p99 1976.8μs だったため、transport 境界に改善余地がある。
@@ -145,6 +166,7 @@ flow-control / scheduler 側をさらに見るため、PoC に call 単位の `W
 - request size sweepでも同じ傾向だった。100KB〜2MBの全サイズで、total p99はclient upload done p99ではなくresponse header / server InPayload p99に近い。2MBではclient upload done p99も大きくなるが、まだ全体tailの主因ではない。
 - ext-grpc の server stats size sweep でも、p99 は server InPayload / OutHeader に寄る。PoCとの差は512KB以上で server InPayload までに既に出ており、response parse や post-handler response path だけを詰めても large request p99 差は消えない。
 - flow-control追加指標では、明示的な `allowed == 0` pause は観測されなかった。tail sampleは `WINDOW_UPDATE` 受信時刻、server InPayload、server OutHeader のいずれかに寄るため、client側nghttp2の単純なPAUSEではなく、server受信、gRPC-Go transport、Docker/OS/Go schedulerの複合tailとして追う。
+- 同一server条件の三実装比較でも、p99は各実装ともserver InPayload / OutHeaderと連動した。ext-grpcはserver InPayload p99が低く、PoCとの差はclient側処理後のserver到達区間にも残る。php-grpc-liteは1MB以上でp50も悪く、client upload pathの改善余地が別に残る。
 - ただしこの PoC は互換実装ではない。metadata / trailer / error semantics / deadline / TLS を満たすにはかなり追加実装が必要。
 
 ## 判断
@@ -156,6 +178,7 @@ flow-control / scheduler 側をさらに見るため、PoC に call 単位の `W
 - 同一 call 時刻対応後の優先度は、client側copy削減よりも、server InPayload 到達までの tail をpayload size sweep / repeated runで確認すること。ここが安定して残るなら、client C拡張だけでext-grpc p99へ完全に寄せるのは難しく、server側gRPC-Go / Docker scheduler / HTTP/2 flow-controlの影響として扱う。
 - ext-grpc の server stats size sweep と比較すると、large request p99差は「server InPayload後〜client response header」だけではなく「server InPayloadまで」にも出る。no-copyでp50/throughputは十分詰まっているため、次に詰めるなら client側copy削減より、送信駆動、HTTP/2 flow-control、server受信完了までのtailを分ける必要がある。
 - flow-control / scheduler 追加計測後の判断として、まずは client C拡張内の `allowed == 0` pause を主因にしない。次に進むなら、test-server の `TEST_SERVER_GOMAXPROCS`、`TEST_SERVER_GRPC_INITIAL_WINDOW_SIZE`、`TEST_SERVER_GRPC_INITIAL_CONN_WINDOW_SIZE` を振って、server側windowとGo scheduler条件で p99 / server InPayload / OutHeader がどう動くかを見る。
+- 三実装比較後の判断として、今後はserver条件を揃えた比較を必須にする。ext-grpcとの差分は「client実装差」と「同じserver条件でもserver InPayload側に出るtail」に分けて読む。php-grpc-lite本体の改善では、まず1MB以上でp50にも出ているrequest frame build / libcurl upload pathを対象にし、p99だけを単独目標にしない。
 - ただし現時点で php-grpc-lite 本体を C extension 前提に切り替える判断材料としては不足。drop-in replacement の価値は互換性が主で、C transport は別フェーズの候補に留める。
 - 次に進めるなら、C extension を本体化する前に `php-grpc-lite` の PHP userland 側で削れる固定費を先に潰し、その後に「native transport を入れるならどの surface を C に落とすか」を決める。
 
