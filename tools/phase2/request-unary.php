@@ -24,6 +24,7 @@ $maxCalls = 0;
 $diagnosticRpc = false;
 $curlTraceOutput = null;
 $curlTraceCalls = 0;
+$uploadReadCallback = false;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -65,6 +66,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $maxCalls = (int) substr($arg, strlen('--max-calls='));
     } elseif ($arg === '--diagnostic-rpc') {
         $diagnosticRpc = true;
+    } elseif ($arg === '--upload-read-callback') {
+        $uploadReadCallback = true;
     } elseif ($arg === '--curl-trace-output') {
         $curlTraceOutput = $args[++$argIndex] ?? null;
     } elseif (str_starts_with($arg, '--curl-trace-output=')) {
@@ -116,7 +119,7 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
     $diagnosticSeries = [];
     $curlTraceWritten = 0;
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $requestPayloadBytes, $curlTraceHandle, $curlTraceCalls, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $requestPayloadBytes, $curlTraceHandle, $curlTraceCalls, $uploadReadCallback, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
@@ -126,6 +129,9 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
                 $options = [];
                 if ($implementation === 'php-grpc-lite') {
                     $options['php_grpc_lite.diagnostics'] = $diagnostics;
+                    if ($uploadReadCallback) {
+                        $options['php_grpc_lite.upload_read_callback'] = true;
+                    }
                 }
                 if ($implementation === 'php-grpc-lite' && $curlTraceHandle !== null && $curlTraceWritten < $curlTraceCalls) {
                     $curlTraceWritten++;
@@ -172,6 +178,7 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
         'max_calls' => $maxCalls,
         'diagnostic_rpc' => $diagnosticRpc,
         'client_internal_diagnostics' => $diagnosticRpc && $implementation === 'php-grpc-lite',
+        'upload_read_callback' => $uploadReadCallback && $implementation === 'php-grpc-lite',
         'curl_trace_output' => $curlTraceOutput,
         'curl_trace_calls' => $curlTraceCalls,
     ], $metrics);
@@ -355,7 +362,7 @@ function diagnosticUnit(string $name): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/request-unary.php --suite=request-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--request-payload-sizes=0,100,1024,10240,102400,1048576] [--warmup-calls=3] [--max-calls=0] [--diagnostic-rpc] [--curl-trace-output=var/bench-results/trace.log --curl-trace-calls=3]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/request-unary.php --suite=request-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--request-payload-sizes=0,100,1024,10240,102400,1048576] [--warmup-calls=3] [--max-calls=0] [--diagnostic-rpc] [--upload-read-callback] [--curl-trace-output=var/bench-results/trace.log --curl-trace-calls=3]\n");
     exit(2);
 }
 

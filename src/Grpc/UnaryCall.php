@@ -17,6 +17,7 @@ class UnaryCall extends AbstractCall
     private ?object $diagnostics = null;
     private int $curlExecStartedNs = 0;
     private bool $returnTransferFastPath = false;
+    private bool $uploadReadCallback = false;
     private string $returnedBody = '';
 
     /** @var list<string> */
@@ -41,7 +42,9 @@ class UnaryCall extends AbstractCall
         $diagnostics = $this->options['php_grpc_lite.diagnostics'] ?? null;
         $this->diagnostics = is_object($diagnostics) ? $diagnostics : null;
         $this->returnTransferFastPath = ($this->options['php_grpc_lite.return_transfer_fast_path'] ?? false) === true;
+        $this->uploadReadCallback = ($this->options['php_grpc_lite.upload_read_callback'] ?? false) === true;
         $this->recordDiagnostic('return_transfer_fast_path', $this->returnTransferFastPath ? 1 : 0);
+        $this->recordDiagnostic('upload_read_callback', $this->uploadReadCallback ? 1 : 0);
         if ($this->diagnostics !== null) {
             $this->diagnostics->events = [];
         }
@@ -51,10 +54,11 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnostic('request_serialize_ns', hrtime(true) - $serializeStartedNs);
 
         $frameStartedNs = hrtime(true);
-        $frame = "\x00" . pack('N', strlen($serialized)) . $serialized;
+        $grpcHeader = "\x00" . pack('N', strlen($serialized));
+        $frame = $this->uploadReadCallback ? null : $grpcHeader . $serialized;
         $this->recordDiagnostic('request_frame_build_ns', hrtime(true) - $frameStartedNs);
         $this->recordDiagnostic('request_payload_bytes', strlen($serialized));
-        $this->recordDiagnostic('request_frame_bytes', strlen($frame));
+        $this->recordDiagnostic('request_frame_bytes', strlen($grpcHeader) + strlen($serialized));
 
         $initCurlStartedNs = hrtime(true);
         $this->ch = $this->initCurl();
@@ -68,11 +72,16 @@ class UnaryCall extends AbstractCall
             CURLOPT_URL            => $this->buildUrl(),
             CURLOPT_HTTP_VERSION   => $this->getHttpVersion(),
             CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $frame,
             CURLOPT_HTTPHEADER     => $requestHeaders,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADERFUNCTION => $this->onHeader(...),
         ];
+        if ($this->uploadReadCallback) {
+            $curlOptions[CURLOPT_INFILESIZE] = strlen($grpcHeader) + strlen($serialized);
+            $curlOptions[CURLOPT_READFUNCTION] = $this->makeUploadReadCallback($grpcHeader, $serialized);
+        } else {
+            $curlOptions[CURLOPT_POSTFIELDS] = $frame;
+        }
         if (!$this->returnTransferFastPath) {
             $curlOptions[CURLOPT_WRITEFUNCTION] = $this->onBodyChunk(...);
         }
@@ -327,9 +336,66 @@ class UnaryCall extends AbstractCall
         return $body;
     }
 
+    /**
+     * @return callable(\CurlHandle, resource|null, int): string
+     */
+    private function makeUploadReadCallback(string $grpcHeader, string $serialized): callable
+    {
+        $offset = 0;
+        $headerBytes = strlen($grpcHeader);
+        $totalBytes = $headerBytes + strlen($serialized);
+
+        return function (\CurlHandle $ch, mixed $file, int $length) use ($grpcHeader, $serialized, &$offset, $headerBytes, $totalBytes): string {
+            $startedNs = hrtime(true);
+            $this->recordCallbackOffsetOnce('upload_first_read_callback_ns');
+            $this->recordDiagnostic('upload_read_callback_calls_total', 1, true);
+            $this->recordDiagnosticMax('upload_read_callback_requested_bytes_max', $length);
+
+            if ($offset >= $totalBytes || $length <= 0) {
+                $this->recordCallbackOffsetOnce('upload_read_complete_ns');
+                return '';
+            }
+
+            $remaining = min($length, $totalBytes - $offset);
+            if ($offset < $headerBytes) {
+                $chunk = substr($grpcHeader, $offset, min($remaining, $headerBytes - $offset));
+                if (strlen($chunk) < $remaining) {
+                    $payloadOffset = 0;
+                    $chunk .= substr($serialized, $payloadOffset, $remaining - strlen($chunk));
+                }
+            } else {
+                $payloadOffset = $offset - $headerBytes;
+                $chunk = substr($serialized, $payloadOffset, $remaining);
+            }
+
+            $chunkBytes = strlen($chunk);
+            $offset += $chunkBytes;
+            $elapsedNs = hrtime(true) - $startedNs;
+            $this->recordDiagnostic('upload_read_callback_ns_total', $elapsedNs, true);
+            $this->recordDiagnostic('upload_read_callback_bytes_total', $chunkBytes, true);
+            $this->recordDiagnosticMax('upload_read_callback_bytes_max', $chunkBytes);
+            $this->recordDiagnosticMax('upload_read_callback_ns_max', $elapsedNs);
+            $this->recordCallbackOffset('upload_last_read_callback_ns');
+            if ($offset >= $totalBytes) {
+                $this->recordCallbackOffsetOnce('upload_read_complete_ns');
+            }
+
+            return $chunk;
+        };
+    }
+
     private function recordCallbackOffsetOnce(string $name): void
     {
         if ($this->diagnostics === null || $this->curlExecStartedNs === 0 || isset($this->diagnostics->{$name})) {
+            return;
+        }
+
+        $this->diagnostics->{$name} = hrtime(true) - $this->curlExecStartedNs;
+    }
+
+    private function recordCallbackOffset(string $name): void
+    {
+        if ($this->diagnostics === null || $this->curlExecStartedNs === 0) {
             return;
         }
 
@@ -398,6 +464,13 @@ class UnaryCall extends AbstractCall
         if ((is_int($totalTimeNs) || is_float($totalTimeNs)) && (is_int($startTransferTimeNs) || is_float($startTransferTimeNs))) {
             $this->recordDiagnostic('curl_download_after_starttransfer_ns', max(0, $totalTimeNs - $startTransferTimeNs));
         }
+        $postTransferTimeNs = $this->diagnostics->curl_posttransfer_time_ns ?? null;
+        if ((is_int($postTransferTimeNs) || is_float($postTransferTimeNs)) && (is_int($startTransferTimeNs) || is_float($startTransferTimeNs))) {
+            $this->recordDiagnostic('curl_wait_after_upload_before_first_byte_ns', max(0, $startTransferTimeNs - $postTransferTimeNs));
+        }
+        if ((is_int($postTransferTimeNs) || is_float($postTransferTimeNs)) && (is_int($totalTimeNs) || is_float($totalTimeNs))) {
+            $this->recordDiagnostic('curl_after_upload_until_done_ns', max(0, $totalTimeNs - $postTransferTimeNs));
+        }
     }
 
     /**
@@ -405,7 +478,7 @@ class UnaryCall extends AbstractCall
      */
     private function curlTimingInfoMap(): array
     {
-        return [
+        $map = [
             'curl_total_time_ns' => \CURLINFO_TOTAL_TIME_T,
             'curl_namelookup_time_ns' => \CURLINFO_NAMELOOKUP_TIME_T,
             'curl_connect_time_ns' => \CURLINFO_CONNECT_TIME_T,
@@ -414,6 +487,11 @@ class UnaryCall extends AbstractCall
             'curl_starttransfer_time_ns' => \CURLINFO_STARTTRANSFER_TIME_T,
             'curl_redirect_time_ns' => \CURLINFO_REDIRECT_TIME_T,
         ];
+        if (defined('CURLINFO_POSTTRANSFER_TIME_T')) {
+            $map['curl_posttransfer_time_ns'] = \CURLINFO_POSTTRANSFER_TIME_T;
+        }
+
+        return $map;
     }
 
     /**
