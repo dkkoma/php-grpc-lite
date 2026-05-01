@@ -118,6 +118,19 @@ PoC の request size sweep と並べると、512KB 以上では ext-grpc の ser
 
 ただし `client_upload_complete_us` は client が最後の DATA を socket buffer に書き終えた時刻であり、server が受信完了した時刻ではない。PoC の upload done p99 が小さくても server InPayload p99 が大きいのは矛盾ではなく、kernel buffer 以降の送出、HTTP/2 flow control、server側受信処理、Docker scheduler を含む区間が残っていることを示す。
 
+flow-control / scheduler 側をさらに見るため、PoC に call 単位の `WINDOW_UPDATE`、remote window、flow-control pause、write syscall 最大時間、tail sample を追加した。再実行用の入口は `bench/phase2/nghttp2-poc-flow-sweep.sh`。下表は `split + no-copy + server stats`、各 1000 calls の単発 run。
+
+| request | p50 | p99 | upload p99 | response header p99 | server InPayload p99 | first WINDOW_UPDATE p99 | last WINDOW_UPDATE p99 | WINDOW_UPDATE p99 | flow pause p99 | max write syscall p99 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100KB | 65μs | 1986μs | 80μs | 1880μs | 1628μs | 1182μs | 1590μs | 3 | 0 | 35μs |
+| 512KB | 192μs | 3636μs | 389μs | 3551μs | 3367μs | 1643μs | 3427μs | 4 | 0 | 179μs |
+| 1MB | 372μs | 4046μs | 1355μs | 4044μs | 3617μs | 1658μs | 3081μs | 8 | 0 | 778μs |
+| 2MB | 740μs | 4638μs | 1517μs | 4636μs | 4174μs | 1979μs | 4129μs | 6 | 0 | 994μs |
+
+この run では `nghttp2_data_source_read_length_callback()` が `allowed == 0` で返す明示的な flow-control pause は p99 でも 0 だった。一方で、tail sample では `client_upload_complete_us` が数十〜数百μsで終わっている call でも、`server_stats_in_payload_ns` または `server_stats_out_header_ns` が数msまで伸びる。例えば 1MB request の最遅 call は upload complete 95μs、last WINDOW_UPDATE 222μs、server InPayload 6153μs、response header 6440μsだった。2MB request では InPayload 1675μsに対して OutHeader 6818μsまで伸びる sample もあり、server handler後のGo runtime / scheduler / transport write側のtailも混ざる。
+
+したがって、現時点で見えている問題を「client側でremote windowが0になり、DATA readがPAUSEしている」とは言い切れない。より正確には、kernel buffer へ早く書き終わった後、server側HTTP/2 read loopがrequest全体をgRPC payloadとして引き上げるまで、またはhandler後にresponse headerを返すまでの区間でtailが出ている。HTTP/2 flow-controlは関与しているが、nghttp2 client API上の単純なwindow枯渇待ちではなく、gRPC-Go transport、Docker network、OS scheduler、Go scheduler を含む境界として扱うべき。
+
 ## 観察
 
 - direct nghttp2 は 100KB response の p50 で libcurl 通常経路より明確に低い。直近の libcurl 通常経路は 100KB response p50 120.1μs / p99 1976.8μs だったため、transport 境界に改善余地がある。
@@ -131,6 +144,7 @@ PoC の request size sweep と並べると、512KB 以上では ext-grpc の ser
 - 同一 call 時刻対応では、1MB no-copy の client upload done p99 は 573μs、client response header p99 は 3186μs、server InPayload p99 は 3004μsだった。残る tail は client内のpayload copyや最後のDATA write完了前ではなく、wire / server受信 / flow-control / schedulerを含む区間に寄っている。
 - request size sweepでも同じ傾向だった。100KB〜2MBの全サイズで、total p99はclient upload done p99ではなくresponse header / server InPayload p99に近い。2MBではclient upload done p99も大きくなるが、まだ全体tailの主因ではない。
 - ext-grpc の server stats size sweep でも、p99 は server InPayload / OutHeader に寄る。PoCとの差は512KB以上で server InPayload までに既に出ており、response parse や post-handler response path だけを詰めても large request p99 差は消えない。
+- flow-control追加指標では、明示的な `allowed == 0` pause は観測されなかった。tail sampleは `WINDOW_UPDATE` 受信時刻、server InPayload、server OutHeader のいずれかに寄るため、client側nghttp2の単純なPAUSEではなく、server受信、gRPC-Go transport、Docker/OS/Go schedulerの複合tailとして追う。
 - ただしこの PoC は互換実装ではない。metadata / trailer / error semantics / deadline / TLS を満たすにはかなり追加実装が必要。
 
 ## 判断
@@ -141,6 +155,7 @@ PoC の request size sweep と並べると、512KB 以上では ext-grpc の ser
 - copy 経路の単純な nonblocking poll loop は p99 を改善しなかった。次に tail を追うなら、no-copy 経路でpartial writeを安全に扱う状態機械を作るか、client側だけでなく server stats と同一 call 対応した upload完了時刻を取る必要がある。
 - 同一 call 時刻対応後の優先度は、client側copy削減よりも、server InPayload 到達までの tail をpayload size sweep / repeated runで確認すること。ここが安定して残るなら、client C拡張だけでext-grpc p99へ完全に寄せるのは難しく、server側gRPC-Go / Docker scheduler / HTTP/2 flow-controlの影響として扱う。
 - ext-grpc の server stats size sweep と比較すると、large request p99差は「server InPayload後〜client response header」だけではなく「server InPayloadまで」にも出る。no-copyでp50/throughputは十分詰まっているため、次に詰めるなら client側copy削減より、送信駆動、HTTP/2 flow-control、server受信完了までのtailを分ける必要がある。
+- flow-control / scheduler 追加計測後の判断として、まずは client C拡張内の `allowed == 0` pause を主因にしない。次に進むなら、test-server の `TEST_SERVER_GOMAXPROCS`、`TEST_SERVER_GRPC_INITIAL_WINDOW_SIZE`、`TEST_SERVER_GRPC_INITIAL_CONN_WINDOW_SIZE` を振って、server側windowとGo scheduler条件で p99 / server InPayload / OutHeader がどう動くかを見る。
 - ただし現時点で php-grpc-lite 本体を C extension 前提に切り替える判断材料としては不足。drop-in replacement の価値は互換性が主で、C transport は別フェーズの候補に留める。
 - 次に進めるなら、C extension を本体化する前に `php-grpc-lite` の PHP userland 側で削れる固定費を先に潰し、その後に「native transport を入れるならどの surface を C に落とすか」を決める。
 

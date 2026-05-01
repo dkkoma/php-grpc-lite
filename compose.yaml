@@ -16,6 +16,12 @@ services:
       context: ./poc
       dockerfile: test-server/Dockerfile
     image: php-grpc-lite-test-server
+    environment:
+      TEST_SERVER_GOMAXPROCS: ${TEST_SERVER_GOMAXPROCS:-}
+      TEST_SERVER_GRPC_INITIAL_WINDOW_SIZE: ${TEST_SERVER_GRPC_INITIAL_WINDOW_SIZE:-}
+      TEST_SERVER_GRPC_INITIAL_CONN_WINDOW_SIZE: ${TEST_SERVER_GRPC_INITIAL_CONN_WINDOW_SIZE:-}
+      TEST_SERVER_GRPC_READ_BUFFER_SIZE: ${TEST_SERVER_GRPC_READ_BUFFER_SIZE:-}
+      TEST_SERVER_GRPC_WRITE_BUFFER_SIZE: ${TEST_SERVER_GRPC_WRITE_BUFFER_SIZE:-}
 
   spanner-emulator:
     image: gcr.io/cloud-spanner-emulator/emulator

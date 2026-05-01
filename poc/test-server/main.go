@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -326,11 +327,45 @@ func (s *server) BenchServerStream(req *pb.BenchRequest, stream pb.Greeter_Bench
 	return nil
 }
 
-func newServer() *grpc.Server {
-	s := grpc.NewServer(grpc.StatsHandler(benchStatsHandler{}))
+func newServer(extraOptions ...grpc.ServerOption) *grpc.Server {
+	options := []grpc.ServerOption{grpc.StatsHandler(benchStatsHandler{})}
+	options = append(options, benchGrpcServerOptionsFromEnv()...)
+	options = append(options, extraOptions...)
+	s := grpc.NewServer(options...)
 	pb.RegisterGreeterServer(s, &server{})
 	reflection.Register(s)
 	return s
+}
+
+func benchGrpcServerOptionsFromEnv() []grpc.ServerOption {
+	var options []grpc.ServerOption
+	if value, ok := envInt("TEST_SERVER_GRPC_INITIAL_WINDOW_SIZE"); ok {
+		options = append(options, grpc.InitialWindowSize(int32(value)))
+	}
+	if value, ok := envInt("TEST_SERVER_GRPC_INITIAL_CONN_WINDOW_SIZE"); ok {
+		options = append(options, grpc.InitialConnWindowSize(int32(value)))
+	}
+	if value, ok := envInt("TEST_SERVER_GRPC_READ_BUFFER_SIZE"); ok {
+		options = append(options, grpc.ReadBufferSize(value))
+	}
+	if value, ok := envInt("TEST_SERVER_GRPC_WRITE_BUFFER_SIZE"); ok {
+		options = append(options, grpc.WriteBufferSize(value))
+	}
+	return options
+}
+
+func envInt(key string) (int, bool) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0, false
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("ignoring invalid %s=%q: %v", key, raw, err)
+		return 0, false
+	}
+	log.Printf("%s=%d", key, value)
+	return value, true
 }
 
 func serveNonGrpcH2C() {
@@ -381,6 +416,10 @@ func grpcFrame(flag byte, payload []byte) []byte {
 }
 
 func main() {
+	if value, ok := envInt("TEST_SERVER_GOMAXPROCS"); ok {
+		runtime.GOMAXPROCS(value)
+	}
+
 	// h2c plaintext on :50051
 	go func() {
 		lis, err := net.Listen("tcp", ":50051")
@@ -400,9 +439,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load TLS keys: %v", err)
 	}
-	tlsServer := grpc.NewServer(grpc.Creds(creds))
-	pb.RegisterGreeterServer(tlsServer, &server{})
-	reflection.Register(tlsServer)
+	tlsServer := newServer(grpc.Creds(creds))
 	go func() {
 		lis, err := net.Listen("tcp", ":50052")
 		if err != nil {
@@ -420,8 +457,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to set up mTLS: %v", err)
 	}
-	pb.RegisterGreeterServer(mtlsServer, &server{})
-	reflection.Register(mtlsServer)
 
 	lis, err := net.Listen("tcp", ":50053")
 	if err != nil {
@@ -451,5 +486,5 @@ func newMtlsServer() (*grpc.Server, error) {
 		ClientCAs:    clientCAs,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 	}
-	return grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg))), nil
+	return newServer(grpc.Creds(credentials.NewTLS(tlsCfg))), nil
 }

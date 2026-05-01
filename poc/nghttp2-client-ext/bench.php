@@ -52,8 +52,21 @@ $callsPerSecond = $result['total_us'] > 0 ? ($result['ok'] / ($result['total_us'
 $series = [
     'client_first_data_sent_us',
     'client_upload_complete_us',
+    'client_first_window_update_us',
+    'client_last_window_update_us',
+    'client_first_flow_control_pause_us',
     'client_response_header_us',
     'client_stream_close_us',
+    'call_window_update_frames_recv',
+    'call_connection_window_update_frames_recv',
+    'call_stream_window_update_frames_recv',
+    'call_connection_window_update_increment_recv',
+    'call_stream_window_update_increment_recv',
+    'call_data_read_length_calls',
+    'call_flow_control_pauses',
+    'call_max_write_syscall_us',
+    'call_min_session_remote_window',
+    'call_min_stream_remote_window',
     'server_handler_ns',
     'server_payload_alloc_ns',
     'server_payload_bytes',
@@ -79,6 +92,7 @@ foreach ($series as $key) {
 }
 
 $result['sample_calls'] = sampleCalls($result, $rawLatencies, min(5, $count));
+$result['tail_sample_calls'] = tailSampleCalls($result, $rawLatencies, min(5, $count));
 
 foreach (array_merge(['latencies_us'], $series) as $key) {
     unset($result[$key]);
@@ -120,11 +134,68 @@ function sampleCalls(array $result, array $latencies, int $limit): array
         $samples[] = [
             'latency_us' => (int) ($latencies[$i] ?? 0),
             'client_upload_complete_us' => (int) ($result['client_upload_complete_us'][$i] ?? 0),
+            'client_first_window_update_us' => (int) ($result['client_first_window_update_us'][$i] ?? 0),
+            'client_last_window_update_us' => (int) ($result['client_last_window_update_us'][$i] ?? 0),
+            'client_first_flow_control_pause_us' => (int) ($result['client_first_flow_control_pause_us'][$i] ?? 0),
             'client_response_header_us' => (int) ($result['client_response_header_us'][$i] ?? 0),
             'client_stream_close_us' => (int) ($result['client_stream_close_us'][$i] ?? 0),
+            'call_window_update_frames_recv' => (int) ($result['call_window_update_frames_recv'][$i] ?? 0),
+            'call_connection_window_update_frames_recv' => (int) ($result['call_connection_window_update_frames_recv'][$i] ?? 0),
+            'call_stream_window_update_frames_recv' => (int) ($result['call_stream_window_update_frames_recv'][$i] ?? 0),
+            'call_connection_window_update_increment_recv' => (int) ($result['call_connection_window_update_increment_recv'][$i] ?? 0),
+            'call_stream_window_update_increment_recv' => (int) ($result['call_stream_window_update_increment_recv'][$i] ?? 0),
+            'call_data_read_length_calls' => (int) ($result['call_data_read_length_calls'][$i] ?? 0),
+            'call_flow_control_pauses' => (int) ($result['call_flow_control_pauses'][$i] ?? 0),
+            'call_max_write_syscall_us' => (int) ($result['call_max_write_syscall_us'][$i] ?? 0),
+            'call_min_session_remote_window' => (int) ($result['call_min_session_remote_window'][$i] ?? 0),
+            'call_min_stream_remote_window' => (int) ($result['call_min_stream_remote_window'][$i] ?? 0),
+            'server_handler_ns' => (int) ($result['server_handler_ns'][$i] ?? 0),
+            'server_stats_handler_start_ns' => (int) ($result['server_stats_handler_start_ns'][$i] ?? 0),
+            'server_stats_handler_end_ns' => (int) ($result['server_stats_handler_end_ns'][$i] ?? 0),
             'server_stats_in_payload_ns' => (int) ($result['server_stats_in_payload_ns'][$i] ?? 0),
             'server_stats_out_header_ns' => (int) ($result['server_stats_out_header_ns'][$i] ?? 0),
             'server_stats_out_payload_ns' => (int) ($result['server_stats_out_payload_ns'][$i] ?? 0),
+        ];
+    }
+    return $samples;
+}
+
+/**
+ * @param array<string, mixed> $result
+ * @return list<array<string, int|float>>
+ */
+function tailSampleCalls(array $result, array $latencies, int $limit): array
+{
+    $indices = array_keys($latencies);
+    usort($indices, static fn (int $a, int $b): int => ($latencies[$b] ?? 0) <=> ($latencies[$a] ?? 0));
+
+    $samples = [];
+    foreach (array_slice($indices, 0, $limit) as $index) {
+        $samples[] = [
+            'index' => $index,
+            'latency_us' => (int) ($latencies[$index] ?? 0),
+            'client_upload_complete_us' => (int) ($result['client_upload_complete_us'][$index] ?? 0),
+            'client_first_window_update_us' => (int) ($result['client_first_window_update_us'][$index] ?? 0),
+            'client_last_window_update_us' => (int) ($result['client_last_window_update_us'][$index] ?? 0),
+            'client_first_flow_control_pause_us' => (int) ($result['client_first_flow_control_pause_us'][$index] ?? 0),
+            'client_response_header_us' => (int) ($result['client_response_header_us'][$index] ?? 0),
+            'client_stream_close_us' => (int) ($result['client_stream_close_us'][$index] ?? 0),
+            'call_window_update_frames_recv' => (int) ($result['call_window_update_frames_recv'][$index] ?? 0),
+            'call_connection_window_update_frames_recv' => (int) ($result['call_connection_window_update_frames_recv'][$index] ?? 0),
+            'call_stream_window_update_frames_recv' => (int) ($result['call_stream_window_update_frames_recv'][$index] ?? 0),
+            'call_connection_window_update_increment_recv' => (int) ($result['call_connection_window_update_increment_recv'][$index] ?? 0),
+            'call_stream_window_update_increment_recv' => (int) ($result['call_stream_window_update_increment_recv'][$index] ?? 0),
+            'call_data_read_length_calls' => (int) ($result['call_data_read_length_calls'][$index] ?? 0),
+            'call_flow_control_pauses' => (int) ($result['call_flow_control_pauses'][$index] ?? 0),
+            'call_max_write_syscall_us' => (int) ($result['call_max_write_syscall_us'][$index] ?? 0),
+            'call_min_session_remote_window' => (int) ($result['call_min_session_remote_window'][$index] ?? 0),
+            'call_min_stream_remote_window' => (int) ($result['call_min_stream_remote_window'][$index] ?? 0),
+            'server_handler_ns' => (int) ($result['server_handler_ns'][$index] ?? 0),
+            'server_stats_handler_start_ns' => (int) ($result['server_stats_handler_start_ns'][$index] ?? 0),
+            'server_stats_handler_end_ns' => (int) ($result['server_stats_handler_end_ns'][$index] ?? 0),
+            'server_stats_in_payload_ns' => (int) ($result['server_stats_in_payload_ns'][$index] ?? 0),
+            'server_stats_out_header_ns' => (int) ($result['server_stats_out_header_ns'][$index] ?? 0),
+            'server_stats_out_payload_ns' => (int) ($result['server_stats_out_payload_ns'][$index] ?? 0),
         ];
     }
     return $samples;
