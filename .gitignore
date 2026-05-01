@@ -13,6 +13,8 @@ bench-comparison/composer.lock
 
 # Benchmark transient outputs
 var/bench-results/
+var/build-curl-instrumented/
+var/instrumented-curl/
 .phpbench/
 
 # Research scratch (cloned upstream sources for surveying)
