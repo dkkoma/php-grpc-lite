@@ -34,14 +34,17 @@ type server struct {
 type benchStatsContextKey struct{}
 
 type benchRPCStats struct {
-	mu                        sync.Mutex
-	beginAt                   time.Time
-	inPayloadSinceBeginNs     int64
-	outHeaderSinceBeginNs     int64
-	outPayloadSinceBeginNs    int64
-	outPayloadLengthBytes     int
-	outPayloadWireLengthBytes int
-	outPayloadCompressedBytes int
+	mu                          sync.Mutex
+	beginAt                     time.Time
+	inPayloadSinceBeginNs       int64
+	outHeaderSinceBeginNs       int64
+	firstOutPayloadSinceBeginNs int64
+	lastOutPayloadSinceBeginNs  int64
+	outPayloadCount             int
+	outPayloadSinceBeginNs      int64
+	outPayloadLengthBytes       int
+	outPayloadWireLengthBytes   int
+	outPayloadCompressedBytes   int
 }
 
 type benchStatsHandler struct{}
@@ -193,7 +196,13 @@ func (s *benchRPCStats) setOutHeader(t time.Time) {
 func (s *benchRPCStats) setOutPayload(t time.Time, lengthBytes int, wireLengthBytes int, compressedBytes int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.outPayloadSinceBeginNs = s.sinceBegin(t)
+	sinceBegin := s.sinceBegin(t)
+	if s.outPayloadCount == 0 {
+		s.firstOutPayloadSinceBeginNs = sinceBegin
+	}
+	s.outPayloadCount++
+	s.lastOutPayloadSinceBeginNs = sinceBegin
+	s.outPayloadSinceBeginNs = sinceBegin
 	s.outPayloadLengthBytes = lengthBytes
 	s.outPayloadWireLengthBytes = wireLengthBytes
 	s.outPayloadCompressedBytes = compressedBytes
@@ -206,6 +215,9 @@ func (s *benchRPCStats) trailerPairs() []string {
 		"x-bench-server-stats-in-payload-ns", strconv.FormatInt(s.inPayloadSinceBeginNs, 10),
 		"x-bench-server-stats-out-header-ns", strconv.FormatInt(s.outHeaderSinceBeginNs, 10),
 		"x-bench-server-stats-out-payload-ns", strconv.FormatInt(s.outPayloadSinceBeginNs, 10),
+		"x-bench-server-stats-first-out-payload-ns", strconv.FormatInt(s.firstOutPayloadSinceBeginNs, 10),
+		"x-bench-server-stats-last-out-payload-ns", strconv.FormatInt(s.lastOutPayloadSinceBeginNs, 10),
+		"x-bench-server-stats-out-payload-count", strconv.Itoa(s.outPayloadCount),
 		"x-bench-server-stats-out-payload-bytes", strconv.Itoa(s.outPayloadLengthBytes),
 		"x-bench-server-stats-out-payload-wire-bytes", strconv.Itoa(s.outPayloadWireLengthBytes),
 		"x-bench-server-stats-out-payload-compressed-bytes", strconv.Itoa(s.outPayloadCompressedBytes),
@@ -323,6 +335,9 @@ func (s *server) BenchServerStream(req *pb.BenchRequest, stream pb.Greeter_Bench
 		if err := stream.Send(&pb.BenchReply{Payload: payload}); err != nil {
 			return err
 		}
+	}
+	if rpcStats := benchRPCStatsFromContext(stream.Context()); rpcStats != nil {
+		stream.SetTrailer(metadata.Pairs(rpcStats.trailerPairs()...))
 	}
 	return nil
 }

@@ -13,6 +13,7 @@
 #   ./bench/phase2/run.sh rtt-unary-diagnostic
 #   ./bench/phase2/run.sh throughput-streaming
 #   ./bench/phase2/run.sh large-streaming
+#   ./bench/phase2/run.sh streaming-diagnostic
 #   ./bench/phase2/run.sh payload-unary
 #   ./bench/phase2/run.sh payload-unary-diagnostic
 #   ./bench/phase2/run.sh payload-unary-diagnostic-cached
@@ -112,6 +113,12 @@ case "$suite" in
             "phase2-$suite-$timestamp-$implementation.json" \
             tools/phase2/large-streaming.php
         ;;
+    streaming-diagnostic)
+        run_phase2_php \
+            "Phase 2 streaming RPC diagnostic" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/streaming-diagnostic.php
+        ;;
     payload-unary)
         run_phase2_php \
             "Phase 2 unary payload sweep" \
@@ -178,7 +185,7 @@ case "$suite" in
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic]
 EOF
         exit 2
         ;;
