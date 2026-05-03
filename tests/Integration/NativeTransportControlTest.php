@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace PhpGrpcLite\Tests\Integration;
 
 use Grpc\ChannelCredentials;
+use Grpc\Internal\NativeTransport;
 use Helloworld\BenchRequest;
 use Helloworld\HelloRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
@@ -149,5 +150,68 @@ final class NativeTransportControlTest extends TestCase
 
         self::assertSame(1, $count);
         self::assertSame(\Grpc\STATUS_CANCELLED, $call->getStatus()->code);
+    }
+
+    public function testNativeChannelGoAwayIsNotReusedForNextRpc(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $first = NativeTransport::unarySimple(
+            'test-server:50055',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [],
+        );
+        $second = NativeTransport::unarySimple(
+            'test-server:50055',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [],
+        );
+
+        self::assertSame(\Grpc\STATUS_OK, $first['grpc_status']);
+        self::assertTrue($first['raw']['channel_draining'] ?? false);
+        self::assertSame(\Grpc\STATUS_OK, $second['grpc_status']);
+        self::assertTrue($second['raw']['channel_draining'] ?? false);
+    }
+
+    public function testNativeChannelEofIsDiscardedBeforeNextRpc(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $failed = false;
+        for ($attempt = 0; $attempt < 4; $attempt++) {
+            try {
+                $result = NativeTransport::unarySimple(
+                    'test-server:50056',
+                    '/helloworld.Greeter/BenchUnary',
+                    '',
+                    [],
+                );
+                if ($result['grpc_status'] !== \Grpc\STATUS_OK) {
+                    $failed = true;
+                    break;
+                }
+            } catch (\RuntimeException) {
+                $failed = true;
+                break;
+            }
+        }
+
+        self::assertTrue($failed, 'EOF fixture did not produce a failed RPC');
+
+        $next = NativeTransport::unarySimple(
+            'test-server:50056',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [],
+        );
+
+        self::assertSame(\Grpc\STATUS_OK, $next['grpc_status']);
+        self::assertFalse($next['raw']['channel_dead'] ?? true);
     }
 }

@@ -85,7 +85,7 @@ Phase 2 MVP の設計上は、native transport を採用するなら C 拡張内
 
 残課題:
 
-- GOAWAY / EOF / send error の再現テスト用 h2 server fixture
+- send error / mid-stream failure の追加fixture
 - TLS/mTLS channel
 - FPM request をまたぐ persistent resource の可否
 - concurrent streams / multiplex

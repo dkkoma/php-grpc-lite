@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -13,11 +15,13 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "example.com/helloworld/pb"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/hpack"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -50,6 +54,7 @@ type benchRPCStats struct {
 type benchStatsHandler struct{}
 
 var benchPayloadCache = map[int][]byte{}
+var eofLifecycleConnections int64
 
 func init() {
 	for _, size := range []int{0, 100, 1024, 10 * 1024, 100 * 1024, 1024 * 1024} {
@@ -422,6 +427,105 @@ func serveNonGrpcH2C() {
 	}
 }
 
+func serveLifecycleH2C() {
+	go serveRawH2C(":50055", true, false)
+	go serveRawH2C(":50056", false, true)
+}
+
+func serveRawH2C(addr string, sendGoAway bool, firstConnectionEOF bool) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c lifecycle fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleRawH2C(conn, sendGoAway, firstConnectionEOF)
+	}
+}
+
+func handleRawH2C(conn net.Conn, sendGoAway bool, firstConnectionEOF bool) {
+	defer conn.Close()
+	if firstConnectionEOF && atomic.AddInt64(&eofLifecycleConnections, 1)%2 == 1 {
+		return
+	}
+
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var streamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			streamID = f.Header().StreamID
+			if f.StreamEnded() {
+				writeRawGrpcOK(framer, streamID, sendGoAway)
+				return
+			}
+		case *http2.DataFrame:
+			if streamID == 0 {
+				streamID = f.Header().StreamID
+			}
+			if f.StreamEnded() {
+				writeRawGrpcOK(framer, streamID, sendGoAway)
+				return
+			}
+		}
+	}
+}
+
+func writeRawGrpcOK(framer *http2.Framer, streamID uint32, sendGoAway bool) {
+	headers := encodeHeaders([]hpack.HeaderField{
+		{Name: ":status", Value: "200"},
+		{Name: "content-type", Value: "application/grpc"},
+	})
+	_ = framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: headers,
+		EndHeaders:    true,
+	})
+	_ = framer.WriteData(streamID, false, grpcFrame(0, nil))
+	if sendGoAway {
+		_ = framer.WriteGoAway(streamID, http2.ErrCodeNo, nil)
+	}
+	trailers := encodeHeaders([]hpack.HeaderField{
+		{Name: "grpc-status", Value: "0"},
+	})
+	_ = framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: trailers,
+		EndHeaders:    true,
+		EndStream:     true,
+	})
+}
+
+func encodeHeaders(fields []hpack.HeaderField) []byte {
+	var buf bytes.Buffer
+	encoder := hpack.NewEncoder(&buf)
+	for _, field := range fields {
+		_ = encoder.WriteField(field)
+	}
+	return buf.Bytes()
+}
+
 func grpcFrame(flag byte, payload []byte) []byte {
 	frame := make([]byte, 5+len(payload))
 	frame[0] = flag
@@ -448,6 +552,7 @@ func main() {
 	}()
 
 	go serveNonGrpcH2C()
+	serveLifecycleH2C()
 
 	// h2 over TLS on :50052
 	creds, err := credentials.NewServerTLSFromFile("/certs/server.crt", "/certs/server.key")
