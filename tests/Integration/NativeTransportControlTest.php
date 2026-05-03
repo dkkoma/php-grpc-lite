@@ -528,6 +528,58 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame(0, $second['connect_us']);
     }
 
+    public function testNativeStreamResourceDestructReleasesChannelBusyState(): void
+    {
+        if (!function_exists('nghttp2_poc_stream_open')) {
+            self::markTestSkipped('nghttp2_poc stream API is not loaded in this process');
+        }
+
+        $key = 'phpunit-stream-lifecycle-' . bin2hex(random_bytes(8));
+        $request = new BenchRequest();
+        $request->setMessageCount(3);
+        $request->setPayloadBytes(100);
+        $serialized = $request->serializeToString();
+
+        $stream = \nghttp2_poc_stream_open(
+            $key,
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchServerStream',
+            $serialized,
+            [],
+        );
+
+        try {
+            \nghttp2_poc_stream_open(
+                $key,
+                'test-server',
+                50051,
+                '/helloworld.Greeter/BenchServerStream',
+                $serialized,
+                [],
+            );
+            self::fail('second stream on a busy native channel unexpectedly opened');
+        } catch (\Throwable $e) {
+            self::assertStringContainsString('active stream', $e->getMessage());
+        }
+
+        unset($stream);
+
+        $nextStream = \nghttp2_poc_stream_open(
+            $key,
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchServerStream',
+            $serialized,
+            [],
+        );
+        $next = \nghttp2_poc_stream_next($nextStream);
+
+        self::assertFalse($next['done']);
+        self::assertIsString($next['payload']);
+        self::assertTrue(\nghttp2_poc_stream_cancel($nextStream));
+    }
+
     public function testNativeChannelEofIsDiscardedBeforeNextRpc(): void
     {
         if (!extension_loaded('nghttp2_poc')) {

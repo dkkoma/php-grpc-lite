@@ -267,6 +267,7 @@ static void free_queued_raw_response_payloads(poc_client *client);
 static int add_metadata_entry(poc_client *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
 static void free_metadata_entries(poc_client *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, poc_client *client, bool trailing);
+static void cleanup_poc_client(poc_client *client);
 static void compact_response_body_if_needed(poc_client *client);
 static bool channel_usable(poc_channel *channel);
 static int connect_tcp(const char *host, zend_long port);
@@ -400,21 +401,7 @@ static void destroy_poc_stream(poc_stream *stream)
     if (stream->recv_buf != NULL) {
         efree(stream->recv_buf);
     }
-    if (stream->client.response_payload != NULL) {
-        zend_string_release(stream->client.response_payload);
-        stream->client.response_payload = NULL;
-    }
-    free_queued_response_payloads(&stream->client);
-    free_queued_raw_response_payloads(&stream->client);
-    free_metadata_entries(&stream->client);
-    if (stream->client.grpc_message != NULL) {
-        zend_string_release(stream->client.grpc_message);
-        stream->client.grpc_message = NULL;
-    }
-    if (stream->client.response_raw_payload != NULL) {
-        free(stream->client.response_raw_payload);
-    }
-    smart_str_free(&stream->client.body);
+    cleanup_poc_client(&stream->client);
     efree(stream);
 }
 
@@ -1854,6 +1841,29 @@ static void add_metadata_map_to_return(zval *return_value, const char *name, poc
     add_assoc_zval(return_value, name, &metadata);
 }
 
+static void cleanup_poc_client(poc_client *client)
+{
+    if (client == NULL) {
+        return;
+    }
+    if (client->response_payload != NULL) {
+        zend_string_release(client->response_payload);
+        client->response_payload = NULL;
+    }
+    if (client->response_raw_payload != NULL) {
+        free(client->response_raw_payload);
+        client->response_raw_payload = NULL;
+    }
+    free_queued_response_payloads(client);
+    free_queued_raw_response_payloads(client);
+    free_metadata_entries(client);
+    if (client->grpc_message != NULL) {
+        zend_string_release(client->grpc_message);
+        client->grpc_message = NULL;
+    }
+    smart_str_free(&client->body);
+}
+
 static int enqueue_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us)
 {
     queued_raw_payload *entry = malloc(sizeof(queued_raw_payload));
@@ -2487,6 +2497,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     uint64_t initial_send_us = 0;
     uint64_t recv_loop_started = 0;
     uint64_t recv_loop_us = 0;
+    bool user_data_set = false;
     if (!channel_usable(channel)) {
         zend_throw_exception(NULL, "invalid nghttp2_poc channel", 0);
         return FAILURE;
@@ -2513,6 +2524,8 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
 
     setup_started = monotonic_us();
     nghttp2_session_set_user_data(channel->session, &client);
+    user_data_set = true;
+    channel->busy = true;
     nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":scheme", channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", channel->authority, strlen(channel->authority));
@@ -2551,7 +2564,11 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     client.stream_id = nghttp2_submit_request(channel->session, NULL, nva, nvlen, &data_provider, NULL);
     submit_us = monotonic_us() - submit_started;
     if (client.stream_id < 0) {
-        nghttp2_session_set_user_data(channel->session, NULL);
+        if (user_data_set) {
+            nghttp2_session_set_user_data(channel->session, NULL);
+        }
+        channel->busy = false;
+        cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }
@@ -2561,7 +2578,11 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
         mark_channel_dead(channel, rv);
-        nghttp2_session_set_user_data(channel->session, NULL);
+        if (user_data_set) {
+            nghttp2_session_set_user_data(channel->session, NULL);
+        }
+        channel->busy = false;
+        cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         return FAILURE;
     }
@@ -2582,16 +2603,22 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
         rv = nghttp2_session_mem_recv(channel->session, (const uint8_t *) recv_buf, (size_t) nread);
         if (rv < 0) {
             mark_channel_dead(channel, rv);
-            nghttp2_session_set_user_data(channel->session, NULL);
-            smart_str_free(&client.body);
+            if (user_data_set) {
+                nghttp2_session_set_user_data(channel->session, NULL);
+            }
+            channel->busy = false;
+            cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
         rv = nghttp2_session_send(channel->session);
         if (rv != 0) {
             mark_channel_dead(channel, rv);
-            nghttp2_session_set_user_data(channel->session, NULL);
-            smart_str_free(&client.body);
+            if (user_data_set) {
+                nghttp2_session_set_user_data(channel->session, NULL);
+            }
+            channel->busy = false;
+            cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
             return FAILURE;
         }
@@ -2599,6 +2626,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     }
     recv_loop_us = monotonic_us() - recv_loop_started;
     nghttp2_session_set_user_data(channel->session, NULL);
+    channel->busy = false;
 
     array_init(return_value);
     smart_str_0(&client.body);
@@ -2656,11 +2684,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     add_assoc_long(return_value, "server_stats_out_payload_compressed_bytes", client.server_stats_out_payload_compressed_bytes);
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
-    if (client.grpc_message != NULL) {
-        zend_string_release(client.grpc_message);
-    }
-    free_metadata_entries(&client);
-    smart_str_free(&client.body);
+    cleanup_poc_client(&client);
     return SUCCESS;
 }
 
@@ -3147,6 +3171,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
         close(client.fd);
         nghttp2_session_del(session);
         nghttp2_session_callbacks_del(callbacks);
+        cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         RETURN_THROWS();
     }
@@ -3158,6 +3183,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
         close(client.fd);
         nghttp2_session_del(session);
         nghttp2_session_callbacks_del(callbacks);
+        cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         RETURN_THROWS();
     }
@@ -3174,7 +3200,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
             close(client.fd);
             nghttp2_session_del(session);
             nghttp2_session_callbacks_del(callbacks);
-            smart_str_free(&client.body);
+            cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             RETURN_THROWS();
         }
@@ -3183,7 +3209,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
             close(client.fd);
             nghttp2_session_del(session);
             nghttp2_session_callbacks_del(callbacks);
-            smart_str_free(&client.body);
+            cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
             RETURN_THROWS();
         }
@@ -3230,11 +3256,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
     add_assoc_long(return_value, "cleanup_us", (zend_long) cleanup_us);
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
-    if (client.grpc_message != NULL) {
-        zend_string_release(client.grpc_message);
-    }
-    free_metadata_entries(&client);
-    smart_str_free(&client.body);
+    cleanup_poc_client(&client);
 }
 
 PHP_FUNCTION(nghttp2_poc_unary_batch)
@@ -3620,6 +3642,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         client.grpc_status = -1;
         client.http_status = -1;
         client.stream_error_code = 0;
+        client.compressed_response_seen = false;
+        client.response_current_compressed = false;
         client.timed_out = false;
         client.request_offset = 0;
         client.pending_data_len = 0;
@@ -3725,7 +3749,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         client.server_stats_out_payload_bytes = 0;
         client.server_stats_out_payload_wire_bytes = 0;
         client.server_stats_out_payload_compressed_bytes = 0;
-        smart_str_free(&client.body);
+        cleanup_poc_client(&client);
         memset(&client.body, 0, sizeof(client.body));
 
         client.stream_id = nghttp2_submit_request(session, NULL, nva, nvlen, &data_provider, NULL);
@@ -4055,12 +4079,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_zval(return_value, "server_stats_out_payload_bytes", &server_stats_out_payload_bytes);
     add_assoc_zval(return_value, "server_stats_out_payload_wire_bytes", &server_stats_out_payload_wire_bytes);
     add_assoc_zval(return_value, "server_stats_out_payload_compressed_bytes", &server_stats_out_payload_compressed_bytes);
-    if (client.response_payload != NULL) {
-        zend_string_release(client.response_payload);
-        client.response_payload = NULL;
-    }
-    free_queued_response_payloads(&client);
-    smart_str_free(&client.body);
+    cleanup_poc_client(&client);
 }
 
 PHP_GINIT_FUNCTION(nghttp2_poc)

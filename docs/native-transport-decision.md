@@ -4,7 +4,7 @@
 
 `php-grpc-lite` の本実装transportは native nghttp2 transport をdefaultにする方針で進める。
 
-ただしこれはPhase 2の設計判断であり、drop-in release defaultにはまだしない。release defaultにするには、native extension packaging、長時間stress、large response tuning、production C extensionとしてのresource lifecycle整理を満たす必要がある。
+ただしこれはPhase 2の設計判断であり、drop-in release defaultにはまだしない。release defaultにするには、native extension packaging、長時間stress、large response tuning、production C extensionとしてのmemory checkを満たす必要がある。
 
 ただし、libcurl経路はfallbackではなく明示的な安定経路として残す。ユーザーはworkloadや運用安定性に応じて `native` / `curl` を選択できる。
 
@@ -44,6 +44,7 @@ nativeをdrop-in release defaultにする前に満たす条件:
 - `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。Phase 2 stream resourceでMVP検証済み。
 - Channel lifetimeでHTTP/2 session/socketを再利用できる。unary simple経路はC側persistent channelでrequestまたぎ再利用する。production server streaming resourceも同じlifecycleへ載せる。
 - RST_STREAM / missing trailers / metadata / status / deadlineの主要互換性をext-grpcまたはlibcurl経路と照合済み。Phase 2 native compatibility gateでmetadata/status/compression/error semanticsの代表条件は検証済み。
+- native resource lifecycleが整理され、stream resource destructor、unary failure path、persistent channel busy状態の代表条件を検証済み。production packaging後のnative memory checkerはrelease hardeningで扱う。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 
 ## MVP Scope
@@ -124,6 +125,7 @@ Native transportに残すがMVP必須ではないもの:
 - Native stream resource: `docs/research/native-stream-resource-2026-05-04.md`
 - Native slow consumer / memory surface: `docs/research/native-slow-consumer-2026-05-04.md`
 - Native compatibility gates: `docs/research/native-compatibility-gates-2026-05-04.md`
+- Native resource lifecycle cleanup: `docs/research/native-resource-lifecycle-2026-05-04.md`
 - Server streaming goal comparison: `docs/research/nghttp2-poc-server-stream-goal-comparison-2026-05-03.md`
 - Small SELECT streaming comparison: `docs/research/small-select-streaming-comparison-2026-05-03.md`
 - Spanner emulator streaming shape: `docs/research/spanner-emulator-streaming-shape-2026-05-03.md`

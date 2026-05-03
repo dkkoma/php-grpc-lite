@@ -41,7 +41,7 @@ docker compose run --rm dev php -d extension=/workspace/poc/nghttp2-client-ext/m
 結果:
 
 - `NativeTransportControlTest`: 24 tests / 74 assertions / 1 skipped
-- extension loaded full PHPUnit: 58 tests / 194 assertions / 1 skipped
+- extension loaded full PHPUnit: 59 tests / 198 assertions / 1 skipped
 
 ## 確認済み
 
