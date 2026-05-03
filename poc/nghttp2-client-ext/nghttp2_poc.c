@@ -83,6 +83,8 @@ typedef struct {
     size_t poll_calls;
     size_t poll_timeouts;
     size_t poll_errors;
+    bool timed_out;
+    uint64_t deadline_abs_us;
     uint64_t max_write_syscall_us;
     size_t max_send_callback_len;
     size_t max_data_frame_len;
@@ -1553,6 +1555,11 @@ static int drive_stream_poll(nghttp2_session *session, poc_client *client, char 
     while (!client->stream_closed && (nghttp2_session_want_read(session) || nghttp2_session_want_write(session))) {
         int rv;
 
+        if (client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
+            client->timed_out = true;
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+
         if (client->read_first_poll_loop && nghttp2_session_want_read(session)) {
             rv = receive_available(session, client, recv_buf, recv_buf_len);
             if (rv < 0) {
@@ -1610,7 +1617,22 @@ static int drive_stream_poll(nghttp2_session *session, poc_client *client, char 
         pfd.revents = 0;
         client->poll_calls++;
         uint64_t poll_started = monotonic_us();
-        rv = poll(&pfd, 1, 5000);
+        int poll_timeout_ms = 5000;
+        if (client->deadline_abs_us > 0) {
+            uint64_t remaining_us;
+            if (poll_started >= client->deadline_abs_us) {
+                client->timed_out = true;
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            remaining_us = client->deadline_abs_us - poll_started;
+            poll_timeout_ms = (int) ((remaining_us + 999) / 1000);
+            if (poll_timeout_ms < 1) {
+                poll_timeout_ms = 1;
+            } else if (poll_timeout_ms > 5000) {
+                poll_timeout_ms = 5000;
+            }
+        }
+        rv = poll(&pfd, 1, poll_timeout_ms);
         uint64_t poll_elapsed = monotonic_us() - poll_started;
         client->call_poll_wait_us += poll_elapsed;
         if (poll_elapsed > client->call_max_poll_wait_us) {
@@ -1618,6 +1640,9 @@ static int drive_stream_poll(nghttp2_session *session, poc_client *client, char 
         }
         if (rv == 0) {
             client->poll_timeouts++;
+            if (client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
+                client->timed_out = true;
+            }
             return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
         if (rv < 0) {
@@ -1844,6 +1869,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zend_long read_ahead_max_messages = 0;
     zend_long read_ahead_max_bytes = 0;
     bool transport_thread = false;
+    zend_long timeout_us = 0;
     bool compact_response_buffer = false;
     zend_long response_compact_threshold = 0;
     zval *response_callback_zv = NULL;
@@ -1954,7 +1980,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     memset(&response_fci, 0, sizeof(response_fci));
     memset(&response_fcc, 0, sizeof(response_fcc));
 
-    ZEND_PARSE_PARAMETERS_START(5, 25)
+    ZEND_PARSE_PARAMETERS_START(5, 26)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -1981,6 +2007,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         Z_PARAM_LONG(read_ahead_max_messages)
         Z_PARAM_LONG(read_ahead_max_bytes)
         Z_PARAM_BOOL(transport_thread)
+        Z_PARAM_LONG(timeout_us)
     ZEND_PARSE_PARAMETERS_END();
 
     if (iterations < 1) {
@@ -2193,10 +2220,12 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     for (zend_long i = 0; i < iterations; i++) {
         uint64_t started = monotonic_us();
         client.call_started_us = started;
+        client.deadline_abs_us = timeout_us > 0 ? started + (uint64_t) timeout_us : 0;
         client.stream_closed = false;
         client.grpc_status = -1;
         client.http_status = -1;
         client.stream_error_code = 0;
+        client.timed_out = false;
         client.request_offset = 0;
         client.pending_data_len = 0;
         clear_pending_write(&client);
@@ -2501,6 +2530,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_bool(return_value, "direct_response_payload", client.direct_response_payload);
     add_assoc_bool(return_value, "read_ahead_delivery", client.read_ahead_delivery);
     add_assoc_bool(return_value, "transport_thread", client.transport_thread);
+    add_assoc_bool(return_value, "timed_out", client.timed_out);
     add_assoc_bool(return_value, "compact_response_buffer", client.compact_response_buffer);
     add_assoc_long(return_value, "response_compact_threshold", (zend_long) client.response_compact_threshold);
     add_assoc_long(return_value, "request_wire_bytes", client.grpc_header_len + client.request_len);
@@ -2684,6 +2714,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_max_messages, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_max_bytes, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, transport_thread, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {

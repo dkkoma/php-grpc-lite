@@ -19,6 +19,7 @@ class UnaryCall extends AbstractCall
     private bool $returnTransferFastPath = false;
     private bool $uploadReadCallback = false;
     private bool $nativeTransport = false;
+    private bool $cancelled = false;
     private ?string $nativeSerializedRequest = null;
     private string $returnedBody = '';
 
@@ -170,14 +171,27 @@ class UnaryCall extends AbstractCall
      */
     private function waitNative(): array
     {
-        $result = Internal\NativeTransport::unaryBatch(
-            $this->channel->getTarget(),
-            $this->method,
-            $this->nativeSerializedRequest ?? '',
-            $this->buildNativeRequestHeaders(),
-            false,
-            true,
-        );
+        if ($this->cancelled) {
+            return [null, $this->makeStatus(STATUS_CANCELLED, 'call cancelled')];
+        }
+
+        if (!$this->channel->credentials->isInsecure()) {
+            return [null, $this->makeStatus(STATUS_UNAVAILABLE, 'native transport currently supports insecure h2c only')];
+        }
+
+        try {
+            $result = Internal\NativeTransport::unaryBatch(
+                $this->channel->getTarget(),
+                $this->method,
+                $this->nativeSerializedRequest ?? '',
+                $this->buildNativeRequestHeaders(),
+                false,
+                true,
+                isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+            );
+        } catch (\RuntimeException $e) {
+            return [null, $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage())];
+        }
 
         $code = $result['grpc_status'];
         $this->responseTrailers = $result['trailers'];
@@ -187,11 +201,12 @@ class UnaryCall extends AbstractCall
             $response = Internal\Deserialize::apply($this->deserialize, $payload);
         }
 
-        return [$response, $this->makeStatus($code, '')];
+        return [$response, $this->makeStatus($code, $result['details'])];
     }
 
     public function cancel(): void
     {
+        $this->cancelled = true;
         if ($this->ch !== null) {
             $this->discardCurl($this->ch);
             $this->ch = null;

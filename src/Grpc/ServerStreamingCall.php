@@ -33,6 +33,7 @@ class ServerStreamingCall extends AbstractCall
     private ?\stdClass $finalStatus = null;
     private ?\stdClass $compressionStatus = null;
     private bool $nativeTransport = false;
+    private bool $cancelled = false;
     private ?string $nativeSerializedRequest = null;
 
     /**
@@ -162,6 +163,7 @@ class ServerStreamingCall extends AbstractCall
 
     public function cancel(): void
     {
+        $this->cancelled = true;
         if ($this->ch !== null) {
             $this->discardCurl($this->ch);
             $this->ch = null;
@@ -185,27 +187,47 @@ class ServerStreamingCall extends AbstractCall
      */
     private function responsesNative(): \Generator
     {
+        if ($this->cancelled) {
+            $this->finalStatus = $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
+            return;
+        }
+
+        if (!$this->channel->credentials->isInsecure()) {
+            $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, 'native transport currently supports insecure h2c only');
+            return;
+        }
+
         $mode = (string) ($this->options['php_grpc_lite.native_response_mode']
             ?? $this->channel->opts['php_grpc_lite.native_response_mode']
             ?? 'direct');
         $compact = $mode === 'compact64' || $mode === 'compact';
         $direct = !$compact;
 
-        $result = Internal\NativeTransport::unaryBatch(
-            $this->channel->getTarget(),
-            $this->method,
-            $this->nativeSerializedRequest ?? '',
-            $this->buildNativeRequestHeaders(),
-            $compact,
-            $direct,
-        );
+        try {
+            $result = Internal\NativeTransport::unaryBatch(
+                $this->channel->getTarget(),
+                $this->method,
+                $this->nativeSerializedRequest ?? '',
+                $this->buildNativeRequestHeaders(),
+                $compact,
+                $direct,
+                isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+            );
+        } catch (\RuntimeException $e) {
+            $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage());
+            return;
+        }
 
         $code = $result['grpc_status'];
         $this->responseTrailers = $result['trailers'];
         foreach ($result['payloads'] as $payload) {
             yield Internal\Deserialize::apply($this->deserialize, $payload);
+            if ($this->cancelled) {
+                $this->finalStatus = $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
+                return;
+            }
         }
-        $this->finalStatus = $this->makeStatus($code, '');
+        $this->finalStatus = $this->makeStatus($code, $result['details']);
     }
 
     private function buildStatusFromTrailers(): \stdClass

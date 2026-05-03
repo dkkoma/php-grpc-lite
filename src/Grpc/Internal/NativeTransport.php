@@ -13,7 +13,7 @@ final class NativeTransport
 {
     /**
      * @param array<string, string> $headers
-     * @return array{payloads: list<string>, grpc_status: int, http_status: int, trailers: array<string, list<string>>, raw: array<string, mixed>}
+     * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, trailers: array<string, list<string>>, raw: array<string, mixed>}
      */
     public static function unaryBatch(
         string $target,
@@ -22,6 +22,7 @@ final class NativeTransport
         array $headers,
         bool $compactResponseBuffer,
         bool $directResponsePayload,
+        int $timeoutMicros = 0,
     ): array {
         if (!function_exists('nghttp2_poc_unary_batch')) {
             throw new \RuntimeException('nghttp2_poc extension is not loaded');
@@ -59,26 +60,68 @@ final class NativeTransport
             0,
             0,
             false,
+            $timeoutMicros,
         );
+
+        [$grpcStatus, $details] = self::normalizeStatus($result);
 
         return [
             'payloads' => $payloads,
-            'grpc_status' => (int) ($result['grpc_status'] ?? -1),
+            'grpc_status' => $grpcStatus,
+            'details' => $details,
             'http_status' => (int) ($result['http_status'] ?? 0),
-            'trailers' => self::extractTrailers($result),
+            'trailers' => self::extractTrailers($result, $grpcStatus, $details),
             'raw' => $result,
         ];
+    }
+
+    /** @param array<string, mixed> $result */
+    private static function normalizeStatus(array $result): array
+    {
+        if (($result['timed_out'] ?? false) === true) {
+            return [\Grpc\STATUS_DEADLINE_EXCEEDED, 'native transport deadline exceeded'];
+        }
+
+        $grpcStatus = (int) ($result['grpc_status'] ?? -1);
+        if ($grpcStatus >= 0) {
+            return [$grpcStatus, ''];
+        }
+
+        $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
+        if ($streamErrorCode !== 0) {
+            return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
+        }
+
+        $httpStatus = (int) ($result['http_status'] ?? 0);
+        if ($httpStatus !== 200) {
+            return [\Grpc\STATUS_UNKNOWN, "HTTP status $httpStatus without grpc-status"];
+        }
+
+        return [\Grpc\STATUS_UNKNOWN, 'missing grpc-status trailer'];
+    }
+
+    private static function mapHttp2ErrorToGrpcStatus(int $streamErrorCode): int
+    {
+        return match ($streamErrorCode) {
+            0x8 => \Grpc\STATUS_CANCELLED,
+            0x2 => \Grpc\STATUS_INTERNAL,
+            0x7 => \Grpc\STATUS_UNAVAILABLE,
+            default => \Grpc\STATUS_UNAVAILABLE,
+        };
     }
 
     /**
      * @param array<string, mixed> $result
      * @return array<string, list<string>>
      */
-    private static function extractTrailers(array $result): array
+    private static function extractTrailers(array $result, int $grpcStatus, string $details): array
     {
         $trailers = [
-            'grpc-status' => [(string) ((int) ($result['grpc_status'] ?? -1))],
+            'grpc-status' => [(string) $grpcStatus],
         ];
+        if ($details !== '') {
+            $trailers['grpc-message'] = [rawurlencode($details)];
+        }
 
         foreach ([
             'server_stats_handler_start_ns',

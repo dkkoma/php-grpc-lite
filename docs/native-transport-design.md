@@ -182,6 +182,8 @@ libcurl pathと同等に通す必要があるもの:
 
 互換性・制御系は `docs/compatibility-control-checklist.md` に沿って追加する。
 
+2026-05-03時点のMVP actual surfaceでは、deadline、API-level cancel、missing `grpc-status` 合成、TLS/mTLS明示未対応エラーまで実装済み。詳細は `docs/research/native-control-semantics-2026-05-03.md`。ただしserver streamingはbatch drain後にyieldするため、transport-level `RST_STREAM` と真のbackpressure検証はproduction streaming resource化後に残る。
+
 ## Benchmark Work
 
 MVP comparison runner:
