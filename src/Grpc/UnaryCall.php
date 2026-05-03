@@ -175,10 +175,6 @@ class UnaryCall extends AbstractCall
             return [null, $this->makeStatus(STATUS_CANCELLED, 'call cancelled')];
         }
 
-        if (!$this->channel->credentials->isInsecure()) {
-            return [null, $this->makeStatus(STATUS_UNAVAILABLE, 'native transport currently supports insecure h2c only')];
-        }
-
         try {
             $headers = $this->buildNativeRequestHeaders();
             $transportStartedNs = hrtime(true);
@@ -189,6 +185,7 @@ class UnaryCall extends AbstractCall
                     $this->nativeSerializedRequest ?? '',
                     $headers,
                     isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+                    $this->channel->credentials,
                 );
                 $this->recordDiagnostic('native_unary_simple', 1);
             } else {

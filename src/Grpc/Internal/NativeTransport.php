@@ -90,6 +90,7 @@ final class NativeTransport
         string $serializedRequest,
         array $headers,
         int $timeoutMicros = 0,
+        ?\Grpc\ChannelCredentials $credentials = null,
     ): array {
         if (!function_exists('nghttp2_poc_unary')) {
             throw new \RuntimeException('nghttp2_poc extension is not loaded');
@@ -98,9 +99,9 @@ final class NativeTransport
         [$host, $port] = self::splitTarget($target);
         $framedRequest = "\0" . pack('N', strlen($serializedRequest)) . $serializedRequest;
         if (function_exists('nghttp2_poc_channel_open') && function_exists('nghttp2_poc_channel_unary')) {
-            $key = self::channelKey($host, $port);
+            $key = self::channelKey($host, $port, $credentials);
             try {
-                $result = \nghttp2_poc_channel_unary(self::channel($host, $port), $path, $framedRequest, $headers, $timeoutMicros);
+                $result = \nghttp2_poc_channel_unary(self::channel($host, $port, $credentials), $path, $framedRequest, $headers, $timeoutMicros);
             } catch (\Throwable $e) {
                 unset(self::$channels[$key]);
                 throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
@@ -222,22 +223,36 @@ final class NativeTransport
     }
 
     /** @return resource */
-    private static function channel(string $host, int $port): mixed
+    private static function channel(string $host, int $port, ?\Grpc\ChannelCredentials $credentials): mixed
     {
-        $key = self::channelKey($host, $port);
+        $key = self::channelKey($host, $port, $credentials);
         if (isset(self::$channels[$key]) && function_exists('nghttp2_poc_channel_is_usable') && !\nghttp2_poc_channel_is_usable(self::$channels[$key])) {
             unset(self::$channels[$key]);
         }
         if (!isset(self::$channels[$key])) {
-            self::$channels[$key] = \nghttp2_poc_channel_open($host, $port);
+            $useTls = $credentials !== null && !$credentials->isInsecure();
+            self::$channels[$key] = \nghttp2_poc_channel_open(
+                $host,
+                $port,
+                $useTls,
+                $credentials?->rootCerts,
+                $credentials?->certChain,
+                $credentials?->privateKey,
+            );
         }
 
         return self::$channels[$key];
     }
 
-    private static function channelKey(string $host, int $port): string
+    private static function channelKey(string $host, int $port, ?\Grpc\ChannelCredentials $credentials): string
     {
-        return $host . ':' . $port;
+        return implode('|', [
+            $host . ':' . $port,
+            $credentials?->type ?? \Grpc\ChannelCredentials::TYPE_INSECURE,
+            sha1($credentials?->rootCerts ?? ''),
+            sha1($credentials?->certChain ?? ''),
+            sha1($credentials?->privateKey ?? ''),
+        ]);
     }
 
     /** @return array{0: string, 1: int} */

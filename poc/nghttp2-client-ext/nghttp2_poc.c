@@ -12,6 +12,9 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -267,6 +270,9 @@ static void *transport_thread_main(void *arg);
 
 struct _poc_channel {
     int fd;
+    bool tls;
+    SSL_CTX *ssl_ctx;
+    SSL *ssl;
     nghttp2_session_callbacks *callbacks;
     nghttp2_session *session;
     char authority[512];
@@ -284,6 +290,13 @@ static void poc_channel_dtor(zend_resource *rsrc)
     poc_channel *channel = (poc_channel *) rsrc->ptr;
     if (channel == NULL) {
         return;
+    }
+    if (channel->ssl != NULL) {
+        SSL_shutdown(channel->ssl);
+        SSL_free(channel->ssl);
+    }
+    if (channel->ssl_ctx != NULL) {
+        SSL_CTX_free(channel->ssl_ctx);
     }
     if (channel->fd >= 0) {
         close(channel->fd);
@@ -358,6 +371,130 @@ static int set_socket_timeout_us(int fd, zend_long timeout_us)
     return 0;
 }
 
+static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len)
+{
+    BIO *bio = BIO_new_mem_buf(pem, (int) pem_len);
+    if (bio == NULL) {
+        return -1;
+    }
+    int loaded = 0;
+    while (true) {
+        X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+        if (cert == NULL) {
+            break;
+        }
+        if (X509_STORE_add_cert(store, cert) == 1) {
+            loaded++;
+        }
+        X509_free(cert);
+    }
+    BIO_free(bio);
+    ERR_clear_error();
+    return loaded > 0 ? 0 : -1;
+}
+
+static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len)
+{
+    BIO *cert_bio = BIO_new_mem_buf(cert, (int) cert_len);
+    BIO *key_bio = BIO_new_mem_buf(key, (int) key_len);
+    if (cert_bio == NULL || key_bio == NULL) {
+        if (cert_bio != NULL) {
+            BIO_free(cert_bio);
+        }
+        if (key_bio != NULL) {
+            BIO_free(key_bio);
+        }
+        return -1;
+    }
+
+    X509 *x509 = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
+    BIO_free(cert_bio);
+    BIO_free(key_bio);
+    if (x509 == NULL || pkey == NULL) {
+        if (x509 != NULL) {
+            X509_free(x509);
+        }
+        if (pkey != NULL) {
+            EVP_PKEY_free(pkey);
+        }
+        return -1;
+    }
+
+    int ok = SSL_CTX_use_certificate(ctx, x509) == 1
+        && SSL_CTX_use_PrivateKey(ctx, pkey) == 1
+        && SSL_CTX_check_private_key(ctx) == 1;
+    X509_free(x509);
+    EVP_PKEY_free(pkey);
+    return ok ? 0 : -1;
+}
+
+static int configure_tls_channel(poc_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+{
+    channel->ssl_ctx = SSL_CTX_new(TLS_client_method());
+    if (channel->ssl_ctx == NULL) {
+        return -1;
+    }
+    SSL_CTX_set_verify(channel->ssl_ctx, SSL_VERIFY_PEER, NULL);
+
+    if (root_certs != NULL && root_certs_len > 0) {
+        if (add_pem_certs_to_store(SSL_CTX_get_cert_store(channel->ssl_ctx), root_certs, root_certs_len) != 0) {
+            return -1;
+        }
+    } else if (SSL_CTX_set_default_verify_paths(channel->ssl_ctx) != 1) {
+        return -1;
+    }
+
+    if (cert_chain != NULL && private_key != NULL && cert_chain_len > 0 && private_key_len > 0) {
+        if (configure_client_certificate(channel->ssl_ctx, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
+            return -1;
+        }
+    }
+
+    channel->ssl = SSL_new(channel->ssl_ctx);
+    if (channel->ssl == NULL) {
+        return -1;
+    }
+    static const unsigned char alpn[] = {2, 'h', '2'};
+    SSL_set_alpn_protos(channel->ssl, alpn, sizeof(alpn));
+    SSL_set_tlsext_host_name(channel->ssl, host);
+    SSL_set1_host(channel->ssl, host);
+    SSL_set_fd(channel->ssl, channel->fd);
+    if (SSL_connect(channel->ssl) != 1) {
+        return -1;
+    }
+    channel->tls = true;
+    return 0;
+}
+
+static ssize_t channel_send(poc_client *client, const uint8_t *data, size_t length)
+{
+    if (client->channel != NULL && client->channel->ssl != NULL) {
+        int written = SSL_write(client->channel->ssl, data, (int) length);
+        if (written <= 0) {
+            int ssl_error = SSL_get_error(client->channel->ssl, written);
+            errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
+            return -1;
+        }
+        return written;
+    }
+    return send(client->fd, data, length, 0);
+}
+
+static ssize_t channel_recv(poc_channel *channel, uint8_t *data, size_t length)
+{
+    if (channel != NULL && channel->ssl != NULL) {
+        int nread = SSL_read(channel->ssl, data, (int) length);
+        if (nread <= 0) {
+            int ssl_error = SSL_get_error(channel->ssl, nread);
+            errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
+            return -1;
+        }
+        return nread;
+    }
+    return recv(channel->fd, data, length, 0);
+}
+
 static int connect_tcp(const char *host, zend_long port)
 {
     char port_buf[16];
@@ -416,7 +553,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
 
     if (client->poll_loop) {
         uint64_t syscall_started = monotonic_us();
-        ssize_t written = send(client->fd, data, length, 0);
+        ssize_t written = channel_send(client, data, length);
         uint64_t syscall_elapsed = monotonic_us() - syscall_started;
         if (syscall_elapsed > client->max_write_syscall_us) {
             client->max_write_syscall_us = syscall_elapsed;
@@ -444,7 +581,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
 
     while (total_written < length) {
         uint64_t syscall_started = monotonic_us();
-        ssize_t written = send(client->fd, data + total_written, length - total_written, 0);
+        ssize_t written = channel_send(client, data + total_written, length - total_written);
         uint64_t syscall_elapsed = monotonic_us() - syscall_started;
         if (syscall_elapsed > client->max_write_syscall_us) {
             client->max_write_syscall_us = syscall_elapsed;
@@ -1791,13 +1928,25 @@ PHP_FUNCTION(nghttp2_poc_channel_open)
     char *host = NULL;
     size_t host_len = 0;
     zend_long port = 0;
+    bool use_tls = false;
+    char *root_certs = NULL;
+    size_t root_certs_len = 0;
+    char *cert_chain = NULL;
+    size_t cert_chain_len = 0;
+    char *private_key = NULL;
+    size_t private_key_len = 0;
     poc_channel *channel;
     poc_client open_client;
     int rv;
 
-    ZEND_PARSE_PARAMETERS_START(2, 2)
+    ZEND_PARSE_PARAMETERS_START(2, 6)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_BOOL(use_tls)
+        Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
+        Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
+        Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
     ZEND_PARSE_PARAMETERS_END();
 
     channel = ecalloc(1, sizeof(poc_channel));
@@ -1808,9 +1957,15 @@ PHP_FUNCTION(nghttp2_poc_channel_open)
         zend_throw_exception(NULL, "failed to connect", 0);
         RETURN_THROWS();
     }
+    if (use_tls && configure_tls_channel(channel, host, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
+        poc_channel_dtor(&(zend_resource){.ptr = channel});
+        zend_throw_exception(NULL, "failed to establish TLS", 0);
+        RETURN_THROWS();
+    }
 
     memset(&open_client, 0, sizeof(open_client));
     open_client.fd = channel->fd;
+    open_client.channel = channel;
     open_client.grpc_status = -1;
     open_client.http_status = -1;
 
@@ -1972,7 +2127,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
 
     recv_loop_started = monotonic_us();
     while (!client.stream_closed) {
-        ssize_t nread = recv(channel->fd, recv_buf, sizeof(recv_buf), 0);
+        ssize_t nread = channel_recv(channel, (uint8_t *) recv_buf, sizeof(recv_buf));
         if (nread <= 0) {
             if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client.deadline_abs_us > 0 && monotonic_us() >= client.deadline_abs_us) {
                 client.timed_out = true;
@@ -3104,6 +3259,10 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_nghttp2_poc_channel_open, 0, 0, 2)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, use_tls, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, root_certs, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_is_usable, 0, 1, _IS_BOOL, 0)

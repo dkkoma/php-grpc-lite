@@ -192,11 +192,6 @@ class ServerStreamingCall extends AbstractCall
             return;
         }
 
-        if (!$this->channel->credentials->isInsecure()) {
-            $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, 'native transport currently supports insecure h2c only');
-            return;
-        }
-
         $mode = (string) ($this->options['php_grpc_lite.native_response_mode']
             ?? $this->channel->opts['php_grpc_lite.native_response_mode']
             ?? 'simple');
@@ -211,6 +206,7 @@ class ServerStreamingCall extends AbstractCall
                     $this->nativeSerializedRequest ?? '',
                     $this->buildNativeRequestHeaders(),
                     0,
+                    $this->channel->credentials,
                 );
             } elseif ($mode === 'simple') {
                 $result = Internal\NativeTransport::unarySimple(
@@ -219,6 +215,7 @@ class ServerStreamingCall extends AbstractCall
                     $this->nativeSerializedRequest ?? '',
                     $this->buildNativeRequestHeaders(),
                     (int) $this->options['timeout'],
+                    $this->channel->credentials,
                 );
             } else {
                 $result = Internal\NativeTransport::unaryBatch(

@@ -13,10 +13,17 @@ use PHPUnit\Framework\TestCase;
 final class NativeTransportControlTest extends TestCase
 {
     private const TLS_TARGET = 'test-server:50052';
+    private const MTLS_TARGET = 'test-server:50053';
     private const CA_PATH = __DIR__ . '/../../poc/test-server/certs/server.crt';
+    private const CLIENT_CERT_PATH = __DIR__ . '/../../poc/test-server/certs/client.crt';
+    private const CLIENT_KEY_PATH = __DIR__ . '/../../poc/test-server/certs/client.key';
 
-    public function testNativeTlsFailsExplicitlyWithoutCurlFallback(): void
+    public function testNativeTlsUnarySucceeds(): void
     {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
         $rootCerts = file_get_contents(self::CA_PATH);
         self::assertNotFalse($rootCerts);
 
@@ -29,9 +36,34 @@ final class NativeTransportControlTest extends TestCase
         $request->setName('TLS');
         [$response, $status] = $client->SayHello($request)->wait();
 
-        self::assertNull($response);
-        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
-        self::assertSame('native transport currently supports insecure h2c only', $status->details);
+        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+        self::assertSame('Hello, TLS', $response?->getMessage());
+    }
+
+    public function testNativeMtlsUnarySucceeds(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $rootCerts = file_get_contents(self::CA_PATH);
+        $clientCert = file_get_contents(self::CLIENT_CERT_PATH);
+        $clientKey = file_get_contents(self::CLIENT_KEY_PATH);
+        self::assertNotFalse($rootCerts);
+        self::assertNotFalse($clientCert);
+        self::assertNotFalse($clientKey);
+
+        $client = new GreeterClient(self::MTLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl($rootCerts, $clientKey, $clientCert),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        $request = new HelloRequest();
+        $request->setName('mTLS');
+        [$response, $status] = $client->SayHello($request)->wait();
+
+        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+        self::assertSame('Hello, mTLS', $response?->getMessage());
     }
 
     public function testNativeExtensionMissingFailsAsStatusWithoutCurlFallback(): void
