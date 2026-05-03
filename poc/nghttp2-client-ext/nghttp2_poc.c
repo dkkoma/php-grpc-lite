@@ -107,10 +107,18 @@ typedef struct {
     zend_fcall_info *response_fci;
     zend_fcall_info_cache *response_fcc;
     bool decode_response_incrementally;
+    bool direct_response_payload;
     bool compact_response_buffer;
     size_t response_compact_threshold;
     size_t response_parse_offset;
+    uint8_t response_header_buf[5];
+    size_t response_header_len;
+    uint32_t response_payload_len;
+    size_t response_payload_offset;
+    zend_string *response_payload;
     zend_long call_decoded_messages;
+    uint64_t call_response_payload_string_us;
+    uint64_t call_max_response_payload_string_us;
     uint64_t call_response_decode_us;
     uint64_t call_max_response_decode_us;
     size_t call_body_compact_count;
@@ -176,7 +184,8 @@ static uint64_t monotonic_us(void);
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 static void record_data_sent(poc_client *client);
 static int process_response_messages(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us);
-static int process_response_messages_from_offset(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us);
+static int process_response_messages_from_offset(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us);
+static int process_response_data_direct(poc_client *client, const uint8_t *data, size_t len);
 static void compact_response_body_if_needed(poc_client *client);
 
 static int connect_tcp(const char *host, zend_long port)
@@ -664,7 +673,11 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
             }
             client->last_response_data_us = elapsed;
         }
-        if (!client->discard_response_body) {
+        if (client->direct_response_payload && client->decode_response_incrementally && client->response_fci != NULL && client->response_fcc != NULL) {
+            if (process_response_data_direct(client, data, len) != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+        } else if (!client->discard_response_body) {
             uint64_t append_started = monotonic_us();
             uint64_t append_elapsed;
             smart_str_appendl(&client->body, (const char *) data, len);
@@ -678,12 +691,18 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
             }
             if (client->decode_response_incrementally && client->response_fci != NULL && client->response_fcc != NULL) {
                 zend_long decoded_messages = 0;
+                uint64_t payload_string_us = 0;
+                uint64_t max_payload_string_us = 0;
                 uint64_t decode_us = 0;
                 uint64_t max_decode_us = 0;
-                if (process_response_messages_from_offset(client, client->response_fci, client->response_fcc, &client->response_parse_offset, false, &decoded_messages, &decode_us, &max_decode_us) != 0) {
+                if (process_response_messages_from_offset(client, client->response_fci, client->response_fcc, &client->response_parse_offset, false, &decoded_messages, &payload_string_us, &max_payload_string_us, &decode_us, &max_decode_us) != 0) {
                     return NGHTTP2_ERR_CALLBACK_FAILURE;
                 }
                 client->call_decoded_messages += decoded_messages;
+                client->call_response_payload_string_us += payload_string_us;
+                if (max_payload_string_us > client->call_max_response_payload_string_us) {
+                    client->call_max_response_payload_string_us = max_payload_string_us;
+                }
                 client->call_response_decode_us += decode_us;
                 if (max_decode_us > client->call_max_response_decode_us) {
                     client->call_max_response_decode_us = max_decode_us;
@@ -868,16 +887,20 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
 static int process_response_messages(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us)
 {
     size_t offset = 0;
-    return process_response_messages_from_offset(client, fci, fcc, &offset, true, decoded_messages, decode_us, max_decode_us);
+    uint64_t payload_string_us = 0;
+    uint64_t max_payload_string_us = 0;
+    return process_response_messages_from_offset(client, fci, fcc, &offset, true, decoded_messages, &payload_string_us, &max_payload_string_us, decode_us, max_decode_us);
 }
 
-static int process_response_messages_from_offset(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us)
+static int process_response_messages_from_offset(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us)
 {
     zend_string *body;
     const char *data;
     size_t len;
 
     *decoded_messages = 0;
+    *payload_string_us = 0;
+    *max_payload_string_us = 0;
     *decode_us = 0;
     *max_decode_us = 0;
 
@@ -894,6 +917,8 @@ static int process_response_messages_from_offset(poc_client *client, zend_fcall_
         uint32_t payload_len;
         zval params[1];
         zval retval;
+        uint64_t payload_string_started;
+        uint64_t payload_string_elapsed;
         uint64_t started;
         uint64_t elapsed;
 
@@ -909,7 +934,13 @@ static int process_response_messages_from_offset(poc_client *client, zend_fcall_
         }
         *offset += 5;
 
+        payload_string_started = monotonic_us();
         ZVAL_STRINGL(&params[0], data + *offset, payload_len);
+        payload_string_elapsed = monotonic_us() - payload_string_started;
+        *payload_string_us += payload_string_elapsed;
+        if (payload_string_elapsed > *max_payload_string_us) {
+            *max_payload_string_us = payload_string_elapsed;
+        }
         ZVAL_UNDEF(&retval);
         fci->params = params;
         fci->param_count = 1;
@@ -935,6 +966,93 @@ static int process_response_messages_from_offset(poc_client *client, zend_fcall_
             zval_ptr_dtor(&retval);
         }
         *offset += payload_len;
+    }
+
+    return 0;
+}
+
+static int process_response_data_direct(poc_client *client, const uint8_t *data, size_t len)
+{
+    size_t offset = 0;
+
+    while (offset < len) {
+        if (client->response_header_len < 5) {
+            size_t need = 5 - client->response_header_len;
+            size_t take = need < len - offset ? need : len - offset;
+            memcpy(client->response_header_buf + client->response_header_len, data + offset, take);
+            client->response_header_len += take;
+            offset += take;
+            if (client->response_header_len < 5) {
+                continue;
+            }
+
+            client->response_payload_len = ((uint32_t) client->response_header_buf[1] << 24)
+                | ((uint32_t) client->response_header_buf[2] << 16)
+                | ((uint32_t) client->response_header_buf[3] << 8)
+                | (uint32_t) client->response_header_buf[4];
+            client->response_payload_offset = 0;
+            client->response_payload = zend_string_alloc(client->response_payload_len, 0);
+            if (client->response_payload_len == 0) {
+                ZSTR_VAL(client->response_payload)[0] = '\0';
+            }
+        }
+
+        if (client->response_payload != NULL) {
+            size_t need = client->response_payload_len - client->response_payload_offset;
+            size_t take = need < len - offset ? need : len - offset;
+            uint64_t payload_string_started = monotonic_us();
+            uint64_t payload_string_elapsed;
+            if (take > 0) {
+                memcpy(ZSTR_VAL(client->response_payload) + client->response_payload_offset, data + offset, take);
+                client->response_payload_offset += take;
+                offset += take;
+            }
+            payload_string_elapsed = monotonic_us() - payload_string_started;
+            client->call_response_payload_string_us += payload_string_elapsed;
+            if (payload_string_elapsed > client->call_max_response_payload_string_us) {
+                client->call_max_response_payload_string_us = payload_string_elapsed;
+            }
+
+            if (client->response_payload_offset == client->response_payload_len) {
+                zval params[1];
+                zval retval;
+                zend_string *payload = client->response_payload;
+                uint64_t started;
+                uint64_t elapsed;
+
+                ZSTR_VAL(payload)[client->response_payload_len] = '\0';
+                client->response_payload = NULL;
+                client->response_header_len = 0;
+                client->response_payload_len = 0;
+                client->response_payload_offset = 0;
+
+                ZVAL_STR(&params[0], payload);
+                ZVAL_UNDEF(&retval);
+                client->response_fci->params = params;
+                client->response_fci->param_count = 1;
+                client->response_fci->retval = &retval;
+
+                started = monotonic_us();
+                if (zend_call_function(client->response_fci, client->response_fcc) != SUCCESS) {
+                    zval_ptr_dtor(&params[0]);
+                    if (!Z_ISUNDEF(retval)) {
+                        zval_ptr_dtor(&retval);
+                    }
+                    return -1;
+                }
+                elapsed = monotonic_us() - started;
+                client->call_response_decode_us += elapsed;
+                if (elapsed > client->call_max_response_decode_us) {
+                    client->call_max_response_decode_us = elapsed;
+                }
+                client->call_decoded_messages++;
+
+                zval_ptr_dtor(&params[0]);
+                if (!Z_ISUNDEF(retval)) {
+                    zval_ptr_dtor(&retval);
+                }
+            }
+        }
     }
 
     return 0;
@@ -1318,6 +1436,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     bool flush_after_mem_recv = false;
     bool read_first_poll_loop = false;
     bool decode_response_incrementally = false;
+    bool direct_response_payload = false;
     bool compact_response_buffer = false;
     zend_long response_compact_threshold = 0;
     zval *response_callback_zv = NULL;
@@ -1388,6 +1507,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zval call_max_body_compact_us;
     zval call_max_body_buffer_bytes;
     zval call_decoded_messages;
+    zval call_response_payload_string_us;
+    zval call_max_response_payload_string_us;
     zval call_response_decode_us;
     zval call_max_response_decode_us;
     zval server_handler_ns;
@@ -1409,7 +1530,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     memset(&response_fci, 0, sizeof(response_fci));
     memset(&response_fcc, 0, sizeof(response_fcc));
 
-    ZEND_PARSE_PARAMETERS_START(5, 20)
+    ZEND_PARSE_PARAMETERS_START(5, 21)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -1431,6 +1552,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         Z_PARAM_BOOL(decode_response_incrementally)
         Z_PARAM_BOOL(compact_response_buffer)
         Z_PARAM_LONG(response_compact_threshold)
+        Z_PARAM_BOOL(direct_response_payload)
     ZEND_PARSE_PARAMETERS_END();
 
     if (iterations < 1) {
@@ -1457,7 +1579,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     client.flush_after_mem_recv = flush_after_mem_recv;
     client.read_first_poll_loop = read_first_poll_loop;
     client.decode_response_incrementally = decode_response_incrementally;
-    client.compact_response_buffer = compact_response_buffer && decode_response_incrementally;
+    client.direct_response_payload = direct_response_payload && decode_response_incrementally && response_callback_enabled;
+    client.compact_response_buffer = compact_response_buffer && decode_response_incrementally && !client.direct_response_payload;
     client.response_compact_threshold = response_compact_threshold > 0 ? (size_t) response_compact_threshold : 1;
     if (response_callback_enabled) {
         client.response_fci = &response_fci;
@@ -1597,6 +1720,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     array_init(&call_max_body_compact_us);
     array_init(&call_max_body_buffer_bytes);
     array_init(&call_decoded_messages);
+    array_init(&call_response_payload_string_us);
+    array_init(&call_max_response_payload_string_us);
     array_init(&call_response_decode_us);
     array_init(&call_max_response_decode_us);
     array_init(&server_handler_ns);
@@ -1673,7 +1798,16 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         client.call_max_body_compact_us = 0;
         client.call_max_body_buffer_bytes = 0;
         client.response_parse_offset = 0;
+        client.response_header_len = 0;
+        client.response_payload_len = 0;
+        client.response_payload_offset = 0;
+        if (client.response_payload != NULL) {
+            zend_string_release(client.response_payload);
+            client.response_payload = NULL;
+        }
         client.call_decoded_messages = 0;
+        client.call_response_payload_string_us = 0;
+        client.call_max_response_payload_string_us = 0;
         client.call_response_decode_us = 0;
         client.call_max_response_decode_us = 0;
         client.server_handler_ns = 0;
@@ -1735,6 +1869,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         }
 
         zend_long decoded_messages = client.call_decoded_messages;
+        uint64_t response_payload_string_us = client.call_response_payload_string_us;
+        uint64_t max_response_payload_string_us = client.call_max_response_payload_string_us;
         uint64_t response_decode_us = client.call_response_decode_us;
         uint64_t max_response_decode_us = client.call_max_response_decode_us;
         if (response_callback_enabled && !decode_response_incrementally) {
@@ -1742,7 +1878,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
                 failed++;
                 break;
             }
-        } else if (response_callback_enabled && decode_response_incrementally && client.response_parse_offset != (client.body.s ? ZSTR_LEN(client.body.s) : 0)) {
+        } else if (response_callback_enabled && decode_response_incrementally && client.direct_response_payload && (client.response_header_len != 0 || client.response_payload != NULL)) {
+            failed++;
+            break;
+        } else if (response_callback_enabled && decode_response_incrementally && !client.direct_response_payload && client.response_parse_offset != (client.body.s ? ZSTR_LEN(client.body.s) : 0)) {
             failed++;
             break;
         }
@@ -1795,6 +1934,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         add_next_index_long(&call_max_body_compact_us, (zend_long) client.call_max_body_compact_us);
         add_next_index_long(&call_max_body_buffer_bytes, (zend_long) client.call_max_body_buffer_bytes);
         add_next_index_long(&call_decoded_messages, decoded_messages);
+        add_next_index_long(&call_response_payload_string_us, (zend_long) response_payload_string_us);
+        add_next_index_long(&call_max_response_payload_string_us, (zend_long) max_response_payload_string_us);
         add_next_index_long(&call_response_decode_us, (zend_long) response_decode_us);
         add_next_index_long(&call_max_response_decode_us, (zend_long) max_response_decode_us);
         add_next_index_long(&server_handler_ns, client.server_handler_ns);
@@ -1843,6 +1984,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_bool(return_value, "read_first_poll_loop", read_first_poll_loop);
     add_assoc_bool(return_value, "response_callback_enabled", response_callback_enabled);
     add_assoc_bool(return_value, "decode_response_incrementally", decode_response_incrementally);
+    add_assoc_bool(return_value, "direct_response_payload", client.direct_response_payload);
     add_assoc_bool(return_value, "compact_response_buffer", client.compact_response_buffer);
     add_assoc_long(return_value, "response_compact_threshold", (zend_long) client.response_compact_threshold);
     add_assoc_long(return_value, "request_wire_bytes", client.grpc_header_len + client.request_len);
@@ -1936,6 +2078,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_zval(return_value, "call_max_body_compact_us", &call_max_body_compact_us);
     add_assoc_zval(return_value, "call_max_body_buffer_bytes", &call_max_body_buffer_bytes);
     add_assoc_zval(return_value, "call_decoded_messages", &call_decoded_messages);
+    add_assoc_zval(return_value, "call_response_payload_string_us", &call_response_payload_string_us);
+    add_assoc_zval(return_value, "call_max_response_payload_string_us", &call_max_response_payload_string_us);
     add_assoc_zval(return_value, "call_response_decode_us", &call_response_decode_us);
     add_assoc_zval(return_value, "call_max_response_decode_us", &call_max_response_decode_us);
     add_assoc_zval(return_value, "server_handler_ns", &server_handler_ns);
@@ -1953,6 +2097,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_zval(return_value, "server_stats_out_payload_bytes", &server_stats_out_payload_bytes);
     add_assoc_zval(return_value, "server_stats_out_payload_wire_bytes", &server_stats_out_payload_wire_bytes);
     add_assoc_zval(return_value, "server_stats_out_payload_compressed_bytes", &server_stats_out_payload_compressed_bytes);
+    if (client.response_payload != NULL) {
+        zend_string_release(client.response_payload);
+        client.response_payload = NULL;
+    }
     smart_str_free(&client.body);
 }
 
@@ -1997,6 +2145,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, decode_response_incrementally, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, compact_response_buffer, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, response_compact_threshold, IS_LONG, 0, "1")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, direct_response_payload, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {

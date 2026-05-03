@@ -23,9 +23,11 @@ $options = getopt('', [
     'flush-after-mem-recv',
     'read-first-poll-loop',
     'decode-response-messages',
+    'response-callback-mode::',
     'incremental-decode',
     'compact-response-buffer',
     'response-compact-threshold::',
+    'direct-response-payload',
     'poll-loop',
     'discard-response-body',
 ]);
@@ -44,12 +46,14 @@ $recvBufferSize = (int) ($options['recv-buffer-size'] ?? 16384);
 $flushAfterMemRecv = array_key_exists('flush-after-mem-recv', $options);
 $readFirstPollLoop = array_key_exists('read-first-poll-loop', $options);
 $decodeResponseMessages = array_key_exists('decode-response-messages', $options);
+$responseCallbackMode = (string) ($options['response-callback-mode'] ?? ($decodeResponseMessages ? 'decode-yield' : 'none'));
 $incrementalDecode = array_key_exists('incremental-decode', $options);
 $compactResponseBuffer = array_key_exists('compact-response-buffer', $options);
 $responseCompactThreshold = (int) ($options['response-compact-threshold'] ?? 1);
+$directResponsePayload = array_key_exists('direct-response-payload', $options);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
-if ($decodeResponseMessages) {
+if ($responseCallbackMode !== 'none') {
     $discardResponseBody = false;
 }
 
@@ -59,6 +63,10 @@ if (!in_array($rpc, ['unary', 'server-stream'], true)) {
 }
 if ($messageCount < 1) {
     fwrite(STDERR, "--message-count must be positive\n");
+    exit(2);
+}
+if (!in_array($responseCallbackMode, ['none', 'noop', 'strlen', 'decode', 'decode-yield'], true)) {
+    fwrite(STDERR, "--response-callback-mode must be none, noop, strlen, decode, or decode-yield\n");
     exit(2);
 }
 
@@ -75,15 +83,19 @@ $payload = $request->serializeToString();
 $requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) . $payload;
 $path = $rpc === 'server-stream' ? '/helloworld.Greeter/BenchServerStream' : '/helloworld.Greeter/BenchUnary';
 
-$responseCallback = $decodeResponseMessages
-    ? static fn (string $payload): Helloworld\BenchReply => decodeAndYieldBenchReply($payload)
-    : null;
+$responseCallback = match ($responseCallbackMode) {
+    'noop' => static fn (string $payload): null => null,
+    'strlen' => static fn (string $payload): int => strlen($payload),
+    'decode' => static fn (string $payload): Helloworld\BenchReply => decodeBenchReply($payload),
+    'decode-yield' => static fn (string $payload): Helloworld\BenchReply => decodeAndYieldBenchReply($payload),
+    default => null,
+};
 
 $result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold, $directResponsePayload);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -141,6 +153,8 @@ $series = [
     'call_max_body_compact_us',
     'call_max_body_buffer_bytes',
     'call_decoded_messages',
+    'call_response_payload_string_us',
+    'call_max_response_payload_string_us',
     'call_response_decode_us',
     'call_max_response_decode_us',
     'server_handler_ns',
@@ -190,10 +204,12 @@ $result += [
     'recv_buffer_size' => $recvBufferSize,
     'flush_after_mem_recv' => $flushAfterMemRecv,
     'read_first_poll_loop' => $readFirstPollLoop,
-    'decode_response_messages' => $decodeResponseMessages,
+    'decode_response_messages' => $responseCallbackMode === 'decode-yield',
+    'response_callback_mode' => $responseCallbackMode,
     'incremental_decode' => $incrementalDecode,
     'compact_response_buffer' => $compactResponseBuffer,
     'response_compact_threshold' => $responseCompactThreshold,
+    'direct_response_payload' => $directResponsePayload,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,
@@ -216,13 +232,20 @@ function percentile(array $values, float $percentile): float
 
 function decodeAndYieldBenchReply(string $payload): Helloworld\BenchReply
 {
-    $reply = new Helloworld\BenchReply();
-    $reply->mergeFromString($payload);
+    $reply = decodeBenchReply($payload);
     foreach (yieldBenchReply($reply) as $yielded) {
         return $yielded;
     }
 
     throw new \RuntimeException('yieldBenchReply did not yield');
+}
+
+function decodeBenchReply(string $payload): Helloworld\BenchReply
+{
+    $reply = new Helloworld\BenchReply();
+    $reply->mergeFromString($payload);
+
+    return $reply;
 }
 
 /** @return \Generator<int, Helloworld\BenchReply> */
@@ -287,6 +310,8 @@ function sampleCalls(array $result, array $latencies, int $limit): array
             'call_max_body_compact_us' => (int) ($result['call_max_body_compact_us'][$i] ?? 0),
             'call_max_body_buffer_bytes' => (int) ($result['call_max_body_buffer_bytes'][$i] ?? 0),
             'call_decoded_messages' => (int) ($result['call_decoded_messages'][$i] ?? 0),
+            'call_response_payload_string_us' => (int) ($result['call_response_payload_string_us'][$i] ?? 0),
+            'call_max_response_payload_string_us' => (int) ($result['call_max_response_payload_string_us'][$i] ?? 0),
             'call_response_decode_us' => (int) ($result['call_response_decode_us'][$i] ?? 0),
             'call_max_response_decode_us' => (int) ($result['call_max_response_decode_us'][$i] ?? 0),
             'server_handler_ns' => (int) ($result['server_handler_ns'][$i] ?? 0),
@@ -363,6 +388,8 @@ function tailSampleCalls(array $result, array $latencies, int $limit): array
             'call_max_body_compact_us' => (int) ($result['call_max_body_compact_us'][$index] ?? 0),
             'call_max_body_buffer_bytes' => (int) ($result['call_max_body_buffer_bytes'][$index] ?? 0),
             'call_decoded_messages' => (int) ($result['call_decoded_messages'][$index] ?? 0),
+            'call_response_payload_string_us' => (int) ($result['call_response_payload_string_us'][$index] ?? 0),
+            'call_max_response_payload_string_us' => (int) ($result['call_max_response_payload_string_us'][$index] ?? 0),
             'call_response_decode_us' => (int) ($result['call_response_decode_us'][$index] ?? 0),
             'call_max_response_decode_us' => (int) ($result['call_max_response_decode_us'][$index] ?? 0),
             'server_handler_ns' => (int) ($result['server_handler_ns'][$index] ?? 0),
