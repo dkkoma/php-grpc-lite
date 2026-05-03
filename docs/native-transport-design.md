@@ -4,7 +4,7 @@
 
 公式 `ext-grpc` のdrop-in surfaceを保ちながら、transport内部をlibcurlからnative nghttp2へ置き換える。
 
-MVPの目的はext-grpcの完全再実装ではなく、Phase 2で確認した性能上の本筋改善をproduction extensionへ移すこと。
+目的はext-grpcの完全再実装ではなく、Phase 2で確認した性能上の本筋改善をproduction extensionへ移すこと。
 
 ## Architecture
 
@@ -18,11 +18,11 @@ Grpc\BaseStub
         -> stream state map
 ```
 
-MVPではまずinsecure h2cのcontrolled benchmark pathを実装する。その後TLS/mTLS、deadline、metadata互換、error semanticsを追加する。Phase 2の方針としてnative defaultへ進めるが、drop-in release defaultにはrelease gateを置く。
+native transport は `Grpc\Channel` に紐づく HTTP/2 transport resource として実装する。`UnaryCall` / `ServerStreamingCall` は transport backend を直接意識せず、既存 `Grpc\` API surface を維持する。
 
 ## Request Path
 
-### Current libcurl path
+### libcurl stable route
 
 ```text
 protobuf PHP string
@@ -120,20 +120,13 @@ Requirements:
 - completion/error state
 - diagnostics counters
 
-MVPでは1 session内1 active streamでもよい。ただし構造は後でmultiple active streamsへ拡張できるように分離する。
+最初のproduction実装では1 session内1 active streamでもよい。ただし構造は後でmultiple active streamsへ拡張できるように分離する。
 
 ## Channel Lifetime
-
-Production design:
 
 - Channelにnative transport resourceを持たせる。
 - 同一PHP request内ではHTTP/2 session/socketを再利用する。
 - error/cancel/途中終了時はsessionを破棄する。
-
-Current MVP actual surface:
-
-- `NativeTransport::unaryBatch()` をcallごとに呼ぶ計測用wrapperであり、Channel/session reuseはまだない。
-- server streamingはbatch drain後にyieldするため、true streaming resourceではない。
 
 Deferred:
 
@@ -151,12 +144,12 @@ Public `Grpc\` APIは維持する。
 - `getStatus()`
 - `cancel()`
 
-Phase 2の設計判断としてnative transportをdefaultにする方向で進める。ただし、drop-in release defaultにはまだしない。libcurl経路はfallbackではなく明示的な安定経路として残す。
+native transportをdefault経路とする。libcurl経路はfallbackではなく、ユーザーが明示選択できる安定経路として残す。
 
 ```php
 new GreeterClient('test-server:50051', [
     'credentials' => ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'native', // Phase 2 target default
+    'php_grpc_lite.transport' => 'native',
 ]);
 
 new GreeterClient('test-server:50051', [
@@ -165,7 +158,7 @@ new GreeterClient('test-server:50051', [
 ]);
 ```
 
-`php_grpc_lite.native_transport=true` はPoC期の互換optionとして当面残す。テストやベンチで経路を固定する場合は `PHP_GRPC_LITE_TRANSPORT=native|curl` も使える。user optionが指定された場合は環境変数より優先する。
+テストやベンチで経路を固定する場合は `PHP_GRPC_LITE_TRANSPORT=native|curl` も使える。user optionが指定された場合は環境変数より優先する。
 
 自動fallbackはしない。native未対応機能、native extension未ロード、transport errorは黙ってlibcurlへ落とさず、選択された経路の失敗として扱う。
 
@@ -185,25 +178,11 @@ libcurl pathと同等に通す必要があるもの:
 - TLS / mTLS
 - compression unsupported explicit error
 
-互換性・制御系は `docs/compatibility-control-checklist.md` に沿って追加する。
+互換性・制御系は `docs/compatibility-control-checklist.md` に沿って追加する。実装進捗や検証途中の制限は `docs/research/` に残し、このdesign docには最終設計として満たすべき形だけを書く。
 
-2026-05-03時点のMVP actual surfaceでは、deadline、API-level cancel、missing `grpc-status` 合成、TLS/mTLS明示未対応エラーまで実装済み。詳細は `docs/research/native-control-semantics-2026-05-03.md`。ただしserver streamingはbatch drain後にyieldするため、transport-level `RST_STREAM` と真のbackpressure検証はproduction streaming resource化後に残る。
+## Benchmark Requirements
 
-## Benchmark Work
-
-MVP comparison runner:
-
-```bash
-BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-libcurl-ext.sh
-```
-
-比較対象:
-
-- current libcurl transport (`php_grpc_lite.transport=curl`)
-- native MVP upload/direct/compact
-- official ext-grpc
-
-判定軸:
+native transportの採用・調整では、以下をactual `Grpc\` API surfaceで測る。
 
 - large request unary p50/p99/calls/s
 - server streaming many-small
@@ -212,21 +191,14 @@ BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-
 - memory upper bound
 - server timing trailerとの残差
 
-`compare-native-mvp-vs-libcurl-ext.sh` はPoC batch APIだけでなく、actual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを通る `native-surface-*` variantも出力する。`100×100KiB` の例外形状は run 間揺れを分けるため、以下のfocused repeat runnerで再取得する。
+transport内部の診断runnerは候補比較に使う。採用判断はpublic `Grpc\` API surfaceの測定を優先する。
 
-採用判断はactual surface resultを優先する。PoC batch API resultはtransport内部の候補比較・診断線として扱う。
-
-```bash
-REPEATS=3 BENCH_TAG=20260503-100x100k-repeat bench/phase2/repeat-server-stream-100x100k.sh
-```
-
-## Non-goals for MVP
+## Non-goals
 
 - client streaming / bidi streaming
 - full ext-grpc channel args互換
 - shared event loop / multiplex scheduler
 - PHP-FPM worker persistent pool
 - compression implementation
-- production TLS/mTLS path
 
-これらはnative transport MVPの後に、compatibilityとworkload優先度に応じて扱う。
+これらはnative unary / server streaming transportの後に、compatibilityとworkload優先度に応じて扱う。
