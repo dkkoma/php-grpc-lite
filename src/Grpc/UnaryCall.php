@@ -188,6 +188,7 @@ class UnaryCall extends AbstractCall
                     $this->method,
                     $this->nativeSerializedRequest ?? '',
                     $headers,
+                    isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
                 );
                 $this->recordDiagnostic('native_unary_simple', 1);
             } else {
@@ -260,9 +261,6 @@ class UnaryCall extends AbstractCall
         }
         if ($mode !== 'simple') {
             throw new \InvalidArgumentException("php_grpc_lite.native_unary_mode must be 'simple' or 'batch'");
-        }
-        if (isset($this->options['timeout'])) {
-            return false;
         }
         foreach (['x-bench-server-stats', 'x-bench-server-timing'] as $diagnosticHeader) {
             if (array_key_exists($diagnosticHeader, $headers)) {

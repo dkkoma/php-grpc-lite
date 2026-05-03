@@ -210,6 +210,15 @@ class ServerStreamingCall extends AbstractCall
                     $this->method,
                     $this->nativeSerializedRequest ?? '',
                     $this->buildNativeRequestHeaders(),
+                    0,
+                );
+            } elseif ($mode === 'simple') {
+                $result = Internal\NativeTransport::unarySimple(
+                    $this->channel->getTarget(),
+                    $this->method,
+                    $this->nativeSerializedRequest ?? '',
+                    $this->buildNativeRequestHeaders(),
+                    (int) $this->options['timeout'],
                 );
             } else {
                 $result = Internal\NativeTransport::unaryBatch(

@@ -430,6 +430,7 @@ func serveNonGrpcH2C() {
 func serveLifecycleH2C() {
 	go serveRawH2C(":50055", true, false)
 	go serveRawH2C(":50056", false, true)
+	go serveMidStreamFailureH2C(":50057")
 }
 
 func serveRawH2C(addr string, sendGoAway bool, firstConnectionEOF bool) {
@@ -515,6 +516,75 @@ func writeRawGrpcOK(framer *http2.Framer, streamID uint32, sendGoAway bool) {
 		EndHeaders:    true,
 		EndStream:     true,
 	})
+}
+
+func serveMidStreamFailureH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c mid-stream failure fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleMidStreamFailureH2C(conn)
+	}
+}
+
+func handleMidStreamFailureH2C(conn net.Conn) {
+	defer conn.Close()
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var streamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			streamID = f.Header().StreamID
+			if f.StreamEnded() {
+				writeRawGrpcPartialAndClose(framer, streamID)
+				return
+			}
+		case *http2.DataFrame:
+			if streamID == 0 {
+				streamID = f.Header().StreamID
+			}
+			if f.StreamEnded() {
+				writeRawGrpcPartialAndClose(framer, streamID)
+				return
+			}
+		}
+	}
+}
+
+func writeRawGrpcPartialAndClose(framer *http2.Framer, streamID uint32) {
+	headers := encodeHeaders([]hpack.HeaderField{
+		{Name: ":status", Value: "200"},
+		{Name: "content-type", Value: "application/grpc"},
+	})
+	_ = framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: headers,
+		EndHeaders:    true,
+	})
+	_ = framer.WriteData(streamID, false, []byte{0, 0, 0})
 }
 
 func encodeHeaders(fields []hpack.HeaderField) []byte {

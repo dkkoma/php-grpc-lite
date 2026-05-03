@@ -214,4 +214,36 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame(\Grpc\STATUS_OK, $next['grpc_status']);
         self::assertFalse($next['raw']['channel_dead'] ?? true);
     }
+
+    public function testNativeChannelMidStreamFailureIsDiscardedBeforeNextRpc(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $failed = false;
+        try {
+            $result = NativeTransport::unarySimple(
+                'test-server:50057',
+                '/helloworld.Greeter/BenchUnary',
+                '',
+                [],
+            );
+            $failed = $result['grpc_status'] !== \Grpc\STATUS_OK
+                || ($result['raw']['channel_dead'] ?? false) === true;
+        } catch (\RuntimeException) {
+            $failed = true;
+        }
+
+        self::assertTrue($failed, 'mid-stream failure fixture did not produce a failed RPC');
+
+        $next = NativeTransport::unarySimple(
+            'test-server:50051',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [],
+        );
+
+        self::assertSame(\Grpc\STATUS_OK, $next['grpc_status']);
+    }
 }

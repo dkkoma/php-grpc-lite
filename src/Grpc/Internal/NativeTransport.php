@@ -89,6 +89,7 @@ final class NativeTransport
         string $path,
         string $serializedRequest,
         array $headers,
+        int $timeoutMicros = 0,
     ): array {
         if (!function_exists('nghttp2_poc_unary')) {
             throw new \RuntimeException('nghttp2_poc extension is not loaded');
@@ -99,7 +100,7 @@ final class NativeTransport
         if (function_exists('nghttp2_poc_channel_open') && function_exists('nghttp2_poc_channel_unary')) {
             $key = self::channelKey($host, $port);
             try {
-                $result = \nghttp2_poc_channel_unary(self::channel($host, $port), $path, $framedRequest, $headers);
+                $result = \nghttp2_poc_channel_unary(self::channel($host, $port), $path, $framedRequest, $headers, $timeoutMicros);
             } catch (\Throwable $e) {
                 unset(self::$channels[$key]);
                 throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);

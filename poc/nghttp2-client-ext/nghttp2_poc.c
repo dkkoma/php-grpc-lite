@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
@@ -333,6 +334,28 @@ static void mark_channel_draining(poc_channel *channel, int32_t last_stream_id, 
 static bool channel_usable(poc_channel *channel)
 {
     return channel != NULL && channel->fd >= 0 && channel->session != NULL && !channel->dead && !channel->draining;
+}
+
+static int set_socket_timeout_us(int fd, zend_long timeout_us)
+{
+    struct timeval tv;
+    if (timeout_us <= 0) {
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+    } else {
+        tv.tv_sec = (time_t) (timeout_us / 1000000);
+        tv.tv_usec = (suseconds_t) (timeout_us % 1000000);
+        if (tv.tv_sec == 0 && tv.tv_usec == 0) {
+            tv.tv_usec = 1;
+        }
+    }
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0) {
+        return -1;
+    }
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
+        return -1;
+    }
+    return 0;
 }
 
 static int connect_tcp(const char *host, zend_long port)
@@ -1860,13 +1883,15 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     uint64_t initial_send_us = 0;
     uint64_t recv_loop_started = 0;
     uint64_t recv_loop_us = 0;
+    zend_long timeout_us = 0;
 
-    ZEND_PARSE_PARAMETERS_START(3, 4)
+    ZEND_PARSE_PARAMETERS_START(3, 5)
         Z_PARAM_RESOURCE(channel_zv)
         Z_PARAM_STRING(path, path_len)
         Z_PARAM_STRING(request, request_len)
         Z_PARAM_OPTIONAL
         Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_LONG(timeout_us)
     ZEND_PARSE_PARAMETERS_END();
 
     channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "nghttp2_poc_channel", le_poc_channel);
@@ -1883,6 +1908,12 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     client.request = (const uint8_t *) request;
     client.request_len = request_len;
     total_started = monotonic_us();
+    client.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
+    if (set_socket_timeout_us(channel->fd, timeout_us) != 0) {
+        mark_channel_dead(channel, errno);
+        zend_throw_exception(NULL, "failed to set socket timeout", 0);
+        RETURN_THROWS();
+    }
 
     setup_started = monotonic_us();
     nghttp2_session_set_user_data(channel->session, &client);
@@ -1943,6 +1974,9 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     while (!client.stream_closed) {
         ssize_t nread = recv(channel->fd, recv_buf, sizeof(recv_buf), 0);
         if (nread <= 0) {
+            if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client.deadline_abs_us > 0 && monotonic_us() >= client.deadline_abs_us) {
+                client.timed_out = true;
+            }
             if (!client.stream_closed) {
                 mark_channel_dead(channel, nread == 0 ? 0 : errno);
             }
@@ -1999,6 +2033,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     add_assoc_long(return_value, "initial_send_us", (zend_long) initial_send_us);
     add_assoc_long(return_value, "recv_loop_us", (zend_long) recv_loop_us);
     add_assoc_long(return_value, "cleanup_us", 0);
+    add_assoc_bool(return_value, "timed_out", client.timed_out);
     add_assoc_bool(return_value, "channel_reused", true);
     add_assoc_bool(return_value, "channel_dead", channel->dead);
     add_assoc_bool(return_value, "channel_draining", channel->draining);
@@ -3080,6 +3115,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_unary, 0, 3,
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, IS_ARRAY, 0)
