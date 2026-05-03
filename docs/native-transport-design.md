@@ -205,6 +205,12 @@ BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-
 - memory upper bound
 - server timing trailerとの残差
 
+`compare-native-mvp-vs-libcurl-ext.sh` はPoC batch APIだけでなく、actual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを通る `native-surface-*` variantも出力する。`100×100KiB` の例外形状は run 間揺れを分けるため、以下のfocused repeat runnerで再取得する。
+
+```bash
+REPEATS=3 BENCH_TAG=20260503-100x100k-repeat bench/phase2/repeat-server-stream-100x100k.sh
+```
+
 ## Non-goals for MVP
 
 - client streaming / bidi streaming

@@ -35,7 +35,7 @@ append_unary_result() {
     p99_ns="$(metric "$file" latency_p99_ns)"
     cps="$(metric "$file" calls_per_second)"
     awk -v implementation="$implementation" -v p50_ns="$p50_ns" -v p99_ns="$p99_ns" -v cps="$cps" -v file="$file" \
-        'BEGIN { printf "large-request-unary\t%s\t\t%.1f\t%.1f\t%.1f\t\t\t%s\n", implementation, p50_ns / 1000.0, p99_ns / 1000.0, cps, file }' >> "$summary_tsv"
+        'BEGIN { printf "large-request-unary\t%s\tsurface\t%.1f\t%.1f\t%.1f\t\t\t%s\n", implementation, p50_ns / 1000.0, p99_ns / 1000.0, cps, file }' >> "$summary_tsv"
 }
 
 append_unary_poc_result() {
@@ -46,7 +46,7 @@ append_unary_poc_result() {
     p99="$(poc_metric "$file" p99_us)"
     cps="$(poc_metric "$file" calls_per_second)"
     awk -v implementation="$implementation" -v p50="$p50" -v p99="$p99" -v cps="$cps" -v file="$file" \
-        'BEGIN { printf "large-request-unary\t%s\t\t%.1f\t%.1f\t%.1f\t\t\t%s\n", implementation, p50, p99, cps, file }' >> "$summary_tsv"
+        'BEGIN { printf "large-request-unary\t%s\tpoc\t%.1f\t%.1f\t%.1f\t\t\t%s\n", implementation, p50, p99, cps, file }' >> "$summary_tsv"
 }
 
 append_stream_result() {
@@ -59,7 +59,7 @@ append_stream_result() {
     mps="$(metric "$file" messages_per_second)"
     server_p99_ns="$(metric "$file" server_stats_last_out_payload_ns_p99)"
     awk -v case_name="$case_name" -v implementation="$implementation" -v p50_ns="$p50_ns" -v p99_ns="$p99_ns" -v mps="$mps" -v server_p99_ns="$server_p99_ns" -v file="$file" \
-        'BEGIN { printf "%s\t%s\t\t%.1f\t%.1f\t%.1f\t%.1f\t\t%s\n", case_name, implementation, p50_ns / 1000.0, p99_ns / 1000.0, mps, server_p99_ns / 1000.0, file }' >> "$summary_tsv"
+        'BEGIN { printf "%s\t%s\tsurface\t%.1f\t%.1f\t%.1f\t%.1f\t\t%s\n", case_name, implementation, p50_ns / 1000.0, p99_ns / 1000.0, mps, server_p99_ns / 1000.0, file }' >> "$summary_tsv"
 }
 
 append_stream_poc_result() {
@@ -75,7 +75,7 @@ append_stream_poc_result() {
     poll_p99="$(poc_metric "$file" call_poll_wait_us_p99)"
     max_buffer_p99="$(poc_metric "$file" call_max_body_buffer_bytes_p99)"
     awk -v case_name="$case_name" -v implementation="$implementation" -v p50="$p50" -v p99="$p99" -v cps="$cps" -v message_count="$message_count" -v server_p99_ns="$server_p99_ns" -v poll_p99="$poll_p99" -v max_buffer_p99="$max_buffer_p99" -v file="$file" \
-        'BEGIN { printf "%s\t%s\t\t%.1f\t%.1f\t%.1f\t%.1f\t%s\t%s\t%s\n", case_name, implementation, p50, p99, cps * message_count, server_p99_ns / 1000.0, poll_p99, max_buffer_p99, file }' >> "$summary_tsv"
+        'BEGIN { printf "%s\t%s\tpoc\t%.1f\t%.1f\t%.1f\t%.1f\t%s\t%s\t%s\n", case_name, implementation, p50, p99, cps * message_count, server_p99_ns / 1000.0, poll_p99, max_buffer_p99, file }' >> "$summary_tsv"
 }
 
 printf "case\timplementation\tvariant\tp50_us\tp99_us\tthroughput\tserver_last_p99_us\tpoll_wait_p99_us\tmax_body_buffer_bytes_p99\tjson\n" > "$summary_tsv"
@@ -99,6 +99,11 @@ docker compose run --rm dev sh -lc \
     "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=unary --iterations=1000 --request-bytes=1048576 --response-bytes=100 --split-grpc-frame --no-copy --poll-loop" \
     > "$mvp_unary"
 append_unary_poc_result "mvp-upload" "$mvp_unary"
+
+native_surface_unary="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-large-request-unary-native-surface.json"
+docker compose run --rm dev sh -lc \
+    "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/request-unary.php --suite=request-unary --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_surface_unary' --duration=2 --request-payload-sizes=1048576 --warmup-calls=3 --max-calls=1000 --transport=native"
+append_unary_result "native-surface" "$native_surface_unary"
 
 ext_unary="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-large-request-unary-ext-grpc.json"
 docker compose run --rm dev-ext-grpc php tools/phase2/request-unary.php \
@@ -143,11 +148,21 @@ for case_spec in "${stream_cases[@]}"; do
         > "$mvp_direct"
     append_stream_poc_result "$case_name" "mvp-direct" "$mvp_direct" "$message_count"
 
+    native_surface_direct="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-native-surface-direct.json"
+    docker compose run --rm dev sh -lc \
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_surface_direct' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=direct"
+    append_stream_result "$case_name" "native-surface-direct" "$native_surface_direct"
+
     mvp_compact="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-mvp-compact64.json"
     docker compose run --rm dev sh -lc \
         "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size --compact-response-buffer --response-compact-threshold=65536" \
         > "$mvp_compact"
     append_stream_poc_result "$case_name" "mvp-compact64" "$mvp_compact" "$message_count"
+
+    native_surface_compact="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-native-surface-compact64.json"
+    docker compose run --rm dev sh -lc \
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_surface_compact' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=compact64"
+    append_stream_result "$case_name" "native-surface-compact64" "$native_surface_compact"
 
     ext_stream="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-ext-grpc.json"
     docker compose run --rm dev-ext-grpc php tools/phase2/streaming-diagnostic.php \

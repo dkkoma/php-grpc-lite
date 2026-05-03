@@ -13,7 +13,7 @@ final class NativeTransport
 {
     /**
      * @param array<string, string> $headers
-     * @return array{payloads: list<string>, grpc_status: int, http_status: int, raw: array<string, mixed>}
+     * @return array{payloads: list<string>, grpc_status: int, http_status: int, trailers: array<string, list<string>>, raw: array<string, mixed>}
      */
     public static function unaryBatch(
         string $target,
@@ -65,8 +65,55 @@ final class NativeTransport
             'payloads' => $payloads,
             'grpc_status' => (int) ($result['grpc_status'] ?? -1),
             'http_status' => (int) ($result['http_status'] ?? 0),
+            'trailers' => self::extractTrailers($result),
             'raw' => $result,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @return array<string, list<string>>
+     */
+    private static function extractTrailers(array $result): array
+    {
+        $trailers = [
+            'grpc-status' => [(string) ((int) ($result['grpc_status'] ?? -1))],
+        ];
+
+        foreach ([
+            'server_stats_handler_start_ns',
+            'server_stats_handler_end_ns',
+            'server_stats_in_payload_ns',
+            'server_stats_out_header_ns',
+            'server_stats_out_payload_ns',
+            'server_stats_first_out_payload_ns',
+            'server_stats_last_out_payload_ns',
+            'server_stats_out_payload_count',
+            'server_stats_out_payload_bytes',
+            'server_stats_out_payload_wire_bytes',
+            'server_stats_out_payload_compressed_bytes',
+        ] as $field) {
+            $value = self::firstScalarValue($result[$field] ?? null);
+            if ($value === null) {
+                continue;
+            }
+            $trailers['x-bench-' . str_replace('_', '-', $field)] = [(string) $value];
+        }
+
+        return $trailers;
+    }
+
+    private static function firstScalarValue(mixed $value): int|string|null
+    {
+        if (is_int($value) || is_string($value)) {
+            return $value;
+        }
+        if (!is_array($value) || $value === []) {
+            return null;
+        }
+
+        $first = reset($value);
+        return is_int($first) || is_string($first) ? $first : null;
     }
 
     /** @return array{0: string, 1: int} */

@@ -180,7 +180,7 @@ class UnaryCall extends AbstractCall
         );
 
         $code = $result['grpc_status'];
-        $this->responseTrailers = ['grpc-status' => [(string) $code]];
+        $this->responseTrailers = $result['trailers'];
         $payload = $result['payloads'][0] ?? null;
         $response = null;
         if ($payload !== null && $this->deserialize !== null) {

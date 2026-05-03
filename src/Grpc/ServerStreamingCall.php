@@ -201,7 +201,7 @@ class ServerStreamingCall extends AbstractCall
         );
 
         $code = $result['grpc_status'];
-        $this->responseTrailers = ['grpc-status' => [(string) $code]];
+        $this->responseTrailers = $result['trailers'];
         foreach ($result['payloads'] as $payload) {
             yield Internal\Deserialize::apply($this->deserialize, $payload);
         }
