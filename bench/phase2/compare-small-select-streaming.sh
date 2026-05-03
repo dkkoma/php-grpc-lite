@@ -19,6 +19,7 @@ timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 native_response_mode="${NATIVE_RESPONSE_MODE:-simple}"
 include_poc="${INCLUDE_POC:-1}"
+warmup_streams="${WARMUP_STREAMS:-3}"
 mkdir -p "$output_dir"
 
 summary_tsv="$output_dir/phase2-small-select-streaming-$timestamp.tsv"
@@ -139,6 +140,7 @@ run_streaming_diagnostic() {
         --autoload="$autoload" \
         --output="$file" \
         --streams="$streams" \
+        --warmup-streams="$warmup_streams" \
         --message-count="$message_count" \
         --payload-bytes="$payload_bytes" \
         "$@"
@@ -175,7 +177,7 @@ for case_spec in "${cases[@]}"; do
 
     native_file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-native-$native_response_mode.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/streaming-diagnostic.php --suite=small-select-streaming --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_file' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-response-mode=$native_response_mode"
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/streaming-diagnostic.php --suite=small-select-streaming --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_file' --streams=$streams --warmup-streams=$warmup_streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-response-mode=$native_response_mode"
     append_result "$case_name" php-grpc-lite "native-$native_response_mode" "$streams" "$message_count" "$payload_bytes" "$native_file"
 
     run_streaming_diagnostic "$case_name" dev-ext-grpc ext-grpc c-core \

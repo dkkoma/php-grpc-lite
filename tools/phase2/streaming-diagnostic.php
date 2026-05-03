@@ -20,6 +20,7 @@ $output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $streams = 1000;
+$warmupStreams = 3;
 $messageCount = 10;
 $payloadBytes = 100 * 1024;
 $nativeTransport = false;
@@ -52,6 +53,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $streams = (int) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--streams=')) {
         $streams = (int) substr($arg, strlen('--streams='));
+    } elseif ($arg === '--warmup-streams') {
+        $warmupStreams = (int) ($args[++$argIndex] ?? -1);
+    } elseif (str_starts_with($arg, '--warmup-streams=')) {
+        $warmupStreams = (int) substr($arg, strlen('--warmup-streams='));
     } elseif ($arg === '--message-count') {
         $messageCount = (int) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--message-count=')) {
@@ -78,8 +83,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
 if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
     usage('suite, implementation, target, autoload, and output are required');
 }
-if ($streams <= 0 || $messageCount <= 0 || $payloadBytes < 0) {
-    usage('streams, message-count, and payload-bytes must be valid');
+if ($streams <= 0 || $warmupStreams < 0 || $messageCount <= 0 || $payloadBytes < 0) {
+    usage('streams, warmup-streams, message-count, and payload-bytes must be valid');
 }
 
 requireAutoload($autoload);
@@ -96,6 +101,9 @@ if ($nativeTransport || $transport === 'native') {
 }
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
+for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {
+    StreamingBenchHelper::drain($client, $request);
+}
 $streamLatenciesNs = [];
 $series = [
     'server_stats_in_payload_ns' => [],
@@ -150,6 +158,7 @@ foreach (summarizeSeries($series) as $name => $summary) {
 $measurement = ResultContract::measurement('streaming_diagnostic', 'streaming-diagnostic', 'BenchServerStream', [
     'target' => $target,
     'streams' => $streams,
+    'warmup_streams' => $warmupStreams,
     'message_count' => $messageCount,
     'payload_bytes' => $payloadBytes,
     'native_transport' => $nativeTransport,
@@ -204,7 +213,7 @@ function writeDocument(string $output, array $document): void
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --output=var/bench-results/result.json [--streams=1000] [--message-count=10] [--payload-bytes=102400]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --output=var/bench-results/result.json [--streams=1000] [--warmup-streams=3] [--message-count=10] [--payload-bytes=102400]\n");
     exit(2);
 }
 
