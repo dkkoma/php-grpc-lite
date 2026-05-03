@@ -28,6 +28,8 @@ $options = getopt('', [
     'compact-response-buffer',
     'response-compact-threshold::',
     'direct-response-payload',
+    'read-ahead-delivery',
+    'transport-thread',
     'poll-loop',
     'discard-response-body',
 ]);
@@ -51,6 +53,8 @@ $incrementalDecode = array_key_exists('incremental-decode', $options);
 $compactResponseBuffer = array_key_exists('compact-response-buffer', $options);
 $responseCompactThreshold = (int) ($options['response-compact-threshold'] ?? 1);
 $directResponsePayload = array_key_exists('direct-response-payload', $options);
+$readAheadDelivery = array_key_exists('read-ahead-delivery', $options);
+$transportThread = array_key_exists('transport-thread', $options);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
 if ($responseCallbackMode !== 'none') {
@@ -95,7 +99,7 @@ $result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $it
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold, $directResponsePayload);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold, $directResponsePayload, $readAheadDelivery, $transportThread);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -166,6 +170,10 @@ $series = [
     'call_max_body_compact_us',
     'call_max_body_buffer_bytes',
     'call_decoded_messages',
+    'call_max_response_queue_count',
+    'call_max_response_queue_bytes',
+    'call_response_queue_wait_us',
+    'call_max_response_queue_wait_us',
     'call_response_payload_string_us',
     'call_max_response_payload_string_us',
     'call_response_decode_us',
@@ -231,6 +239,8 @@ $result += [
     'compact_response_buffer' => $compactResponseBuffer,
     'response_compact_threshold' => $responseCompactThreshold,
     'direct_response_payload' => $directResponsePayload,
+    'read_ahead_delivery' => $readAheadDelivery,
+    'transport_thread' => $transportThread,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,
@@ -388,6 +398,10 @@ function sampleCalls(array $result, array $latencies, int $limit): array
             'call_max_body_compact_us' => (int) ($result['call_max_body_compact_us'][$i] ?? 0),
             'call_max_body_buffer_bytes' => (int) ($result['call_max_body_buffer_bytes'][$i] ?? 0),
             'call_decoded_messages' => (int) ($result['call_decoded_messages'][$i] ?? 0),
+            'call_max_response_queue_count' => (int) ($result['call_max_response_queue_count'][$i] ?? 0),
+            'call_max_response_queue_bytes' => (int) ($result['call_max_response_queue_bytes'][$i] ?? 0),
+            'call_response_queue_wait_us' => (int) ($result['call_response_queue_wait_us'][$i] ?? 0),
+            'call_max_response_queue_wait_us' => (int) ($result['call_max_response_queue_wait_us'][$i] ?? 0),
             'call_response_payload_string_us' => (int) ($result['call_response_payload_string_us'][$i] ?? 0),
             'call_max_response_payload_string_us' => (int) ($result['call_max_response_payload_string_us'][$i] ?? 0),
             'call_response_decode_us' => (int) ($result['call_response_decode_us'][$i] ?? 0),
@@ -485,6 +499,10 @@ function tailSampleCalls(array $result, array $latencies, int $limit, array $der
             'call_max_body_compact_us' => (int) ($result['call_max_body_compact_us'][$index] ?? 0),
             'call_max_body_buffer_bytes' => (int) ($result['call_max_body_buffer_bytes'][$index] ?? 0),
             'call_decoded_messages' => (int) ($result['call_decoded_messages'][$index] ?? 0),
+            'call_max_response_queue_count' => (int) ($result['call_max_response_queue_count'][$index] ?? 0),
+            'call_max_response_queue_bytes' => (int) ($result['call_max_response_queue_bytes'][$index] ?? 0),
+            'call_response_queue_wait_us' => (int) ($result['call_response_queue_wait_us'][$index] ?? 0),
+            'call_max_response_queue_wait_us' => (int) ($result['call_max_response_queue_wait_us'][$index] ?? 0),
             'call_response_payload_string_us' => (int) ($result['call_response_payload_string_us'][$index] ?? 0),
             'call_max_response_payload_string_us' => (int) ($result['call_max_response_payload_string_us'][$index] ?? 0),
             'call_response_decode_us' => (int) ($result['call_response_decode_us'][$index] ?? 0),
