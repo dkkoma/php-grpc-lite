@@ -23,6 +23,7 @@ $options = getopt('', [
     'flush-after-mem-recv',
     'read-first-poll-loop',
     'decode-response-messages',
+    'incremental-decode',
     'poll-loop',
     'discard-response-body',
 ]);
@@ -41,6 +42,7 @@ $recvBufferSize = (int) ($options['recv-buffer-size'] ?? 16384);
 $flushAfterMemRecv = array_key_exists('flush-after-mem-recv', $options);
 $readFirstPollLoop = array_key_exists('read-first-poll-loop', $options);
 $decodeResponseMessages = array_key_exists('decode-response-messages', $options);
+$incrementalDecode = array_key_exists('incremental-decode', $options);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
 if ($decodeResponseMessages) {
@@ -77,7 +79,7 @@ $result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $it
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -180,6 +182,7 @@ $result += [
     'flush_after_mem_recv' => $flushAfterMemRecv,
     'read_first_poll_loop' => $readFirstPollLoop,
     'decode_response_messages' => $decodeResponseMessages,
+    'incremental_decode' => $incrementalDecode,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,
