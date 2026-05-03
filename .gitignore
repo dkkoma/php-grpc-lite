@@ -29,10 +29,12 @@ _research/
 *.lo
 *.la
 *.so
+*.dep
 .libs/
 modules/
 build/
 .deps
+libtool
 Makefile
 Makefile.fragments
 Makefile.objects

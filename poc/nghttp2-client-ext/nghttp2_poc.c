@@ -113,6 +113,10 @@ typedef struct {
     size_t request_len;
     size_t request_offset;
     size_t pending_data_len;
+    struct iovec pending_write_iov[4];
+    size_t pending_write_iovcnt;
+    size_t pending_write_remaining;
+    size_t pending_write_payload_len;
 } poc_client;
 
 static uint64_t monotonic_us(void);
@@ -460,24 +464,125 @@ static int write_data_frame(poc_client *client, const uint8_t *framehd, size_t l
     return 0;
 }
 
+static void clear_pending_write(poc_client *client)
+{
+    client->pending_write_iovcnt = 0;
+    client->pending_write_remaining = 0;
+    client->pending_write_payload_len = 0;
+}
+
+static void consume_pending_write(poc_client *client, size_t consumed)
+{
+    while (client->pending_write_iovcnt > 0 && consumed > 0) {
+        struct iovec *iov = &client->pending_write_iov[0];
+        if (consumed >= iov->iov_len) {
+            consumed -= iov->iov_len;
+            client->pending_write_remaining -= iov->iov_len;
+            memmove(&client->pending_write_iov[0], &client->pending_write_iov[1], sizeof(struct iovec) * (client->pending_write_iovcnt - 1));
+            client->pending_write_iovcnt--;
+            continue;
+        }
+
+        iov->iov_base = (uint8_t *) iov->iov_base + consumed;
+        iov->iov_len -= consumed;
+        client->pending_write_remaining -= consumed;
+        consumed = 0;
+    }
+}
+
+static int prepare_pending_data_frame_write(poc_client *client, const uint8_t *framehd, size_t length)
+{
+    size_t iovcnt = 1;
+    size_t filled_len = 0;
+
+    client->pending_write_iov[0].iov_base = (void *) framehd;
+    client->pending_write_iov[0].iov_len = 9;
+    iovcnt = fill_request_iov(client, client->pending_write_iov, iovcnt, length, &filled_len);
+    if (filled_len != length) {
+        clear_pending_write(client);
+        return -1;
+    }
+
+    client->pending_write_iovcnt = iovcnt;
+    client->pending_write_remaining = 9 + length;
+    client->pending_write_payload_len = length;
+    return 0;
+}
+
+static int flush_pending_data_frame_write(poc_client *client)
+{
+    while (client->pending_write_remaining > 0) {
+        uint64_t syscall_started = monotonic_us();
+        ssize_t written = writev(client->fd, client->pending_write_iov, (int) client->pending_write_iovcnt);
+        uint64_t syscall_elapsed = monotonic_us() - syscall_started;
+        if (syscall_elapsed > client->max_write_syscall_us) {
+            client->max_write_syscall_us = syscall_elapsed;
+        }
+        if (syscall_elapsed > client->call_max_write_syscall_us) {
+            client->call_max_write_syscall_us = syscall_elapsed;
+        }
+        if (written < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                client->last_send_wouldblock = true;
+                client->send_wouldblock_calls++;
+                return NGHTTP2_ERR_WOULDBLOCK;
+            }
+            clear_pending_write(client);
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if (written == 0) {
+            client->last_send_wouldblock = true;
+            client->send_wouldblock_calls++;
+            return NGHTTP2_ERR_WOULDBLOCK;
+        }
+
+        client->write_syscalls++;
+        client->bytes_sent += (size_t) written;
+        consume_pending_write(client, (size_t) written);
+    }
+
+    client->request_offset += client->pending_write_payload_len;
+    clear_pending_write(client);
+    return 0;
+}
+
+static int write_data_frame_nonblocking(poc_client *client, const uint8_t *framehd, size_t length)
+{
+    if (client->pending_write_remaining == 0 && prepare_pending_data_frame_write(client, framehd, length) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return flush_pending_data_frame_write(client);
+}
+
 static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data)
 {
     poc_client *client = (poc_client *) user_data;
+    bool new_data_frame = client->pending_write_remaining == 0;
     (void) session;
     (void) frame;
     (void) source;
 
     client->send_data_callback_calls++;
-    client->data_frames_sent++;
-    client->data_bytes_sent += length;
-    if (length > client->max_data_frame_len) {
-        client->max_data_frame_len = length;
-    }
-    if (client->min_data_frame_len == 0 || length < client->min_data_frame_len) {
-        client->min_data_frame_len = length;
+    if (new_data_frame) {
+        client->data_frames_sent++;
+        client->data_bytes_sent += length;
+        if (length > client->max_data_frame_len) {
+            client->max_data_frame_len = length;
+        }
+        if (client->min_data_frame_len == 0 || length < client->min_data_frame_len) {
+            client->min_data_frame_len = length;
+        }
     }
 
-    if (write_data_frame(client, framehd, length) != 0) {
+    if (client->poll_loop) {
+        int write_rv = write_data_frame_nonblocking(client, framehd, length);
+        if (write_rv == NGHTTP2_ERR_WOULDBLOCK) {
+            return NGHTTP2_ERR_WOULDBLOCK;
+        }
+        if (write_rv != 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+    } else if (write_data_frame(client, framehd, length) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     record_data_sent(client);
@@ -972,11 +1077,6 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         zend_throw_exception(NULL, "iterations must be positive", 0);
         RETURN_THROWS();
     }
-    if (poll_loop && no_copy) {
-        zend_throw_exception(NULL, "poll loop is not supported with no-copy DATA callback", 0);
-        RETURN_THROWS();
-    }
-
     memset(&client, 0, sizeof(client));
     client.fd = -1;
     client.grpc_status = -1;
@@ -1090,6 +1190,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         client.stream_error_code = 0;
         client.request_offset = 0;
         client.pending_data_len = 0;
+        clear_pending_write(&client);
         client.first_data_sent_us = 0;
         client.last_data_sent_us = 0;
         client.first_window_update_us = 0;

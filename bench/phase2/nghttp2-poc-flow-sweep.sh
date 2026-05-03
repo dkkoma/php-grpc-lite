@@ -14,6 +14,12 @@ output_dir="${BENCH_OUTPUT_DIR:-var/bench-results/nghttp2-poc-flow-$timestamp}"
 iterations="${BENCH_ITERATIONS:-1000}"
 request_sizes="${BENCH_REQUEST_PAYLOAD_SIZES:-102400,524288,1048576,2097152}"
 response_bytes="${BENCH_RESPONSE_BYTES:-100}"
+poc_poll_loop="${BENCH_POC_POLL_LOOP:-0}"
+poc_extra_args=()
+
+if [[ "$poc_poll_loop" == "1" ]]; then
+    poc_extra_args+=(--poll-loop)
+fi
 
 mkdir -p "$output_dir"
 
@@ -31,6 +37,7 @@ for size in "${sizes[@]}"; do
         --request-bytes="$size" \
         --split-grpc-frame \
         --no-copy \
+        "${poc_extra_args[@]}" \
         > "$output_path"
 done
 

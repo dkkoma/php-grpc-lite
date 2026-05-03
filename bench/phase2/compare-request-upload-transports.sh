@@ -9,6 +9,8 @@
 # variables such as TEST_SERVER_GOMAXPROCS or
 # TEST_SERVER_GRPC_INITIAL_CONN_WINDOW_SIZE before invoking this script to test
 # scheduler / HTTP/2 window conditions.
+# Set BENCH_POC_POLL_LOOP=1 to run the nghttp2 PoC with no-copy DATA and the
+# nonblocking poll loop.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -21,6 +23,14 @@ duration="${BENCH_DURATION:-30}"
 warmup_calls="${BENCH_WARMUP_CALLS:-10}"
 poc_iterations="${BENCH_POC_ITERATIONS:-$max_calls}"
 response_bytes="${BENCH_RESPONSE_BYTES:-100}"
+poc_poll_loop="${BENCH_POC_POLL_LOOP:-0}"
+poc_label="poc-flow"
+poc_extra_args=()
+
+if [[ "$poc_poll_loop" == "1" ]]; then
+    poc_label="poc-flow-poll"
+    poc_extra_args+=(--poll-loop)
+fi
 
 mkdir -p "$output_dir"
 
@@ -52,7 +62,7 @@ BENCH_OUTPUT_DIR="$output_dir" \
 
 IFS=',' read -r -a sizes <<< "$request_sizes"
 for size in "${sizes[@]}"; do
-    output_path="$output_dir/poc-flow-${timestamp}-${size}.json"
+    output_path="$output_dir/${poc_label}-${timestamp}-${size}.json"
     echo "RUN nghttp2 PoC flow sweep: request=${size} output=${output_path}"
     docker compose run --rm dev php \
         -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so \
@@ -62,6 +72,7 @@ for size in "${sizes[@]}"; do
         --request-bytes="$size" \
         --split-grpc-frame \
         --no-copy \
+        "${poc_extra_args[@]}" \
         > "$output_path"
 done
 
