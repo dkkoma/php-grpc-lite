@@ -278,4 +278,24 @@ final class NativeTransportControlTest extends TestCase
 
         self::assertSame(\Grpc\STATUS_OK, $next['grpc_status']);
     }
+
+    public function testNativePocCanRunConcurrentStreamsOnOneHttp2Session(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $result = \nghttp2_poc_multiplex_unary(
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchUnary',
+            "\0\0\0\0\0",
+            8,
+        );
+
+        self::assertTrue($result['ok']);
+        self::assertSame(8, $result['streams']);
+        self::assertSame(8, $result['closed']);
+        self::assertSame(array_fill(0, 8, \Grpc\STATUS_OK), $result['grpc_statuses']);
+    }
 }

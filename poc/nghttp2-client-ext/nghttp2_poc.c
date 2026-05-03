@@ -260,6 +260,32 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);
 
 typedef struct {
+    int32_t stream_id;
+    bool stream_closed;
+    int grpc_status;
+    uint32_t stream_error_code;
+    const uint8_t *request;
+    size_t request_len;
+    size_t request_offset;
+    smart_str body;
+} mux_stream;
+
+typedef struct {
+    int fd;
+    mux_stream *streams;
+    size_t stream_count;
+    size_t closed_count;
+    size_t bytes_sent;
+    size_t bytes_received;
+} mux_context;
+
+static ssize_t mux_send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
+static ssize_t mux_data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
+static int mux_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+static int mux_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
+static int mux_on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
+
+typedef struct {
     nghttp2_session *session;
     poc_client *client;
     size_t recv_buf_len;
@@ -1923,6 +1949,205 @@ static void *transport_thread_main(void *arg)
     return NULL;
 }
 
+static ssize_t mux_send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
+{
+    mux_context *ctx = (mux_context *) user_data;
+    size_t total_written = 0;
+    (void) session;
+    (void) flags;
+    while (total_written < length) {
+        ssize_t written = send(ctx->fd, data + total_written, length - total_written, 0);
+        if (written <= 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        total_written += (size_t) written;
+    }
+    ctx->bytes_sent += total_written;
+    return (ssize_t) total_written;
+}
+
+static ssize_t mux_data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+{
+    mux_stream *stream = (mux_stream *) source->ptr;
+    size_t remaining;
+    size_t to_copy;
+    (void) session;
+    (void) stream_id;
+    (void) user_data;
+
+    *data_flags = 0;
+    if (stream->request_offset >= stream->request_len) {
+        *data_flags = NGHTTP2_DATA_FLAG_EOF;
+        return 0;
+    }
+    remaining = stream->request_len - stream->request_offset;
+    to_copy = remaining < length ? remaining : length;
+    memcpy(buf, stream->request + stream->request_offset, to_copy);
+    stream->request_offset += to_copy;
+    if (stream->request_offset >= stream->request_len) {
+        *data_flags = NGHTTP2_DATA_FLAG_EOF;
+    }
+    return (ssize_t) to_copy;
+}
+
+static int mux_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
+{
+    mux_stream *stream = (mux_stream *) nghttp2_session_get_stream_user_data(session, stream_id);
+    (void) flags;
+    (void) user_data;
+    if (stream != NULL && len > 0) {
+        smart_str_appendl(&stream->body, (const char *) data, len);
+    }
+    return 0;
+}
+
+static int mux_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+{
+    mux_stream *stream;
+    (void) flags;
+    (void) user_data;
+    if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_HEADERS) {
+        return 0;
+    }
+    stream = (mux_stream *) nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+    if (stream == NULL) {
+        return 0;
+    }
+    if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
+        stream->grpc_status = (int) header_value_to_long(value, valuelen);
+    }
+    return 0;
+}
+
+static int mux_on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
+{
+    mux_context *ctx = (mux_context *) user_data;
+    mux_stream *stream = (mux_stream *) nghttp2_session_get_stream_user_data(session, stream_id);
+    (void) session;
+    if (stream != NULL && !stream->stream_closed) {
+        stream->stream_closed = true;
+        stream->stream_error_code = error_code;
+        ctx->closed_count++;
+    }
+    return 0;
+}
+
+PHP_FUNCTION(nghttp2_poc_multiplex_unary)
+{
+    char *host = NULL;
+    size_t host_len = 0;
+    zend_long port = 0;
+    char *path = NULL;
+    size_t path_len = 0;
+    char *request = NULL;
+    size_t request_len = 0;
+    zend_long stream_count = 0;
+    mux_context ctx;
+    nghttp2_session_callbacks *callbacks = NULL;
+    nghttp2_session *session = NULL;
+    nghttp2_nv nva[7];
+    size_t nvlen = 0;
+    char authority[512];
+    char recv_buf[16384];
+    uint64_t started;
+    int rv = 0;
+
+    ZEND_PARSE_PARAMETERS_START(5, 5)
+        Z_PARAM_STRING(host, host_len)
+        Z_PARAM_LONG(port)
+        Z_PARAM_STRING(path, path_len)
+        Z_PARAM_STRING(request, request_len)
+        Z_PARAM_LONG(stream_count)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (stream_count <= 0 || stream_count > 256) {
+        zend_throw_exception(NULL, "stream_count must be between 1 and 256", 0);
+        RETURN_THROWS();
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.fd = connect_tcp(host, port);
+    if (ctx.fd < 0) {
+        zend_throw_exception(NULL, "failed to connect", 0);
+        RETURN_THROWS();
+    }
+    ctx.stream_count = (size_t) stream_count;
+    ctx.streams = ecalloc(ctx.stream_count, sizeof(mux_stream));
+
+    nghttp2_session_callbacks_new(&callbacks);
+    nghttp2_session_callbacks_set_send_callback(callbacks, mux_send_callback);
+    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, mux_on_data_chunk_recv_callback);
+    nghttp2_session_callbacks_set_on_header_callback(callbacks, mux_on_header_callback);
+    nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, mux_on_stream_close_callback);
+    nghttp2_session_client_new(&session, callbacks, &ctx);
+    nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0);
+
+    snprintf(authority, sizeof(authority), "%s:%ld", host, port);
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":scheme", "http");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", authority, strlen(authority));
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "nghttp2-poc/0.1");
+
+    for (size_t i = 0; i < ctx.stream_count; i++) {
+        nghttp2_data_provider data_provider;
+        memset(&data_provider, 0, sizeof(data_provider));
+        ctx.streams[i].grpc_status = -1;
+        ctx.streams[i].request = (const uint8_t *) request;
+        ctx.streams[i].request_len = request_len;
+        data_provider.source.ptr = &ctx.streams[i];
+        data_provider.read_callback = mux_data_source_read_callback;
+        ctx.streams[i].stream_id = nghttp2_submit_request(session, NULL, nva, nvlen, &data_provider, &ctx.streams[i]);
+        if (ctx.streams[i].stream_id < 0) {
+            rv = -1;
+            break;
+        }
+    }
+
+    started = monotonic_us();
+    if (rv == 0 && nghttp2_session_send(session) != 0) {
+        rv = -1;
+    }
+    while (rv == 0 && ctx.closed_count < ctx.stream_count) {
+        ssize_t nread = recv(ctx.fd, recv_buf, sizeof(recv_buf), 0);
+        if (nread <= 0) {
+            rv = -1;
+            break;
+        }
+        ctx.bytes_received += (size_t) nread;
+        if (nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread) < 0) {
+            rv = -1;
+            break;
+        }
+        if (nghttp2_session_send(session) != 0) {
+            rv = -1;
+            break;
+        }
+    }
+
+    array_init(return_value);
+    add_assoc_long(return_value, "streams", (zend_long) ctx.stream_count);
+    add_assoc_long(return_value, "closed", (zend_long) ctx.closed_count);
+    add_assoc_long(return_value, "elapsed_us", (zend_long) (monotonic_us() - started));
+    add_assoc_long(return_value, "bytes_sent", (zend_long) ctx.bytes_sent);
+    add_assoc_long(return_value, "bytes_received", (zend_long) ctx.bytes_received);
+    add_assoc_bool(return_value, "ok", rv == 0 && ctx.closed_count == ctx.stream_count);
+    zval statuses;
+    array_init(&statuses);
+    for (size_t i = 0; i < ctx.stream_count; i++) {
+        add_next_index_long(&statuses, ctx.streams[i].grpc_status);
+        smart_str_free(&ctx.streams[i].body);
+    }
+    add_assoc_zval(return_value, "grpc_statuses", &statuses);
+
+    close(ctx.fd);
+    nghttp2_session_del(session);
+    nghttp2_session_callbacks_del(callbacks);
+    efree(ctx.streams);
+}
+
 PHP_FUNCTION(nghttp2_poc_channel_open)
 {
     char *host = NULL;
@@ -3256,6 +3481,14 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary, 0, 4, IS_ARRA
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_multiplex_unary, 0, 5, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
+    ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, stream_count, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_nghttp2_poc_channel_open, 0, 0, 2)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
@@ -3307,6 +3540,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {
+    PHP_FE(nghttp2_poc_multiplex_unary, arginfo_nghttp2_poc_multiplex_unary)
     PHP_FE(nghttp2_poc_channel_open, arginfo_nghttp2_poc_channel_open)
     PHP_FE(nghttp2_poc_channel_is_usable, arginfo_nghttp2_poc_channel_is_usable)
     PHP_FE(nghttp2_poc_channel_unary, arginfo_nghttp2_poc_channel_unary)
