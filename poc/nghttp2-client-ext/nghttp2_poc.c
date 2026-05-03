@@ -96,6 +96,10 @@ typedef struct {
     uint64_t last_window_update_us;
     uint64_t first_window_update_sent_us;
     uint64_t last_window_update_sent_us;
+    uint64_t last_window_update_sent_abs_us;
+    uint64_t last_poll_return_abs_us;
+    bool awaiting_data_after_poll;
+    bool awaiting_data_after_window_update_sent;
     uint64_t first_flow_control_pause_us;
     uint64_t first_response_header_us;
     uint64_t stream_closed_us;
@@ -154,6 +158,15 @@ typedef struct {
     uint64_t call_max_poll_wait_us;
     size_t call_pollin_ready;
     size_t call_pollout_ready;
+    uint64_t call_poll_to_data_us;
+    uint64_t call_max_poll_to_data_us;
+    uint64_t call_window_update_to_data_us;
+    uint64_t call_max_window_update_to_data_us;
+    size_t call_receive_drains;
+    size_t call_receive_drains_with_data;
+    size_t call_receive_drains_eagain_after_data;
+    size_t call_max_reads_per_drain;
+    size_t call_max_bytes_per_drain;
     int32_t call_min_session_remote_window;
     int32_t call_min_stream_remote_window;
     zend_long server_handler_ns;
@@ -677,6 +690,22 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
             }
             client->last_response_data_us = elapsed;
         }
+        if (client->awaiting_data_after_poll && client->last_poll_return_abs_us > 0) {
+            uint64_t delta = monotonic_us() - client->last_poll_return_abs_us;
+            client->call_poll_to_data_us += delta;
+            if (delta > client->call_max_poll_to_data_us) {
+                client->call_max_poll_to_data_us = delta;
+            }
+            client->awaiting_data_after_poll = false;
+        }
+        if (client->awaiting_data_after_window_update_sent && client->last_window_update_sent_abs_us > 0) {
+            uint64_t delta = monotonic_us() - client->last_window_update_sent_abs_us;
+            client->call_window_update_to_data_us += delta;
+            if (delta > client->call_max_window_update_to_data_us) {
+                client->call_max_window_update_to_data_us = delta;
+            }
+            client->awaiting_data_after_window_update_sent = false;
+        }
         if (client->direct_response_payload && client->decode_response_incrementally && client->response_fci != NULL && client->response_fcc != NULL) {
             if (process_response_data_direct(client, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -825,6 +854,8 @@ static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame 
                 client->first_window_update_sent_us = elapsed;
             }
             client->last_window_update_sent_us = elapsed;
+            client->last_window_update_sent_abs_us = monotonic_us();
+            client->awaiting_data_after_window_update_sent = true;
         }
     }
     return 0;
@@ -1142,6 +1173,9 @@ static void record_data_sent(poc_client *client)
 
 static int receive_available(nghttp2_session *session, poc_client *client, char *recv_buf, size_t recv_buf_len)
 {
+    size_t reads = 0;
+    size_t bytes = 0;
+    client->call_receive_drains++;
     for (;;) {
         uint64_t recv_started = monotonic_us();
         ssize_t nread = recv(client->fd, recv_buf, recv_buf_len, 0);
@@ -1155,6 +1189,8 @@ static int receive_available(nghttp2_session *session, poc_client *client, char 
             if (recv_elapsed > client->call_max_recv_syscall_us) {
                 client->call_max_recv_syscall_us = recv_elapsed;
             }
+            reads++;
+            bytes += (size_t) nread;
             client->bytes_received += (size_t) nread;
             mem_recv_started = monotonic_us();
             rv = nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread);
@@ -1194,6 +1230,16 @@ static int receive_available(nghttp2_session *session, poc_client *client, char 
                 client->call_max_recv_syscall_us = recv_elapsed;
             }
             client->recv_wouldblock_calls++;
+            if (reads > 0) {
+                client->call_receive_drains_with_data++;
+                client->call_receive_drains_eagain_after_data++;
+                if (reads > client->call_max_reads_per_drain) {
+                    client->call_max_reads_per_drain = reads;
+                }
+                if (bytes > client->call_max_bytes_per_drain) {
+                    client->call_max_bytes_per_drain = bytes;
+                }
+            }
             return 0;
         }
         return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -1275,6 +1321,8 @@ static int drive_stream_poll(nghttp2_session *session, poc_client *client, char 
         }
         if ((pfd.revents & POLLIN) != 0) {
             client->call_pollin_ready++;
+            client->last_poll_return_abs_us = monotonic_us();
+            client->awaiting_data_after_poll = true;
         }
         if ((pfd.revents & POLLOUT) != 0) {
             client->call_pollout_ready++;
@@ -1531,6 +1579,15 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zval call_max_poll_wait_us;
     zval call_pollin_ready;
     zval call_pollout_ready;
+    zval call_poll_to_data_us;
+    zval call_max_poll_to_data_us;
+    zval call_window_update_to_data_us;
+    zval call_max_window_update_to_data_us;
+    zval call_receive_drains;
+    zval call_receive_drains_with_data;
+    zval call_receive_drains_eagain_after_data;
+    zval call_max_reads_per_drain;
+    zval call_max_bytes_per_drain;
     zval call_min_session_remote_window;
     zval call_min_stream_remote_window;
     zval call_response_data_bytes;
@@ -1748,6 +1805,15 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     array_init(&call_max_poll_wait_us);
     array_init(&call_pollin_ready);
     array_init(&call_pollout_ready);
+    array_init(&call_poll_to_data_us);
+    array_init(&call_max_poll_to_data_us);
+    array_init(&call_window_update_to_data_us);
+    array_init(&call_max_window_update_to_data_us);
+    array_init(&call_receive_drains);
+    array_init(&call_receive_drains_with_data);
+    array_init(&call_receive_drains_eagain_after_data);
+    array_init(&call_max_reads_per_drain);
+    array_init(&call_max_bytes_per_drain);
     array_init(&call_min_session_remote_window);
     array_init(&call_min_stream_remote_window);
     array_init(&call_response_data_bytes);
@@ -1830,6 +1896,19 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         client.call_max_poll_wait_us = 0;
         client.call_pollin_ready = 0;
         client.call_pollout_ready = 0;
+        client.call_poll_to_data_us = 0;
+        client.call_max_poll_to_data_us = 0;
+        client.call_window_update_to_data_us = 0;
+        client.call_max_window_update_to_data_us = 0;
+        client.call_receive_drains = 0;
+        client.call_receive_drains_with_data = 0;
+        client.call_receive_drains_eagain_after_data = 0;
+        client.call_max_reads_per_drain = 0;
+        client.call_max_bytes_per_drain = 0;
+        client.last_poll_return_abs_us = 0;
+        client.awaiting_data_after_poll = false;
+        client.last_window_update_sent_abs_us = 0;
+        client.awaiting_data_after_window_update_sent = false;
         client.call_min_session_remote_window = 0;
         client.call_min_stream_remote_window = 0;
         client.call_response_data_bytes = 0;
@@ -1970,6 +2049,15 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         add_next_index_long(&call_max_poll_wait_us, (zend_long) client.call_max_poll_wait_us);
         add_next_index_long(&call_pollin_ready, (zend_long) client.call_pollin_ready);
         add_next_index_long(&call_pollout_ready, (zend_long) client.call_pollout_ready);
+        add_next_index_long(&call_poll_to_data_us, (zend_long) client.call_poll_to_data_us);
+        add_next_index_long(&call_max_poll_to_data_us, (zend_long) client.call_max_poll_to_data_us);
+        add_next_index_long(&call_window_update_to_data_us, (zend_long) client.call_window_update_to_data_us);
+        add_next_index_long(&call_max_window_update_to_data_us, (zend_long) client.call_max_window_update_to_data_us);
+        add_next_index_long(&call_receive_drains, (zend_long) client.call_receive_drains);
+        add_next_index_long(&call_receive_drains_with_data, (zend_long) client.call_receive_drains_with_data);
+        add_next_index_long(&call_receive_drains_eagain_after_data, (zend_long) client.call_receive_drains_eagain_after_data);
+        add_next_index_long(&call_max_reads_per_drain, (zend_long) client.call_max_reads_per_drain);
+        add_next_index_long(&call_max_bytes_per_drain, (zend_long) client.call_max_bytes_per_drain);
         add_next_index_long(&call_min_session_remote_window, (zend_long) client.call_min_session_remote_window);
         add_next_index_long(&call_min_stream_remote_window, (zend_long) client.call_min_stream_remote_window);
         add_next_index_long(&call_response_data_bytes, (zend_long) client.call_response_data_bytes);
@@ -2118,6 +2206,15 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_zval(return_value, "call_max_poll_wait_us", &call_max_poll_wait_us);
     add_assoc_zval(return_value, "call_pollin_ready", &call_pollin_ready);
     add_assoc_zval(return_value, "call_pollout_ready", &call_pollout_ready);
+    add_assoc_zval(return_value, "call_poll_to_data_us", &call_poll_to_data_us);
+    add_assoc_zval(return_value, "call_max_poll_to_data_us", &call_max_poll_to_data_us);
+    add_assoc_zval(return_value, "call_window_update_to_data_us", &call_window_update_to_data_us);
+    add_assoc_zval(return_value, "call_max_window_update_to_data_us", &call_max_window_update_to_data_us);
+    add_assoc_zval(return_value, "call_receive_drains", &call_receive_drains);
+    add_assoc_zval(return_value, "call_receive_drains_with_data", &call_receive_drains_with_data);
+    add_assoc_zval(return_value, "call_receive_drains_eagain_after_data", &call_receive_drains_eagain_after_data);
+    add_assoc_zval(return_value, "call_max_reads_per_drain", &call_max_reads_per_drain);
+    add_assoc_zval(return_value, "call_max_bytes_per_drain", &call_max_bytes_per_drain);
     add_assoc_zval(return_value, "call_min_session_remote_window", &call_min_session_remote_window);
     add_assoc_zval(return_value, "call_min_stream_remote_window", &call_min_stream_remote_window);
     add_assoc_zval(return_value, "call_response_data_bytes", &call_response_data_bytes);
