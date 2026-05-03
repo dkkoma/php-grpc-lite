@@ -125,5 +125,6 @@ Native transportに残すがMVP必須ではないもの:
 - Native control semantics: `docs/research/native-control-semantics-2026-05-03.md`
 - Upload no-copy + poll loop: `docs/research/native-transport-unary-large-request-conclusion-2026-05-03.md`
 - Server streaming goal comparison: `docs/research/nghttp2-poc-server-stream-goal-comparison-2026-05-03.md`
+- Small SELECT streaming comparison: `docs/research/small-select-streaming-comparison-2026-05-03.md`
 - Bounded read-ahead: `docs/research/nghttp2-poc-server-stream-bounded-read-ahead-2026-05-03.md`
 - Shared event loop / multiplex: `docs/research/curl-multiplex-shared-event-loop-2026-05-03.md`
