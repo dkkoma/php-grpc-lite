@@ -97,7 +97,16 @@ final class NativeTransport
         [$host, $port] = self::splitTarget($target);
         $framedRequest = "\0" . pack('N', strlen($serializedRequest)) . $serializedRequest;
         if (function_exists('nghttp2_poc_channel_open') && function_exists('nghttp2_poc_channel_unary')) {
-            $result = \nghttp2_poc_channel_unary(self::channel($host, $port), $path, $framedRequest, $headers);
+            $key = self::channelKey($host, $port);
+            try {
+                $result = \nghttp2_poc_channel_unary(self::channel($host, $port), $path, $framedRequest, $headers);
+            } catch (\Throwable $e) {
+                unset(self::$channels[$key]);
+                throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
+            }
+            if (($result['channel_dead'] ?? false) === true || ($result['channel_draining'] ?? false) === true) {
+                unset(self::$channels[$key]);
+            }
         } else {
             $result = \nghttp2_poc_unary($host, $port, $path, $framedRequest, $headers);
         }
@@ -214,12 +223,20 @@ final class NativeTransport
     /** @return resource */
     private static function channel(string $host, int $port): mixed
     {
-        $key = $host . ':' . $port;
+        $key = self::channelKey($host, $port);
+        if (isset(self::$channels[$key]) && function_exists('nghttp2_poc_channel_is_usable') && !\nghttp2_poc_channel_is_usable(self::$channels[$key])) {
+            unset(self::$channels[$key]);
+        }
         if (!isset(self::$channels[$key])) {
             self::$channels[$key] = \nghttp2_poc_channel_open($host, $port);
         }
 
         return self::$channels[$key];
+    }
+
+    private static function channelKey(string $host, int $port): string
+    {
+        return $host . ':' . $port;
     }
 
     /** @return array{0: string, 1: int} */

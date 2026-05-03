@@ -27,6 +27,8 @@
 #define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
 #define MAX_RECV_BUF_SIZE 262144
 
+typedef struct _poc_channel poc_channel;
+
 typedef struct queued_payload {
     zend_string *payload;
     uint64_t ready_abs_us;
@@ -42,6 +44,7 @@ typedef struct queued_raw_payload {
 
 typedef struct {
     int fd;
+    poc_channel *channel;
     int32_t stream_id;
     bool stream_closed;
     int grpc_status;
@@ -261,12 +264,17 @@ typedef struct {
 
 static void *transport_thread_main(void *arg);
 
-typedef struct {
+struct _poc_channel {
     int fd;
     nghttp2_session_callbacks *callbacks;
     nghttp2_session *session;
     char authority[512];
-} poc_channel;
+    bool dead;
+    bool draining;
+    int last_error;
+    uint32_t last_goaway_error_code;
+    int32_t last_goaway_stream_id;
+};
 
 static int le_poc_channel;
 
@@ -301,6 +309,30 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks)
     nghttp2_session_callbacks_set_on_frame_recv_callback(*callbacks, on_frame_recv_callback);
     nghttp2_session_callbacks_set_on_frame_not_send_callback(*callbacks, on_frame_not_send_callback);
     return 0;
+}
+
+static void mark_channel_dead(poc_channel *channel, int error_code)
+{
+    if (channel == NULL) {
+        return;
+    }
+    channel->dead = true;
+    channel->last_error = error_code;
+}
+
+static void mark_channel_draining(poc_channel *channel, int32_t last_stream_id, uint32_t error_code)
+{
+    if (channel == NULL) {
+        return;
+    }
+    channel->draining = true;
+    channel->last_goaway_stream_id = last_stream_id;
+    channel->last_goaway_error_code = error_code;
+}
+
+static bool channel_usable(poc_channel *channel)
+{
+    return channel != NULL && channel->fd >= 0 && channel->session != NULL && !channel->dead && !channel->draining;
 }
 
 static int connect_tcp(const char *host, zend_long port)
@@ -966,7 +998,9 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     client->recv_frames++;
     client->last_recv_frame_type = frame->hd.type;
     client->last_recv_frame_flags = frame->hd.flags;
-    if (frame->hd.type == NGHTTP2_WINDOW_UPDATE) {
+    if (frame->hd.type == NGHTTP2_GOAWAY) {
+        mark_channel_draining(client->channel, frame->goaway.last_stream_id, frame->goaway.error_code);
+    } else if (frame->hd.type == NGHTTP2_WINDOW_UPDATE) {
         uint64_t elapsed = client->call_started_us == 0 ? 0 : monotonic_us() - client->call_started_us;
         client->window_update_frames_recv++;
         client->call_window_update_frames_recv++;
@@ -1787,6 +1821,19 @@ PHP_FUNCTION(nghttp2_poc_channel_open)
     RETURN_RES(zend_register_resource(channel, le_poc_channel));
 }
 
+PHP_FUNCTION(nghttp2_poc_channel_is_usable)
+{
+    zval *channel_zv = NULL;
+    poc_channel *channel;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_RESOURCE(channel_zv)
+    ZEND_PARSE_PARAMETERS_END();
+
+    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "nghttp2_poc_channel", le_poc_channel);
+    RETURN_BOOL(channel_usable(channel));
+}
+
 PHP_FUNCTION(nghttp2_poc_channel_unary)
 {
     zval *channel_zv = NULL;
@@ -1823,13 +1870,14 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     ZEND_PARSE_PARAMETERS_END();
 
     channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "nghttp2_poc_channel", le_poc_channel);
-    if (channel == NULL || channel->fd < 0 || channel->session == NULL) {
+    if (!channel_usable(channel)) {
         zend_throw_exception(NULL, "invalid nghttp2_poc channel", 0);
         RETURN_THROWS();
     }
 
     memset(&client, 0, sizeof(client));
     client.fd = channel->fd;
+    client.channel = channel;
     client.grpc_status = -1;
     client.http_status = -1;
     client.request = (const uint8_t *) request;
@@ -1885,6 +1933,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     rv = nghttp2_session_send(channel->session);
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
+        mark_channel_dead(channel, rv);
         nghttp2_session_set_user_data(channel->session, NULL);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         RETURN_THROWS();
@@ -1894,11 +1943,15 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     while (!client.stream_closed) {
         ssize_t nread = recv(channel->fd, recv_buf, sizeof(recv_buf), 0);
         if (nread <= 0) {
+            if (!client.stream_closed) {
+                mark_channel_dead(channel, nread == 0 ? 0 : errno);
+            }
             break;
         }
         client.bytes_received += (size_t) nread;
         rv = nghttp2_session_mem_recv(channel->session, (const uint8_t *) recv_buf, (size_t) nread);
         if (rv < 0) {
+            mark_channel_dead(channel, rv);
             nghttp2_session_set_user_data(channel->session, NULL);
             smart_str_free(&client.body);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
@@ -1906,6 +1959,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
         }
         rv = nghttp2_session_send(channel->session);
         if (rv != 0) {
+            mark_channel_dead(channel, rv);
             nghttp2_session_set_user_data(channel->session, NULL);
             smart_str_free(&client.body);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
@@ -1946,6 +2000,11 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     add_assoc_long(return_value, "recv_loop_us", (zend_long) recv_loop_us);
     add_assoc_long(return_value, "cleanup_us", 0);
     add_assoc_bool(return_value, "channel_reused", true);
+    add_assoc_bool(return_value, "channel_dead", channel->dead);
+    add_assoc_bool(return_value, "channel_draining", channel->draining);
+    add_assoc_long(return_value, "channel_last_error", channel->last_error);
+    add_assoc_long(return_value, "channel_last_goaway_error_code", channel->last_goaway_error_code);
+    add_assoc_long(return_value, "channel_last_goaway_stream_id", channel->last_goaway_stream_id);
     add_assoc_long(return_value, "server_handler_ns", client.server_handler_ns);
     add_assoc_long(return_value, "server_payload_alloc_ns", client.server_payload_alloc_ns);
     add_assoc_long(return_value, "server_payload_bytes", client.server_payload_bytes);
@@ -3012,6 +3071,10 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_nghttp2_poc_channel_open, 0, 0, 2)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_is_usable, 0, 1, _IS_BOOL, 0)
+    ZEND_ARG_INFO(0, channel)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_unary, 0, 3, IS_ARRAY, 0)
     ZEND_ARG_INFO(0, channel)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
@@ -3050,6 +3113,7 @@ ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {
     PHP_FE(nghttp2_poc_channel_open, arginfo_nghttp2_poc_channel_open)
+    PHP_FE(nghttp2_poc_channel_is_usable, arginfo_nghttp2_poc_channel_is_usable)
     PHP_FE(nghttp2_poc_channel_unary, arginfo_nghttp2_poc_channel_unary)
     PHP_FE(nghttp2_poc_unary, arginfo_nghttp2_poc_unary)
     PHP_FE(nghttp2_poc_unary_batch, arginfo_nghttp2_poc_unary_batch)

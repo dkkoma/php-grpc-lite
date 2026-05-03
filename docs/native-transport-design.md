@@ -162,6 +162,14 @@ new GreeterClient('test-server:50051', [
 
 自動fallbackはしない。native未対応機能、native extension未ロード、transport errorは黙ってlibcurlへ落とさず、選択された経路の失敗として扱う。
 
+## Channel Lifecycle
+
+native transportはChannel lifetimeに対応するHTTP/2 sessionをC resourceとして保持する。通常のRPCは同じsession上に新しいstreamを作る。
+
+connectionが壊れた場合、transport層では同じRPCを自動retryしない。send/recv errorやEOFはchannelをdead扱いにし、そのRPCはエラーとして返す。GOAWAYを受けたchannelはdraining扱いにし、新規RPCには使わない。次のRPC開始時に新しいchannel resourceを作る。
+
+retry policyやidempotency判断はtransport lifecycleとは分離し、将来の明示機能として扱う。
+
 ## Compatibility Work
 
 libcurl pathと同等に通す必要があるもの:

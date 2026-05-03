@@ -34,9 +34,11 @@ C PoC に最小の persistent channel API を追加した。
 - `nghttp2_poc_channel_open(host, port)` で TCP connection と nghttp2 session を作成する
 - `nghttp2_poc_channel_unary(channel, path, framed_request, headers)` で同一 HTTP/2 session 上に stream を追加する
 - `NativeTransport::unarySimple()` は target ごとに channel を保持して再利用する
+- channel resource は GOAWAY を受けたら `draining`、EOF/send/mem_recv error を受けたら `dead` にし、PHP 側の cache から外す
+- 壊れた RPC は transport 層では自動 retry せず、次の RPC 開始時に新しい channel を作る
 - server streaming の small response では `native_response_mode=simple` により同じ persistent simple 経路を使う
 
-これは Phase 2 PoC の最小実装であり、TLS/mTLS、reconnect、request をまたぐ FPM persistent resource、concurrent streams は未実装。
+これは Phase 2 PoC の最小実装であり、TLS/mTLS、request をまたぐ FPM persistent resource、concurrent streams は未実装。
 
 ## 結果: small unary
 
@@ -83,7 +85,7 @@ Phase 2 MVP の設計上は、native transport を採用するなら C 拡張内
 
 残課題:
 
-- C channel resource の reconnect / GOAWAY / EOF handling
+- GOAWAY / EOF / send error の再現テスト用 h2 server fixture
 - TLS/mTLS channel
 - FPM request をまたぐ persistent resource の可否
 - concurrent streams / multiplex
