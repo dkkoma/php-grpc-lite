@@ -124,13 +124,13 @@ Requirements:
 
 ## Channel Lifetime
 
-- Channelにnative transport resourceを持たせる。
-- 同一PHP request内ではHTTP/2 session/socketを再利用する。
-- error/cancel/途中終了時はsessionを破棄する。
+- Channel identityからC側persistent channel keyを作る。
+- HTTP/2 session/socketはC extensionのprocess-local / thread-local cacheに保持する。
+- PHP userlandではchannel resource/socket/sessionを保持しない。
+- error/cancel/途中終了時はC側persistent channelをdead扱いにし、次RPCで新規接続する。
 
 Deferred:
 
-- PHP-FPM worker lifetimeにまたがるpersistent native channel pool。
 - shared event loop / multiplex scheduler。
 
 ## PHP Surface
@@ -166,7 +166,7 @@ new GreeterClient('test-server:50051', [
 
 native transportはChannel lifetimeに対応するHTTP/2 sessionをC側のpersistent channelとして保持する。通常のRPCは同じsession上に新しいstreamを作る。
 
-FPMではworker process内でrequestをまたいでpersistent channelを再利用する。ZTS / FrankenPHP workerではthread-local module globals上のcacheとして扱い、threadをまたいでsocket/sessionを共有しない。PHP request-localなstatic cacheは最適化補助であり、lifetimeの本体ではない。
+FPMではworker process内でrequestをまたいでpersistent channelを再利用する。ZTS / FrankenPHP workerではthread-local module globals上のcacheとして扱い、threadをまたいでsocket/sessionを共有しない。PHP userlandではchannelを保持しない。
 
 connectionが壊れた場合、transport層では同じRPCを自動retryしない。send/recv errorやEOFはchannelをdead扱いにし、そのRPCはエラーとして返す。GOAWAYを受けたchannelはdraining扱いにし、新規RPCには使わない。次のRPC開始時に新しいchannel resourceを作る。
 

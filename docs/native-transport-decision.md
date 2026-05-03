@@ -86,10 +86,6 @@ Native transportに残すがMVP必須ではないもの:
   - 単一call latency改善の本筋ではない。
   - channel transportの次段階として扱う。
 
-- **persistent native channel pool**
-  - PHP-FPM worker lifetimeでrequestをまたぐreuseに効く可能性がある。
-  - ext-grpcのpersistent channel/subchannel poolに近い性質をnative側でどう持つかは別途設計する。
-
 ## Explicit Stable Route
 
 本実装のdefaultはnativeだが、libcurl経路は以下の目的で維持する。

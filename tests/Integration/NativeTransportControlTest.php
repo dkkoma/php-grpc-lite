@@ -83,7 +83,7 @@ final class NativeTransportControlTest extends TestCase
 
         self::assertNull($response);
         self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
-        self::assertSame('nghttp2_poc extension is not loaded', $status->details);
+        self::assertSame('nghttp2_poc persistent channel API is not loaded', $status->details);
     }
 
     public function testNativeUnaryCancelBeforeWaitReturnsCancelledStatus(): void
@@ -226,10 +226,6 @@ final class NativeTransportControlTest extends TestCase
             $request,
             [],
         );
-
-        $reflection = new \ReflectionClass(NativeTransport::class);
-        $channels = $reflection->getProperty('channels');
-        $channels->setValue(null, []);
 
         $second = \nghttp2_poc_persistent_channel_unary(
             $key,
