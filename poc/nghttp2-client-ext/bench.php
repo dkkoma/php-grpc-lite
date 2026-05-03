@@ -22,6 +22,7 @@ $options = getopt('', [
     'recv-buffer-size::',
     'flush-after-mem-recv',
     'read-first-poll-loop',
+    'decode-response-messages',
     'poll-loop',
     'discard-response-body',
 ]);
@@ -39,8 +40,12 @@ $recvConnectionWindowSize = (int) ($options['recv-connection-window-size'] ?? 0)
 $recvBufferSize = (int) ($options['recv-buffer-size'] ?? 16384);
 $flushAfterMemRecv = array_key_exists('flush-after-mem-recv', $options);
 $readFirstPollLoop = array_key_exists('read-first-poll-loop', $options);
+$decodeResponseMessages = array_key_exists('decode-response-messages', $options);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
+if ($decodeResponseMessages) {
+    $discardResponseBody = false;
+}
 
 if (!in_array($rpc, ['unary', 'server-stream'], true)) {
     fwrite(STDERR, "--rpc must be unary or server-stream\n");
@@ -64,11 +69,15 @@ $payload = $request->serializeToString();
 $requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) . $payload;
 $path = $rpc === 'server-stream' ? '/helloworld.Greeter/BenchServerStream' : '/helloworld.Greeter/BenchUnary';
 
+$responseCallback = $decodeResponseMessages
+    ? static fn (string $payload): Helloworld\BenchReply => decodeAndYieldBenchReply($payload)
+    : null;
+
 $result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -120,6 +129,9 @@ $series = [
     'call_data_recv_calls',
     'call_body_append_us',
     'call_max_body_append_us',
+    'call_decoded_messages',
+    'call_response_decode_us',
+    'call_max_response_decode_us',
     'server_handler_ns',
     'server_payload_alloc_ns',
     'server_payload_bytes',
@@ -167,6 +179,7 @@ $result += [
     'recv_buffer_size' => $recvBufferSize,
     'flush_after_mem_recv' => $flushAfterMemRecv,
     'read_first_poll_loop' => $readFirstPollLoop,
+    'decode_response_messages' => $decodeResponseMessages,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,
@@ -185,6 +198,23 @@ function percentile(array $values, float $percentile): float
     $index = (int) ceil($percentile * $count) - 1;
     $index = max(0, min($count - 1, $index));
     return (float) $values[$index];
+}
+
+function decodeAndYieldBenchReply(string $payload): Helloworld\BenchReply
+{
+    $reply = new Helloworld\BenchReply();
+    $reply->mergeFromString($payload);
+    foreach (yieldBenchReply($reply) as $yielded) {
+        return $yielded;
+    }
+
+    throw new \RuntimeException('yieldBenchReply did not yield');
+}
+
+/** @return \Generator<int, Helloworld\BenchReply> */
+function yieldBenchReply(Helloworld\BenchReply $reply): \Generator
+{
+    yield $reply;
 }
 
 /**
@@ -237,6 +267,9 @@ function sampleCalls(array $result, array $latencies, int $limit): array
             'call_data_recv_calls' => (int) ($result['call_data_recv_calls'][$i] ?? 0),
             'call_body_append_us' => (int) ($result['call_body_append_us'][$i] ?? 0),
             'call_max_body_append_us' => (int) ($result['call_max_body_append_us'][$i] ?? 0),
+            'call_decoded_messages' => (int) ($result['call_decoded_messages'][$i] ?? 0),
+            'call_response_decode_us' => (int) ($result['call_response_decode_us'][$i] ?? 0),
+            'call_max_response_decode_us' => (int) ($result['call_max_response_decode_us'][$i] ?? 0),
             'server_handler_ns' => (int) ($result['server_handler_ns'][$i] ?? 0),
             'server_stats_handler_start_ns' => (int) ($result['server_stats_handler_start_ns'][$i] ?? 0),
             'server_stats_handler_end_ns' => (int) ($result['server_stats_handler_end_ns'][$i] ?? 0),
@@ -305,6 +338,9 @@ function tailSampleCalls(array $result, array $latencies, int $limit): array
             'call_data_recv_calls' => (int) ($result['call_data_recv_calls'][$index] ?? 0),
             'call_body_append_us' => (int) ($result['call_body_append_us'][$index] ?? 0),
             'call_max_body_append_us' => (int) ($result['call_max_body_append_us'][$index] ?? 0),
+            'call_decoded_messages' => (int) ($result['call_decoded_messages'][$index] ?? 0),
+            'call_response_decode_us' => (int) ($result['call_response_decode_us'][$index] ?? 0),
+            'call_max_response_decode_us' => (int) ($result['call_max_response_decode_us'][$index] ?? 0),
             'server_handler_ns' => (int) ($result['server_handler_ns'][$index] ?? 0),
             'server_stats_handler_start_ns' => (int) ($result['server_stats_handler_start_ns'][$index] ?? 0),
             'server_stats_handler_end_ns' => (int) ($result['server_stats_handler_end_ns'][$index] ?? 0),
