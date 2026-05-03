@@ -12,34 +12,53 @@ $options = getopt('', [
     'iterations::',
     'response-bytes::',
     'request-bytes::',
+    'rpc::',
+    'message-count::',
     'split-grpc-frame',
     'no-copy',
     'data-frame-size::',
     'poll-loop',
+    'discard-response-body',
 ]);
 
 $iterations = (int) ($options['iterations'] ?? 1000);
 $responseBytes = (int) ($options['response-bytes'] ?? 100);
 $requestBytes = (int) ($options['request-bytes'] ?? 0);
+$rpc = (string) ($options['rpc'] ?? 'unary');
+$messageCount = (int) ($options['message-count'] ?? 1);
 $splitGrpcFrame = array_key_exists('split-grpc-frame', $options);
 $noCopy = array_key_exists('no-copy', $options);
 $dataFrameSize = (int) ($options['data-frame-size'] ?? 0);
 $pollLoop = array_key_exists('poll-loop', $options);
+$discardResponseBody = array_key_exists('discard-response-body', $options);
+
+if (!in_array($rpc, ['unary', 'server-stream'], true)) {
+    fwrite(STDERR, "--rpc must be unary or server-stream\n");
+    exit(2);
+}
+if ($messageCount < 1) {
+    fwrite(STDERR, "--message-count must be positive\n");
+    exit(2);
+}
 
 $request = new Helloworld\BenchRequest();
 $request->setPayloadBytes($responseBytes);
+if ($rpc === 'server-stream') {
+    $request->setMessageCount($messageCount);
+}
 if ($requestBytes > 0) {
     $request->setRequestPayload(str_repeat("\0", $requestBytes));
 }
 
 $payload = $request->serializeToString();
 $requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) . $payload;
+$path = $rpc === 'server-stream' ? '/helloworld.Greeter/BenchServerStream' : '/helloworld.Greeter/BenchUnary';
 
-$result = nghttp2_poc_unary_batch('test-server', 50051, '/helloworld.Greeter/BenchUnary', $requestBody, $iterations, [
+$result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -52,6 +71,8 @@ $callsPerSecond = $result['total_us'] > 0 ? ($result['ok'] / ($result['total_us'
 $series = [
     'client_first_data_sent_us',
     'client_upload_complete_us',
+    'client_first_response_data_us',
+    'client_last_response_data_us',
     'client_first_window_update_us',
     'client_last_window_update_us',
     'client_first_flow_control_pause_us',
@@ -67,6 +88,10 @@ $series = [
     'call_max_write_syscall_us',
     'call_min_session_remote_window',
     'call_min_stream_remote_window',
+    'call_response_data_bytes',
+    'call_data_recv_calls',
+    'call_body_append_us',
+    'call_max_body_append_us',
     'server_handler_ns',
     'server_payload_alloc_ns',
     'server_payload_bytes',
@@ -100,11 +125,14 @@ foreach (array_merge(['latencies_us'], $series) as $key) {
 $result += [
     'response_bytes' => $responseBytes,
     'request_bytes' => $requestBytes,
+    'rpc' => $rpc,
+    'message_count' => $messageCount,
     'serialized_payload_bytes' => strlen($payload),
     'split_grpc_frame' => $splitGrpcFrame,
     'no_copy' => $noCopy,
     'data_frame_size' => $dataFrameSize,
     'poll_loop' => $pollLoop,
+    'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,
     'p99_us' => $p99,
     'calls_per_second' => $callsPerSecond,
@@ -134,6 +162,8 @@ function sampleCalls(array $result, array $latencies, int $limit): array
         $samples[] = [
             'latency_us' => (int) ($latencies[$i] ?? 0),
             'client_upload_complete_us' => (int) ($result['client_upload_complete_us'][$i] ?? 0),
+            'client_first_response_data_us' => (int) ($result['client_first_response_data_us'][$i] ?? 0),
+            'client_last_response_data_us' => (int) ($result['client_last_response_data_us'][$i] ?? 0),
             'client_first_window_update_us' => (int) ($result['client_first_window_update_us'][$i] ?? 0),
             'client_last_window_update_us' => (int) ($result['client_last_window_update_us'][$i] ?? 0),
             'client_first_flow_control_pause_us' => (int) ($result['client_first_flow_control_pause_us'][$i] ?? 0),
@@ -149,6 +179,10 @@ function sampleCalls(array $result, array $latencies, int $limit): array
             'call_max_write_syscall_us' => (int) ($result['call_max_write_syscall_us'][$i] ?? 0),
             'call_min_session_remote_window' => (int) ($result['call_min_session_remote_window'][$i] ?? 0),
             'call_min_stream_remote_window' => (int) ($result['call_min_stream_remote_window'][$i] ?? 0),
+            'call_response_data_bytes' => (int) ($result['call_response_data_bytes'][$i] ?? 0),
+            'call_data_recv_calls' => (int) ($result['call_data_recv_calls'][$i] ?? 0),
+            'call_body_append_us' => (int) ($result['call_body_append_us'][$i] ?? 0),
+            'call_max_body_append_us' => (int) ($result['call_max_body_append_us'][$i] ?? 0),
             'server_handler_ns' => (int) ($result['server_handler_ns'][$i] ?? 0),
             'server_stats_handler_start_ns' => (int) ($result['server_stats_handler_start_ns'][$i] ?? 0),
             'server_stats_handler_end_ns' => (int) ($result['server_stats_handler_end_ns'][$i] ?? 0),
@@ -175,6 +209,8 @@ function tailSampleCalls(array $result, array $latencies, int $limit): array
             'index' => $index,
             'latency_us' => (int) ($latencies[$index] ?? 0),
             'client_upload_complete_us' => (int) ($result['client_upload_complete_us'][$index] ?? 0),
+            'client_first_response_data_us' => (int) ($result['client_first_response_data_us'][$index] ?? 0),
+            'client_last_response_data_us' => (int) ($result['client_last_response_data_us'][$index] ?? 0),
             'client_first_window_update_us' => (int) ($result['client_first_window_update_us'][$index] ?? 0),
             'client_last_window_update_us' => (int) ($result['client_last_window_update_us'][$index] ?? 0),
             'client_first_flow_control_pause_us' => (int) ($result['client_first_flow_control_pause_us'][$index] ?? 0),
@@ -190,6 +226,10 @@ function tailSampleCalls(array $result, array $latencies, int $limit): array
             'call_max_write_syscall_us' => (int) ($result['call_max_write_syscall_us'][$index] ?? 0),
             'call_min_session_remote_window' => (int) ($result['call_min_session_remote_window'][$index] ?? 0),
             'call_min_stream_remote_window' => (int) ($result['call_min_stream_remote_window'][$index] ?? 0),
+            'call_response_data_bytes' => (int) ($result['call_response_data_bytes'][$index] ?? 0),
+            'call_data_recv_calls' => (int) ($result['call_data_recv_calls'][$index] ?? 0),
+            'call_body_append_us' => (int) ($result['call_body_append_us'][$index] ?? 0),
+            'call_max_body_append_us' => (int) ($result['call_max_body_append_us'][$index] ?? 0),
             'server_handler_ns' => (int) ($result['server_handler_ns'][$index] ?? 0),
             'server_stats_handler_start_ns' => (int) ($result['server_stats_handler_start_ns'][$index] ?? 0),
             'server_stats_handler_end_ns' => (int) ($result['server_stats_handler_end_ns'][$index] ?? 0),
