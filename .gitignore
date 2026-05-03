@@ -15,6 +15,10 @@ bench-comparison/composer.lock
 var/bench-results/
 var/build-curl-instrumented/
 var/instrumented-curl/
+var/build-nghttp2-instrumented/
+var/instrumented-nghttp2/
+var/build-curl-nghttp2-instrumented/
+var/instrumented-curl-nghttp2/
 .phpbench/
 
 # Research scratch (cloned upstream sources for surveying)
