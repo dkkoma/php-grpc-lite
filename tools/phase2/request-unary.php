@@ -25,6 +25,7 @@ $diagnosticRpc = false;
 $curlTraceOutput = null;
 $curlTraceCalls = 0;
 $uploadReadCallback = false;
+$nativeTransport = false;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -68,6 +69,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $diagnosticRpc = true;
     } elseif ($arg === '--upload-read-callback') {
         $uploadReadCallback = true;
+    } elseif ($arg === '--native-transport') {
+        $nativeTransport = true;
     } elseif ($arg === '--curl-trace-output') {
         $curlTraceOutput = $args[++$argIndex] ?? null;
     } elseif (str_starts_with($arg, '--curl-trace-output=')) {
@@ -106,7 +109,11 @@ if ($curlTraceOutput !== null && $curlTraceOutput !== '') {
     fwrite($curlTraceHandle, "# curl debug trace; timing is relative to call option creation; latency is diagnostic only\n");
 }
 
-$client = UnaryBenchHelper::client($target);
+$clientOptions = [];
+if ($nativeTransport) {
+    $clientOptions['php_grpc_lite.native_transport'] = true;
+}
+$client = UnaryBenchHelper::client($target, $clientOptions);
 $measurements = [];
 foreach ($requestPayloadSizes as $requestPayloadBytes) {
     $requestPayload = $requestPayloadBytes > 0 ? str_repeat("\0", $requestPayloadBytes) : '';
@@ -179,6 +186,7 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
         'diagnostic_rpc' => $diagnosticRpc,
         'client_internal_diagnostics' => $diagnosticRpc && $implementation === 'php-grpc-lite',
         'upload_read_callback' => $uploadReadCallback && $implementation === 'php-grpc-lite',
+        'native_transport' => $nativeTransport,
         'curl_trace_output' => $curlTraceOutput,
         'curl_trace_calls' => $curlTraceCalls,
     ], $metrics);

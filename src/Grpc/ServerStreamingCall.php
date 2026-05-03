@@ -32,6 +32,8 @@ class ServerStreamingCall extends AbstractCall
 
     private ?\stdClass $finalStatus = null;
     private ?\stdClass $compressionStatus = null;
+    private bool $nativeTransport = false;
+    private ?string $nativeSerializedRequest = null;
 
     /**
      * @param object $argument message instance with serializeToString()
@@ -41,9 +43,15 @@ class ServerStreamingCall extends AbstractCall
     public function start(object $argument, array $metadata = [], array $options = []): void
     {
         $this->mergeStartArgs($metadata, $options);
+        $this->nativeTransport = $this->shouldUseNativeTransport();
 
         $serialized = $argument->serializeToString();
         $frame = "\x00" . pack('N', strlen($serialized)) . $serialized;
+
+        if ($this->nativeTransport) {
+            $this->nativeSerializedRequest = $serialized;
+            return;
+        }
 
         $this->ch = $this->initCurl();
         curl_setopt_array($this->ch, [
@@ -66,6 +74,10 @@ class ServerStreamingCall extends AbstractCall
     public function responses(): \Generator
     {
         if ($this->ch === null) {
+            if ($this->nativeTransport && $this->nativeSerializedRequest !== null) {
+                yield from $this->responsesNative();
+                return;
+            }
             throw new \RuntimeException('ServerStreamingCall::responses() called before start()');
         }
         if ($this->finalStatus !== null) {
@@ -166,6 +178,34 @@ class ServerStreamingCall extends AbstractCall
     public function getTrailingMetadata(): array
     {
         return $this->responseTrailers;
+    }
+
+    /**
+     * @return \Generator<int, object>
+     */
+    private function responsesNative(): \Generator
+    {
+        $mode = (string) ($this->options['php_grpc_lite.native_response_mode']
+            ?? $this->channel->opts['php_grpc_lite.native_response_mode']
+            ?? 'direct');
+        $compact = $mode === 'compact64' || $mode === 'compact';
+        $direct = !$compact;
+
+        $result = Internal\NativeTransport::unaryBatch(
+            $this->channel->getTarget(),
+            $this->method,
+            $this->nativeSerializedRequest ?? '',
+            $this->buildNativeRequestHeaders(),
+            $compact,
+            $direct,
+        );
+
+        $code = $result['grpc_status'];
+        $this->responseTrailers = ['grpc-status' => [(string) $code]];
+        foreach ($result['payloads'] as $payload) {
+            yield Internal\Deserialize::apply($this->deserialize, $payload);
+        }
+        $this->finalStatus = $this->makeStatus($code, '');
     }
 
     private function buildStatusFromTrailers(): \stdClass

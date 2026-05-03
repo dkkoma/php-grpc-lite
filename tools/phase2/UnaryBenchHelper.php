@@ -9,9 +9,10 @@ use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
 
 final class UnaryBenchHelper
 {
-    public static function client(string $target): GreeterClient
+    /** @param array<string, mixed> $options */
+    public static function client(string $target, array $options = []): GreeterClient
     {
-        return new GreeterClient($target, [
+        return new GreeterClient($target, $options + [
             'credentials' => ChannelCredentials::createInsecure(),
         ]);
     }

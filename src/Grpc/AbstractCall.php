@@ -107,6 +107,28 @@ abstract class AbstractCall
         return $headers;
     }
 
+    /** @return array<string, string> */
+    protected function buildNativeRequestHeaders(): array
+    {
+        $headers = [];
+        foreach ($this->buildRequestHeaders() as $line) {
+            [$key, $value] = array_pad(explode(':', $line, 2), 2, '');
+            $key = strtolower(trim($key));
+            if ($key === '' || $key === 'content-type' || $key === 'te' || $key === 'user-agent') {
+                continue;
+            }
+            $headers[$key] = ltrim($value);
+        }
+
+        return $headers;
+    }
+
+    protected function shouldUseNativeTransport(): bool
+    {
+        return ($this->channel->opts['php_grpc_lite.native_transport'] ?? false) === true
+            || ($this->options['php_grpc_lite.native_transport'] ?? false) === true;
+    }
+
     /** @param array<string, string|list<string>> $metadata */
     protected function mergeStartArgs(array $metadata, array $options): void
     {

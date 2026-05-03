@@ -22,6 +22,8 @@ $autoload = 'vendor/autoload.php';
 $streams = 1000;
 $messageCount = 10;
 $payloadBytes = 100 * 1024;
+$nativeTransport = false;
+$nativeResponseMode = 'direct';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -57,6 +59,12 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $payloadBytes = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--payload-bytes=')) {
         $payloadBytes = (int) substr($arg, strlen('--payload-bytes='));
+    } elseif ($arg === '--native-transport') {
+        $nativeTransport = true;
+    } elseif ($arg === '--native-response-mode') {
+        $nativeResponseMode = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--native-response-mode=')) {
+        $nativeResponseMode = substr($arg, strlen('--native-response-mode='));
     } else {
         usage("unexpected argument: $arg");
     }
@@ -71,7 +79,12 @@ if ($streams <= 0 || $messageCount <= 0 || $payloadBytes < 0) {
 
 requireAutoload($autoload);
 
-$client = StreamingBenchHelper::client($target);
+$clientOptions = [];
+if ($nativeTransport) {
+    $clientOptions['php_grpc_lite.native_transport'] = true;
+    $clientOptions['php_grpc_lite.native_response_mode'] = $nativeResponseMode;
+}
+$client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
 $streamLatenciesNs = [];
 $series = [
@@ -129,6 +142,8 @@ $measurement = ResultContract::measurement('streaming_diagnostic', 'streaming-di
     'streams' => $streams,
     'message_count' => $messageCount,
     'payload_bytes' => $payloadBytes,
+    'native_transport' => $nativeTransport,
+    'native_response_mode' => $nativeResponseMode,
 ], $metrics);
 
 $document = ResultContract::document($suite, $implementation, [$measurement]);

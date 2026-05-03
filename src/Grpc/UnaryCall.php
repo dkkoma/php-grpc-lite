@@ -18,6 +18,8 @@ class UnaryCall extends AbstractCall
     private int $curlExecStartedNs = 0;
     private bool $returnTransferFastPath = false;
     private bool $uploadReadCallback = false;
+    private bool $nativeTransport = false;
+    private ?string $nativeSerializedRequest = null;
     private string $returnedBody = '';
 
     /** @var list<string> */
@@ -41,6 +43,7 @@ class UnaryCall extends AbstractCall
         $this->mergeStartArgs($metadata, $options);
         $diagnostics = $this->options['php_grpc_lite.diagnostics'] ?? null;
         $this->diagnostics = is_object($diagnostics) ? $diagnostics : null;
+        $this->nativeTransport = $this->shouldUseNativeTransport();
         $this->returnTransferFastPath = ($this->options['php_grpc_lite.return_transfer_fast_path'] ?? false) === true;
         $this->uploadReadCallback = ($this->options['php_grpc_lite.upload_read_callback'] ?? false) === true;
         $this->recordDiagnostic('return_transfer_fast_path', $this->returnTransferFastPath ? 1 : 0);
@@ -59,6 +62,11 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnostic('request_frame_build_ns', hrtime(true) - $frameStartedNs);
         $this->recordDiagnostic('request_payload_bytes', strlen($serialized));
         $this->recordDiagnostic('request_frame_bytes', strlen($grpcHeader) + strlen($serialized));
+
+        if ($this->nativeTransport) {
+            $this->nativeSerializedRequest = $serialized;
+            return;
+        }
 
         $initCurlStartedNs = hrtime(true);
         $this->ch = $this->initCurl();
@@ -100,6 +108,9 @@ class UnaryCall extends AbstractCall
     public function wait(): array
     {
         if ($this->ch === null) {
+            if ($this->nativeTransport && $this->nativeSerializedRequest !== null) {
+                return $this->waitNative();
+            }
             throw new \RuntimeException('UnaryCall::wait() called before start()');
         }
 
@@ -152,6 +163,31 @@ class UnaryCall extends AbstractCall
         $this->recordDiagnostic('status_build_ns', hrtime(true) - $statusStartedNs);
         $this->recordDiagnostic('wait_after_curl_userland_ns', hrtime(true) - $afterCurlStartedNs);
         return [$response, $status];
+    }
+
+    /**
+     * @return array{0: object|null, 1: \stdClass}
+     */
+    private function waitNative(): array
+    {
+        $result = Internal\NativeTransport::unaryBatch(
+            $this->channel->getTarget(),
+            $this->method,
+            $this->nativeSerializedRequest ?? '',
+            $this->buildNativeRequestHeaders(),
+            false,
+            true,
+        );
+
+        $code = $result['grpc_status'];
+        $this->responseTrailers = ['grpc-status' => [(string) $code]];
+        $payload = $result['payloads'][0] ?? null;
+        $response = null;
+        if ($payload !== null && $this->deserialize !== null) {
+            $response = Internal\Deserialize::apply($this->deserialize, $payload);
+        }
+
+        return [$response, $this->makeStatus($code, '')];
     }
 
     public function cancel(): void
