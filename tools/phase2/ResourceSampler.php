@@ -28,6 +28,8 @@ final class ResourceSampler
 
         $diagnosticUserCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_utime');
         $diagnosticSystemCpuUs = self::timevalDeltaUs($usageBefore, $usageAfter, 'ru_stime');
+        $diagnosticRssMaxBeforeKiB = (int) ($usageBefore['ru_maxrss'] ?? 0);
+        $diagnosticRssMaxAfterKiB = (int) ($usageAfter['ru_maxrss'] ?? 0);
 
         return [
             'result' => $result,
@@ -47,6 +49,14 @@ final class ResourceSampler
                 'diagnostic_cpu_total_us_total' => [
                     'value' => $diagnosticUserCpuUs + $diagnosticSystemCpuUs,
                     'unit' => 'us',
+                ],
+                'diagnostic_rss_max_kib' => [
+                    'value' => $diagnosticRssMaxAfterKiB,
+                    'unit' => 'KiB',
+                ],
+                'diagnostic_rss_max_delta_kib' => [
+                    'value' => max(0, $diagnosticRssMaxAfterKiB - $diagnosticRssMaxBeforeKiB),
+                    'unit' => 'KiB',
                 ],
                 'memory_usage_delta_bytes' => [
                     'value' => $memoryAfter - $memoryBefore,

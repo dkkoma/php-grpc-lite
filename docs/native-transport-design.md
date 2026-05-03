@@ -219,7 +219,6 @@ transport内部の診断runnerは候補比較に使う。採用判断はpublic `
 - client streaming / bidi streaming
 - full ext-grpc channel args互換
 - shared event loop / multiplex scheduler
-- PHP-FPM worker persistent pool
 - compression implementation
 
 これらはnative unary / server streaming transportの後に、compatibilityとworkload優先度に応じて扱う。
