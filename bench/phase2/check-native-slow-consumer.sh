@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Check actual native server-streaming surface under slow consumer behavior.
+# Check the current native server-streaming surface limitation under slow
+# consumer behavior.
 # The current MVP native wrapper drains a full batch before yielding, so this
-# runner records that limitation instead of treating it as a production result.
+# runner records that limitation. It is not a true backpressure validation.
 #
 set -euo pipefail
 

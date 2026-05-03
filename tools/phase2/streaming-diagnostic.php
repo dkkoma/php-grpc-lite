@@ -87,10 +87,12 @@ requireAutoload($autoload);
 $clientOptions = [];
 if ($nativeTransport) {
     $clientOptions['php_grpc_lite.native_transport'] = true;
-    $clientOptions['php_grpc_lite.native_response_mode'] = $nativeResponseMode;
 }
 if ($transport !== null && $transport !== '') {
     $clientOptions['php_grpc_lite.transport'] = $transport;
+}
+if ($nativeTransport || $transport === 'native') {
+    $clientOptions['php_grpc_lite.native_response_mode'] = $nativeResponseMode;
 }
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);

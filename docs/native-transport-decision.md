@@ -2,14 +2,16 @@
 
 ## Decision
 
-`php-grpc-lite` の本実装transportは native nghttp2 transport をdefaultにする。
+`php-grpc-lite` の本実装transportは native nghttp2 transport をdefaultにする方針で進める。
+
+ただしこれはPhase 2の設計判断であり、drop-in release defaultにはまだしない。release defaultにするには、native extension packaging、TLS/mTLS、true server streaming resource、Channel/session reuse、control semantics互換を満たす必要がある。
 
 ただし、libcurl経路はfallbackではなく明示的な安定経路として残す。ユーザーはworkloadや運用安定性に応じて `native` / `curl` を選択できる。
 
 理由:
 
 - request/responseのlarge payload pathで、libcurl経由では避けにくいbuffer/copy/進行単位の制約がある。
-- nghttp2 direct PoCでは、large request unaryとserver streaming large responseでext-grpc同等レンジまで到達した。
+- nghttp2 direct PoCでは、large request unaryと多くのserver streaming large response形状でext-grpc同等レンジまで到達した。
 - `compact/ring buffer + direct payload assembly` により、server streamingのmemory保持と二重copyを抑えられる。
 - libcurl経路はcold固定費やsmall unaryには有効だが、Phase 2で見ているlarge payload transport構造の本筋改善にはならない。
 - 一方で、libcurl経路は既に互換性検証済みの範囲が広く、native移行期の安全な選択肢として価値がある。
@@ -19,7 +21,7 @@ Transport option:
 ```php
 new GreeterClient($target, [
     'credentials' => ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'native', // default
+    'php_grpc_lite.transport' => 'native', // Phase 2 target default
 ]);
 
 new GreeterClient($target, [
@@ -29,6 +31,18 @@ new GreeterClient($target, [
 ```
 
 自動fallbackはしない。`native` を選んでnative未対応機能やtransport errorに当たった場合、黙ってcurlへ落とさず明示的に失敗させる。
+
+## Release Default Gates
+
+nativeをdrop-in release defaultにする前に満たす条件:
+
+- native extension packagingが通常利用できる。
+- TLS / mTLS がlibcurl経路と同等に通る。
+- server streamingがbatch drain後yieldではなく、messageごとにtransportからyieldできる。
+- slow consumer時にmemory upper boundとbackpressureが検証済み。
+- `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。
+- Channel lifetimeでHTTP/2 session/socketを再利用できる。
+- RST_STREAM / missing trailers / metadata / status / deadlineの互換性をext-grpcまたはlibcurl経路と照合済み。
 
 ## MVP Scope
 
@@ -84,6 +98,11 @@ Native transportに残すがMVP必須ではないもの:
 - production rollback path。
 
 これは自動fallbackではない。ユーザーまたはベンチが `php_grpc_lite.transport=curl` を指定した場合だけlibcurl経路を使う。
+
+## Known Exceptions
+
+- `100×100KiB` server streamingはactual surface repeat 1回ではnativeがcurl/ext-grpcに勝っていない。server last p99も同時に悪化しており、client CPUだけでは説明できない。decision evidenceに昇格するには `REPEATS>=3` で再取得する。
+- 現MVP actual surfaceのserver streamingは `NativeTransport::unaryBatch()` でbatch drain後にyieldする。PoC batch APIは診断線であり、採用判断はactual surface resultを優先する。
 
 ## Rejected
 

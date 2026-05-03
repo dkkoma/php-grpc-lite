@@ -6,8 +6,10 @@ namespace Grpc\Internal;
 /**
  * Thin PHP wrapper around the Phase 2 nghttp2 transport MVP extension.
  *
- * This is intentionally opt-in and benchmark-oriented. It supports the
- * insecure h2c path used by the controlled Go test-server benchmarks.
+ * This is benchmark-oriented glue for the current MVP extension. It supports
+ * only the insecure h2c path used by the controlled Go test-server benchmarks;
+ * production packaging, TLS/mTLS, channel reuse, and true streaming resources
+ * are still release gates for native default.
  */
 final class NativeTransport
 {

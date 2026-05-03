@@ -63,7 +63,7 @@
 | 0 | 純 PHP PoC。libcurl + ext-curl で HTTP/2 を喋り、gRPC framing を PHP で実装。`Grpc\` 互換 API を提供 | unary と server streaming の sample が動く | **2026-04-25 完了** |
 | 1 | ベンチマーク基盤整備 | レイテンシ/スループット/メモリ計測を継続比較できる | **2026-04-28 完了**。Docker ローカル実行・ログ保存・JSON/TSV 抽出・baseline check/update・ext-grpc 比較入口を整備済み |
 | 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | スコープ決定前。`docs/benchmarks/measurement-plan-phase2.md` の多軸計測で候補を選ぶ |
-| 3 | nghttp2 直接呼び出しに置き換え | libcurl 依存除去 | Phase 2 PoC比較により native nghttp2 transport 方向に決定。詳細は `docs/native-transport-decision.md` / `docs/native-transport-design.md` |
+| 3 | nghttp2 直接呼び出しに置き換え | default transportからlibcurlを外し、明示stable routeとしてlibcurlを維持 | Phase 2 PoC比較により native nghttp2 transport 方向に決定。ただしdrop-in release defaultにはrelease gateを置く。詳細は `docs/native-transport-decision.md` / `docs/native-transport-design.md` |
 
 各フェーズの遷移はベンチマーク結果で判断する。Phase 3 は未確定(libcurl のままで十分かもしれない)。
 

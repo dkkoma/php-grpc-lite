@@ -55,12 +55,12 @@ REPEATS=1 BENCH_TAG=20260503-native-surface-repeat-smoke bench/phase2/repeat-ser
 
 ## 見解
 
-`100×100KiB` は今回のactual surface repeatでもnativeが勝っていない。native-direct / native-compact64のclient p99悪化と同時に `server last p99` も悪化しているため、単純なPHP decode/yieldだけの差ではない。
+`100×100KiB` は今回のactual surface repeat 1回ではnativeが勝っていない。native-direct / native-compact64のclient p99悪化と同時に `server last p99` も悪化しているため、単純なPHP decode/yieldだけの差ではない。
 
-この形状はnative default判断のブロッカーというより、server/transport progression差が混ざりやすい例外形状としてdecision runでrepeat数を増やして扱うべきである。
+この形状はserver/transport progression差が混ざりやすい例外形状として、decision runで `REPEATS>=3` に増やして扱うべきである。この1回runだけでは、release default判断の安全性を支えるevidenceにはしない。
 
 ## 残り
 
-- slow consumer / backpressureのactual native surface検証。
+- slow consumer limitation check。
 - deadline / cancel / RST_STREAM / missing trailers / TLS / mTLS のnative実装と互換テスト。
 - direct / compact のdefault選択ルール。

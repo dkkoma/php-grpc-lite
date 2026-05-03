@@ -18,7 +18,7 @@ Grpc\BaseStub
         -> stream state map
 ```
 
-MVPではまずinsecure h2cのcontrolled benchmark pathを実装する。その後TLS/mTLS、deadline、metadata互換、error semanticsを追加する。
+MVPではまずinsecure h2cのcontrolled benchmark pathを実装する。その後TLS/mTLS、deadline、metadata互換、error semanticsを追加する。Phase 2の方針としてnative defaultへ進めるが、drop-in release defaultにはrelease gateを置く。
 
 ## Request Path
 
@@ -124,11 +124,16 @@ MVPでは1 session内1 active streamでもよい。ただし構造は後でmulti
 
 ## Channel Lifetime
 
-MVP直後:
+Production design:
 
 - Channelにnative transport resourceを持たせる。
 - 同一PHP request内ではHTTP/2 session/socketを再利用する。
 - error/cancel/途中終了時はsessionを破棄する。
+
+Current MVP actual surface:
+
+- `NativeTransport::unaryBatch()` をcallごとに呼ぶ計測用wrapperであり、Channel/session reuseはまだない。
+- server streamingはbatch drain後にyieldするため、true streaming resourceではない。
 
 Deferred:
 
@@ -146,12 +151,12 @@ Public `Grpc\` APIは維持する。
 - `getStatus()`
 - `cancel()`
 
-native transportをdefaultにする。ただし、libcurl経路はfallbackではなく明示的な安定経路として残す。
+Phase 2の設計判断としてnative transportをdefaultにする方向で進める。ただし、drop-in release defaultにはまだしない。libcurl経路はfallbackではなく明示的な安定経路として残す。
 
 ```php
 new GreeterClient('test-server:50051', [
     'credentials' => ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'native', // default
+    'php_grpc_lite.transport' => 'native', // Phase 2 target default
 ]);
 
 new GreeterClient('test-server:50051', [
@@ -208,6 +213,8 @@ BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-
 - server timing trailerとの残差
 
 `compare-native-mvp-vs-libcurl-ext.sh` はPoC batch APIだけでなく、actual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを通る `native-surface-*` variantも出力する。`100×100KiB` の例外形状は run 間揺れを分けるため、以下のfocused repeat runnerで再取得する。
+
+採用判断はactual surface resultを優先する。PoC batch API resultはtransport内部の候補比較・診断線として扱う。
 
 ```bash
 REPEATS=3 BENCH_TAG=20260503-100x100k-repeat bench/phase2/repeat-server-stream-100x100k.sh
