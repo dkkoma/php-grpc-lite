@@ -7,9 +7,9 @@ namespace Grpc\Internal;
  * Thin PHP wrapper around the Phase 2 nghttp2 transport MVP extension.
  *
  * This is benchmark-oriented glue for the current MVP extension. It supports
- * only the insecure h2c path used by the controlled Go test-server benchmarks;
- * production packaging, TLS/mTLS, channel reuse, and true streaming resources
- * are still release gates for native default.
+ * production packaging and true streaming resources are still release gates for
+ * native default. Unary native channels support request-crossing process/thread
+ * local persistence in the C extension.
  */
 final class NativeTransport
 {
@@ -98,7 +98,28 @@ final class NativeTransport
 
         [$host, $port] = self::splitTarget($target);
         $framedRequest = "\0" . pack('N', strlen($serializedRequest)) . $serializedRequest;
-        if (function_exists('nghttp2_poc_channel_open') && function_exists('nghttp2_poc_channel_unary')) {
+        if (function_exists('nghttp2_poc_persistent_channel_unary')) {
+            $key = self::channelKey($host, $port, $credentials);
+            try {
+                $useTls = $credentials !== null && !$credentials->isInsecure();
+                $result = \nghttp2_poc_persistent_channel_unary(
+                    $key,
+                    $host,
+                    $port,
+                    $path,
+                    $framedRequest,
+                    $headers,
+                    $timeoutMicros,
+                    $useTls,
+                    $credentials?->rootCerts,
+                    $credentials?->certChain,
+                    $credentials?->privateKey,
+                );
+            } catch (\Throwable $e) {
+                unset(self::$channels[$key]);
+                throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
+            }
+        } elseif (function_exists('nghttp2_poc_channel_open') && function_exists('nghttp2_poc_channel_unary')) {
             $key = self::channelKey($host, $port, $credentials);
             try {
                 $result = \nghttp2_poc_channel_unary(self::channel($host, $port, $credentials), $path, $framedRequest, $headers, $timeoutMicros);

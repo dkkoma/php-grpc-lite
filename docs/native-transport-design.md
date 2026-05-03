@@ -164,7 +164,9 @@ new GreeterClient('test-server:50051', [
 
 ## Channel Lifecycle
 
-native transportはChannel lifetimeに対応するHTTP/2 sessionをC resourceとして保持する。通常のRPCは同じsession上に新しいstreamを作る。
+native transportはChannel lifetimeに対応するHTTP/2 sessionをC側のpersistent channelとして保持する。通常のRPCは同じsession上に新しいstreamを作る。
+
+FPMではworker process内でrequestをまたいでpersistent channelを再利用する。ZTS / FrankenPHP workerではthread-local module globals上のcacheとして扱い、threadをまたいでsocket/sessionを共有しない。PHP request-localなstatic cacheは最適化補助であり、lifetimeの本体ではない。
 
 connectionが壊れた場合、transport層では同じRPCを自動retryしない。send/recv errorやEOFはchannelをdead扱いにし、そのRPCはエラーとして返す。GOAWAYを受けたchannelはdraining扱いにし、新規RPCには使わない。次のRPC開始時に新しいchannel resourceを作る。
 

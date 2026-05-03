@@ -42,7 +42,7 @@ nativeをdrop-in release defaultにする前に満たす条件:
 - server streamingがbatch drain後yieldではなく、messageごとにtransportからyieldできる。
 - slow consumer時にmemory upper boundとbackpressureが検証済み。
 - `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。
-- Channel lifetimeでHTTP/2 session/socketを再利用できる。
+- Channel lifetimeでHTTP/2 session/socketを再利用できる。unary simple経路はC側persistent channelでrequestまたぎ再利用する。production server streaming resourceも同じlifecycleへ載せる。
 - RST_STREAM / missing trailers / metadata / status / deadlineの互換性をext-grpcまたはlibcurl経路と照合済み。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 

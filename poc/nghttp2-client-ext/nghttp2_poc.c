@@ -251,6 +251,7 @@ static int deliver_raw_response_payload(poc_client *client, char *payload, size_
 static int deliver_queued_raw_response_payloads(poc_client *client);
 static void free_queued_raw_response_payloads(poc_client *client);
 static void compact_response_body_if_needed(poc_client *client);
+static int connect_tcp(const char *host, zend_long port);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
@@ -297,6 +298,7 @@ static void *transport_thread_main(void *arg);
 struct _poc_channel {
     int fd;
     bool tls;
+    bool persistent;
     SSL_CTX *ssl_ctx;
     SSL *ssl;
     nghttp2_session_callbacks *callbacks;
@@ -311,9 +313,17 @@ struct _poc_channel {
 
 static int le_poc_channel;
 
-static void poc_channel_dtor(zend_resource *rsrc)
+ZEND_BEGIN_MODULE_GLOBALS(nghttp2_poc)
+    HashTable persistent_channels;
+    bool persistent_channels_initialized;
+ZEND_END_MODULE_GLOBALS(nghttp2_poc)
+
+ZEND_DECLARE_MODULE_GLOBALS(nghttp2_poc)
+
+#define NGHTTP2_POC_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(nghttp2_poc, v)
+
+static void destroy_poc_channel(poc_channel *channel)
 {
-    poc_channel *channel = (poc_channel *) rsrc->ptr;
     if (channel == NULL) {
         return;
     }
@@ -333,7 +343,12 @@ static void poc_channel_dtor(zend_resource *rsrc)
     if (channel->callbacks != NULL) {
         nghttp2_session_callbacks_del(channel->callbacks);
     }
-    efree(channel);
+    pefree(channel, channel->persistent);
+}
+
+static void poc_channel_dtor(zend_resource *rsrc)
+{
+    destroy_poc_channel((poc_channel *) rsrc->ptr);
 }
 
 static int configure_callbacks(nghttp2_session_callbacks **callbacks)
@@ -519,6 +534,57 @@ static ssize_t channel_recv(poc_channel *channel, uint8_t *data, size_t length)
         return nread;
     }
     return recv(channel->fd, data, length, 0);
+}
+
+static poc_channel *create_poc_channel(const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, const char **error_message)
+{
+    poc_channel *channel;
+    poc_client open_client;
+    int rv;
+
+    channel = pecalloc(1, sizeof(poc_channel), persistent);
+    channel->persistent = persistent;
+    channel->fd = -1;
+    channel->fd = connect_tcp(host, port);
+    if (channel->fd < 0) {
+        pefree(channel, persistent);
+        *error_message = "failed to connect";
+        return NULL;
+    }
+    if (use_tls && configure_tls_channel(channel, host, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
+        destroy_poc_channel(channel);
+        *error_message = "failed to establish TLS";
+        return NULL;
+    }
+
+    memset(&open_client, 0, sizeof(open_client));
+    open_client.fd = channel->fd;
+    open_client.channel = channel;
+    open_client.grpc_status = -1;
+    open_client.http_status = -1;
+
+    if (configure_callbacks(&channel->callbacks) != 0) {
+        destroy_poc_channel(channel);
+        *error_message = "failed to configure callbacks";
+        return NULL;
+    }
+    if (nghttp2_session_client_new(&channel->session, channel->callbacks, &open_client) != 0) {
+        destroy_poc_channel(channel);
+        *error_message = "failed to create nghttp2 session";
+        return NULL;
+    }
+
+    nghttp2_submit_settings(channel->session, NGHTTP2_FLAG_NONE, NULL, 0);
+    rv = nghttp2_session_send(channel->session);
+    if (rv != 0) {
+        destroy_poc_channel(channel);
+        *error_message = "nghttp2_session_send failed";
+        return NULL;
+    }
+    nghttp2_session_set_user_data(channel->session, NULL);
+
+    snprintf(channel->authority, sizeof(channel->authority), "%s:%ld", host, port);
+    return channel;
 }
 
 static int connect_tcp(const char *host, zend_long port)
@@ -2161,8 +2227,7 @@ PHP_FUNCTION(nghttp2_poc_channel_open)
     char *private_key = NULL;
     size_t private_key_len = 0;
     poc_channel *channel;
-    poc_client open_client;
-    int rv;
+    const char *error_message = NULL;
 
     ZEND_PARSE_PARAMETERS_START(2, 6)
         Z_PARAM_STRING(host, host_len)
@@ -2174,53 +2239,11 @@ PHP_FUNCTION(nghttp2_poc_channel_open)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = ecalloc(1, sizeof(poc_channel));
-    channel->fd = -1;
-    channel->fd = connect_tcp(host, port);
-    if (channel->fd < 0) {
-        efree(channel);
-        zend_throw_exception(NULL, "failed to connect", 0);
+    channel = create_poc_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, false, &error_message);
+    if (channel == NULL) {
+        zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open channel", 0);
         RETURN_THROWS();
     }
-    if (use_tls && configure_tls_channel(channel, host, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
-        poc_channel_dtor(&(zend_resource){.ptr = channel});
-        zend_throw_exception(NULL, "failed to establish TLS", 0);
-        RETURN_THROWS();
-    }
-
-    memset(&open_client, 0, sizeof(open_client));
-    open_client.fd = channel->fd;
-    open_client.channel = channel;
-    open_client.grpc_status = -1;
-    open_client.http_status = -1;
-
-    if (configure_callbacks(&channel->callbacks) != 0) {
-        close(channel->fd);
-        efree(channel);
-        zend_throw_exception(NULL, "failed to configure callbacks", 0);
-        RETURN_THROWS();
-    }
-    if (nghttp2_session_client_new(&channel->session, channel->callbacks, &open_client) != 0) {
-        nghttp2_session_callbacks_del(channel->callbacks);
-        close(channel->fd);
-        efree(channel);
-        zend_throw_exception(NULL, "failed to create nghttp2 session", 0);
-        RETURN_THROWS();
-    }
-
-    nghttp2_submit_settings(channel->session, NGHTTP2_FLAG_NONE, NULL, 0);
-    rv = nghttp2_session_send(channel->session);
-    if (rv != 0) {
-        nghttp2_session_del(channel->session);
-        nghttp2_session_callbacks_del(channel->callbacks);
-        close(channel->fd);
-        efree(channel);
-        zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
-        RETURN_THROWS();
-    }
-    nghttp2_session_set_user_data(channel->session, NULL);
-
-    snprintf(channel->authority, sizeof(channel->authority), "%s:%ld", host, port);
     RETURN_RES(zend_register_resource(channel, le_poc_channel));
 }
 
@@ -2237,15 +2260,8 @@ PHP_FUNCTION(nghttp2_poc_channel_is_usable)
     RETURN_BOOL(channel_usable(channel));
 }
 
-PHP_FUNCTION(nghttp2_poc_channel_unary)
+static int perform_poc_channel_unary(poc_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool channel_reused, bool persistent_reused, zval *return_value)
 {
-    zval *channel_zv = NULL;
-    poc_channel *channel;
-    char *path = NULL;
-    size_t path_len = 0;
-    char *request = NULL;
-    size_t request_len = 0;
-    zval *headers_zv = NULL;
     poc_client client;
     nghttp2_data_provider data_provider;
     nghttp2_nv nva[16];
@@ -2263,21 +2279,9 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     uint64_t initial_send_us = 0;
     uint64_t recv_loop_started = 0;
     uint64_t recv_loop_us = 0;
-    zend_long timeout_us = 0;
-
-    ZEND_PARSE_PARAMETERS_START(3, 5)
-        Z_PARAM_RESOURCE(channel_zv)
-        Z_PARAM_STRING(path, path_len)
-        Z_PARAM_STRING(request, request_len)
-        Z_PARAM_OPTIONAL
-        Z_PARAM_ARRAY(headers_zv)
-        Z_PARAM_LONG(timeout_us)
-    ZEND_PARSE_PARAMETERS_END();
-
-    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "nghttp2_poc_channel", le_poc_channel);
     if (!channel_usable(channel)) {
         zend_throw_exception(NULL, "invalid nghttp2_poc channel", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     memset(&client, 0, sizeof(client));
@@ -2292,7 +2296,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     if (set_socket_timeout_us(channel->fd, timeout_us) != 0) {
         mark_channel_dead(channel, errno);
         zend_throw_exception(NULL, "failed to set socket timeout", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     setup_started = monotonic_us();
@@ -2337,7 +2341,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     if (client.stream_id < 0) {
         nghttp2_session_set_user_data(channel->session, NULL);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     initial_send_started = monotonic_us();
@@ -2347,7 +2351,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
         mark_channel_dead(channel, rv);
         nghttp2_session_set_user_data(channel->session, NULL);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     recv_loop_started = monotonic_us();
@@ -2369,7 +2373,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
             nghttp2_session_set_user_data(channel->session, NULL);
             smart_str_free(&client.body);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
-            RETURN_THROWS();
+            return FAILURE;
         }
         rv = nghttp2_session_send(channel->session);
         if (rv != 0) {
@@ -2377,7 +2381,7 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
             nghttp2_session_set_user_data(channel->session, NULL);
             smart_str_free(&client.body);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
-            RETURN_THROWS();
+            return FAILURE;
         }
         client.last_session_error = rv;
     }
@@ -2414,7 +2418,8 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     add_assoc_long(return_value, "recv_loop_us", (zend_long) recv_loop_us);
     add_assoc_long(return_value, "cleanup_us", 0);
     add_assoc_bool(return_value, "timed_out", client.timed_out);
-    add_assoc_bool(return_value, "channel_reused", true);
+    add_assoc_bool(return_value, "channel_reused", channel_reused);
+    add_assoc_bool(return_value, "persistent_reused", persistent_reused);
     add_assoc_bool(return_value, "channel_dead", channel->dead);
     add_assoc_bool(return_value, "channel_draining", channel->draining);
     add_assoc_long(return_value, "channel_last_error", channel->last_error);
@@ -2436,6 +2441,109 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
     add_assoc_long(return_value, "server_stats_out_payload_wire_bytes", client.server_stats_out_payload_wire_bytes);
     add_assoc_long(return_value, "server_stats_out_payload_compressed_bytes", client.server_stats_out_payload_compressed_bytes);
     smart_str_free(&client.body);
+    return SUCCESS;
+}
+
+PHP_FUNCTION(nghttp2_poc_channel_unary)
+{
+    zval *channel_zv = NULL;
+    poc_channel *channel;
+    char *path = NULL;
+    size_t path_len = 0;
+    char *request = NULL;
+    size_t request_len = 0;
+    zval *headers_zv = NULL;
+    zend_long timeout_us = 0;
+
+    ZEND_PARSE_PARAMETERS_START(3, 5)
+        Z_PARAM_RESOURCE(channel_zv)
+        Z_PARAM_STRING(path, path_len)
+        Z_PARAM_STRING(request, request_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_LONG(timeout_us)
+    ZEND_PARSE_PARAMETERS_END();
+
+    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "nghttp2_poc_channel", le_poc_channel);
+    if (perform_poc_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, false, return_value) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+PHP_FUNCTION(nghttp2_poc_persistent_channel_unary)
+{
+    char *key = NULL;
+    size_t key_len = 0;
+    char *host = NULL;
+    size_t host_len = 0;
+    zend_long port = 0;
+    char *path = NULL;
+    size_t path_len = 0;
+    char *request = NULL;
+    size_t request_len = 0;
+    zval *headers_zv = NULL;
+    zend_long timeout_us = 0;
+    bool use_tls = false;
+    char *root_certs = NULL;
+    size_t root_certs_len = 0;
+    char *cert_chain = NULL;
+    size_t cert_chain_len = 0;
+    char *private_key = NULL;
+    size_t private_key_len = 0;
+    poc_channel *channel;
+    bool persistent_reused = false;
+    const char *error_message = NULL;
+
+    ZEND_PARSE_PARAMETERS_START(5, 11)
+        Z_PARAM_STRING(key, key_len)
+        Z_PARAM_STRING(host, host_len)
+        Z_PARAM_LONG(port)
+        Z_PARAM_STRING(path, path_len)
+        Z_PARAM_STRING(request, request_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_LONG(timeout_us)
+        Z_PARAM_BOOL(use_tls)
+        Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
+        Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
+        Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (!NGHTTP2_POC_G(persistent_channels_initialized)) {
+        zend_throw_exception(NULL, "persistent channel cache is not initialized", 0);
+        RETURN_THROWS();
+    }
+
+    channel = zend_hash_str_find_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+    if (channel != NULL && !channel_usable(channel)) {
+        destroy_poc_channel(channel);
+        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+        channel = NULL;
+    }
+
+    if (channel == NULL) {
+        channel = create_poc_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, &error_message);
+        if (channel == NULL) {
+            zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
+            RETURN_THROWS();
+        }
+        zend_hash_str_update_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len, channel);
+    } else {
+        persistent_reused = true;
+    }
+
+    if (perform_poc_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, persistent_reused, return_value) != SUCCESS) {
+        if (channel != NULL && !channel_usable(channel)) {
+            destroy_poc_channel(channel);
+            zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+        }
+        RETURN_THROWS();
+    }
+
+    if (!channel_usable(channel)) {
+        destroy_poc_channel(channel);
+        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+    }
 }
 
 PHP_FUNCTION(nghttp2_poc_unary)
@@ -3460,6 +3568,31 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     smart_str_free(&client.body);
 }
 
+PHP_GINIT_FUNCTION(nghttp2_poc)
+{
+#if defined(COMPILE_DL_NGHTTP2_POC) && defined(ZTS)
+    ZEND_TSRMLS_CACHE_UPDATE();
+#endif
+    zend_hash_init(&nghttp2_poc_globals->persistent_channels, 8, NULL, NULL, 1);
+    nghttp2_poc_globals->persistent_channels_initialized = true;
+}
+
+PHP_GSHUTDOWN_FUNCTION(nghttp2_poc)
+{
+    poc_channel *channel;
+
+    if (!nghttp2_poc_globals->persistent_channels_initialized) {
+        return;
+    }
+
+    ZEND_HASH_FOREACH_PTR(&nghttp2_poc_globals->persistent_channels, channel) {
+        destroy_poc_channel(channel);
+    } ZEND_HASH_FOREACH_END();
+
+    zend_hash_destroy(&nghttp2_poc_globals->persistent_channels);
+    nghttp2_poc_globals->persistent_channels_initialized = false;
+}
+
 PHP_MINIT_FUNCTION(nghttp2_poc)
 {
     le_poc_channel = zend_register_list_destructors_ex(poc_channel_dtor, NULL, "nghttp2_poc_channel", module_number);
@@ -3510,6 +3643,20 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_unary, 0, 3,
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_persistent_channel_unary, 0, 5, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
+    ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, use_tls, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, root_certs, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
@@ -3544,6 +3691,7 @@ static const zend_function_entry nghttp2_poc_functions[] = {
     PHP_FE(nghttp2_poc_channel_open, arginfo_nghttp2_poc_channel_open)
     PHP_FE(nghttp2_poc_channel_is_usable, arginfo_nghttp2_poc_channel_is_usable)
     PHP_FE(nghttp2_poc_channel_unary, arginfo_nghttp2_poc_channel_unary)
+    PHP_FE(nghttp2_poc_persistent_channel_unary, arginfo_nghttp2_poc_persistent_channel_unary)
     PHP_FE(nghttp2_poc_unary, arginfo_nghttp2_poc_unary)
     PHP_FE(nghttp2_poc_unary_batch, arginfo_nghttp2_poc_unary_batch)
     PHP_FE_END
@@ -3559,7 +3707,11 @@ zend_module_entry nghttp2_poc_module_entry = {
     NULL,
     PHP_MINFO(nghttp2_poc),
     "0.1.0",
-    STANDARD_MODULE_PROPERTIES
+    ZEND_MODULE_GLOBALS(nghttp2_poc),
+    PHP_GINIT(nghttp2_poc),
+    PHP_GSHUTDOWN(nghttp2_poc),
+    NULL,
+    STANDARD_MODULE_PROPERTIES_EX
 };
 
 #ifdef COMPILE_DL_NGHTTP2_POC

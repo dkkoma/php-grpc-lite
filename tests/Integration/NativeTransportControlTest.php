@@ -209,6 +209,44 @@ final class NativeTransportControlTest extends TestCase
         self::assertTrue($second['raw']['channel_draining'] ?? false);
     }
 
+    public function testNativePersistentChannelSurvivesPhpRequestLocalCacheReset(): void
+    {
+        if (!function_exists('nghttp2_poc_persistent_channel_unary')) {
+            self::markTestSkipped('nghttp2_poc persistent channel API is not loaded in this process');
+        }
+
+        $key = 'phpunit-persistent-' . bin2hex(random_bytes(8));
+        $request = "\0\0\0\0\0";
+
+        $first = \nghttp2_poc_persistent_channel_unary(
+            $key,
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchUnary',
+            $request,
+            [],
+        );
+
+        $reflection = new \ReflectionClass(NativeTransport::class);
+        $channels = $reflection->getProperty('channels');
+        $channels->setValue(null, []);
+
+        $second = \nghttp2_poc_persistent_channel_unary(
+            $key,
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchUnary',
+            $request,
+            [],
+        );
+
+        self::assertSame(\Grpc\STATUS_OK, $first['grpc_status']);
+        self::assertFalse($first['persistent_reused']);
+        self::assertSame(\Grpc\STATUS_OK, $second['grpc_status']);
+        self::assertTrue($second['persistent_reused']);
+        self::assertSame(0, $second['connect_us']);
+    }
+
     public function testNativeChannelEofIsDiscardedBeforeNextRpc(): void
     {
         if (!extension_loaded('nghttp2_poc')) {
