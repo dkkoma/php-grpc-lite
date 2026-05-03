@@ -90,7 +90,8 @@ docker compose run --rm dev php tools/phase2/request-unary.php \
     --duration=2 \
     --request-payload-sizes=1048576 \
     --warmup-calls=3 \
-    --max-calls=1000
+    --max-calls=1000 \
+    --transport=curl
 append_unary_result "libcurl" "$libcurl_unary"
 
 mvp_unary="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-large-request-unary-mvp-upload.json"
@@ -132,7 +133,8 @@ for case_spec in "${stream_cases[@]}"; do
         --output="$libcurl_stream" \
         --streams="$streams" \
         --message-count="$message_count" \
-        --payload-bytes="$payload_bytes"
+        --payload-bytes="$payload_bytes" \
+        --transport=curl
     append_stream_result "$case_name" "libcurl" "$libcurl_stream"
 
     mvp_direct="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-mvp-direct.json"

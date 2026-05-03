@@ -24,6 +24,7 @@ $messageCount = 10;
 $payloadBytes = 100 * 1024;
 $nativeTransport = false;
 $nativeResponseMode = 'direct';
+$transport = null;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -61,6 +62,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $payloadBytes = (int) substr($arg, strlen('--payload-bytes='));
     } elseif ($arg === '--native-transport') {
         $nativeTransport = true;
+    } elseif ($arg === '--transport') {
+        $transport = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--transport=')) {
+        $transport = substr($arg, strlen('--transport='));
     } elseif ($arg === '--native-response-mode') {
         $nativeResponseMode = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--native-response-mode=')) {
@@ -83,6 +88,9 @@ $clientOptions = [];
 if ($nativeTransport) {
     $clientOptions['php_grpc_lite.native_transport'] = true;
     $clientOptions['php_grpc_lite.native_response_mode'] = $nativeResponseMode;
+}
+if ($transport !== null && $transport !== '') {
+    $clientOptions['php_grpc_lite.transport'] = $transport;
 }
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
@@ -144,6 +152,7 @@ $measurement = ResultContract::measurement('streaming_diagnostic', 'streaming-di
     'payload_bytes' => $payloadBytes,
     'native_transport' => $nativeTransport,
     'native_response_mode' => $nativeResponseMode,
+    'transport' => $transport,
 ], $metrics);
 
 $document = ResultContract::document($suite, $implementation, [$measurement]);

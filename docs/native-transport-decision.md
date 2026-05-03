@@ -2,14 +2,33 @@
 
 ## Decision
 
-`php-grpc-lite` の本実装transportは、libcurl継続ではなく native nghttp2 transport へ移行する。
+`php-grpc-lite` の本実装transportは native nghttp2 transport をdefaultにする。
+
+ただし、libcurl経路はfallbackではなく明示的な安定経路として残す。ユーザーはworkloadや運用安定性に応じて `native` / `curl` を選択できる。
 
 理由:
 
 - request/responseのlarge payload pathで、libcurl経由では避けにくいbuffer/copy/進行単位の制約がある。
 - nghttp2 direct PoCでは、large request unaryとserver streaming large responseでext-grpc同等レンジまで到達した。
 - `compact/ring buffer + direct payload assembly` により、server streamingのmemory保持と二重copyを抑えられる。
-- libcurl継続案はcold固定費やsmall unaryには有効だが、Phase 2で見ているlarge payload transport構造の本筋改善にはならない。
+- libcurl経路はcold固定費やsmall unaryには有効だが、Phase 2で見ているlarge payload transport構造の本筋改善にはならない。
+- 一方で、libcurl経路は既に互換性検証済みの範囲が広く、native移行期の安全な選択肢として価値がある。
+
+Transport option:
+
+```php
+new GreeterClient($target, [
+    'credentials' => ChannelCredentials::createInsecure(),
+    'php_grpc_lite.transport' => 'native', // default
+]);
+
+new GreeterClient($target, [
+    'credentials' => ChannelCredentials::createInsecure(),
+    'php_grpc_lite.transport' => 'curl',   // explicit stable route
+]);
+```
+
+自動fallbackはしない。`native` を選んでnative未対応機能やtransport errorに当たった場合、黙ってcurlへ落とさず明示的に失敗させる。
 
 ## MVP Scope
 
@@ -55,16 +74,23 @@ Native transportに残すがMVP必須ではないもの:
   - PHP-FPM worker lifetimeでrequestをまたぐreuseに効く可能性がある。
   - ext-grpcのpersistent channel/subchannel poolに近い性質をnative側でどう持つかは別途設計する。
 
+## Explicit Stable Route
+
+本実装のdefaultはnativeだが、libcurl経路は以下の目的で維持する。
+
+- workloadごとの明示的な選択肢。
+- native移行期の安定経路。
+- 互換性比較のoracle。
+- production rollback path。
+
+これは自動fallbackではない。ユーザーまたはベンチが `php_grpc_lite.transport=curl` を指定した場合だけlibcurl経路を使う。
+
 ## Rejected
 
 現時点で採用しないもの:
 
-- **libcurl transport continuation**
-  - 本実装の主経路には残さない。
-  - 既存libcurl pathは比較対象・fallback期間のために残すことはあっても、target architectureではない。
-
 - **PHP 8.5 persistent curl share**
-  - libcurlを本実装に残さないため採用しない。
+  - libcurl経路は明示的な安定経路として残すが、target architectureはnativeであり、persistent curl shareを主改善策にはしない。
 
 - **unbounded read-ahead**
   - many-small / long streamでqueue waitとdelivery latencyを悪化させる。

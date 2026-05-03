@@ -125,8 +125,36 @@ abstract class AbstractCall
 
     protected function shouldUseNativeTransport(): bool
     {
-        return ($this->channel->opts['php_grpc_lite.native_transport'] ?? false) === true
-            || ($this->options['php_grpc_lite.native_transport'] ?? false) === true;
+        $transport = $this->options['php_grpc_lite.transport']
+            ?? $this->channel->opts['php_grpc_lite.transport']
+            ?? null;
+        if ($transport !== null) {
+            return match ((string) $transport) {
+                'native' => true,
+                'curl' => false,
+                default => throw new \InvalidArgumentException(
+                    "php_grpc_lite.transport must be 'native' or 'curl'"
+                ),
+            };
+        }
+
+        if (($this->options['php_grpc_lite.native_transport'] ?? false) === true
+            || ($this->channel->opts['php_grpc_lite.native_transport'] ?? false) === true) {
+            return true;
+        }
+
+        $envTransport = getenv('PHP_GRPC_LITE_TRANSPORT');
+        if (is_string($envTransport) && $envTransport !== '') {
+            return match ($envTransport) {
+                'native' => true,
+                'curl' => false,
+                default => throw new \InvalidArgumentException(
+                    "PHP_GRPC_LITE_TRANSPORT must be 'native' or 'curl'"
+                ),
+            };
+        }
+
+        return true;
     }
 
     /** @param array<string, string|list<string>> $metadata */

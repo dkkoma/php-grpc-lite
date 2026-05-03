@@ -26,6 +26,7 @@ $curlTraceOutput = null;
 $curlTraceCalls = 0;
 $uploadReadCallback = false;
 $nativeTransport = false;
+$transport = null;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -71,6 +72,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $uploadReadCallback = true;
     } elseif ($arg === '--native-transport') {
         $nativeTransport = true;
+    } elseif ($arg === '--transport') {
+        $transport = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--transport=')) {
+        $transport = substr($arg, strlen('--transport='));
     } elseif ($arg === '--curl-trace-output') {
         $curlTraceOutput = $args[++$argIndex] ?? null;
     } elseif (str_starts_with($arg, '--curl-trace-output=')) {
@@ -112,6 +117,9 @@ if ($curlTraceOutput !== null && $curlTraceOutput !== '') {
 $clientOptions = [];
 if ($nativeTransport) {
     $clientOptions['php_grpc_lite.native_transport'] = true;
+}
+if ($transport !== null && $transport !== '') {
+    $clientOptions['php_grpc_lite.transport'] = $transport;
 }
 $client = UnaryBenchHelper::client($target, $clientOptions);
 $measurements = [];
@@ -187,6 +195,7 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
         'client_internal_diagnostics' => $diagnosticRpc && $implementation === 'php-grpc-lite',
         'upload_read_callback' => $uploadReadCallback && $implementation === 'php-grpc-lite',
         'native_transport' => $nativeTransport,
+        'transport' => $transport,
         'curl_trace_output' => $curlTraceOutput,
         'curl_trace_calls' => $curlTraceCalls,
     ], $metrics);

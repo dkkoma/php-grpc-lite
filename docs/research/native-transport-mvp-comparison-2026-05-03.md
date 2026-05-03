@@ -111,7 +111,8 @@ native transport MVPはPhase 2の実装方向として十分成立する。
 - large request unaryではlibcurlを明確に上回り、ext-grpcと同等レンジ。
 - server streaming large responseでは多くの代表形状でext-grpc同等以上。
 - response pathは `direct payload assembly` と `compact/ring buffer` の両方が必要。
-- libcurl継続は本実装の主経路から外す判断でよい。
+- default transportはnativeへ進める判断でよい。
+- libcurl経路は自動fallbackではなく、workload選択・安定経路・互換性oracleとして `php_grpc_lite.transport=curl` で明示的に残す。
 
 ただしMVPのproduction化には以下が残る。
 

@@ -146,16 +146,23 @@ Public `Grpc\` APIは維持する。
 - `getStatus()`
 - `cancel()`
 
-MVP中はopt-in optionでnative transportを選択する。
+native transportをdefaultにする。ただし、libcurl経路はfallbackではなく明示的な安定経路として残す。
 
 ```php
 new GreeterClient('test-server:50051', [
     'credentials' => ChannelCredentials::createInsecure(),
-    'php_grpc_lite.native_transport' => true,
+    'php_grpc_lite.transport' => 'native', // default
+]);
+
+new GreeterClient('test-server:50051', [
+    'credentials' => ChannelCredentials::createInsecure(),
+    'php_grpc_lite.transport' => 'curl',   // explicit stable route
 ]);
 ```
 
-最終的にnative transportをdefaultにするかは、compatibility testとdecision benchmark完了後に決める。
+`php_grpc_lite.native_transport=true` はPoC期の互換optionとして当面残す。テストやベンチで経路を固定する場合は `PHP_GRPC_LITE_TRANSPORT=native|curl` も使える。user optionが指定された場合は環境変数より優先する。
+
+自動fallbackはしない。native未対応機能、native extension未ロード、transport errorは黙ってlibcurlへ落とさず、選択された経路の失敗として扱う。
 
 ## Compatibility Work
 
@@ -185,7 +192,7 @@ BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-
 
 比較対象:
 
-- current libcurl transport
+- current libcurl transport (`php_grpc_lite.transport=curl`)
 - native MVP upload/direct/compact
 - official ext-grpc
 
