@@ -24,6 +24,7 @@
 
 #define MAKE_NV(NAME, VALUE) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, sizeof(VALUE) - 1, NGHTTP2_NV_FLAG_NONE}
 #define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
+#define MAX_RECV_BUF_SIZE 262144
 
 typedef struct {
     int fd;
@@ -77,6 +78,8 @@ typedef struct {
     uint32_t data_frame_size_cap;
     uint32_t recv_stream_window_size;
     uint32_t recv_connection_window_size;
+    bool flush_after_mem_recv;
+    bool read_first_poll_loop;
     int32_t min_session_remote_window;
     int32_t min_stream_remote_window;
     uint32_t remote_max_frame_size;
@@ -863,6 +866,19 @@ static int receive_available(nghttp2_session *session, poc_client *client, char 
             if (rv < 0) {
                 return rv;
             }
+            if (client->flush_after_mem_recv && nghttp2_session_want_write(session)) {
+                uint64_t send_started = monotonic_us();
+                uint64_t send_elapsed;
+                rv = nghttp2_session_send(session);
+                send_elapsed = monotonic_us() - send_started;
+                client->call_session_send_after_recv_us += send_elapsed;
+                if (send_elapsed > client->call_max_session_send_after_recv_us) {
+                    client->call_max_session_send_after_recv_us = send_elapsed;
+                }
+                if (rv < 0) {
+                    return rv;
+                }
+            }
             continue;
         }
         if (nread == 0) {
@@ -888,6 +904,16 @@ static int drive_stream_poll(nghttp2_session *session, poc_client *client, char 
 {
     while (!client->stream_closed && (nghttp2_session_want_read(session) || nghttp2_session_want_write(session))) {
         int rv;
+
+        if (client->read_first_poll_loop && nghttp2_session_want_read(session)) {
+            rv = receive_available(session, client, recv_buf, recv_buf_len);
+            if (rv < 0) {
+                return rv;
+            }
+            if (client->stream_closed) {
+                return 0;
+            }
+        }
 
         do {
             uint64_t send_started;
@@ -1138,6 +1164,9 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zend_long data_frame_size = 0;
     zend_long recv_stream_window_size = 0;
     zend_long recv_connection_window_size = 0;
+    zend_long recv_buffer_size = 16384;
+    bool flush_after_mem_recv = false;
+    bool read_first_poll_loop = false;
     poc_client client;
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session *session = NULL;
@@ -1148,7 +1177,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     char header_storage[8][512];
     size_t header_storage_used = 0;
     int rv;
-    char recv_buf[16384];
+    char recv_buf[MAX_RECV_BUF_SIZE];
+    size_t recv_buf_len = 16384;
     zend_long ok = 0;
     zend_long failed = 0;
     uint64_t total_started;
@@ -1211,7 +1241,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zval server_stats_out_payload_wire_bytes;
     zval server_stats_out_payload_compressed_bytes;
 
-    ZEND_PARSE_PARAMETERS_START(5, 13)
+    ZEND_PARSE_PARAMETERS_START(5, 16)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -1226,6 +1256,9 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         Z_PARAM_BOOL(discard_response_body)
         Z_PARAM_LONG(recv_stream_window_size)
         Z_PARAM_LONG(recv_connection_window_size)
+        Z_PARAM_LONG(recv_buffer_size)
+        Z_PARAM_BOOL(flush_after_mem_recv)
+        Z_PARAM_BOOL(read_first_poll_loop)
     ZEND_PARSE_PARAMETERS_END();
 
     if (iterations < 1) {
@@ -1241,6 +1274,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     client.no_copy = no_copy;
     client.poll_loop = poll_loop;
     client.discard_response_body = discard_response_body;
+    client.flush_after_mem_recv = flush_after_mem_recv;
+    client.read_first_poll_loop = read_first_poll_loop;
     if (data_frame_size > 0) {
         client.data_frame_size_cap = (uint32_t) data_frame_size;
     }
@@ -1249,6 +1284,12 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     }
     if (recv_connection_window_size > 0) {
         client.recv_connection_window_size = (uint32_t) recv_connection_window_size;
+    }
+    if (recv_buffer_size > 0) {
+        recv_buf_len = (size_t) recv_buffer_size;
+        if (recv_buf_len > MAX_RECV_BUF_SIZE) {
+            recv_buf_len = MAX_RECV_BUF_SIZE;
+        }
     }
     if (split_grpc_frame) {
         set_grpc_header(&client, request_len);
@@ -1456,7 +1497,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         }
 
         if (poll_loop) {
-            rv = drive_stream_poll(session, &client, recv_buf, sizeof(recv_buf));
+            rv = drive_stream_poll(session, &client, recv_buf, recv_buf_len);
             if (rv != 0) {
                 failed++;
                 break;
@@ -1469,7 +1510,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
             }
 
             while (!client.stream_closed) {
-                ssize_t nread = recv(client.fd, recv_buf, sizeof(recv_buf), 0);
+                ssize_t nread = recv(client.fd, recv_buf, recv_buf_len, 0);
                 if (nread <= 0) {
                     failed++;
                     break;
@@ -1573,6 +1614,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_bool(return_value, "split_grpc_frame", split_grpc_frame);
     add_assoc_bool(return_value, "no_copy", no_copy);
     add_assoc_bool(return_value, "poll_loop", poll_loop);
+    add_assoc_bool(return_value, "flush_after_mem_recv", flush_after_mem_recv);
+    add_assoc_bool(return_value, "read_first_poll_loop", read_first_poll_loop);
     add_assoc_long(return_value, "request_wire_bytes", client.grpc_header_len + client.request_len);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
     add_assoc_long(return_value, "bytes_received", client.bytes_received);
@@ -1612,6 +1655,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_long(return_value, "data_frame_size_cap", client.data_frame_size_cap);
     add_assoc_long(return_value, "recv_stream_window_size", client.recv_stream_window_size);
     add_assoc_long(return_value, "recv_connection_window_size", client.recv_connection_window_size);
+    add_assoc_long(return_value, "recv_buffer_size", (zend_long) recv_buf_len);
     add_assoc_long(return_value, "min_session_remote_window", client.min_session_remote_window);
     add_assoc_long(return_value, "min_stream_remote_window", client.min_stream_remote_window);
     add_assoc_long(return_value, "remote_max_frame_size", client.remote_max_frame_size);
@@ -1709,6 +1753,9 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, discard_response_body, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, recv_stream_window_size, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, recv_connection_window_size, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, recv_buffer_size, IS_LONG, 0, "16384")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, flush_after_mem_recv, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_first_poll_loop, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry nghttp2_poc_functions[] = {

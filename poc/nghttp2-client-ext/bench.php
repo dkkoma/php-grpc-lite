@@ -19,6 +19,9 @@ $options = getopt('', [
     'data-frame-size::',
     'recv-stream-window-size::',
     'recv-connection-window-size::',
+    'recv-buffer-size::',
+    'flush-after-mem-recv',
+    'read-first-poll-loop',
     'poll-loop',
     'discard-response-body',
 ]);
@@ -33,6 +36,9 @@ $noCopy = array_key_exists('no-copy', $options);
 $dataFrameSize = (int) ($options['data-frame-size'] ?? 0);
 $recvStreamWindowSize = (int) ($options['recv-stream-window-size'] ?? 0);
 $recvConnectionWindowSize = (int) ($options['recv-connection-window-size'] ?? 0);
+$recvBufferSize = (int) ($options['recv-buffer-size'] ?? 16384);
+$flushAfterMemRecv = array_key_exists('flush-after-mem-recv', $options);
+$readFirstPollLoop = array_key_exists('read-first-poll-loop', $options);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
 
@@ -62,7 +68,7 @@ $result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $it
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -158,6 +164,9 @@ $result += [
     'data_frame_size' => $dataFrameSize,
     'recv_stream_window_size' => $recvStreamWindowSize,
     'recv_connection_window_size' => $recvConnectionWindowSize,
+    'recv_buffer_size' => $recvBufferSize,
+    'flush_after_mem_recv' => $flushAfterMemRecv,
+    'read_first_poll_loop' => $readFirstPollLoop,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,
