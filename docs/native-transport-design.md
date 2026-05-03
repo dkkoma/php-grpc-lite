@@ -128,6 +128,9 @@ Requirements:
 - HTTP/2 session/socketはC extensionのprocess-local / thread-local cacheに保持する。
 - PHP userlandではchannel resource/socket/sessionを保持しない。
 - error/cancel/途中終了時はC側persistent channelをdead扱いにし、次RPCで新規接続する。
+- server streamingはC stream resourceをPHP Generatorがpullし、messageごとにyieldする。
+- slow consumer時はPHPが次messageを要求するまで追加readとWINDOW_UPDATE送信を進めず、transport側でbackpressureをかける。
+- `cancel()` はactive streamへ `RST_STREAM(CANCEL)` を送る。
 
 Deferred:
 
@@ -164,7 +167,7 @@ new GreeterClient('test-server:50051', [
 
 ## Channel Lifecycle
 
-native transportはChannel lifetimeに対応するHTTP/2 sessionをC側のpersistent channelとして保持する。通常のRPCは同じsession上に新しいstreamを作る。
+native transportはChannel lifetimeに対応するHTTP/2 sessionをC側のpersistent channelとして保持する。通常のRPCは同じsession上に新しいstreamを作る。Phase 2 MVPでは1 session内1 active streamを前提にし、concurrent stream schedulingはshared event loop段階へ残す。
 
 FPMではworker process内でrequestをまたいでpersistent channelを再利用する。ZTS / FrankenPHP workerではthread-local module globals上のcacheとして扱い、threadをまたいでsocket/sessionを共有しない。PHP userlandではchannelを保持しない。
 

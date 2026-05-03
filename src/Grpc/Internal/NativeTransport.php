@@ -141,6 +141,73 @@ final class NativeTransport
         ];
     }
 
+    /**
+     * @param array<string, string> $headers
+     * @return resource
+     */
+    public static function streamOpen(
+        string $target,
+        string $path,
+        string $serializedRequest,
+        array $headers,
+        int $timeoutMicros = 0,
+        ?\Grpc\ChannelCredentials $credentials = null,
+    ): mixed {
+        if (!function_exists('nghttp2_poc_stream_open')) {
+            throw new \RuntimeException('nghttp2_poc stream API is not loaded');
+        }
+
+        [$host, $port] = self::splitTarget($target);
+        $useTls = $credentials !== null && !$credentials->isInsecure();
+
+        return \nghttp2_poc_stream_open(
+            self::channelKey($host, $port, $credentials),
+            $host,
+            $port,
+            $path,
+            $serializedRequest,
+            $headers,
+            $timeoutMicros,
+            $useTls,
+            $credentials?->rootCerts,
+            $credentials?->certChain,
+            $credentials?->privateKey,
+        );
+    }
+
+    /** @return array{done: bool, payload?: string, raw?: array<string, mixed>, grpc_status?: int, details?: string, http_status?: int, trailers?: array<string, list<string>>} */
+    public static function streamNext(mixed $stream): array
+    {
+        if (!function_exists('nghttp2_poc_stream_next')) {
+            throw new \RuntimeException('nghttp2_poc stream API is not loaded');
+        }
+
+        $result = \nghttp2_poc_stream_next($stream);
+        if (($result['done'] ?? false) !== true) {
+            return [
+                'done' => false,
+                'payload' => is_string($result['payload'] ?? null) ? $result['payload'] : '',
+            ];
+        }
+
+        [$grpcStatus, $details] = self::normalizeStatus($result);
+        return [
+            'done' => true,
+            'grpc_status' => $grpcStatus,
+            'details' => $details,
+            'http_status' => (int) ($result['http_status'] ?? 0),
+            'trailers' => self::extractTrailers($result, $grpcStatus, $details),
+            'raw' => $result,
+        ];
+    }
+
+    public static function streamCancel(mixed $stream): void
+    {
+        if (function_exists('nghttp2_poc_stream_cancel')) {
+            \nghttp2_poc_stream_cancel($stream);
+        }
+    }
+
     /** @param array<string, mixed> $result */
     private static function normalizeStatus(array $result): array
     {

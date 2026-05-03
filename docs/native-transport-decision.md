@@ -39,9 +39,9 @@ nativeをdrop-in release defaultにする前に満たす条件:
 
 - native extension packagingが通常利用できる。
 - TLS / mTLS がlibcurl経路と同等に通る。
-- server streamingがbatch drain後yieldではなく、messageごとにtransportからyieldできる。
-- slow consumer時にmemory upper boundとbackpressureが検証済み。
-- `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。
+- server streamingがbatch drain後yieldではなく、messageごとにtransportからyieldできる。Phase 2 stream resourceでMVP検証済み。
+- slow consumer時にmemory upper boundとbackpressureが検証済み。stream resourceでpull型backpressureは導入済み、memory upper boundの長時間検証は残る。
+- `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。Phase 2 stream resourceでMVP検証済み。
 - Channel lifetimeでHTTP/2 session/socketを再利用できる。unary simple経路はC側persistent channelでrequestまたぎ再利用する。production server streaming resourceも同じlifecycleへ載せる。
 - RST_STREAM / missing trailers / metadata / status / deadlineの互換性をext-grpcまたはlibcurl経路と照合済み。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
@@ -122,6 +122,7 @@ Native transportに残すがMVP必須ではないもの:
 - Native actual surface / 100×100KiB repeat: `docs/research/native-surface-repeat-2026-05-03.md`
 - Native control semantics: `docs/research/native-control-semantics-2026-05-03.md`
 - Upload no-copy + poll loop: `docs/research/native-transport-unary-large-request-conclusion-2026-05-03.md`
+- Native stream resource: `docs/research/native-stream-resource-2026-05-04.md`
 - Server streaming goal comparison: `docs/research/nghttp2-poc-server-stream-goal-comparison-2026-05-03.md`
 - Small SELECT streaming comparison: `docs/research/small-select-streaming-comparison-2026-05-03.md`
 - Spanner emulator streaming shape: `docs/research/spanner-emulator-streaming-shape-2026-05-03.md`

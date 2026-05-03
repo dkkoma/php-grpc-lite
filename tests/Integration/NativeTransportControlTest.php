@@ -184,6 +184,38 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame(\Grpc\STATUS_CANCELLED, $call->getStatus()->code);
     }
 
+    public function testNativeServerStreamingYieldsMessagesIncrementally(): void
+    {
+        if (!function_exists('nghttp2_poc_stream_open')) {
+            self::markTestSkipped('nghttp2_poc stream API is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        $request = new BenchRequest();
+        $request->setMessageCount(3);
+        $request->setPayloadBytes(100);
+        $request->setServerDelayMs(50);
+
+        $call = $client->BenchServerStream($request);
+        $start = hrtime(true);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+            if ($count === 1) {
+                $call->cancel();
+            }
+        }
+        $elapsedMs = (hrtime(true) - $start) / 1_000_000;
+
+        self::assertSame(1, $count);
+        self::assertLessThan(130.0, $elapsedMs);
+        self::assertSame(\Grpc\STATUS_CANCELLED, $call->getStatus()->code);
+    }
+
     public function testNativeChannelGoAwayIsNotReusedForNextRpc(): void
     {
         if (!extension_loaded('nghttp2_poc')) {

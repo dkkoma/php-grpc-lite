@@ -35,6 +35,7 @@ class ServerStreamingCall extends AbstractCall
     private bool $nativeTransport = false;
     private bool $cancelled = false;
     private ?string $nativeSerializedRequest = null;
+    private mixed $nativeStream = null;
 
     /**
      * @param object $argument message instance with serializeToString()
@@ -164,6 +165,13 @@ class ServerStreamingCall extends AbstractCall
     public function cancel(): void
     {
         $this->cancelled = true;
+        if ($this->nativeStream !== null) {
+            Internal\NativeTransport::streamCancel($this->nativeStream);
+            $this->nativeStream = null;
+            if ($this->finalStatus === null) {
+                $this->finalStatus = $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
+            }
+        }
         if ($this->ch !== null) {
             $this->discardCurl($this->ch);
             $this->ch = null;
@@ -192,57 +200,48 @@ class ServerStreamingCall extends AbstractCall
             return;
         }
 
-        $mode = (string) ($this->options['php_grpc_lite.native_response_mode']
-            ?? $this->channel->opts['php_grpc_lite.native_response_mode']
-            ?? 'simple');
-        $compact = $mode === 'compact64' || $mode === 'compact';
-        $direct = !$compact;
-
         try {
-            if ($mode === 'simple' && !isset($this->options['timeout'])) {
-                $result = Internal\NativeTransport::unarySimple(
-                    $this->channel->getTarget(),
-                    $this->method,
-                    $this->nativeSerializedRequest ?? '',
-                    $this->buildNativeRequestHeaders(),
-                    0,
-                    $this->channel->credentials,
-                );
-            } elseif ($mode === 'simple') {
-                $result = Internal\NativeTransport::unarySimple(
-                    $this->channel->getTarget(),
-                    $this->method,
-                    $this->nativeSerializedRequest ?? '',
-                    $this->buildNativeRequestHeaders(),
-                    (int) $this->options['timeout'],
-                    $this->channel->credentials,
-                );
-            } else {
-                $result = Internal\NativeTransport::unaryBatch(
-                    $this->channel->getTarget(),
-                    $this->method,
-                    $this->nativeSerializedRequest ?? '',
-                    $this->buildNativeRequestHeaders(),
-                    $compact,
-                    $direct,
-                    isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
-                );
-            }
+            $this->nativeStream = Internal\NativeTransport::streamOpen(
+                $this->channel->getTarget(),
+                $this->method,
+                $this->nativeSerializedRequest ?? '',
+                $this->buildNativeRequestHeaders(),
+                isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+                $this->channel->credentials,
+            );
         } catch (\RuntimeException $e) {
             $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage());
             return;
         }
 
-        $code = $result['grpc_status'];
-        $this->responseTrailers = $result['trailers'];
-        foreach ($result['payloads'] as $payload) {
-            yield Internal\Deserialize::apply($this->deserialize, $payload);
-            if ($this->cancelled) {
-                $this->finalStatus = $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
-                return;
+        try {
+            while (true) {
+                if ($this->cancelled) {
+                    if ($this->nativeStream !== null) {
+                        Internal\NativeTransport::streamCancel($this->nativeStream);
+                        $this->nativeStream = null;
+                    }
+                    if ($this->finalStatus === null) {
+                        $this->finalStatus = $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
+                    }
+                    return;
+                }
+
+                $next = Internal\NativeTransport::streamNext($this->nativeStream);
+                if (($next['done'] ?? false) === true) {
+                    $this->responseTrailers = $next['trailers'] ?? [];
+                    $this->finalStatus = $this->makeStatus((int) $next['grpc_status'], (string) $next['details']);
+                    return;
+                }
+
+                yield Internal\Deserialize::apply($this->deserialize, (string) $next['payload']);
             }
+        } catch (\RuntimeException $e) {
+            $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage());
+            return;
+        } finally {
+            $this->nativeStream = null;
         }
-        $this->finalStatus = $this->makeStatus($code, $result['details']);
     }
 
     private function buildStatusFromTrailers(): \stdClass
