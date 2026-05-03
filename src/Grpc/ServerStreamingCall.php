@@ -199,20 +199,29 @@ class ServerStreamingCall extends AbstractCall
 
         $mode = (string) ($this->options['php_grpc_lite.native_response_mode']
             ?? $this->channel->opts['php_grpc_lite.native_response_mode']
-            ?? 'direct');
+            ?? 'simple');
         $compact = $mode === 'compact64' || $mode === 'compact';
         $direct = !$compact;
 
         try {
-            $result = Internal\NativeTransport::unaryBatch(
-                $this->channel->getTarget(),
-                $this->method,
-                $this->nativeSerializedRequest ?? '',
-                $this->buildNativeRequestHeaders(),
-                $compact,
-                $direct,
-                isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
-            );
+            if ($mode === 'simple' && !isset($this->options['timeout'])) {
+                $result = Internal\NativeTransport::unarySimple(
+                    $this->channel->getTarget(),
+                    $this->method,
+                    $this->nativeSerializedRequest ?? '',
+                    $this->buildNativeRequestHeaders(),
+                );
+            } else {
+                $result = Internal\NativeTransport::unaryBatch(
+                    $this->channel->getTarget(),
+                    $this->method,
+                    $this->nativeSerializedRequest ?? '',
+                    $this->buildNativeRequestHeaders(),
+                    $compact,
+                    $direct,
+                    isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+                );
+            }
         } catch (\RuntimeException $e) {
             $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage());
             return;

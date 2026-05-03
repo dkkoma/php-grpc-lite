@@ -180,28 +180,96 @@ class UnaryCall extends AbstractCall
         }
 
         try {
-            $result = Internal\NativeTransport::unaryBatch(
-                $this->channel->getTarget(),
-                $this->method,
-                $this->nativeSerializedRequest ?? '',
-                $this->buildNativeRequestHeaders(),
-                false,
-                true,
-                isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
-            );
+            $headers = $this->buildNativeRequestHeaders();
+            $transportStartedNs = hrtime(true);
+            if ($this->shouldUseNativeUnarySimple($headers)) {
+                $result = Internal\NativeTransport::unarySimple(
+                    $this->channel->getTarget(),
+                    $this->method,
+                    $this->nativeSerializedRequest ?? '',
+                    $headers,
+                );
+                $this->recordDiagnostic('native_unary_simple', 1);
+            } else {
+                $result = Internal\NativeTransport::unaryBatch(
+                    $this->channel->getTarget(),
+                    $this->method,
+                    $this->nativeSerializedRequest ?? '',
+                    $headers,
+                    false,
+                    true,
+                    isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+                );
+                $this->recordDiagnostic('native_unary_simple', 0);
+            }
+            $this->recordDiagnostic('native_transport_call_ns', hrtime(true) - $transportStartedNs);
         } catch (\RuntimeException $e) {
             return [null, $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage())];
         }
 
+        $normalizeStartedNs = hrtime(true);
         $code = $result['grpc_status'];
         $this->responseTrailers = $result['trailers'];
         $payload = $result['payloads'][0] ?? null;
+        $this->recordDiagnostic('native_result_normalize_ns', hrtime(true) - $normalizeStartedNs);
+        $this->recordNativeRawDiagnostics($result['raw']);
         $response = null;
         if ($payload !== null && $this->deserialize !== null) {
+            $deserializeStartedNs = hrtime(true);
             $response = Internal\Deserialize::apply($this->deserialize, $payload);
+            $this->recordDiagnostic('native_response_deserialize_ns', hrtime(true) - $deserializeStartedNs);
         }
 
-        return [$response, $this->makeStatus($code, $result['details'])];
+        $statusStartedNs = hrtime(true);
+        $status = $this->makeStatus($code, $result['details']);
+        $this->recordDiagnostic('native_status_build_ns', hrtime(true) - $statusStartedNs);
+        return [$response, $status];
+    }
+
+    /** @param array<string, mixed> $raw */
+    private function recordNativeRawDiagnostics(array $raw): void
+    {
+        foreach ([
+            'total_us',
+            'connect_us',
+            'setup_us',
+            'submit_us',
+            'initial_send_us',
+            'recv_loop_us',
+            'cleanup_us',
+            'bytes_sent',
+            'bytes_received',
+            'sent_frames',
+            'recv_frames',
+        ] as $name) {
+            $value = $raw[$name] ?? null;
+            if (is_int($value) || is_float($value)) {
+                $this->recordDiagnostic('native_raw_' . $name, str_ends_with($name, '_us') ? $value * 1000 : $value);
+            }
+        }
+    }
+
+    /** @param array<string, string> $headers */
+    private function shouldUseNativeUnarySimple(array $headers): bool
+    {
+        $mode = (string) ($this->options['php_grpc_lite.native_unary_mode']
+            ?? $this->channel->opts['php_grpc_lite.native_unary_mode']
+            ?? 'simple');
+        if ($mode === 'batch') {
+            return false;
+        }
+        if ($mode !== 'simple') {
+            throw new \InvalidArgumentException("php_grpc_lite.native_unary_mode must be 'simple' or 'batch'");
+        }
+        if (isset($this->options['timeout'])) {
+            return false;
+        }
+        foreach (['x-bench-server-stats', 'x-bench-server-timing'] as $diagnosticHeader) {
+            if (array_key_exists($diagnosticHeader, $headers)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public function cancel(): void

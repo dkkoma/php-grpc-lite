@@ -17,7 +17,7 @@ cd "$(dirname "$0")/../.."
 
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
-native_response_mode="${NATIVE_RESPONSE_MODE:-compact64}"
+native_response_mode="${NATIVE_RESPONSE_MODE:-simple}"
 include_poc="${INCLUDE_POC:-1}"
 mkdir -p "$output_dir"
 

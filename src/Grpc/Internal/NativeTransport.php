@@ -13,6 +13,9 @@ namespace Grpc\Internal;
  */
 final class NativeTransport
 {
+    /** @var array<string, resource> */
+    private static array $channels = [];
+
     /**
      * @param array<string, string> $headers
      * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, trailers: array<string, list<string>>, raw: array<string, mixed>}
@@ -66,6 +69,53 @@ final class NativeTransport
         );
 
         [$grpcStatus, $details] = self::normalizeStatus($result);
+
+        return [
+            'payloads' => $payloads,
+            'grpc_status' => $grpcStatus,
+            'details' => $details,
+            'http_status' => (int) ($result['http_status'] ?? 0),
+            'trailers' => self::extractTrailers($result, $grpcStatus, $details),
+            'raw' => $result,
+        ];
+    }
+
+    /**
+     * @param array<string, string> $headers
+     * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, trailers: array<string, list<string>>, raw: array<string, mixed>}
+     */
+    public static function unarySimple(
+        string $target,
+        string $path,
+        string $serializedRequest,
+        array $headers,
+    ): array {
+        if (!function_exists('nghttp2_poc_unary')) {
+            throw new \RuntimeException('nghttp2_poc extension is not loaded');
+        }
+
+        [$host, $port] = self::splitTarget($target);
+        $framedRequest = "\0" . pack('N', strlen($serializedRequest)) . $serializedRequest;
+        if (function_exists('nghttp2_poc_channel_open') && function_exists('nghttp2_poc_channel_unary')) {
+            $result = \nghttp2_poc_channel_unary(self::channel($host, $port), $path, $framedRequest, $headers);
+        } else {
+            $result = \nghttp2_poc_unary($host, $port, $path, $framedRequest, $headers);
+        }
+        [$grpcStatus, $details] = self::normalizeStatus($result);
+        $payloads = [];
+        $body = $result['body'] ?? '';
+        if (is_string($body)) {
+            $offset = 0;
+            $bodyLength = strlen($body);
+            while ($offset + 5 <= $bodyLength) {
+                $payloadLength = unpack('N', substr($body, $offset + 1, 4))[1];
+                if ($offset + 5 + $payloadLength > $bodyLength) {
+                    break;
+                }
+                $payloads[] = substr($body, $offset + 5, $payloadLength);
+                $offset += 5 + $payloadLength;
+            }
+        }
 
         return [
             'payloads' => $payloads,
@@ -159,6 +209,17 @@ final class NativeTransport
 
         $first = reset($value);
         return is_int($first) || is_string($first) ? $first : null;
+    }
+
+    /** @return resource */
+    private static function channel(string $host, int $port): mixed
+    {
+        $key = $host . ':' . $port;
+        if (!isset(self::$channels[$key])) {
+            self::$channels[$key] = \nghttp2_poc_channel_open($host, $port);
+        }
+
+        return self::$channels[$key];
     }
 
     /** @return array{0: string, 1: int} */

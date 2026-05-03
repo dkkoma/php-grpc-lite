@@ -21,6 +21,7 @@ $durationSec = 1.0;
 $warmupCalls = 3;
 $maxCalls = 0;
 $transport = null;
+$diagnosticRpc = false;
 $cases = [
     ['name' => 'begin_txn', 'request_bytes' => 92, 'response_bytes' => 18],
     ['name' => 'dml_insert_10col', 'request_bytes' => 355, 'response_bytes' => 8],
@@ -67,6 +68,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
         $transport = substr($arg, strlen('--transport='));
+    } elseif ($arg === '--diagnostic-rpc') {
+        $diagnosticRpc = true;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -98,13 +101,26 @@ foreach ($cases as $case) {
     }
 
     $latenciesNs = [];
+    $diagnosticSeries = [];
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, &$latenciesNs): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, &$latenciesNs, &$diagnosticSeries): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
             $callStartNs = hrtime(true);
-            UnaryBenchHelper::call($client, $request);
+            if ($diagnosticRpc) {
+                $diagnostics = new \stdClass();
+                $options = [];
+                if ($implementation === 'php-grpc-lite') {
+                    $options['php_grpc_lite.diagnostics'] = $diagnostics;
+                }
+                UnaryBenchHelper::call($client, $request, $options);
+                if ($implementation === 'php-grpc-lite') {
+                    collectDiagnostics($diagnostics, $diagnosticSeries);
+                }
+            } else {
+                UnaryBenchHelper::call($client, $request);
+            }
             $latenciesNs[] = hrtime(true) - $callStartNs;
             $calls++;
         } while (hrtime(true) - $startedNs < $deadlineNs && ($maxCalls === 0 || $calls < $maxCalls));
@@ -120,6 +136,9 @@ foreach ($cases as $case) {
     foreach (UnaryBenchHelper::percentiles($latenciesNs) as $name => $value) {
         $metrics['latency_' . $name . '_ns'] = ['value' => $value, 'unit' => 'ns'];
     }
+    foreach (summarizeDiagnostics($diagnosticSeries) as $name => $metric) {
+        $metrics[$name] = $metric;
+    }
 
     $measurements[] = ResultContract::measurement($case['name'], 'unary-shape', 'BenchUnary', [
         'target' => $target,
@@ -129,6 +148,7 @@ foreach ($cases as $case) {
         'warmup_calls' => $warmupCalls,
         'max_calls' => $maxCalls,
         'transport' => $transport,
+        'diagnostic_rpc' => $diagnosticRpc,
     ], $metrics);
 }
 
@@ -159,4 +179,33 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(STDERR, "Usage: php tools/phase2/unary-shape.php --suite=unary-shape --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--warmup-calls=3] [--max-calls=0]\n");
     exit(2);
+}
+
+/** @param array<string, list<int|float>> $series */
+function collectDiagnostics(\stdClass $diagnostics, array &$series): void
+{
+    foreach (get_object_vars($diagnostics) as $name => $value) {
+        if (!is_int($value) && !is_float($value)) {
+            continue;
+        }
+        $series[$name][] = $value;
+    }
+}
+
+/**
+ * @param array<string, list<int|float>> $series
+ * @return array<string, array{value: int|float, unit: string}>
+ */
+function summarizeDiagnostics(array $series): array
+{
+    $metrics = [];
+    foreach ($series as $name => $values) {
+        foreach (UnaryBenchHelper::percentiles($values) as $percentile => $value) {
+            $metrics[$name . '_' . $percentile] = [
+                'value' => $value,
+                'unit' => str_ends_with($name, '_bytes') || str_ends_with($name, '_frames') ? 'count' : 'ns',
+            ];
+        }
+    }
+    return $metrics;
 }
