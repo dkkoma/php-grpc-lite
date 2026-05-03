@@ -30,11 +30,11 @@ BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-
 - response payload: `100B`
 - warm sequential calls
 
-| implementation | p50 | p99 | calls/s |
+| metric | libcurl | MVP upload | ext-grpc |
 | --- | ---: | ---: | ---: |
-| libcurl | 844.2μs | 4065.3μs | 925.7 |
-| MVP upload | 360.0μs | 3839.0μs | 1396.0 |
-| ext-grpc | 412.9μs | 3642.6μs | 1370.4 |
+| p50 | 844.2μs | 360.0μs | 412.9μs |
+| p99 | 4065.3μs | 3839.0μs | 3642.6μs |
+| throughput | 925.7 calls/s | 1396.0 calls/s | 1370.4 calls/s |
 
 判断:
 
@@ -42,30 +42,55 @@ BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-
 - p99はext-grpcより約196μs遅いが、libcurlよりは改善している。
 - large request pathでlibcurlを外す価値は引き続き明確。
 
-## server streaming
+## server streaming summary
 
-| case | implementation | p50 | p99 | msg/s | server last p99 | poll wait p99 | max body buffer p99 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1000×100B | libcurl | 4604.2μs | 8385.6μs | 207866.0 | 7955.0μs | - | - |
-| 1000×100B | MVP direct | 4368.0μs | 8131.0μs | 219781.8 | 7858.5μs | 7584μs | 0B |
-| 1000×100B | MVP compact64 | 4431.0μs | 8347.0μs | 213674.5 | 8308.6μs | 7742μs | 65591B |
-| 1000×100B | ext-grpc | 5095.2μs | 9038.2μs | 188950.6 | 7768.3μs | - | - |
-| 10×100KiB | libcurl | 917.4μs | 3639.9μs | 8318.2 | 3016.1μs | - | - |
-| 10×100KiB | MVP direct | 480.0μs | 3465.0μs | 12219.2 | 3277.1μs | 3299μs | 0B |
-| 10×100KiB | MVP compact64 | 506.0μs | 3340.0μs | 12620.3 | 3227.2μs | 3205μs | 102409B |
-| 10×100KiB | ext-grpc | 633.9μs | 3379.3μs | 10965.5 | 2874.9μs | - | - |
-| 100×100KiB | libcurl | 5062.3μs | 10341.3μs | 18210.2 | 9837.8μs | - | - |
-| 100×100KiB | MVP direct | 5473.0μs | 12747.0μs | 16702.3 | 12611.1μs | 10865μs | 0B |
-| 100×100KiB | MVP compact64 | 5393.0μs | 12396.0μs | 16773.6 | 12264.4μs | 10777μs | 102409B |
-| 100×100KiB | ext-grpc | 5407.4μs | 10760.4μs | 17523.1 | 10631.9μs | - | - |
-| 1×1MiB | libcurl | 899.0μs | 5406.4μs | 792.3 | 4484.3μs | - | - |
-| 1×1MiB | MVP direct | 486.0μs | 3985.0μs | 1281.0 | 3675.4μs | 3835μs | 0B |
-| 1×1MiB | MVP compact64 | 491.0μs | 4109.0μs | 1316.6 | 3582.6μs | 3801μs | 1048585B |
-| 1×1MiB | ext-grpc | 527.7μs | 3852.0μs | 1277.2 | 3250.2μs | - | - |
-| 10000×100B | libcurl | 43996.8μs | 56445.6μs | 224598.7 | 55852.4μs | - | - |
-| 10000×100B | MVP direct | 42052.0μs | 50780.0μs | 233831.1 | 50659.6μs | 45354μs | 0B |
-| 10000×100B | MVP compact64 | 41925.0μs | 53243.0μs | 235003.4 | 52900.7μs | 47303μs | 65591B |
-| 10000×100B | ext-grpc | 43531.5μs | 57483.6μs | 226376.7 | 56125.7μs | - | - |
+| case | metric | libcurl | MVP direct | MVP compact64 | ext-grpc |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1000×100B | p50 | 4604.2μs | 4368.0μs | 4431.0μs | 5095.2μs |
+| 1000×100B | p99 | 8385.6μs | 8131.0μs | 8347.0μs | 9038.2μs |
+| 1000×100B | msg/s | 207866.0 | 219781.8 | 213674.5 | 188950.6 |
+| 1000×100B | server last p99 | 7955.0μs | 7858.5μs | 8308.6μs | 7768.3μs |
+| 10×100KiB | p50 | 917.4μs | 480.0μs | 506.0μs | 633.9μs |
+| 10×100KiB | p99 | 3639.9μs | 3465.0μs | 3340.0μs | 3379.3μs |
+| 10×100KiB | msg/s | 8318.2 | 12219.2 | 12620.3 | 10965.5 |
+| 10×100KiB | server last p99 | 3016.1μs | 3277.1μs | 3227.2μs | 2874.9μs |
+| 100×100KiB | p50 | 5062.3μs | 5473.0μs | 5393.0μs | 5407.4μs |
+| 100×100KiB | p99 | 10341.3μs | 12747.0μs | 12396.0μs | 10760.4μs |
+| 100×100KiB | msg/s | 18210.2 | 16702.3 | 16773.6 | 17523.1 |
+| 100×100KiB | server last p99 | 9837.8μs | 12611.1μs | 12264.4μs | 10631.9μs |
+| 1×1MiB | p50 | 899.0μs | 486.0μs | 491.0μs | 527.7μs |
+| 1×1MiB | p99 | 5406.4μs | 3985.0μs | 4109.0μs | 3852.0μs |
+| 1×1MiB | msg/s | 792.3 | 1281.0 | 1316.6 | 1277.2 |
+| 1×1MiB | server last p99 | 4484.3μs | 3675.4μs | 3582.6μs | 3250.2μs |
+| 10000×100B | p50 | 43996.8μs | 42052.0μs | 41925.0μs | 43531.5μs |
+| 10000×100B | p99 | 56445.6μs | 50780.0μs | 53243.0μs | 57483.6μs |
+| 10000×100B | msg/s | 224598.7 | 233831.1 | 235003.4 | 226376.7 |
+| 10000×100B | server last p99 | 55852.4μs | 50659.6μs | 52900.7μs | 56125.7μs |
+
+## server streaming MVP internals
+
+| case | metric | MVP direct | MVP compact64 |
+| --- | --- | ---: | ---: |
+| 1000×100B | poll wait p99 | 7584μs | 7742μs |
+| 1000×100B | max body buffer p99 | 0B | 65591B |
+| 10×100KiB | poll wait p99 | 3299μs | 3205μs |
+| 10×100KiB | max body buffer p99 | 0B | 102409B |
+| 100×100KiB | poll wait p99 | 10865μs | 10777μs |
+| 100×100KiB | max body buffer p99 | 0B | 102409B |
+| 1×1MiB | poll wait p99 | 3835μs | 3801μs |
+| 1×1MiB | max body buffer p99 | 0B | 1048585B |
+| 10000×100B | poll wait p99 | 45354μs | 47303μs |
+| 10000×100B | max body buffer p99 | 0B | 65591B |
+
+## server streaming winners
+
+| case | best p50 | best p99 | best throughput | note |
+| --- | --- | --- | --- | --- |
+| 1000×100B | MVP direct | MVP direct | MVP direct | MVPが全指標で優位 |
+| 10×100KiB | MVP direct | MVP compact64 | MVP compact64 | MVPが全指標で優位 |
+| 100×100KiB | libcurl | libcurl | libcurl | 今回runではMVPが悪い。server last p99も同時に悪化 |
+| 1×1MiB | MVP direct | ext-grpc | MVP compact64 | p99だけext-grpcが僅差で優位 |
+| 10000×100B | MVP compact64 | MVP direct | MVP compact64 | MVPが全指標で優位 |
 
 ## server streaming 判断
 
