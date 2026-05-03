@@ -4,10 +4,16 @@ declare(strict_types=1);
 require __DIR__ . '/../../vendor/autoload.php';
 
 use Google\Cloud\Spanner\V1\CreateSessionRequest;
+use Google\Cloud\Spanner\V1\BeginTransactionRequest;
+use Google\Cloud\Spanner\V1\CommitRequest;
+use Google\Cloud\Spanner\V1\CommitResponse;
 use Google\Cloud\Spanner\V1\DeleteSessionRequest;
 use Google\Cloud\Spanner\V1\ExecuteSqlRequest;
 use Google\Cloud\Spanner\V1\PartialResultSet;
 use Google\Cloud\Spanner\V1\ResultSetMetadata;
+use Google\Cloud\Spanner\V1\TransactionOptions;
+use Google\Cloud\Spanner\V1\TransactionOptions\ReadWrite;
+use Google\Cloud\Spanner\V1\TransactionSelector;
 use Google\Cloud\Spanner\V1\TypeCode;
 use PhpGrpcLite\Tests\Integration\Fixtures\Spanner\DatabaseAdminGrpcClient;
 use PhpGrpcLite\Tests\Integration\Fixtures\Spanner\InstanceAdminGrpcClient;
@@ -82,7 +88,20 @@ $queries = [
 
 try {
     $instanceName = SpannerEnv::createInstance($instanceAdmin, $instanceId);
-    $databaseName = SpannerEnv::createDatabase($databaseAdmin, $instanceName, $databaseId);
+    $databaseName = SpannerEnv::createDatabase($databaseAdmin, $instanceName, $databaseId, [
+        'CREATE TABLE ShapeRows (
+            id INT64 NOT NULL,
+            created_date DATE,
+            updated_date DATE,
+            first_text STRING(MAX),
+            second_text STRING(MAX),
+            active BOOL,
+            score INT64,
+            ratio FLOAT64,
+            event_ts TIMESTAMP,
+            payload BYTES(MAX),
+        ) PRIMARY KEY (id)',
+    ]);
 
     $sessionReq = new CreateSessionRequest();
     $sessionReq->setDatabase($databaseName);
@@ -96,6 +115,7 @@ try {
     foreach ($queries as $query) {
         $results[] = inspectQuery($spanner, $sessionName, $query);
     }
+    $dmlResults = inspectDmlFlow($spanner, $sessionName);
 
     $document = [
         'suite' => 'spanner-streaming-shape',
@@ -103,6 +123,7 @@ try {
         'database' => $databaseName,
         'generated_at' => gmdate('c'),
         'results' => $results,
+        'dml_results' => $dmlResults,
     ];
 
     if ($output !== null && $output !== '') {
@@ -128,6 +149,21 @@ try {
             $result['chunked_partial_count'],
         );
     }
+    echo "\n";
+    printf("%-12s %-18s %10s %10s %8s\n", 'operation', 'rpc', 'request_b', 'response_b', 'rows');
+    printf("%'-64s\n", '');
+    foreach ($dmlResults as $operation) {
+        foreach ($operation['rpc_shapes'] as $shape) {
+            printf(
+                "%-12s %-18s %10d %10d %8s\n",
+                $operation['operation'],
+                $shape['rpc'],
+                $shape['request_serialized_bytes'],
+                $shape['response_serialized_bytes'],
+                $shape['row_count_exact'] ?? '',
+            );
+        }
+    }
     if ($output !== null && $output !== '') {
         echo "JSON: $output\n";
     }
@@ -138,6 +174,94 @@ try {
         $spanner->DeleteSession($deleteReq)->wait();
     }
     SpannerEnv::deleteInstance($instanceAdmin, $instanceId);
+}
+
+/** @return list<array<string, mixed>> */
+function inspectDmlFlow(SpannerGrpcClient $spanner, string $sessionName): array
+{
+    $operations = [
+        [
+            'operation' => 'insert',
+            'sql' => "INSERT INTO ShapeRows (id, created_date, updated_date, first_text, second_text, active, score, ratio, event_ts, payload) VALUES (1, DATE '2026-05-03', DATE '2026-05-04', 'alpha', 'beta', TRUE, 42, 3.14, TIMESTAMP '2026-05-03T00:00:00Z', b'abc')",
+        ],
+        [
+            'operation' => 'update',
+            'sql' => "UPDATE ShapeRows SET updated_date = DATE '2026-05-05', first_text = 'gamma', second_text = 'delta', active = FALSE, score = 43, ratio = 6.28, event_ts = TIMESTAMP '2026-05-03T01:00:00Z', payload = b'def' WHERE id = 1",
+        ],
+        [
+            'operation' => 'delete',
+            'sql' => 'DELETE FROM ShapeRows WHERE id = 1',
+        ],
+    ];
+
+    $results = [];
+    foreach ($operations as $operation) {
+        $rpcShapes = [];
+
+        $beginRequest = new BeginTransactionRequest();
+        $beginRequest->setSession($sessionName);
+        $beginRequest->setOptions(readWriteOptions());
+        [$transaction, $beginStatus] = $spanner->BeginTransaction($beginRequest)->wait();
+        if ($beginStatus->code !== \Grpc\STATUS_OK) {
+            throw new RuntimeException("BeginTransaction failed for {$operation['operation']}: {$beginStatus->details}");
+        }
+        $transactionId = $transaction->getId();
+        $rpcShapes[] = [
+            'rpc' => 'BeginTransaction',
+            'request_serialized_bytes' => strlen($beginRequest->serializeToString()),
+            'response_serialized_bytes' => strlen($transaction->serializeToString()),
+            'transaction_id_bytes' => strlen($transactionId),
+        ];
+
+        $dmlRequest = new ExecuteSqlRequest();
+        $dmlRequest->setSession($sessionName);
+        $dmlRequest->setSql($operation['sql']);
+        $selector = new TransactionSelector();
+        $selector->setId($transactionId);
+        $dmlRequest->setTransaction($selector);
+        [$resultSet, $dmlStatus] = $spanner->ExecuteSql($dmlRequest)->wait();
+        if ($dmlStatus->code !== \Grpc\STATUS_OK) {
+            throw new RuntimeException("ExecuteSql DML failed for {$operation['operation']}: {$dmlStatus->details}");
+        }
+        $stats = $resultSet->getStats();
+        $rpcShapes[] = [
+            'rpc' => 'ExecuteSqlDml',
+            'request_serialized_bytes' => strlen($dmlRequest->serializeToString()),
+            'response_serialized_bytes' => strlen($resultSet->serializeToString()),
+            'row_count_exact' => $stats !== null ? (int) $stats->getRowCountExact() : null,
+            'sql_bytes' => strlen($operation['sql']),
+        ];
+
+        $commitRequest = new CommitRequest();
+        $commitRequest->setSession($sessionName);
+        $commitRequest->setTransactionId($transactionId);
+        [$commitResponse, $commitStatus] = $spanner->Commit($commitRequest)->wait();
+        if ($commitStatus->code !== \Grpc\STATUS_OK) {
+            throw new RuntimeException("Commit failed for {$operation['operation']}: {$commitStatus->details}");
+        }
+        \assert($commitResponse instanceof CommitResponse);
+        $rpcShapes[] = [
+            'rpc' => 'Commit',
+            'request_serialized_bytes' => strlen($commitRequest->serializeToString()),
+            'response_serialized_bytes' => strlen($commitResponse->serializeToString()),
+            'transaction_id_bytes' => strlen($transactionId),
+        ];
+
+        $results[] = [
+            'operation' => $operation['operation'],
+            'sql' => $operation['sql'],
+            'rpc_shapes' => $rpcShapes,
+        ];
+    }
+
+    return $results;
+}
+
+function readWriteOptions(): TransactionOptions
+{
+    $options = new TransactionOptions();
+    $options->setReadWrite(new ReadWrite());
+    return $options;
 }
 
 /** @param array{name:string,description:string,sql:string} $query */
