@@ -29,6 +29,8 @@ $options = getopt('', [
     'response-compact-threshold::',
     'direct-response-payload',
     'read-ahead-delivery',
+    'read-ahead-max-messages::',
+    'read-ahead-max-bytes::',
     'transport-thread',
     'poll-loop',
     'discard-response-body',
@@ -54,6 +56,8 @@ $compactResponseBuffer = array_key_exists('compact-response-buffer', $options);
 $responseCompactThreshold = (int) ($options['response-compact-threshold'] ?? 1);
 $directResponsePayload = array_key_exists('direct-response-payload', $options);
 $readAheadDelivery = array_key_exists('read-ahead-delivery', $options);
+$readAheadMaxMessages = (int) ($options['read-ahead-max-messages'] ?? 0);
+$readAheadMaxBytes = (int) ($options['read-ahead-max-bytes'] ?? 0);
 $transportThread = array_key_exists('transport-thread', $options);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
@@ -99,7 +103,7 @@ $result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $it
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold, $directResponsePayload, $readAheadDelivery, $transportThread);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold, $directResponsePayload, $readAheadDelivery, $readAheadMaxMessages, $readAheadMaxBytes, $transportThread);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -240,6 +244,8 @@ $result += [
     'response_compact_threshold' => $responseCompactThreshold,
     'direct_response_payload' => $directResponsePayload,
     'read_ahead_delivery' => $readAheadDelivery,
+    'read_ahead_max_messages' => $readAheadMaxMessages,
+    'read_ahead_max_bytes' => $readAheadMaxBytes,
     'transport_thread' => $transportThread,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,

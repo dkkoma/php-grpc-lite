@@ -131,6 +131,8 @@ typedef struct {
     bool decode_response_incrementally;
     bool direct_response_payload;
     bool read_ahead_delivery;
+    size_t read_ahead_max_messages;
+    size_t read_ahead_max_bytes;
     bool transport_thread;
     queued_payload *response_queue_head;
     queued_payload *response_queue_tail;
@@ -233,6 +235,7 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
 static int enqueue_response_payload(poc_client *client, zend_string *payload);
 static int deliver_response_payload(poc_client *client, zend_string *payload, uint64_t ready_abs_us);
 static int deliver_queued_response_payloads(poc_client *client);
+static int deliver_queued_response_payloads_if_bounded(poc_client *client);
 static void free_queued_response_payloads(poc_client *client);
 static int enqueue_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us);
 static int deliver_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us);
@@ -1204,6 +1207,10 @@ static int enqueue_response_payload(poc_client *client, zend_string *payload)
         client->call_max_response_queue_bytes = client->response_queue_bytes;
     }
 
+    if (deliver_queued_response_payloads_if_bounded(client) != 0) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -1275,6 +1282,18 @@ static int deliver_queued_response_payloads(poc_client *client)
     }
 
     return 0;
+}
+
+static int deliver_queued_response_payloads_if_bounded(poc_client *client)
+{
+    bool over_message_limit = client->read_ahead_max_messages > 0 && client->response_queue_count >= client->read_ahead_max_messages;
+    bool over_byte_limit = client->read_ahead_max_bytes > 0 && client->response_queue_bytes >= client->read_ahead_max_bytes;
+
+    if (!over_message_limit && !over_byte_limit) {
+        return 0;
+    }
+
+    return deliver_queued_response_payloads(client);
 }
 
 static void free_queued_response_payloads(poc_client *client)
@@ -1822,6 +1841,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     bool decode_response_incrementally = false;
     bool direct_response_payload = false;
     bool read_ahead_delivery = false;
+    zend_long read_ahead_max_messages = 0;
+    zend_long read_ahead_max_bytes = 0;
     bool transport_thread = false;
     bool compact_response_buffer = false;
     zend_long response_compact_threshold = 0;
@@ -1933,7 +1954,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     memset(&response_fci, 0, sizeof(response_fci));
     memset(&response_fcc, 0, sizeof(response_fcc));
 
-    ZEND_PARSE_PARAMETERS_START(5, 23)
+    ZEND_PARSE_PARAMETERS_START(5, 25)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -1957,6 +1978,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         Z_PARAM_LONG(response_compact_threshold)
         Z_PARAM_BOOL(direct_response_payload)
         Z_PARAM_BOOL(read_ahead_delivery)
+        Z_PARAM_LONG(read_ahead_max_messages)
+        Z_PARAM_LONG(read_ahead_max_bytes)
         Z_PARAM_BOOL(transport_thread)
     ZEND_PARSE_PARAMETERS_END();
 
@@ -1986,6 +2009,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     client.decode_response_incrementally = decode_response_incrementally;
     client.direct_response_payload = direct_response_payload && decode_response_incrementally && response_callback_enabled;
     client.read_ahead_delivery = read_ahead_delivery && client.direct_response_payload;
+    client.read_ahead_max_messages = read_ahead_max_messages > 0 ? (size_t) read_ahead_max_messages : 0;
+    client.read_ahead_max_bytes = read_ahead_max_bytes > 0 ? (size_t) read_ahead_max_bytes : 0;
     client.transport_thread = transport_thread && client.direct_response_payload;
     client.compact_response_buffer = compact_response_buffer && decode_response_incrementally && !client.direct_response_payload;
     client.response_compact_threshold = response_compact_threshold > 0 ? (size_t) response_compact_threshold : 1;
@@ -2656,6 +2681,8 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, response_compact_threshold, IS_LONG, 0, "1")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, direct_response_payload, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_delivery, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_max_messages, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_max_bytes, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, transport_thread, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
