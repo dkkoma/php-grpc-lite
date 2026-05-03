@@ -184,6 +184,7 @@ libcurl pathと同等に通す必要があるもの:
 
 native transportの採用・調整では、以下をactual `Grpc\` API surfaceで測る。
 
+- small SELECT相当のserver streaming p50/p99/messages/s
 - large request unary p50/p99/calls/s
 - server streaming many-small
 - server streaming large payload

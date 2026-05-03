@@ -12,6 +12,7 @@
 
 - request/responseのlarge payload pathで、libcurl経由では避けにくいbuffer/copy/進行単位の制約がある。
 - nghttp2 direct PoCでは、large request unaryと多くのserver streaming large response形状でext-grpc同等レンジまで到達した。
+- small SELECT相当のserver streamingは実運用上の主経路なので、large payloadだけでなくsmall streamingでもext-grpc同等または優位をrelease判断の主軸にする。
 - `compact/ring buffer + direct payload assembly` により、server streamingのmemory保持と二重copyを抑えられる。
 - libcurl経路はcold固定費やsmall unaryには有効だが、Phase 2で見ているlarge payload transport構造の本筋改善にはならない。
 - 一方で、libcurl経路は既に互換性検証済みの範囲が広く、native移行期の安全な選択肢として価値がある。
@@ -43,6 +44,7 @@ nativeをdrop-in release defaultにする前に満たす条件:
 - `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。
 - Channel lifetimeでHTTP/2 session/socketを再利用できる。
 - RST_STREAM / missing trailers / metadata / status / deadlineの互換性をext-grpcまたはlibcurl経路と照合済み。
+- small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 
 ## MVP Scope
 
@@ -126,5 +128,6 @@ Native transportに残すがMVP必須ではないもの:
 - Upload no-copy + poll loop: `docs/research/native-transport-unary-large-request-conclusion-2026-05-03.md`
 - Server streaming goal comparison: `docs/research/nghttp2-poc-server-stream-goal-comparison-2026-05-03.md`
 - Small SELECT streaming comparison: `docs/research/small-select-streaming-comparison-2026-05-03.md`
+- Spanner emulator streaming shape: `docs/research/spanner-emulator-streaming-shape-2026-05-03.md`
 - Bounded read-ahead: `docs/research/nghttp2-poc-server-stream-bounded-read-ahead-2026-05-03.md`
 - Shared event loop / multiplex: `docs/research/curl-multiplex-shared-event-loop-2026-05-03.md`
