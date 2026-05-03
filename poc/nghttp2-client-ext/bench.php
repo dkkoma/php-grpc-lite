@@ -24,6 +24,8 @@ $options = getopt('', [
     'read-first-poll-loop',
     'decode-response-messages',
     'incremental-decode',
+    'compact-response-buffer',
+    'response-compact-threshold::',
     'poll-loop',
     'discard-response-body',
 ]);
@@ -43,6 +45,8 @@ $flushAfterMemRecv = array_key_exists('flush-after-mem-recv', $options);
 $readFirstPollLoop = array_key_exists('read-first-poll-loop', $options);
 $decodeResponseMessages = array_key_exists('decode-response-messages', $options);
 $incrementalDecode = array_key_exists('incremental-decode', $options);
+$compactResponseBuffer = array_key_exists('compact-response-buffer', $options);
+$responseCompactThreshold = (int) ($options['response-compact-threshold'] ?? 1);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
 if ($decodeResponseMessages) {
@@ -79,7 +83,7 @@ $result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $it
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -131,6 +135,11 @@ $series = [
     'call_data_recv_calls',
     'call_body_append_us',
     'call_max_body_append_us',
+    'call_body_compact_count',
+    'call_body_compact_bytes',
+    'call_body_compact_us',
+    'call_max_body_compact_us',
+    'call_max_body_buffer_bytes',
     'call_decoded_messages',
     'call_response_decode_us',
     'call_max_response_decode_us',
@@ -183,6 +192,8 @@ $result += [
     'read_first_poll_loop' => $readFirstPollLoop,
     'decode_response_messages' => $decodeResponseMessages,
     'incremental_decode' => $incrementalDecode,
+    'compact_response_buffer' => $compactResponseBuffer,
+    'response_compact_threshold' => $responseCompactThreshold,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,
@@ -270,6 +281,11 @@ function sampleCalls(array $result, array $latencies, int $limit): array
             'call_data_recv_calls' => (int) ($result['call_data_recv_calls'][$i] ?? 0),
             'call_body_append_us' => (int) ($result['call_body_append_us'][$i] ?? 0),
             'call_max_body_append_us' => (int) ($result['call_max_body_append_us'][$i] ?? 0),
+            'call_body_compact_count' => (int) ($result['call_body_compact_count'][$i] ?? 0),
+            'call_body_compact_bytes' => (int) ($result['call_body_compact_bytes'][$i] ?? 0),
+            'call_body_compact_us' => (int) ($result['call_body_compact_us'][$i] ?? 0),
+            'call_max_body_compact_us' => (int) ($result['call_max_body_compact_us'][$i] ?? 0),
+            'call_max_body_buffer_bytes' => (int) ($result['call_max_body_buffer_bytes'][$i] ?? 0),
             'call_decoded_messages' => (int) ($result['call_decoded_messages'][$i] ?? 0),
             'call_response_decode_us' => (int) ($result['call_response_decode_us'][$i] ?? 0),
             'call_max_response_decode_us' => (int) ($result['call_max_response_decode_us'][$i] ?? 0),
@@ -341,6 +357,11 @@ function tailSampleCalls(array $result, array $latencies, int $limit): array
             'call_data_recv_calls' => (int) ($result['call_data_recv_calls'][$index] ?? 0),
             'call_body_append_us' => (int) ($result['call_body_append_us'][$index] ?? 0),
             'call_max_body_append_us' => (int) ($result['call_max_body_append_us'][$index] ?? 0),
+            'call_body_compact_count' => (int) ($result['call_body_compact_count'][$index] ?? 0),
+            'call_body_compact_bytes' => (int) ($result['call_body_compact_bytes'][$index] ?? 0),
+            'call_body_compact_us' => (int) ($result['call_body_compact_us'][$index] ?? 0),
+            'call_max_body_compact_us' => (int) ($result['call_max_body_compact_us'][$index] ?? 0),
+            'call_max_body_buffer_bytes' => (int) ($result['call_max_body_buffer_bytes'][$index] ?? 0),
             'call_decoded_messages' => (int) ($result['call_decoded_messages'][$index] ?? 0),
             'call_response_decode_us' => (int) ($result['call_response_decode_us'][$index] ?? 0),
             'call_max_response_decode_us' => (int) ($result['call_max_response_decode_us'][$index] ?? 0),
