@@ -99,6 +99,10 @@ typedef struct {
     uint64_t first_flow_control_pause_us;
     uint64_t first_response_header_us;
     uint64_t stream_closed_us;
+    uint64_t first_response_message_ready_us;
+    uint64_t last_response_message_ready_us;
+    uint64_t first_response_callback_done_us;
+    uint64_t last_response_callback_done_us;
     size_t response_data_bytes;
     size_t call_response_data_bytes;
     size_t call_data_recv_calls;
@@ -934,6 +938,13 @@ static int process_response_messages_from_offset(poc_client *client, zend_fcall_
         }
         *offset += 5;
 
+        if (client->call_started_us != 0) {
+            uint64_t ready_us = monotonic_us() - client->call_started_us;
+            if (client->first_response_message_ready_us == 0) {
+                client->first_response_message_ready_us = ready_us;
+            }
+            client->last_response_message_ready_us = ready_us;
+        }
         payload_string_started = monotonic_us();
         ZVAL_STRINGL(&params[0], data + *offset, payload_len);
         payload_string_elapsed = monotonic_us() - payload_string_started;
@@ -955,6 +966,13 @@ static int process_response_messages_from_offset(poc_client *client, zend_fcall_
             return -1;
         }
         elapsed = monotonic_us() - started;
+        if (client->call_started_us != 0) {
+            uint64_t done_us = monotonic_us() - client->call_started_us;
+            if (client->first_response_callback_done_us == 0) {
+                client->first_response_callback_done_us = done_us;
+            }
+            client->last_response_callback_done_us = done_us;
+        }
         *decode_us += elapsed;
         if (elapsed > *max_decode_us) {
             *max_decode_us = elapsed;
@@ -1020,6 +1038,13 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
                 uint64_t started;
                 uint64_t elapsed;
 
+                if (client->call_started_us != 0) {
+                    uint64_t ready_us = monotonic_us() - client->call_started_us;
+                    if (client->first_response_message_ready_us == 0) {
+                        client->first_response_message_ready_us = ready_us;
+                    }
+                    client->last_response_message_ready_us = ready_us;
+                }
                 ZSTR_VAL(payload)[client->response_payload_len] = '\0';
                 client->response_payload = NULL;
                 client->response_header_len = 0;
@@ -1041,6 +1066,13 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
                     return -1;
                 }
                 elapsed = monotonic_us() - started;
+                if (client->call_started_us != 0) {
+                    uint64_t done_us = monotonic_us() - client->call_started_us;
+                    if (client->first_response_callback_done_us == 0) {
+                        client->first_response_callback_done_us = done_us;
+                    }
+                    client->last_response_callback_done_us = done_us;
+                }
                 client->call_response_decode_us += elapsed;
                 if (elapsed > client->call_max_response_decode_us) {
                     client->call_max_response_decode_us = elapsed;
@@ -1471,6 +1503,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     zval client_first_flow_control_pause_us;
     zval client_response_header_us;
     zval client_stream_close_us;
+    zval client_first_response_message_ready_us;
+    zval client_last_response_message_ready_us;
+    zval client_first_response_callback_done_us;
+    zval client_last_response_callback_done_us;
     zval call_window_update_frames_recv;
     zval call_connection_window_update_frames_recv;
     zval call_stream_window_update_frames_recv;
@@ -1684,6 +1720,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     array_init(&client_first_flow_control_pause_us);
     array_init(&client_response_header_us);
     array_init(&client_stream_close_us);
+    array_init(&client_first_response_message_ready_us);
+    array_init(&client_last_response_message_ready_us);
+    array_init(&client_first_response_callback_done_us);
+    array_init(&client_last_response_callback_done_us);
     array_init(&call_window_update_frames_recv);
     array_init(&call_connection_window_update_frames_recv);
     array_init(&call_stream_window_update_frames_recv);
@@ -1762,6 +1802,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         client.first_flow_control_pause_us = 0;
         client.first_response_header_us = 0;
         client.stream_closed_us = 0;
+        client.first_response_message_ready_us = 0;
+        client.last_response_message_ready_us = 0;
+        client.first_response_callback_done_us = 0;
+        client.last_response_callback_done_us = 0;
         client.call_window_update_frames_recv = 0;
         client.call_connection_window_update_frames_recv = 0;
         client.call_stream_window_update_frames_recv = 0;
@@ -1898,6 +1942,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         add_next_index_long(&client_first_flow_control_pause_us, (zend_long) client.first_flow_control_pause_us);
         add_next_index_long(&client_response_header_us, (zend_long) client.first_response_header_us);
         add_next_index_long(&client_stream_close_us, (zend_long) client.stream_closed_us);
+        add_next_index_long(&client_first_response_message_ready_us, (zend_long) client.first_response_message_ready_us);
+        add_next_index_long(&client_last_response_message_ready_us, (zend_long) client.last_response_message_ready_us);
+        add_next_index_long(&client_first_response_callback_done_us, (zend_long) client.first_response_callback_done_us);
+        add_next_index_long(&client_last_response_callback_done_us, (zend_long) client.last_response_callback_done_us);
         add_next_index_long(&call_window_update_frames_recv, (zend_long) client.call_window_update_frames_recv);
         add_next_index_long(&call_connection_window_update_frames_recv, (zend_long) client.call_connection_window_update_frames_recv);
         add_next_index_long(&call_stream_window_update_frames_recv, (zend_long) client.call_stream_window_update_frames_recv);
@@ -2042,6 +2090,10 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     add_assoc_zval(return_value, "client_first_flow_control_pause_us", &client_first_flow_control_pause_us);
     add_assoc_zval(return_value, "client_response_header_us", &client_response_header_us);
     add_assoc_zval(return_value, "client_stream_close_us", &client_stream_close_us);
+    add_assoc_zval(return_value, "client_first_response_message_ready_us", &client_first_response_message_ready_us);
+    add_assoc_zval(return_value, "client_last_response_message_ready_us", &client_last_response_message_ready_us);
+    add_assoc_zval(return_value, "client_first_response_callback_done_us", &client_first_response_callback_done_us);
+    add_assoc_zval(return_value, "client_last_response_callback_done_us", &client_last_response_callback_done_us);
     add_assoc_zval(return_value, "call_window_update_frames_recv", &call_window_update_frames_recv);
     add_assoc_zval(return_value, "call_connection_window_update_frames_recv", &call_connection_window_update_frames_recv);
     add_assoc_zval(return_value, "call_stream_window_update_frames_recv", &call_stream_window_update_frames_recv);

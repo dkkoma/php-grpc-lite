@@ -117,6 +117,10 @@ $series = [
     'client_first_flow_control_pause_us',
     'client_response_header_us',
     'client_stream_close_us',
+    'client_first_response_message_ready_us',
+    'client_last_response_message_ready_us',
+    'client_first_response_callback_done_us',
+    'client_last_response_callback_done_us',
     'call_window_update_frames_recv',
     'call_connection_window_update_frames_recv',
     'call_stream_window_update_frames_recv',
@@ -184,8 +188,16 @@ foreach ($series as $key) {
     $result[$key . '_p99'] = percentile($values, 0.99);
 }
 
+$derivedSeries = buildDerivedSeries($result, $rawLatencies);
+foreach ($derivedSeries as $key => $values) {
+    $sorted = $values;
+    sort($sorted);
+    $result[$key . '_p50'] = percentile($sorted, 0.50);
+    $result[$key . '_p99'] = percentile($sorted, 0.99);
+}
+
 $result['sample_calls'] = sampleCalls($result, $rawLatencies, min(5, $count));
-$result['tail_sample_calls'] = tailSampleCalls($result, $rawLatencies, min(5, $count));
+$result['tail_sample_calls'] = tailSampleCalls($result, $rawLatencies, min(5, $count), $derivedSeries);
 
 foreach (array_merge(['latencies_us'], $series) as $key) {
     unset($result[$key]);
@@ -252,6 +264,54 @@ function decodeBenchReply(string $payload): Helloworld\BenchReply
 function yieldBenchReply(Helloworld\BenchReply $reply): \Generator
 {
     yield $reply;
+}
+
+/**
+ * @param array<string, mixed> $result
+ * @param list<int> $latencies
+ * @return array<string, list<int>>
+ */
+function buildDerivedSeries(array $result, array $latencies): array
+{
+    $series = [
+        'call_loop_active_us' => [],
+        'call_loop_known_including_poll_us' => [],
+        'call_unaccounted_after_loop_known_us' => [],
+        'call_mem_recv_inner_known_us' => [],
+        'call_after_last_data_to_close_us' => [],
+        'call_after_message_ready_to_close_us' => [],
+        'call_after_callback_done_to_close_us' => [],
+        'call_server_last_to_close_us' => [],
+    ];
+
+    foreach ($latencies as $index => $latency) {
+        $loopActive =
+            (int) ($result['call_recv_syscall_us'][$index] ?? 0)
+            + (int) ($result['call_mem_recv_us'][$index] ?? 0)
+            + (int) ($result['call_session_send_after_recv_us'][$index] ?? 0);
+        $memRecvInnerKnown =
+            + (int) ($result['call_body_append_us'][$index] ?? 0)
+            + (int) ($result['call_body_compact_us'][$index] ?? 0)
+            + (int) ($result['call_response_payload_string_us'][$index] ?? 0)
+            + (int) ($result['call_response_decode_us'][$index] ?? 0);
+        $knownIncludingPoll = $loopActive + (int) ($result['call_poll_wait_us'][$index] ?? 0);
+        $streamClose = (int) ($result['client_stream_close_us'][$index] ?? 0);
+        $lastData = (int) ($result['client_last_response_data_us'][$index] ?? 0);
+        $messageReady = (int) ($result['client_last_response_message_ready_us'][$index] ?? 0);
+        $callbackDone = (int) ($result['client_last_response_callback_done_us'][$index] ?? 0);
+        $serverLast = (int) round(((int) ($result['server_stats_last_out_payload_ns'][$index] ?? 0)) / 1000);
+
+        $series['call_loop_active_us'][] = $loopActive;
+        $series['call_loop_known_including_poll_us'][] = $knownIncludingPoll;
+        $series['call_unaccounted_after_loop_known_us'][] = max(0, (int) $latency - $knownIncludingPoll);
+        $series['call_mem_recv_inner_known_us'][] = $memRecvInnerKnown;
+        $series['call_after_last_data_to_close_us'][] = max(0, $streamClose - $lastData);
+        $series['call_after_message_ready_to_close_us'][] = $messageReady > 0 ? max(0, $streamClose - $messageReady) : 0;
+        $series['call_after_callback_done_to_close_us'][] = $callbackDone > 0 ? max(0, $streamClose - $callbackDone) : 0;
+        $series['call_server_last_to_close_us'][] = $serverLast > 0 ? max(0, $streamClose - $serverLast) : 0;
+    }
+
+    return $series;
 }
 
 /**
@@ -332,7 +392,7 @@ function sampleCalls(array $result, array $latencies, int $limit): array
  * @param array<string, mixed> $result
  * @return list<array<string, int|float>>
  */
-function tailSampleCalls(array $result, array $latencies, int $limit): array
+function tailSampleCalls(array $result, array $latencies, int $limit, array $derivedSeries = []): array
 {
     $indices = array_keys($latencies);
     usort($indices, static fn (int $a, int $b): int => ($latencies[$b] ?? 0) <=> ($latencies[$a] ?? 0));
@@ -352,6 +412,16 @@ function tailSampleCalls(array $result, array $latencies, int $limit): array
             'client_first_flow_control_pause_us' => (int) ($result['client_first_flow_control_pause_us'][$index] ?? 0),
             'client_response_header_us' => (int) ($result['client_response_header_us'][$index] ?? 0),
             'client_stream_close_us' => (int) ($result['client_stream_close_us'][$index] ?? 0),
+            'client_last_response_message_ready_us' => (int) ($result['client_last_response_message_ready_us'][$index] ?? 0),
+            'client_last_response_callback_done_us' => (int) ($result['client_last_response_callback_done_us'][$index] ?? 0),
+            'call_loop_active_us' => (int) ($derivedSeries['call_loop_active_us'][$index] ?? 0),
+            'call_loop_known_including_poll_us' => (int) ($derivedSeries['call_loop_known_including_poll_us'][$index] ?? 0),
+            'call_unaccounted_after_loop_known_us' => (int) ($derivedSeries['call_unaccounted_after_loop_known_us'][$index] ?? 0),
+            'call_mem_recv_inner_known_us' => (int) ($derivedSeries['call_mem_recv_inner_known_us'][$index] ?? 0),
+            'call_after_last_data_to_close_us' => (int) ($derivedSeries['call_after_last_data_to_close_us'][$index] ?? 0),
+            'call_after_message_ready_to_close_us' => (int) ($derivedSeries['call_after_message_ready_to_close_us'][$index] ?? 0),
+            'call_after_callback_done_to_close_us' => (int) ($derivedSeries['call_after_callback_done_to_close_us'][$index] ?? 0),
+            'call_server_last_to_close_us' => (int) ($derivedSeries['call_server_last_to_close_us'][$index] ?? 0),
             'call_window_update_frames_recv' => (int) ($result['call_window_update_frames_recv'][$index] ?? 0),
             'call_connection_window_update_frames_recv' => (int) ($result['call_connection_window_update_frames_recv'][$index] ?? 0),
             'call_stream_window_update_frames_recv' => (int) ($result['call_stream_window_update_frames_recv'][$index] ?? 0),
