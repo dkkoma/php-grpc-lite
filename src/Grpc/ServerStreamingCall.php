@@ -229,6 +229,7 @@ class ServerStreamingCall extends AbstractCall
 
                 $next = Internal\NativeTransport::streamNext($this->nativeStream);
                 if (($next['done'] ?? false) === true) {
+                    $this->responseHeaders = $next['headers'] ?? [];
                     $this->responseTrailers = $next['trailers'] ?? [];
                     $this->finalStatus = $this->makeStatus((int) $next['grpc_status'], (string) $next['details']);
                     return;

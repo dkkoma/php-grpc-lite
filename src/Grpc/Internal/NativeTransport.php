@@ -15,7 +15,7 @@ final class NativeTransport
 {
     /**
      * @param array<string, string> $headers
-     * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, trailers: array<string, list<string>>, raw: array<string, mixed>}
+     * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, headers: array<string, list<string>>, trailers: array<string, list<string>>, raw: array<string, mixed>}
      */
     public static function unaryBatch(
         string $target,
@@ -72,6 +72,7 @@ final class NativeTransport
             'grpc_status' => $grpcStatus,
             'details' => $details,
             'http_status' => (int) ($result['http_status'] ?? 0),
+            'headers' => self::extractInitialMetadata($result),
             'trailers' => self::extractTrailers($result, $grpcStatus, $details),
             'raw' => $result,
         ];
@@ -79,7 +80,7 @@ final class NativeTransport
 
     /**
      * @param array<string, string> $headers
-     * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, trailers: array<string, list<string>>, raw: array<string, mixed>}
+     * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, headers: array<string, list<string>>, trailers: array<string, list<string>>, raw: array<string, mixed>}
      */
     public static function unarySimple(
         string $target,
@@ -118,10 +119,18 @@ final class NativeTransport
         [$grpcStatus, $details] = self::normalizeStatus($result);
         $payloads = [];
         $body = $result['body'] ?? '';
-        if (is_string($body)) {
+        $shouldParseGrpcBody = $grpcStatus === \Grpc\STATUS_OK
+            || ($grpcStatus === \Grpc\STATUS_UNKNOWN && $details === 'missing grpc-status trailer');
+        if (is_string($body) && $shouldParseGrpcBody) {
             $offset = 0;
             $bodyLength = strlen($body);
             while ($offset + 5 <= $bodyLength) {
+                if (ord($body[$offset]) !== 0) {
+                    $grpcStatus = \Grpc\STATUS_UNIMPLEMENTED;
+                    $details = 'compressed gRPC messages are not supported';
+                    $payloads = [];
+                    break;
+                }
                 $payloadLength = unpack('N', substr($body, $offset + 1, 4))[1];
                 if ($offset + 5 + $payloadLength > $bodyLength) {
                     break;
@@ -136,6 +145,7 @@ final class NativeTransport
             'grpc_status' => $grpcStatus,
             'details' => $details,
             'http_status' => (int) ($result['http_status'] ?? 0),
+            'headers' => self::extractInitialMetadata($result),
             'trailers' => self::extractTrailers($result, $grpcStatus, $details),
             'raw' => $result,
         ];
@@ -175,7 +185,7 @@ final class NativeTransport
         );
     }
 
-    /** @return array{done: bool, payload?: string, raw?: array<string, mixed>, grpc_status?: int, details?: string, http_status?: int, trailers?: array<string, list<string>>} */
+    /** @return array{done: bool, payload?: string, raw?: array<string, mixed>, grpc_status?: int, details?: string, http_status?: int, headers?: array<string, list<string>>, trailers?: array<string, list<string>>} */
     public static function streamNext(mixed $stream): array
     {
         if (!function_exists('nghttp2_poc_stream_next')) {
@@ -196,6 +206,7 @@ final class NativeTransport
             'grpc_status' => $grpcStatus,
             'details' => $details,
             'http_status' => (int) ($result['http_status'] ?? 0),
+            'headers' => self::extractInitialMetadata($result),
             'trailers' => self::extractTrailers($result, $grpcStatus, $details),
             'raw' => $result,
         ];
@@ -215,9 +226,19 @@ final class NativeTransport
             return [\Grpc\STATUS_DEADLINE_EXCEEDED, 'native transport deadline exceeded'];
         }
 
+        $metadata = self::extractInitialMetadata($result);
+        $unsupportedEncoding = self::unsupportedGrpcEncoding($metadata);
+        if ($unsupportedEncoding !== null) {
+            return [\Grpc\STATUS_UNIMPLEMENTED, "unsupported grpc-encoding: $unsupportedEncoding"];
+        }
+        if (($result['compressed_response_seen'] ?? false) === true) {
+            return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
+        }
+
         $grpcStatus = (int) ($result['grpc_status'] ?? -1);
         if ($grpcStatus >= 0) {
-            return [$grpcStatus, ''];
+            $message = $result['grpc_message'] ?? '';
+            return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
         }
 
         $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
@@ -227,10 +248,27 @@ final class NativeTransport
 
         $httpStatus = (int) ($result['http_status'] ?? 0);
         if ($httpStatus !== 200) {
-            return [\Grpc\STATUS_UNKNOWN, "HTTP status $httpStatus without grpc-status"];
+            return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
+        }
+
+        $contentType = strtolower($metadata['content-type'][0] ?? '');
+        if (!str_starts_with($contentType, 'application/grpc')) {
+            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
         }
 
         return [\Grpc\STATUS_UNKNOWN, 'missing grpc-status trailer'];
+    }
+
+    private static function mapHttpStatusToGrpcStatus(int $httpStatus): int
+    {
+        return match ($httpStatus) {
+            400 => \Grpc\STATUS_INTERNAL,
+            401 => \Grpc\STATUS_UNAUTHENTICATED,
+            403 => \Grpc\STATUS_PERMISSION_DENIED,
+            404 => \Grpc\STATUS_UNIMPLEMENTED,
+            429, 502, 503, 504 => \Grpc\STATUS_UNAVAILABLE,
+            default => \Grpc\STATUS_UNKNOWN,
+        };
     }
 
     private static function mapHttp2ErrorToGrpcStatus(int $streamErrorCode): int
@@ -247,11 +285,61 @@ final class NativeTransport
      * @param array<string, mixed> $result
      * @return array<string, list<string>>
      */
+    private static function extractInitialMetadata(array $result): array
+    {
+        return self::normalizeMetadataMap($result['initial_metadata'] ?? []);
+    }
+
+    /**
+     * @param array<string, list<string>> $metadata
+     */
+    private static function unsupportedGrpcEncoding(array $metadata): ?string
+    {
+        $encoding = strtolower($metadata['grpc-encoding'][0] ?? 'identity');
+        return ($encoding === '' || $encoding === 'identity') ? null : $encoding;
+    }
+
+    /**
+     * @param mixed $metadata
+     * @return array<string, list<string>>
+     */
+    private static function normalizeMetadataMap(mixed $metadata): array
+    {
+        if (!is_array($metadata)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($metadata as $key => $values) {
+            if (!is_string($key) || str_starts_with($key, ':')) {
+                continue;
+            }
+            foreach ((array) $values as $value) {
+                if (!is_string($value)) {
+                    continue;
+                }
+                if (str_ends_with(strtolower($key), '-bin')) {
+                    foreach (explode(',', $value) as $part) {
+                        $decoded = base64_decode($part, true);
+                        $normalized[$key][] = $decoded === false ? '' : $decoded;
+                    }
+                    continue;
+                }
+                $normalized[$key][] = $value;
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @return array<string, list<string>>
+     */
     private static function extractTrailers(array $result, int $grpcStatus, string $details): array
     {
-        $trailers = [
-            'grpc-status' => [(string) $grpcStatus],
-        ];
+        $trailers = self::normalizeMetadataMap($result['trailing_metadata'] ?? []);
+        $trailers['grpc-status'] = [(string) $grpcStatus];
         if ($details !== '') {
             $trailers['grpc-message'] = [rawurlencode($details)];
         }

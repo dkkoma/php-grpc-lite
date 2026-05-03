@@ -47,14 +47,23 @@ typedef struct queued_raw_payload {
     struct queued_raw_payload *next;
 } queued_raw_payload;
 
+typedef struct metadata_entry {
+    zend_string *key;
+    zend_string *value;
+    bool trailing;
+    struct metadata_entry *next;
+} metadata_entry;
+
 typedef struct {
     int fd;
     poc_channel *channel;
     int32_t stream_id;
     bool stream_closed;
     int grpc_status;
+    zend_string *grpc_message;
     uint32_t stream_error_code;
     int http_status;
+    bool compressed_response_seen;
     size_t bytes_sent;
     size_t bytes_received;
     size_t data_read_calls;
@@ -155,6 +164,8 @@ typedef struct {
     uint64_t call_max_response_queue_wait_us;
     queued_raw_payload *raw_response_queue_head;
     queued_raw_payload *raw_response_queue_tail;
+    metadata_entry *metadata_head;
+    metadata_entry *metadata_tail;
     char *response_raw_payload;
     bool compact_response_buffer;
     size_t response_compact_threshold;
@@ -163,6 +174,7 @@ typedef struct {
     size_t response_header_len;
     uint32_t response_payload_len;
     size_t response_payload_offset;
+    bool response_current_compressed;
     zend_string *response_payload;
     zend_long call_decoded_messages;
     uint64_t call_response_payload_string_us;
@@ -252,6 +264,9 @@ static int enqueue_raw_response_payload(poc_client *client, char *payload, size_
 static int deliver_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us);
 static int deliver_queued_raw_response_payloads(poc_client *client);
 static void free_queued_raw_response_payloads(poc_client *client);
+static int add_metadata_entry(poc_client *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+static void free_metadata_entries(poc_client *client);
+static void add_metadata_map_to_return(zval *return_value, const char *name, poc_client *client, bool trailing);
 static void compact_response_body_if_needed(poc_client *client);
 static bool channel_usable(poc_channel *channel);
 static int connect_tcp(const char *host, zend_long port);
@@ -391,6 +406,11 @@ static void destroy_poc_stream(poc_stream *stream)
     }
     free_queued_response_payloads(&stream->client);
     free_queued_raw_response_payloads(&stream->client);
+    free_metadata_entries(&stream->client);
+    if (stream->client.grpc_message != NULL) {
+        zend_string_release(stream->client.grpc_message);
+        stream->client.grpc_message = NULL;
+    }
     if (stream->client.response_raw_payload != NULL) {
         free(stream->client.response_raw_payload);
     }
@@ -1224,17 +1244,26 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
     poc_client *client = (poc_client *) user_data;
+    bool trailing;
     (void) session;
     (void) flags;
     if (frame->hd.stream_id != client->stream_id) {
         return 0;
     }
+    trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
         char status_buf[16];
         size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
         memcpy(status_buf, value, copy_len);
         status_buf[copy_len] = '\0';
         client->grpc_status = atoi(status_buf);
+        trailing = true;
+    } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
+        if (client->grpc_message != NULL) {
+            zend_string_release(client->grpc_message);
+        }
+        client->grpc_message = zend_string_init((const char *) value, valuelen, 0);
+        trailing = true;
     } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
         if (client->first_response_header_us == 0) {
             client->first_response_header_us = monotonic_us() - client->call_started_us;
@@ -1274,6 +1303,9 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         client->server_stats_out_payload_wire_bytes = header_value_to_long(value, valuelen);
     } else if (namelen == sizeof("x-bench-server-stats-out-payload-compressed-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-compressed-bytes", namelen) == 0) {
         client->server_stats_out_payload_compressed_bytes = header_value_to_long(value, valuelen);
+    }
+    if (add_metadata_entry(client, name, namelen, value, valuelen, trailing) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     return 0;
 }
@@ -1515,8 +1547,19 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
                 | ((uint32_t) client->response_header_buf[2] << 16)
                 | ((uint32_t) client->response_header_buf[3] << 8)
                 | (uint32_t) client->response_header_buf[4];
+            client->response_current_compressed = client->response_header_buf[0] != 0;
+            if (client->response_header_buf[0] != 0) {
+                client->compressed_response_seen = true;
+            }
             client->response_payload_offset = 0;
-            if (client->transport_thread) {
+            if (client->response_current_compressed) {
+                if (client->response_payload_len == 0) {
+                    client->response_header_len = 0;
+                    client->response_payload_len = 0;
+                    client->response_payload_offset = 0;
+                    client->response_current_compressed = false;
+                }
+            } else if (client->transport_thread) {
                 client->response_raw_payload = client->response_payload_len > 0 ? malloc(client->response_payload_len) : malloc(1);
                 if (client->response_raw_payload == NULL) {
                     return -1;
@@ -1529,7 +1572,18 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
             }
         }
 
-        if (client->transport_thread && client->response_raw_payload != NULL) {
+        if (client->response_current_compressed) {
+            size_t need = client->response_payload_len - client->response_payload_offset;
+            size_t take = need < len - offset ? need : len - offset;
+            client->response_payload_offset += take;
+            offset += take;
+            if (client->response_payload_offset == client->response_payload_len) {
+                client->response_header_len = 0;
+                client->response_payload_len = 0;
+                client->response_payload_offset = 0;
+                client->response_current_compressed = false;
+            }
+        } else if (client->transport_thread && client->response_raw_payload != NULL) {
             size_t need = client->response_payload_len - client->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
             uint64_t payload_string_started = monotonic_us();
@@ -1736,6 +1790,68 @@ static void free_queued_response_payloads(poc_client *client)
     client->response_queue_tail = NULL;
     client->response_queue_count = 0;
     client->response_queue_bytes = 0;
+}
+
+static int add_metadata_entry(poc_client *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
+{
+    metadata_entry *entry;
+
+    if (namelen == 0 || name[0] == ':') {
+        return 0;
+    }
+
+    entry = emalloc(sizeof(metadata_entry));
+    entry->key = zend_string_init((const char *) name, namelen, 0);
+    entry->value = zend_string_init((const char *) value, valuelen, 0);
+    entry->trailing = trailing;
+    entry->next = NULL;
+
+    if (client->metadata_tail == NULL) {
+        client->metadata_head = entry;
+    } else {
+        client->metadata_tail->next = entry;
+    }
+    client->metadata_tail = entry;
+
+    return 0;
+}
+
+static void free_metadata_entries(poc_client *client)
+{
+    while (client->metadata_head != NULL) {
+        metadata_entry *entry = client->metadata_head;
+        client->metadata_head = entry->next;
+        zend_string_release(entry->key);
+        zend_string_release(entry->value);
+        efree(entry);
+    }
+    client->metadata_tail = NULL;
+}
+
+static void add_metadata_map_to_return(zval *return_value, const char *name, poc_client *client, bool trailing)
+{
+    zval metadata;
+    metadata_entry *entry;
+
+    array_init(&metadata);
+    for (entry = client->metadata_head; entry != NULL; entry = entry->next) {
+        zval *values;
+
+        if (entry->trailing != trailing) {
+            continue;
+        }
+        values = zend_hash_find(Z_ARRVAL(metadata), entry->key);
+        if (values == NULL) {
+            zval new_values;
+            array_init(&new_values);
+            add_next_index_str(&new_values, zend_string_copy(entry->value));
+            zend_hash_update(Z_ARRVAL(metadata), entry->key, &new_values);
+        } else if (Z_TYPE_P(values) == IS_ARRAY) {
+            add_next_index_str(values, zend_string_copy(entry->value));
+        }
+    }
+
+    add_assoc_zval(return_value, name, &metadata);
 }
 
 static int enqueue_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us)
@@ -2398,7 +2514,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     setup_started = monotonic_us();
     nghttp2_session_set_user_data(channel->session, &client);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":scheme", "http");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":scheme", channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", channel->authority, strlen(channel->authority));
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
@@ -2488,8 +2604,10 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     smart_str_0(&client.body);
     add_assoc_str(return_value, "body", client.body.s ? zend_string_copy(client.body.s) : zend_empty_string);
     add_assoc_long(return_value, "grpc_status", client.grpc_status);
+    add_assoc_str(return_value, "grpc_message", client.grpc_message != NULL ? zend_string_copy(client.grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client.http_status);
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
+    add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_long(return_value, "request_offset", client.request_offset);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
@@ -2536,6 +2654,12 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     add_assoc_long(return_value, "server_stats_out_payload_bytes", client.server_stats_out_payload_bytes);
     add_assoc_long(return_value, "server_stats_out_payload_wire_bytes", client.server_stats_out_payload_wire_bytes);
     add_assoc_long(return_value, "server_stats_out_payload_compressed_bytes", client.server_stats_out_payload_compressed_bytes);
+    add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
+    add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
+    if (client.grpc_message != NULL) {
+        zend_string_release(client.grpc_message);
+    }
+    free_metadata_entries(&client);
     smart_str_free(&client.body);
     return SUCCESS;
 }
@@ -2726,7 +2850,7 @@ PHP_FUNCTION(nghttp2_poc_stream_open)
 
     nghttp2_session_set_user_data(channel->session, &stream->client);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":scheme", "http");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":scheme", channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", channel->authority, strlen(channel->authority));
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
@@ -2783,8 +2907,10 @@ static void add_stream_status(zval *return_value, poc_stream *stream)
     poc_client *client = &stream->client;
     add_assoc_bool(return_value, "done", true);
     add_assoc_long(return_value, "grpc_status", client->grpc_status);
+    add_assoc_str(return_value, "grpc_message", client->grpc_message != NULL ? zend_string_copy(client->grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client->http_status);
     add_assoc_long(return_value, "stream_error_code", client->stream_error_code);
+    add_assoc_bool(return_value, "compressed_response_seen", client->compressed_response_seen);
     add_assoc_bool(return_value, "timed_out", client->timed_out);
     add_assoc_bool(return_value, "cancelled", stream->cancelled);
     add_assoc_long(return_value, "body_bytes", 0);
@@ -2807,6 +2933,8 @@ static void add_stream_status(zval *return_value, poc_stream *stream)
     add_assoc_long(return_value, "server_stats_out_payload_bytes", client->server_stats_out_payload_bytes);
     add_assoc_long(return_value, "server_stats_out_payload_wire_bytes", client->server_stats_out_payload_wire_bytes);
     add_assoc_long(return_value, "server_stats_out_payload_compressed_bytes", client->server_stats_out_payload_compressed_bytes);
+    add_metadata_map_to_return(return_value, "initial_metadata", client, false);
+    add_metadata_map_to_return(return_value, "trailing_metadata", client, true);
 }
 
 PHP_FUNCTION(nghttp2_poc_stream_next)
@@ -3073,8 +3201,10 @@ PHP_FUNCTION(nghttp2_poc_unary)
     smart_str_0(&client.body);
     add_assoc_str(return_value, "body", client.body.s ? zend_string_copy(client.body.s) : zend_empty_string);
     add_assoc_long(return_value, "grpc_status", client.grpc_status);
+    add_assoc_str(return_value, "grpc_message", client.grpc_message != NULL ? zend_string_copy(client.grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client.http_status);
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
+    add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_long(return_value, "request_offset", client.request_offset);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
@@ -3098,6 +3228,12 @@ PHP_FUNCTION(nghttp2_poc_unary)
     add_assoc_long(return_value, "initial_send_us", (zend_long) initial_send_us);
     add_assoc_long(return_value, "recv_loop_us", (zend_long) recv_loop_us);
     add_assoc_long(return_value, "cleanup_us", (zend_long) cleanup_us);
+    add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
+    add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
+    if (client.grpc_message != NULL) {
+        zend_string_release(client.grpc_message);
+    }
+    free_metadata_entries(&client);
     smart_str_free(&client.body);
 }
 

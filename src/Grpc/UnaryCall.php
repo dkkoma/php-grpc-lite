@@ -207,6 +207,7 @@ class UnaryCall extends AbstractCall
 
         $normalizeStartedNs = hrtime(true);
         $code = $result['grpc_status'];
+        $this->responseHeaders = $result['headers'];
         $this->responseTrailers = $result['trailers'];
         $payload = $result['payloads'][0] ?? null;
         $this->recordDiagnostic('native_result_normalize_ns', hrtime(true) - $normalizeStartedNs);

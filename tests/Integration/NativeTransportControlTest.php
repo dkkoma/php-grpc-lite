@@ -40,6 +40,34 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame('Hello, TLS', $response?->getMessage());
     }
 
+    public function testNativeTlsServerStreamingSucceeds(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $rootCerts = file_get_contents(self::CA_PATH);
+        self::assertNotFalse($rootCerts);
+
+        $client = new GreeterClient(self::TLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl($rootCerts),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        $request = new BenchRequest();
+        $request->setMessageCount(3);
+        $request->setPayloadBytes(100);
+
+        $call = $client->BenchServerStream($request);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(3, $count);
+        self::assertSame(\Grpc\STATUS_OK, $call->getStatus()->code, $call->getStatus()->details);
+    }
+
     public function testNativeMtlsUnarySucceeds(): void
     {
         if (!extension_loaded('nghttp2_poc')) {
@@ -64,6 +92,231 @@ final class NativeTransportControlTest extends TestCase
 
         self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
         self::assertSame('Hello, mTLS', $response?->getMessage());
+    }
+
+    public function testNativeMtlsServerStreamingSucceeds(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $rootCerts = file_get_contents(self::CA_PATH);
+        $clientCert = file_get_contents(self::CLIENT_CERT_PATH);
+        $clientKey = file_get_contents(self::CLIENT_KEY_PATH);
+        self::assertNotFalse($rootCerts);
+        self::assertNotFalse($clientCert);
+        self::assertNotFalse($clientKey);
+
+        $client = new GreeterClient(self::MTLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl($rootCerts, $clientKey, $clientCert),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        $request = new BenchRequest();
+        $request->setMessageCount(3);
+        $request->setPayloadBytes(100);
+
+        $call = $client->BenchServerStream($request);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(3, $count);
+        self::assertSame(\Grpc\STATUS_OK, $call->getStatus()->code, $call->getStatus()->details);
+    }
+
+    public function testNativeTlsWithInvalidRootCertFailsWithoutCurlFallback(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient(self::TLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        $request = new HelloRequest();
+        $request->setName('TLS');
+        [$response, $status] = $client->SayHello($request)->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
+        self::assertSame('failed to establish TLS', $status->details);
+    }
+
+    public function testNativeMtlsWithoutClientCertificateFailsWithoutCurlFallback(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $rootCerts = file_get_contents(self::CA_PATH);
+        self::assertNotFalse($rootCerts);
+
+        $client = new GreeterClient(self::MTLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl($rootCerts),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        $request = new HelloRequest();
+        $request->setName('mTLS');
+        [$response, $status] = $client->SayHello($request)->wait();
+
+        self::assertNull($response);
+        self::assertNotSame(\Grpc\STATUS_OK, $status->code);
+    }
+
+    public function testNativeUnaryTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest(), [
+            'x-bench-error-code' => [(string) \Grpc\STATUS_INVALID_ARGUMENT],
+            'x-bench-error-message' => ['bench error with spaces'],
+        ])->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $status->code);
+        self::assertSame('bench error with spaces', $status->details);
+        self::assertSame(['3'], $status->metadata['grpc-status'] ?? null);
+    }
+
+    public function testNativeServerStreamingTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        $request = new BenchRequest();
+        $request->setMessageCount(10);
+        $request->setPayloadBytes(100);
+
+        $call = $client->BenchServerStream($request, [
+            'x-bench-error-code' => [(string) \Grpc\STATUS_INVALID_ARGUMENT],
+            'x-bench-error-message' => ['bench error with spaces'],
+        ]);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(0, $count);
+        self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $call->getStatus()->code);
+        self::assertSame('bench error with spaces', $call->getStatus()->details);
+    }
+
+    public function testNativeBinaryMetadataRoundTripUsesRawPhpValues(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+        $values = ["\x00\x01\xff,a"];
+
+        $call = $client->BenchUnary(new BenchRequest(), [
+            'x-bench-echo-bin' => $values,
+        ]);
+        [, $status] = $call->wait();
+
+        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+        self::assertSame($values, $call->getMetadata()['x-bench-initial-bin'] ?? null);
+        self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-bin'] ?? null);
+    }
+
+    public function testNativeUnaryHttpStatusWithoutGrpcStatusIsMapped(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50054', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest(), [
+            'x-bench-http-status' => ['503'],
+        ])->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
+        self::assertSame('HTTP status 503 without grpc-status', $status->details);
+    }
+
+    public function testNativeUnaryRejectsNonGrpcContentType(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50054', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNKNOWN, $status->code);
+        self::assertSame('invalid gRPC content-type: text/plain', $status->details);
+    }
+
+    public function testNativeUnaryCompressedMessageIsExplicitlyUnsupported(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50054', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest(), [
+            'x-bench-grpc-response' => ['compressed-flag'],
+        ])->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $status->code);
+        self::assertSame('compressed gRPC messages are not supported', $status->details);
+    }
+
+    public function testNativeUnaryGrpcEncodingIsExplicitlyUnsupported(): void
+    {
+        if (!extension_loaded('nghttp2_poc')) {
+            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50054', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'php_grpc_lite.transport' => 'native',
+        ]);
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest(), [
+            'x-bench-grpc-encoding' => ['gzip'],
+        ])->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $status->code);
+        self::assertSame('unsupported grpc-encoding: gzip', $status->details);
     }
 
     public function testNativeExtensionMissingFailsAsStatusWithoutCurlFallback(): void
