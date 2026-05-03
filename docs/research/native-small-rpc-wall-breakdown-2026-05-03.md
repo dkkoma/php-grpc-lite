@@ -38,7 +38,7 @@ C PoC に最小の persistent channel API を追加した。
 - 壊れた RPC は transport 層では自動 retry せず、次の RPC 開始時に新しい channel を作る
 - server streaming の small response では `native_response_mode=simple` により同じ persistent simple 経路を使う
 
-これは Phase 2 PoC の最小実装であり、TLS/mTLS、request をまたぐ FPM persistent resource、concurrent streams は未実装。
+これは Phase 2 PoC の最小実装であり、request をまたぐ FPM persistent resource、production streaming resource、large streaming mode選択は未実装。
 
 ## 結果: small unary
 
@@ -85,8 +85,8 @@ Phase 2 MVP の設計上は、native transport を採用するなら C 拡張内
 
 残課題:
 
-- send error / mid-stream failure の追加fixture
-- TLS/mTLS channel
 - FPM request をまたぐ persistent resource の可否
-- concurrent streams / multiplex
+- production streaming resource
 - large streaming で `simple` と `compact64` / `direct` の選択ルールを再評価
+
+`nghttp2_poc_multiplex_unary()` により同一HTTP/2 session上の複数in-flight streamはPoC検証済み。ただしFPM / thread-local FrankenPHPの同期主用途ではrelease default gateにせず、async runtimeや同一実行コンテキスト内の並列RPC向けの将来項目として扱う。
