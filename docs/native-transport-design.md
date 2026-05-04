@@ -193,7 +193,7 @@ libcurl pathと同等に通す必要があるもの:
 - content-type validation
 - `grpc-message` percent decode
 - binary metadata request/initial/trailing
-- duplicate metadata value behavior
+- duplicate metadata values are preserved as `array<string, list<string>>`
 - client-side deadline
 - cancel / early stream termination
 - TLS / mTLS

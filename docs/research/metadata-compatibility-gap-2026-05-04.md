@@ -11,14 +11,15 @@
 - native 経路は response initial / trailing metadata、`grpc-status`、`grpc-message`、compressed flag、HTTP status / content-type validation を generic に回収する。
 - trailers-only error と binary metadata の代表ケースは native compatibility gate に入っている。
 - 2026-05-04 の追加観測で、curl / native は同一 key 複数 values を PHP API 上 `list<string>` として保持できる。公式 ext-grpc は同一 key 複数 values のうち最後の value だけを PHP API に出す。
+- php-grpc-lite はgRPC仕様準拠を優先し、同一 key 複数 values を保持する。ext-grpc PHP API の最後値のみ可視な挙動には寄せない。
 - native request metadata は `array<string, list<string>>` として C extension へ渡し、nghttp2 request header list を動的に組み立てる形へ修正済み。固定 8 headers / 512 bytes buffer による欠落・切り詰めは P0 観測ケースでは解消済み。
 
 ## Gaps
 
 | 分類 | 未確認・問題候補 | 現状の観測 |
 |---|---|---|
-| duplicate request metadata | 同一 key の複数 ASCII / binary values が wire 上で複数 header field として送られるか | curl / native は複数 values を保持。ext-grpc は response PHP API では最後値のみ可視 |
-| duplicate response metadata | 同一 key の initial / trailing metadata 複数 values が PHP API でどう見えるか | curl / native は全 values、ext-grpc は最後値のみ可視 |
+| duplicate request metadata | 同一 key の複数 ASCII / binary values が wire 上で複数 header field として送られるか | curl / native は複数 values を保持。ext-grpc は response PHP API では最後値のみ可視だが、php-grpc-lite は仕様準拠で全 values を保持 |
+| duplicate response metadata | 同一 key の initial / trailing metadata 複数 values が PHP API でどう見えるか | curl / native は全 values、ext-grpc は最後値のみ可視。php-grpc-lite は全 values 保持を仕様とする |
 | request key normalization | mixed-case key、underscore、invalid character を ext-grpc と同じ扱いにできるか | curl は呼び出し元 key をほぼそのまま使う。native は PHP 側で固定 header を除外するだけで厳密 validation はない |
 | reserved/system metadata | `grpc-status`、`grpc-message`、`grpc-timeout`、`grpc-encoding`、`te`、`content-type`、`user-agent`、pseudo header 相当を user metadata として渡した時の扱い | request metadata validation は未実装。固定 header と user metadata の衝突方針も未確定 |
 | binary wire format | response の padded / unpadded base64、comma-separated binary values、不正 base64 の扱い | PHP 側は `,` split 後に `base64_decode()` する。strict decode ではないため不正値の ext-grpc 互換は未確認 |
@@ -72,17 +73,16 @@ BENCH_TAG=metadata-compat-20260504-final ./bench/phase2/compare-metadata-compat.
 | many headers + 600B value | echo metadata が欠落・切り詰めなく round-trip | echo metadata が欠落・切り詰めなく round-trip | echo metadata が欠落・切り詰めなく round-trip |
 | duplicate ASCII server streaming | initial/trailing とも全 values 可視 | initial/trailing とも全 values 可視 | initial/trailing とも最後 value のみ可視 |
 
-この差分は wire 上の送受信失敗ではなく、PHP API の metadata map shape 差として扱う。ext-grpc 互換を厳密に優先するなら同一 key 複数 values の露出を最後値へ畳む必要があるが、gRPC metadata semantics としては複数 values 保持の方が自然で、curl/native の現状は情報を失わない。
+この差分は wire 上の送受信失敗ではなく、PHP API の metadata map shape 差として扱う。php-grpc-lite はgRPC metadata semanticsを優先し、同一 key 複数 values を最後値へ畳まない。ext-grpc PHP API の最後値のみ可視な挙動は互換差分としてdocsに残す。
 
 ## Native-specific implementation risks
 
 - `buildNativeRequestHeaders()` が request metadata を `array<string,string>` に畳む問題は修正済み。
 - C extension 側の request header assembly が固定長配列・固定長文字列 buffer を使う問題は、persistent unary / stream / diagnostic unary / unary batch で修正済み。
-- response metadata は linked list と PHP normalize で duplicate values を保持できる。ext-grpc と同じ最後値のみ可視に寄せるかは仕様判断として残す。
+- response metadata は linked list と PHP normalize で duplicate values を保持する。
 
 ## Next step
 
-1. ext-grpc の「最後 value のみ可視」に合わせるか、php-grpc-lite として複数 values 保持を採用するかを判断する。
-2. reserved `grpc-*` / fixed headers injection の観測 fixture を追加する。
-3. uppercase / invalid key / empty value の観測 fixture を追加する。
-4. HTTP/2 header list size 境界の観測 fixture を追加する。
+1. reserved `grpc-*` / fixed headers injection の観測 fixture を追加する。
+2. uppercase / invalid key / empty value の観測 fixture を追加する。
+3. HTTP/2 header list size 境界の観測 fixture を追加する。

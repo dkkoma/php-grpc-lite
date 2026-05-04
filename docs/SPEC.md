@@ -187,7 +187,13 @@
 - [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなく libcurl timeout にも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともに `CURLOPT_TIMEOUT_MS` / `CURLOPT_CONNECTTIMEOUT_MS` を設定し、curl timeout を `STATUS_DEADLINE_EXCEEDED` に変換する(2026-04-27)
 - [x] ~~圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化~~ → 未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` にする(2026-04-28)
 - [x] ~~binary metadata(`*-bin`)の ext-grpc 互換確認~~ → PHP API の値は raw binary、HTTP/2 wire は base64 として扱う。単一 raw binary value の request/initial/trailing round-trip を ext-grpc と照合(2026-04-28)
-- [ ] binary metadata の同一 key 複数 value における ext-grpc 互換確認
+- [x] ~~binary metadata の同一 key 複数 value における ext-grpc 互換確認~~ → 公式 ext-grpc PHP API は最後 value のみ可視だが、php-grpc-lite は gRPC 仕様準拠を優先し、同一 key 複数 values を `array<string, list<string>>` として保持する(2026-05-04)
+
+### 6.1 Metadata shape policy
+
+gRPC metadata は同一 key に複数 values を持てる。php-grpc-lite の PHP API では request / initial / trailing / status metadata を `array<string, list<string>>` として扱い、同一 key 複数 values の順序と内容を保持する。`*-bin` metadata は PHP API 上 raw binary values、HTTP/2 wire 上 base64 values とし、response 側で comma-joined binary metadata を受けた場合も split して複数 raw binary values として返す。
+
+2026-05-04 の観測では、公式 ext-grpc PHP API は同一 key 複数 values の最後 value のみを返した。これは gRPC Core / HTTP/2 metadata semantics ではなく PHP extension surface の情報落ちとして扱う。drop-in 互換のために php-grpc-lite 側で metadata values を最後値へ畳む処理は入れない。
 
 互換性・制御系の実装時チェックリストは `docs/compatibility-control-checklist.md` に集約する。性能ベンチに入れる項目は `docs/benchmarks/README.md` に置き、deadline/error/cancellation などの semantics 検証と混ぜない。
 
@@ -221,3 +227,4 @@
 - **2026-05-03**: native transportのactual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを測るvariantをPhase 2比較runnerへ追加し、`100×100KiB` server streaming例外形状のfocused repeat runnerを追加した。native wrapperからserver stats trailer相当も公開し、PoC APIだけでなく本体surface経由でclient/server timingを並べられるようにした。詳細: `docs/research/native-surface-repeat-2026-05-03.md`。
 - **2026-05-03**: native control semanticsをMVP surfaceで進めた。`nghttp2_poc_unary_batch()` にdeadlineを追加し、PHP wrapperでは `STATUS_DEADLINE_EXCEEDED`、API-level `cancel()`、missing `grpc-status` の `STATUS_UNKNOWN` 合成、HTTP/2 stream resetの基本status変換、TLS/mTLS明示未対応時の `STATUS_UNAVAILABLE` を扱う。server streamingはまだbatch drain後yieldなので、transport-level `RST_STREAM` と真のbackpressureはproduction streaming resource化後に残す。詳細: `docs/research/native-control-semantics-2026-05-03.md`。
 - **2026-05-04**: native server streamingをC stream resource化し、`ServerStreamingCall::responses()` が `nghttp2_poc_stream_next()` をpullしてmessageごとにyieldする経路へ切り替えた。`cancel()` は `RST_STREAM(CANCEL)` を送る。small SELECT代表形状(`1x100B` / `1x1KiB` / `1x4KiB` / `1x10KiB`)ではnativeがcurl/ext-grpcよりp50/p99とも良好、Spanner DML unary shapeでもnativeが最良。一方、`100x100KiB` server streamingなどlarge response surfaceではPoC direct/compactやext-grpcに対して未解明の差が残る。詳細: `docs/research/native-stream-resource-2026-05-04.md`。
+- **2026-05-04**: metadata shape policyを確定。同一 key 複数 values は公式 ext-grpc PHP APIだと最後 value のみ可視だが、php-grpc-lite はgRPC仕様準拠を優先して `array<string, list<string>>` で全 values を保持する。native request metadataの畳み込みとC extension固定header buffer制限は修正済み。詳細: `docs/research/metadata-compatibility-gap-2026-05-04.md`。
