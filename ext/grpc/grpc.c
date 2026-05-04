@@ -30,8 +30,8 @@
 #define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
 #define MAX_RECV_BUF_SIZE 262144
 
-typedef struct _poc_channel poc_channel;
-typedef struct _poc_stream poc_stream;
+typedef struct _h2_channel h2_channel;
+typedef struct _h2_stream h2_stream;
 
 typedef struct queued_payload {
     zend_string *payload;
@@ -48,7 +48,7 @@ typedef struct metadata_entry {
 
 typedef struct {
     int fd;
-    poc_channel *channel;
+    h2_channel *channel;
     int32_t stream_id;
     bool stream_closed;
     int grpc_status;
@@ -235,25 +235,25 @@ typedef struct {
     size_t pending_write_iovcnt;
     size_t pending_write_remaining;
     size_t pending_write_payload_len;
-} poc_client;
+} grpc_call;
 
 static uint64_t monotonic_us(void);
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
-static void record_data_sent(poc_client *client);
-static int process_response_messages(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us);
-static int process_response_messages_from_offset(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us);
-static int process_response_data_direct(poc_client *client, const uint8_t *data, size_t len);
-static int enqueue_response_payload(poc_client *client, zend_string *payload);
-static int deliver_response_payload(poc_client *client, zend_string *payload, uint64_t ready_abs_us);
-static int deliver_queued_response_payloads(poc_client *client);
-static int deliver_queued_response_payloads_if_bounded(poc_client *client);
-static void free_queued_response_payloads(poc_client *client);
-static int add_metadata_entry(poc_client *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void free_metadata_entries(poc_client *client);
-static void add_metadata_map_to_return(zval *return_value, const char *name, poc_client *client, bool trailing);
-static void cleanup_poc_client(poc_client *client);
-static void compact_response_body_if_needed(poc_client *client);
-static bool channel_usable(poc_channel *channel);
+static void record_data_sent(grpc_call *client);
+static int process_response_messages(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us);
+static int process_response_messages_from_offset(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us);
+static int process_response_data_direct(grpc_call *client, const uint8_t *data, size_t len);
+static int enqueue_response_payload(grpc_call *client, zend_string *payload);
+static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us);
+static int deliver_queued_response_payloads(grpc_call *client);
+static int deliver_queued_response_payloads_if_bounded(grpc_call *client);
+static void free_queued_response_payloads(grpc_call *client);
+static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+static void free_metadata_entries(grpc_call *client);
+static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
+static void cleanup_grpc_call(grpc_call *client);
+static void compact_response_body_if_needed(grpc_call *client);
+static bool channel_usable(h2_channel *channel);
 static int connect_tcp(const char *host, zend_long port);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
@@ -269,13 +269,13 @@ typedef struct {
     size_t capacity;
     zend_string **value_strings;
     size_t value_count;
-} poc_request_headers;
+} h2_request_headers;
 
 static size_t count_custom_header_values(zval *headers_zv);
-static void init_request_headers(poc_request_headers *headers, size_t custom_values);
-static void append_request_header(poc_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
-static void append_custom_request_headers(poc_request_headers *headers, zval *headers_zv);
-static void free_request_headers(poc_request_headers *headers);
+static void init_request_headers(h2_request_headers *headers, size_t custom_values);
+static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+static void append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
+static void free_request_headers(h2_request_headers *headers);
 
 typedef struct {
     int32_t stream_id;
@@ -303,7 +303,7 @@ static int mux_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t fla
 static int mux_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int mux_on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
 
-struct _poc_channel {
+struct _h2_channel {
     int fd;
     bool tls;
     bool persistent;
@@ -321,9 +321,9 @@ struct _poc_channel {
     int32_t last_goaway_stream_id;
 };
 
-struct _poc_stream {
-    poc_channel *channel;
-    poc_client client;
+struct _h2_stream {
+    h2_channel *channel;
+    grpc_call client;
     zend_string *request;
     char *recv_buf;
     size_t recv_buf_len;
@@ -331,8 +331,8 @@ struct _poc_stream {
     bool cancelled;
 };
 
-static int le_poc_channel;
-static int le_poc_stream;
+static int le_h2_channel;
+static int le_h2_stream;
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_native)
     HashTable persistent_channels;
@@ -343,7 +343,7 @@ ZEND_DECLARE_MODULE_GLOBALS(grpc_native)
 
 #define GRPC_NATIVE_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(grpc_native, v)
 
-static void destroy_poc_channel(poc_channel *channel)
+static void destroy_h2_channel(h2_channel *channel)
 {
     if (channel == NULL) {
         return;
@@ -367,12 +367,12 @@ static void destroy_poc_channel(poc_channel *channel)
     pefree(channel, channel->persistent);
 }
 
-static void poc_channel_dtor(zend_resource *rsrc)
+static void h2_channel_dtor(zend_resource *rsrc)
 {
-    destroy_poc_channel((poc_channel *) rsrc->ptr);
+    destroy_h2_channel((h2_channel *) rsrc->ptr);
 }
 
-static void destroy_poc_stream(poc_stream *stream)
+static void destroy_h2_stream(h2_stream *stream)
 {
     if (stream == NULL) {
         return;
@@ -391,13 +391,13 @@ static void destroy_poc_stream(poc_stream *stream)
     if (stream->recv_buf != NULL) {
         efree(stream->recv_buf);
     }
-    cleanup_poc_client(&stream->client);
+    cleanup_grpc_call(&stream->client);
     efree(stream);
 }
 
-static void poc_stream_dtor(zend_resource *rsrc)
+static void h2_stream_dtor(zend_resource *rsrc)
 {
-    destroy_poc_stream((poc_stream *) rsrc->ptr);
+    destroy_h2_stream((h2_stream *) rsrc->ptr);
 }
 
 static int configure_callbacks(nghttp2_session_callbacks **callbacks)
@@ -415,7 +415,7 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks)
     return 0;
 }
 
-static void mark_channel_dead(poc_channel *channel, int error_code)
+static void mark_channel_dead(h2_channel *channel, int error_code)
 {
     if (channel == NULL) {
         return;
@@ -424,7 +424,7 @@ static void mark_channel_dead(poc_channel *channel, int error_code)
     channel->last_error = error_code;
 }
 
-static void mark_channel_draining(poc_channel *channel, int32_t last_stream_id, uint32_t error_code)
+static void mark_channel_draining(h2_channel *channel, int32_t last_stream_id, uint32_t error_code)
 {
     if (channel == NULL) {
         return;
@@ -434,12 +434,12 @@ static void mark_channel_draining(poc_channel *channel, int32_t last_stream_id, 
     channel->last_goaway_error_code = error_code;
 }
 
-static bool channel_usable(poc_channel *channel)
+static bool channel_usable(h2_channel *channel)
 {
     return channel != NULL && channel->fd >= 0 && channel->session != NULL && !channel->dead && !channel->draining;
 }
 
-static void remove_unusable_persistent_channel(const char *key, size_t key_len, poc_channel *channel)
+static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_channel *channel)
 {
     if (channel == NULL || channel_usable(channel)) {
         return;
@@ -451,7 +451,7 @@ static void remove_unusable_persistent_channel(const char *key, size_t key_len, 
         channel->detached_from_cache = true;
         return;
     }
-    destroy_poc_channel(channel);
+    destroy_h2_channel(channel);
 }
 
 static int set_socket_timeout_us(int fd, zend_long timeout_us)
@@ -534,7 +534,7 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
     return ok ? 0 : -1;
 }
 
-static int configure_tls_channel(poc_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+static int configure_tls_channel(h2_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
 {
     channel->ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (channel->ssl_ctx == NULL) {
@@ -572,7 +572,7 @@ static int configure_tls_channel(poc_channel *channel, const char *host, const c
     return 0;
 }
 
-static ssize_t channel_send(poc_client *client, const uint8_t *data, size_t length)
+static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length)
 {
     if (client->channel != NULL && client->channel->ssl != NULL) {
         int written = SSL_write(client->channel->ssl, data, (int) length);
@@ -586,7 +586,7 @@ static ssize_t channel_send(poc_client *client, const uint8_t *data, size_t leng
     return send(client->fd, data, length, 0);
 }
 
-static ssize_t channel_recv(poc_channel *channel, uint8_t *data, size_t length)
+static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length)
 {
     if (channel != NULL && channel->ssl != NULL) {
         int nread = SSL_read(channel->ssl, data, (int) length);
@@ -600,13 +600,13 @@ static ssize_t channel_recv(poc_channel *channel, uint8_t *data, size_t length)
     return recv(channel->fd, data, length, 0);
 }
 
-static poc_channel *create_poc_channel(const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, const char **error_message)
+static h2_channel *create_h2_channel(const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, const char **error_message)
 {
-    poc_channel *channel;
-    poc_client open_client;
+    h2_channel *channel;
+    grpc_call open_client;
     int rv;
 
-    channel = pecalloc(1, sizeof(poc_channel), persistent);
+    channel = pecalloc(1, sizeof(h2_channel), persistent);
     channel->persistent = persistent;
     channel->fd = -1;
     channel->fd = connect_tcp(host, port);
@@ -616,7 +616,7 @@ static poc_channel *create_poc_channel(const char *host, zend_long port, bool us
         return NULL;
     }
     if (use_tls && configure_tls_channel(channel, host, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
-        destroy_poc_channel(channel);
+        destroy_h2_channel(channel);
         *error_message = "failed to establish TLS";
         return NULL;
     }
@@ -628,12 +628,12 @@ static poc_channel *create_poc_channel(const char *host, zend_long port, bool us
     open_client.http_status = -1;
 
     if (configure_callbacks(&channel->callbacks) != 0) {
-        destroy_poc_channel(channel);
+        destroy_h2_channel(channel);
         *error_message = "failed to configure callbacks";
         return NULL;
     }
     if (nghttp2_session_client_new(&channel->session, channel->callbacks, &open_client) != 0) {
-        destroy_poc_channel(channel);
+        destroy_h2_channel(channel);
         *error_message = "failed to create nghttp2 session";
         return NULL;
     }
@@ -641,7 +641,7 @@ static poc_channel *create_poc_channel(const char *host, zend_long port, bool us
     nghttp2_submit_settings(channel->session, NGHTTP2_FLAG_NONE, NULL, 0);
     rv = nghttp2_session_send(channel->session);
     if (rv != 0) {
-        destroy_poc_channel(channel);
+        destroy_h2_channel(channel);
         *error_message = "nghttp2_session_send failed";
         return NULL;
     }
@@ -651,9 +651,9 @@ static poc_channel *create_poc_channel(const char *host, zend_long port, bool us
     return channel;
 }
 
-static poc_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool *persistent_reused, const char **error_message)
+static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool *persistent_reused, const char **error_message)
 {
-    poc_channel *channel;
+    h2_channel *channel;
 
     *persistent_reused = false;
     if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
@@ -668,7 +668,7 @@ static poc_channel *get_persistent_channel(const char *key, size_t key_len, cons
     }
 
     if (channel == NULL) {
-        channel = create_poc_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, error_message);
+        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, error_message);
         if (channel == NULL) {
             return NULL;
         }
@@ -680,10 +680,10 @@ static poc_channel *get_persistent_channel(const char *key, size_t key_len, cons
     return channel;
 }
 
-static void discard_persistent_channel(const char *key, size_t key_len, poc_channel *channel)
+static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel)
 {
     if (channel != NULL) {
-        destroy_poc_channel(channel);
+        destroy_h2_channel(channel);
     }
     if (GRPC_NATIVE_G(persistent_channels_initialized)) {
         zend_hash_str_del(&GRPC_NATIVE_G(persistent_channels), key, key_len);
@@ -736,7 +736,7 @@ static int set_nonblocking(int fd)
 
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     size_t total_written = 0;
     (void) session;
     (void) flags;
@@ -794,7 +794,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     return (ssize_t) total_written;
 }
 
-static size_t remaining_request_bytes(poc_client *client)
+static size_t remaining_request_bytes(grpc_call *client)
 {
     size_t total_len = client->grpc_header_len + client->request_len;
     if (client->request_offset >= total_len) {
@@ -803,7 +803,7 @@ static size_t remaining_request_bytes(poc_client *client)
     return total_len - client->request_offset;
 }
 
-static size_t copy_request_bytes(poc_client *client, uint8_t *buf, size_t length)
+static size_t copy_request_bytes(grpc_call *client, uint8_t *buf, size_t length)
 {
     size_t copied = 0;
     size_t total_len = client->grpc_header_len + client->request_len;
@@ -832,7 +832,7 @@ static size_t copy_request_bytes(poc_client *client, uint8_t *buf, size_t length
 
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     size_t total_len = client->grpc_header_len + client->request_len;
     size_t remaining = remaining_request_bytes(client);
     size_t to_send = remaining < length ? remaining : length;
@@ -861,7 +861,7 @@ static ssize_t data_source_read_callback(nghttp2_session *session, int32_t strea
 
 static ssize_t data_source_read_length_callback(nghttp2_session *session, uint8_t frame_type, int32_t stream_id, int32_t session_remote_window_size, int32_t stream_remote_window_size, uint32_t remote_max_frame_size, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     size_t allowed = (size_t) session_remote_window_size;
     (void) session;
     (void) frame_type;
@@ -911,7 +911,7 @@ static ssize_t data_source_read_length_callback(nghttp2_session *session, uint8_
     return (ssize_t) allowed;
 }
 
-static void set_grpc_header(poc_client *client, size_t payload_len)
+static void set_grpc_header(grpc_call *client, size_t payload_len)
 {
     client->grpc_header[0] = 0;
     client->grpc_header[1] = (uint8_t) ((payload_len >> 24) & 0xff);
@@ -921,7 +921,7 @@ static void set_grpc_header(poc_client *client, size_t payload_len)
     client->grpc_header_len = 5;
 }
 
-static int write_all(poc_client *client, const uint8_t *data, size_t length)
+static int write_all(grpc_call *client, const uint8_t *data, size_t length)
 {
     size_t total_written = 0;
     while (total_written < length) {
@@ -944,7 +944,7 @@ static int write_all(poc_client *client, const uint8_t *data, size_t length)
     return 0;
 }
 
-static size_t fill_request_iov(poc_client *client, struct iovec *iov, size_t iov_offset, size_t length, size_t *filled_len)
+static size_t fill_request_iov(grpc_call *client, struct iovec *iov, size_t iov_offset, size_t length, size_t *filled_len)
 {
     size_t filled = 0;
     size_t total_len = client->grpc_header_len + client->request_len;
@@ -977,7 +977,7 @@ static size_t fill_request_iov(poc_client *client, struct iovec *iov, size_t iov
     return iov_offset;
 }
 
-static int write_data_frame(poc_client *client, const uint8_t *framehd, size_t length)
+static int write_data_frame(grpc_call *client, const uint8_t *framehd, size_t length)
 {
     struct iovec iov[4];
     size_t iovcnt = 1;
@@ -1031,14 +1031,14 @@ static int write_data_frame(poc_client *client, const uint8_t *framehd, size_t l
     return 0;
 }
 
-static void clear_pending_write(poc_client *client)
+static void clear_pending_write(grpc_call *client)
 {
     client->pending_write_iovcnt = 0;
     client->pending_write_remaining = 0;
     client->pending_write_payload_len = 0;
 }
 
-static void consume_pending_write(poc_client *client, size_t consumed)
+static void consume_pending_write(grpc_call *client, size_t consumed)
 {
     while (client->pending_write_iovcnt > 0 && consumed > 0) {
         struct iovec *iov = &client->pending_write_iov[0];
@@ -1057,7 +1057,7 @@ static void consume_pending_write(poc_client *client, size_t consumed)
     }
 }
 
-static int prepare_pending_data_frame_write(poc_client *client, const uint8_t *framehd, size_t length)
+static int prepare_pending_data_frame_write(grpc_call *client, const uint8_t *framehd, size_t length)
 {
     size_t iovcnt = 1;
     size_t filled_len = 0;
@@ -1076,7 +1076,7 @@ static int prepare_pending_data_frame_write(poc_client *client, const uint8_t *f
     return 0;
 }
 
-static int flush_pending_data_frame_write(poc_client *client)
+static int flush_pending_data_frame_write(grpc_call *client)
 {
     while (client->pending_write_remaining > 0) {
         uint64_t syscall_started = monotonic_us();
@@ -1113,7 +1113,7 @@ static int flush_pending_data_frame_write(poc_client *client)
     return 0;
 }
 
-static int write_data_frame_nonblocking(poc_client *client, const uint8_t *framehd, size_t length)
+static int write_data_frame_nonblocking(grpc_call *client, const uint8_t *framehd, size_t length)
 {
     if (client->pending_write_remaining == 0 && prepare_pending_data_frame_write(client, framehd, length) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -1123,7 +1123,7 @@ static int write_data_frame_nonblocking(poc_client *client, const uint8_t *frame
 
 static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     bool new_data_frame = client->pending_write_remaining == 0;
     (void) session;
     (void) frame;
@@ -1160,7 +1160,7 @@ static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, co
 
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     (void) session;
     (void) flags;
     if (stream_id == client->stream_id && len > 0) {
@@ -1234,7 +1234,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     bool trailing;
     (void) session;
     (void) flags;
@@ -1303,7 +1303,7 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
 
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     (void) session;
     (void) error_code;
     if (stream_id == client->stream_id) {
@@ -1316,7 +1316,7 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
 
 static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     (void) session;
     client->sent_frames++;
     client->last_sent_frame_type = frame->hd.type;
@@ -1360,7 +1360,7 @@ static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame 
 
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     (void) session;
     client->recv_frames++;
     client->last_recv_frame_type = frame->hd.type;
@@ -1394,7 +1394,7 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 
 static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
 {
-    poc_client *client = (poc_client *) user_data;
+    grpc_call *client = (grpc_call *) user_data;
     (void) session;
     client->not_sent_frames++;
     client->last_not_sent_frame_type = frame->hd.type;
@@ -1445,7 +1445,7 @@ static size_t count_custom_header_values(zval *headers_zv)
     return count;
 }
 
-static void init_request_headers(poc_request_headers *headers, size_t custom_values)
+static void init_request_headers(h2_request_headers *headers, size_t custom_values)
 {
     headers->capacity = 7 + custom_values;
     headers->len = 0;
@@ -1454,7 +1454,7 @@ static void init_request_headers(poc_request_headers *headers, size_t custom_val
     headers->value_strings = custom_values > 0 ? ecalloc(custom_values, sizeof(zend_string *)) : NULL;
 }
 
-static void append_request_header(poc_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
+static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
 {
     if (headers->len >= headers->capacity) {
         return;
@@ -1468,7 +1468,7 @@ static void append_request_header(poc_request_headers *headers, const char *name
     };
 }
 
-static void append_custom_request_headers(poc_request_headers *headers, zval *headers_zv)
+static void append_custom_request_headers(h2_request_headers *headers, zval *headers_zv)
 {
     zend_string *key;
     zval *value;
@@ -1501,7 +1501,7 @@ static void append_custom_request_headers(poc_request_headers *headers, zval *he
     } ZEND_HASH_FOREACH_END();
 }
 
-static void free_request_headers(poc_request_headers *headers)
+static void free_request_headers(h2_request_headers *headers)
 {
     size_t i;
     if (headers->value_strings != NULL) {
@@ -1522,7 +1522,7 @@ static void free_request_headers(poc_request_headers *headers)
     headers->value_count = 0;
 }
 
-static int process_response_messages(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us)
+static int process_response_messages(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us)
 {
     size_t offset = 0;
     uint64_t payload_string_us = 0;
@@ -1530,7 +1530,7 @@ static int process_response_messages(poc_client *client, zend_fcall_info *fci, z
     return process_response_messages_from_offset(client, fci, fcc, &offset, true, decoded_messages, &payload_string_us, &max_payload_string_us, decode_us, max_decode_us);
 }
 
-static int process_response_messages_from_offset(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us)
+static int process_response_messages_from_offset(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us)
 {
     zend_string *body;
     const char *data;
@@ -1623,7 +1623,7 @@ static int process_response_messages_from_offset(poc_client *client, zend_fcall_
     return 0;
 }
 
-static int process_response_data_direct(poc_client *client, const uint8_t *data, size_t len)
+static int process_response_data_direct(grpc_call *client, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
 
@@ -1722,7 +1722,7 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
     return 0;
 }
 
-static int enqueue_response_payload(poc_client *client, zend_string *payload)
+static int enqueue_response_payload(grpc_call *client, zend_string *payload)
 {
     queued_payload *entry = emalloc(sizeof(queued_payload));
     entry->payload = payload;
@@ -1751,7 +1751,7 @@ static int enqueue_response_payload(poc_client *client, zend_string *payload)
     return 0;
 }
 
-static int deliver_response_payload(poc_client *client, zend_string *payload, uint64_t ready_abs_us)
+static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us)
 {
     zval params[1];
     zval retval;
@@ -1801,7 +1801,7 @@ static int deliver_response_payload(poc_client *client, zend_string *payload, ui
     return 0;
 }
 
-static int deliver_queued_response_payloads(poc_client *client)
+static int deliver_queued_response_payloads(grpc_call *client)
 {
     while (client->response_queue_head != NULL) {
         queued_payload *entry = client->response_queue_head;
@@ -1821,7 +1821,7 @@ static int deliver_queued_response_payloads(poc_client *client)
     return 0;
 }
 
-static int deliver_queued_response_payloads_if_bounded(poc_client *client)
+static int deliver_queued_response_payloads_if_bounded(grpc_call *client)
 {
     bool over_message_limit = client->read_ahead_max_messages > 0 && client->response_queue_count >= client->read_ahead_max_messages;
     bool over_byte_limit = client->read_ahead_max_bytes > 0 && client->response_queue_bytes >= client->read_ahead_max_bytes;
@@ -1833,7 +1833,7 @@ static int deliver_queued_response_payloads_if_bounded(poc_client *client)
     return deliver_queued_response_payloads(client);
 }
 
-static void free_queued_response_payloads(poc_client *client)
+static void free_queued_response_payloads(grpc_call *client)
 {
     while (client->response_queue_head != NULL) {
         queued_payload *entry = client->response_queue_head;
@@ -1846,7 +1846,7 @@ static void free_queued_response_payloads(poc_client *client)
     client->response_queue_bytes = 0;
 }
 
-static int add_metadata_entry(poc_client *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
+static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
 {
     metadata_entry *entry;
 
@@ -1870,7 +1870,7 @@ static int add_metadata_entry(poc_client *client, const uint8_t *name, size_t na
     return 0;
 }
 
-static void free_metadata_entries(poc_client *client)
+static void free_metadata_entries(grpc_call *client)
 {
     while (client->metadata_head != NULL) {
         metadata_entry *entry = client->metadata_head;
@@ -1882,7 +1882,7 @@ static void free_metadata_entries(poc_client *client)
     client->metadata_tail = NULL;
 }
 
-static void add_metadata_map_to_return(zval *return_value, const char *name, poc_client *client, bool trailing)
+static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing)
 {
     zval metadata;
     metadata_entry *entry;
@@ -1908,7 +1908,7 @@ static void add_metadata_map_to_return(zval *return_value, const char *name, poc
     add_assoc_zval(return_value, name, &metadata);
 }
 
-static void cleanup_poc_client(poc_client *client)
+static void cleanup_grpc_call(grpc_call *client)
 {
     if (client == NULL) {
         return;
@@ -1926,7 +1926,7 @@ static void cleanup_poc_client(poc_client *client)
     smart_str_free(&client->body);
 }
 
-static void compact_response_body_if_needed(poc_client *client)
+static void compact_response_body_if_needed(grpc_call *client)
 {
     zend_string *body;
     size_t len;
@@ -1967,7 +1967,7 @@ static void compact_response_body_if_needed(poc_client *client)
     }
 }
 
-static void record_data_sent(poc_client *client)
+static void record_data_sent(grpc_call *client)
 {
     uint64_t elapsed = monotonic_us() - client->call_started_us;
     if (client->first_data_sent_us == 0) {
@@ -1976,7 +1976,7 @@ static void record_data_sent(poc_client *client)
     client->last_data_sent_us = elapsed;
 }
 
-static int receive_available(nghttp2_session *session, poc_client *client, char *recv_buf, size_t recv_buf_len)
+static int receive_available(nghttp2_session *session, grpc_call *client, char *recv_buf, size_t recv_buf_len)
 {
     size_t reads = 0;
     size_t bytes = 0;
@@ -2051,7 +2051,7 @@ static int receive_available(nghttp2_session *session, poc_client *client, char 
     }
 }
 
-static int drive_stream_poll(nghttp2_session *session, poc_client *client, char *recv_buf, size_t recv_buf_len)
+static int drive_stream_poll(nghttp2_session *session, grpc_call *client, char *recv_buf, size_t recv_buf_len)
 {
     while (!client->stream_closed && (nghttp2_session_want_read(session) || nghttp2_session_want_write(session))) {
         int rv;
@@ -2377,7 +2377,7 @@ PHP_FUNCTION(grpc_native_channel_open)
     size_t cert_chain_len = 0;
     char *private_key = NULL;
     size_t private_key_len = 0;
-    poc_channel *channel;
+    h2_channel *channel;
     const char *error_message = NULL;
 
     ZEND_PARSE_PARAMETERS_START(2, 6)
@@ -2390,32 +2390,32 @@ PHP_FUNCTION(grpc_native_channel_open)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = create_poc_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, false, &error_message);
+    channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, false, &error_message);
     if (channel == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open channel", 0);
         RETURN_THROWS();
     }
-    RETURN_RES(zend_register_resource(channel, le_poc_channel));
+    RETURN_RES(zend_register_resource(channel, le_h2_channel));
 }
 
 PHP_FUNCTION(grpc_native_channel_is_usable)
 {
     zval *channel_zv = NULL;
-    poc_channel *channel;
+    h2_channel *channel;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_RESOURCE(channel_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_poc_channel);
+    channel = (h2_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_h2_channel);
     RETURN_BOOL(channel_usable(channel));
 }
 
-static int perform_poc_channel_unary(poc_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool channel_reused, bool persistent_reused, zval *return_value)
+static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool channel_reused, bool persistent_reused, zval *return_value)
 {
-    poc_client client;
+    grpc_call client;
     nghttp2_data_provider data_provider;
-    poc_request_headers request_headers;
+    h2_request_headers request_headers;
     int rv;
     char recv_buf[16384];
     uint64_t total_started = 0;
@@ -2478,7 +2478,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
         }
         channel->busy = false;
         free_request_headers(&request_headers);
-        cleanup_poc_client(&client);
+        cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }
@@ -2493,7 +2493,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
         }
         channel->busy = false;
         free_request_headers(&request_headers);
-        cleanup_poc_client(&client);
+        cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         return FAILURE;
     }
@@ -2519,7 +2519,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
             }
             channel->busy = false;
             free_request_headers(&request_headers);
-            cleanup_poc_client(&client);
+            cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
@@ -2531,7 +2531,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
             }
             channel->busy = false;
             free_request_headers(&request_headers);
-            cleanup_poc_client(&client);
+            cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
             return FAILURE;
         }
@@ -2598,14 +2598,14 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
     free_request_headers(&request_headers);
-    cleanup_poc_client(&client);
+    cleanup_grpc_call(&client);
     return SUCCESS;
 }
 
 PHP_FUNCTION(grpc_native_channel_unary)
 {
     zval *channel_zv = NULL;
-    poc_channel *channel;
+    h2_channel *channel;
     char *path = NULL;
     size_t path_len = 0;
     char *request = NULL;
@@ -2622,8 +2622,8 @@ PHP_FUNCTION(grpc_native_channel_unary)
         Z_PARAM_LONG(timeout_us)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_poc_channel);
-    if (perform_poc_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, false, return_value) != SUCCESS) {
+    channel = (h2_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_h2_channel);
+    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, false, return_value) != SUCCESS) {
         RETURN_THROWS();
     }
 }
@@ -2648,7 +2648,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
     size_t cert_chain_len = 0;
     char *private_key = NULL;
     size_t private_key_len = 0;
-    poc_channel *channel;
+    h2_channel *channel;
     bool persistent_reused = false;
     const char *error_message = NULL;
 
@@ -2679,7 +2679,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
     }
 
     if (channel == NULL) {
-        channel = create_poc_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, &error_message);
+        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, &error_message);
         if (channel == NULL) {
             zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
             RETURN_THROWS();
@@ -2689,7 +2689,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
         persistent_reused = true;
     }
 
-    if (perform_poc_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, persistent_reused, return_value) != SUCCESS) {
+    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, persistent_reused, return_value) != SUCCESS) {
         if (channel != NULL && !channel_usable(channel)) {
             remove_unusable_persistent_channel(key, key_len, channel);
         }
@@ -2721,10 +2721,10 @@ PHP_FUNCTION(grpc_native_stream_open)
     size_t cert_chain_len = 0;
     char *private_key = NULL;
     size_t private_key_len = 0;
-    poc_channel *channel;
-    poc_stream *stream;
+    h2_channel *channel;
+    h2_stream *stream;
     nghttp2_data_provider data_provider;
-    poc_request_headers request_headers;
+    h2_request_headers request_headers;
     bool persistent_reused = false;
     const char *error_message = NULL;
     int rv;
@@ -2760,7 +2760,7 @@ PHP_FUNCTION(grpc_native_stream_open)
         RETURN_THROWS();
     }
 
-    stream = ecalloc(1, sizeof(poc_stream));
+    stream = ecalloc(1, sizeof(h2_stream));
     stream->channel = channel;
     stream->request = zend_string_init(request, request_len, 0);
     stream->recv_buf_len = 65536;
@@ -2795,7 +2795,7 @@ PHP_FUNCTION(grpc_native_stream_open)
     stream->client.stream_id = nghttp2_submit_request(channel->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (stream->client.stream_id < 0) {
         free_request_headers(&request_headers);
-        destroy_poc_stream(stream);
+        destroy_h2_stream(stream);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         RETURN_THROWS();
     }
@@ -2806,19 +2806,19 @@ PHP_FUNCTION(grpc_native_stream_open)
         mark_channel_dead(channel, rv);
         channel->busy = false;
         free_request_headers(&request_headers);
-        destroy_poc_stream(stream);
+        destroy_h2_stream(stream);
         discard_persistent_channel(key, key_len, channel);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         RETURN_THROWS();
     }
 
     free_request_headers(&request_headers);
-    RETURN_RES(zend_register_resource(stream, le_poc_stream));
+    RETURN_RES(zend_register_resource(stream, le_h2_stream));
 }
 
-static void add_stream_status(zval *return_value, poc_stream *stream)
+static void add_stream_status(zval *return_value, h2_stream *stream)
 {
-    poc_client *client = &stream->client;
+    grpc_call *client = &stream->client;
     add_assoc_bool(return_value, "done", true);
     add_assoc_long(return_value, "grpc_status", client->grpc_status);
     add_assoc_str(return_value, "grpc_message", client->grpc_message != NULL ? zend_string_copy(client->grpc_message) : zend_empty_string);
@@ -2854,14 +2854,14 @@ static void add_stream_status(zval *return_value, poc_stream *stream)
 PHP_FUNCTION(grpc_native_stream_next)
 {
     zval *stream_zv = NULL;
-    poc_stream *stream;
-    poc_client *client;
+    h2_stream *stream;
+    grpc_call *client;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    stream = (poc_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_poc_stream);
+    stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_h2_stream);
     if (stream == NULL) {
         RETURN_THROWS();
     }
@@ -2921,7 +2921,7 @@ PHP_FUNCTION(grpc_native_stream_next)
         nghttp2_session_set_user_data(stream->channel->session, NULL);
         stream->channel->busy = false;
         if (stream->channel->detached_from_cache) {
-            destroy_poc_channel(stream->channel);
+            destroy_h2_channel(stream->channel);
             stream->channel = NULL;
         }
     }
@@ -2931,13 +2931,13 @@ PHP_FUNCTION(grpc_native_stream_next)
 PHP_FUNCTION(grpc_native_stream_cancel)
 {
     zval *stream_zv = NULL;
-    poc_stream *stream;
+    h2_stream *stream;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    stream = (poc_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_poc_stream);
+    stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_h2_stream);
     if (stream != NULL && !stream->completed && stream->channel != NULL && channel_usable(stream->channel)) {
         stream->cancelled = true;
         stream->completed = true;
@@ -2961,11 +2961,11 @@ PHP_FUNCTION(grpc_native_unary)
     char *request = NULL;
     size_t request_len = 0;
     zval *headers_zv = NULL;
-    poc_client client;
+    grpc_call client;
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session *session = NULL;
     nghttp2_data_provider data_provider;
-    poc_request_headers request_headers;
+    h2_request_headers request_headers;
     char authority[512];
     int rv;
     char recv_buf[16384];
@@ -3042,7 +3042,7 @@ PHP_FUNCTION(grpc_native_unary)
         nghttp2_session_del(session);
         nghttp2_session_callbacks_del(callbacks);
         free_request_headers(&request_headers);
-        cleanup_poc_client(&client);
+        cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         RETURN_THROWS();
     }
@@ -3055,7 +3055,7 @@ PHP_FUNCTION(grpc_native_unary)
         nghttp2_session_del(session);
         nghttp2_session_callbacks_del(callbacks);
         free_request_headers(&request_headers);
-        cleanup_poc_client(&client);
+        cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         RETURN_THROWS();
     }
@@ -3073,7 +3073,7 @@ PHP_FUNCTION(grpc_native_unary)
             nghttp2_session_del(session);
             nghttp2_session_callbacks_del(callbacks);
             free_request_headers(&request_headers);
-            cleanup_poc_client(&client);
+            cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             RETURN_THROWS();
         }
@@ -3083,7 +3083,7 @@ PHP_FUNCTION(grpc_native_unary)
             nghttp2_session_del(session);
             nghttp2_session_callbacks_del(callbacks);
             free_request_headers(&request_headers);
-            cleanup_poc_client(&client);
+            cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
             RETURN_THROWS();
         }
@@ -3131,7 +3131,7 @@ PHP_FUNCTION(grpc_native_unary)
     add_assoc_long(return_value, "cleanup_us", (zend_long) cleanup_us);
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
-    cleanup_poc_client(&client);
+    cleanup_grpc_call(&client);
 }
 
 PHP_FUNCTION(grpc_native_unary_batch)
@@ -3167,11 +3167,11 @@ PHP_FUNCTION(grpc_native_unary_batch)
     bool response_callback_enabled = false;
     zend_fcall_info response_fci;
     zend_fcall_info_cache response_fcc;
-    poc_client client;
+    grpc_call client;
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session *session = NULL;
     nghttp2_data_provider data_provider;
-    poc_request_headers request_headers;
+    h2_request_headers request_headers;
     char authority[512];
     int rv;
     char recv_buf[MAX_RECV_BUF_SIZE];
@@ -3592,7 +3592,7 @@ PHP_FUNCTION(grpc_native_unary_batch)
         client.server_stats_out_payload_bytes = 0;
         client.server_stats_out_payload_wire_bytes = 0;
         client.server_stats_out_payload_compressed_bytes = 0;
-        cleanup_poc_client(&client);
+        cleanup_grpc_call(&client);
         memset(&client.body, 0, sizeof(client.body));
 
         client.stream_id = nghttp2_submit_request(session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
@@ -3901,7 +3901,7 @@ PHP_FUNCTION(grpc_native_unary_batch)
     add_assoc_zval(return_value, "server_stats_out_payload_bytes", &server_stats_out_payload_bytes);
     add_assoc_zval(return_value, "server_stats_out_payload_wire_bytes", &server_stats_out_payload_wire_bytes);
     add_assoc_zval(return_value, "server_stats_out_payload_compressed_bytes", &server_stats_out_payload_compressed_bytes);
-    cleanup_poc_client(&client);
+    cleanup_grpc_call(&client);
 }
 
 PHP_GINIT_FUNCTION(grpc_native)
@@ -3915,14 +3915,14 @@ PHP_GINIT_FUNCTION(grpc_native)
 
 PHP_GSHUTDOWN_FUNCTION(grpc_native)
 {
-    poc_channel *channel;
+    h2_channel *channel;
 
     if (!grpc_native_globals->persistent_channels_initialized) {
         return;
     }
 
     ZEND_HASH_FOREACH_PTR(&grpc_native_globals->persistent_channels, channel) {
-        destroy_poc_channel(channel);
+        destroy_h2_channel(channel);
     } ZEND_HASH_FOREACH_END();
 
     zend_hash_destroy(&grpc_native_globals->persistent_channels);
@@ -3931,8 +3931,8 @@ PHP_GSHUTDOWN_FUNCTION(grpc_native)
 
 PHP_MINIT_FUNCTION(grpc_native)
 {
-    le_poc_channel = zend_register_list_destructors_ex(poc_channel_dtor, NULL, "grpc_native_channel", module_number);
-    le_poc_stream = zend_register_list_destructors_ex(poc_stream_dtor, NULL, "grpc_native_stream", module_number);
+    le_h2_channel = zend_register_list_destructors_ex(h2_channel_dtor, NULL, "grpc_native_channel", module_number);
+    le_h2_stream = zend_register_list_destructors_ex(h2_stream_dtor, NULL, "grpc_native_stream", module_number);
     return SUCCESS;
 }
 
