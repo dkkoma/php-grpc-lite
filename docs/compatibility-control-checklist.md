@@ -41,15 +41,20 @@
 
 ## 5. Metadata Compatibility
 
+詳細な未確認点と次の観測 matrix は `docs/research/metadata-compatibility-gap-2026-05-04.md` に固定する。
+
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
-| ASCII metadata | key/value 正規化が gRPC 仕様と ext-grpc に沿う | lowercase key、重複 key、空白 |
-| binary metadata | `*-bin` は base64 decode/encode 互換を守る | padded/unpadded、`,` join の split |
-| reserved `grpc-*` | application metadata として不正な reserved key を混ぜない | request metadata validation |
-| initial/trailing split | body 前後で metadata を正しく分離する | normal response、trailers-only |
-| metadata size | 過大 metadata の扱いを決める | 明示エラーか libcurl/server に委ねるか |
+| ASCII metadata | key/value 正規化が gRPC 仕様と ext-grpc に沿う | lowercase key、mixed-case input、重複 key、空文字、空白、invalid character |
+| binary metadata | `*-bin` は PHP API 上 raw binary、HTTP/2 wire 上 base64 として扱う | 同一 key 複数 values、padded/unpadded、`,` join の split、不正 base64 |
+| duplicate metadata | 同一 key 複数 values の保持数・順序が curl/native/ext-grpc で説明できる | request echo、initial metadata、trailing metadata |
+| reserved `grpc-*` / fixed headers | application metadata として不正な reserved key を混ぜない | `grpc-status`、`grpc-message`、`grpc-timeout`、`grpc-encoding`、`te`、`content-type`、`user-agent` |
+| initial/trailing split | body 前後で metadata を正しく分離する | normal response、trailers-only、server streaming first payload 前/final payload 後 |
+| metadata size | 過大 metadata の扱いを決める | header count、value bytes、header list size 超過、native 固定 buffer 排除 |
+| authority / gax headers | 実用 metadata と transport header が衝突しない | `:authority`、`grpc.primary_user_agent`、`x-goog-api-client`、`x-goog-request-params` |
 
 2026-04-28 時点で、単一 raw binary value の `*-bin` request / initial / trailing metadata round-trip は php-grpc-lite と ext-grpc で一致確認済み。同一 key の複数 binary values は ext-grpc 側で最後だけ見える挙動が観測されたため、追加確認対象として残す。
+2026-05-04 時点で、native request metadata は duplicate values と大きい metadata を保持する設計になっていない。互換性ゲートを追加する前に、観測 fixture で ext-grpc の実際の PHP API shape を確定する。
 
 ## 6. Compression / Encoding
 
