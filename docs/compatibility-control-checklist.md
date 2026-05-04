@@ -54,7 +54,7 @@
 | authority / gax headers | 実用 metadata と transport header が衝突しない | `:authority`、`grpc.primary_user_agent`、`x-goog-api-client`、`x-goog-request-params` |
 
 2026-04-28 時点で、単一 raw binary value の `*-bin` request / initial / trailing metadata round-trip は php-grpc-lite と ext-grpc で一致確認済み。同一 key の複数 binary values は ext-grpc 側で最後だけ見える挙動が観測されたため、追加確認対象として残す。
-2026-05-04 時点で、native request metadata は duplicate values と大きい metadata を保持する設計になっていない。互換性ゲートを追加する前に、観測 fixture で ext-grpc の実際の PHP API shape を確定する。
+2026-05-04 時点の追加観測で、curl/native は同一 key 複数 values を全て保持し、ext-grpc は最後の value だけを PHP API に出すことを確認した。native request metadata の `array<string,string>` 畳み込みと C extension 固定 buffer は修正済み。残りは ext-grpc の最後値互換へ寄せるか、複数 values 保持を php-grpc-lite の仕様として採用するかの判断。
 
 ## 6. Compression / Encoding
 

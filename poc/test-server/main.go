@@ -88,8 +88,7 @@ func (s *server) BenchUnary(ctx context.Context, req *pb.BenchRequest) (*pb.Benc
 	if err := benchErrorFromContext(ctx); err != nil {
 		return nil, err
 	}
-	sendBenchMetadata(ctx)
-	sendBenchBinaryMetadata(ctx)
+	sendBenchAllMetadata(ctx)
 	if d := req.GetServerDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
@@ -259,48 +258,47 @@ func (h benchStatsHandler) TagConn(ctx context.Context, info *stats.ConnTagInfo)
 
 func (h benchStatsHandler) HandleConn(ctx context.Context, connStats stats.ConnStats) {}
 
-func sendBenchMetadata(ctx context.Context) {
+func sendBenchAllMetadata(ctx context.Context) {
 	incoming, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return
 	}
 
+	initial := metadata.New(nil)
+	trailing := metadata.New(nil)
+
 	count := firstMetadataInt(incoming, "x-bench-response-metadata-count")
-	if count <= 0 {
-		return
-	}
 	valueBytes := firstMetadataInt(incoming, "x-bench-response-metadata-value-bytes")
 	if valueBytes < 0 {
 		valueBytes = 0
 	}
 	value := makeMetadataValue(valueBytes)
-
-	initial := metadata.New(nil)
-	trailing := metadata.New(nil)
 	for i := 0; i < count; i++ {
-		key := fmt.Sprintf("x-bench-initial-%03d", i)
-		initial.Append(key, value)
-		key = fmt.Sprintf("x-bench-trailing-%03d", i)
-		trailing.Append(key, value)
+		initial.Append(fmt.Sprintf("x-bench-initial-%03d", i), value)
+		trailing.Append(fmt.Sprintf("x-bench-trailing-%03d", i), value)
 	}
-	grpc.SendHeader(ctx, initial)
-	grpc.SetTrailer(ctx, trailing)
+
+	appendMetadataValues(initial, "x-bench-initial-bin", incoming.Get("x-bench-echo-bin"))
+	appendMetadataValues(trailing, "x-bench-trailing-bin", incoming.Get("x-bench-echo-bin"))
+	appendMetadataValues(initial, "x-bench-initial-ascii", incoming.Get("x-bench-echo-ascii"))
+	appendMetadataValues(trailing, "x-bench-trailing-ascii", incoming.Get("x-bench-echo-ascii"))
+	appendMetadataValues(initial, "x-bench-initial-duplicate", incoming.Get("x-bench-response-duplicate"))
+	appendMetadataValues(trailing, "x-bench-trailing-duplicate", incoming.Get("x-bench-response-duplicate"))
+	appendMetadataValues(initial, "x-bench-initial-duplicate-bin", incoming.Get("x-bench-response-duplicate-bin"))
+	appendMetadataValues(trailing, "x-bench-trailing-duplicate-bin", incoming.Get("x-bench-response-duplicate-bin"))
+
+	if len(initial) > 0 {
+		grpc.SendHeader(ctx, initial)
+	}
+	if len(trailing) > 0 {
+		grpc.SetTrailer(ctx, trailing)
+	}
 }
 
-func sendBenchBinaryMetadata(ctx context.Context) {
-	incoming, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return
+func appendMetadataValues(md metadata.MD, key string, values []string) {
+	for _, value := range values {
+		md.Append(key, value)
 	}
-	values := incoming.Get("x-bench-echo-bin")
-	if len(values) == 0 {
-		return
-	}
-
-	initial := metadata.MD{"x-bench-initial-bin": values}
-	trailing := metadata.MD{"x-bench-trailing-bin": values}
-	grpc.SendHeader(ctx, initial)
-	grpc.SetTrailer(ctx, trailing)
 }
 
 func firstMetadataInt(md metadata.MD, key string) int {
@@ -330,6 +328,7 @@ func (s *server) BenchServerStream(req *pb.BenchRequest, stream pb.Greeter_Bench
 	if err := benchErrorFromContext(stream.Context()); err != nil {
 		return err
 	}
+	sendBenchAllMetadata(stream.Context())
 	payload := make([]byte, req.GetPayloadBytes())
 	delay := time.Duration(req.GetServerDelayMs()) * time.Millisecond
 	count := int(req.GetMessageCount())

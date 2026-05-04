@@ -107,7 +107,7 @@ abstract class AbstractCall
         return $headers;
     }
 
-    /** @return array<string, string> */
+    /** @return array<string, list<string>> */
     protected function buildNativeRequestHeaders(): array
     {
         $headers = [];
@@ -117,7 +117,7 @@ abstract class AbstractCall
             if ($key === '' || $key === 'content-type' || $key === 'te' || $key === 'user-agent') {
                 continue;
             }
-            $headers[$key] = ltrim($value);
+            $headers[$key][] = ltrim($value);
         }
 
         return $headers;

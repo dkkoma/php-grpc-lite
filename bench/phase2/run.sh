@@ -23,6 +23,7 @@
 #   ./bench/phase2/run.sh payload-streaming
 #   ./bench/phase2/run.sh metadata-header
 #   ./bench/phase2/run.sh metadata-header-diagnostic
+#   ./bench/phase2/run.sh metadata-compat
 #
 set -euo pipefail
 
@@ -52,6 +53,10 @@ run_phase2_php() {
     shift 2
 
     local output_path="$output_dir/$output_name"
+    local php_args=()
+    if [[ "$implementation" == "php-grpc-lite" && "${PHP_GRPC_LITE_TRANSPORT:-}" == "native" ]]; then
+        php_args=(-d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so)
+    fi
 
     echo
     echo "==========================================="
@@ -59,7 +64,7 @@ run_phase2_php() {
     echo "  JSON: $output_path"
     echo "==========================================="
 
-    docker compose run --rm "$container_service" php "$@" \
+    docker compose run --rm "$container_service" php ${php_args+"${php_args[@]}"} "$@" \
         --suite="$suite" \
         --implementation="$implementation" \
         --autoload="$autoload_path" \
@@ -181,11 +186,18 @@ case "$suite" in
             tools/phase2/metadata-header.php \
             --diagnostic-rpc
         ;;
+    metadata-compat)
+        run_phase2_php \
+            "Phase 2 metadata compatibility observation" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/metadata-compat.php \
+            --transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
+        ;;
     *)
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic|metadata-compat]
 EOF
         exit 2
         ;;

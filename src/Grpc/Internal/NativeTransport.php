@@ -14,7 +14,7 @@ namespace Grpc\Internal;
 final class NativeTransport
 {
     /**
-     * @param array<string, string> $headers
+     * @param array<string, list<string>> $headers
      * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, headers: array<string, list<string>>, trailers: array<string, list<string>>, raw: array<string, mixed>}
      */
     public static function unaryBatch(
@@ -79,7 +79,7 @@ final class NativeTransport
     }
 
     /**
-     * @param array<string, string> $headers
+     * @param array<string, list<string>> $headers
      * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, headers: array<string, list<string>>, trailers: array<string, list<string>>, raw: array<string, mixed>}
      */
     public static function unarySimple(
@@ -152,7 +152,7 @@ final class NativeTransport
     }
 
     /**
-     * @param array<string, string> $headers
+     * @param array<string, list<string>> $headers
      * @return resource
      */
     public static function streamOpen(
@@ -344,7 +344,7 @@ final class NativeTransport
             $trailers['grpc-message'] = [rawurlencode($details)];
         }
 
-        foreach ([
+        $serverStatsFields = [
             'server_stats_handler_start_ns',
             'server_stats_handler_end_ns',
             'server_stats_in_payload_ns',
@@ -356,7 +356,21 @@ final class NativeTransport
             'server_stats_out_payload_bytes',
             'server_stats_out_payload_wire_bytes',
             'server_stats_out_payload_compressed_bytes',
-        ] as $field) {
+        ];
+
+        $hasServerStats = false;
+        foreach ($serverStatsFields as $field) {
+            $value = self::firstScalarValue($result[$field] ?? null);
+            if ($value !== null && (string) $value !== '0') {
+                $hasServerStats = true;
+                break;
+            }
+        }
+        if (!$hasServerStats) {
+            return $trailers;
+        }
+
+        foreach ($serverStatsFields as $field) {
             $value = self::firstScalarValue($result[$field] ?? null);
             if ($value === null) {
                 continue;

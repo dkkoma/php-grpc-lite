@@ -280,6 +280,20 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);
 
 typedef struct {
+    nghttp2_nv *nva;
+    size_t len;
+    size_t capacity;
+    zend_string **value_strings;
+    size_t value_count;
+} poc_request_headers;
+
+static size_t count_custom_header_values(zval *headers_zv);
+static void init_request_headers(poc_request_headers *headers, size_t custom_values);
+static void append_request_header(poc_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+static void append_custom_request_headers(poc_request_headers *headers, zval *headers_zv);
+static void free_request_headers(poc_request_headers *headers);
+
+typedef struct {
     int32_t stream_id;
     bool stream_closed;
     int grpc_status;
@@ -1414,6 +1428,110 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
     return (zend_long) atoll(buf);
 }
 
+static size_t count_custom_header_values(zval *headers_zv)
+{
+    size_t count = 0;
+    zend_string *key;
+    zval *value;
+
+    if (headers_zv == NULL || Z_TYPE_P(headers_zv) != IS_ARRAY) {
+        return 0;
+    }
+
+    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), key, value) {
+        if (key == NULL) {
+            continue;
+        }
+        if (Z_TYPE_P(value) == IS_ARRAY) {
+            zval *nested;
+            ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), nested) {
+                count++;
+            } ZEND_HASH_FOREACH_END();
+            continue;
+        }
+        count++;
+    } ZEND_HASH_FOREACH_END();
+
+    return count;
+}
+
+static void init_request_headers(poc_request_headers *headers, size_t custom_values)
+{
+    headers->capacity = 7 + custom_values;
+    headers->len = 0;
+    headers->value_count = 0;
+    headers->nva = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(nghttp2_nv));
+    headers->value_strings = custom_values > 0 ? ecalloc(custom_values, sizeof(zend_string *)) : NULL;
+}
+
+static void append_request_header(poc_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
+{
+    if (headers->len >= headers->capacity) {
+        return;
+    }
+    headers->nva[headers->len++] = (nghttp2_nv) {
+        (uint8_t *) name,
+        (uint8_t *) value,
+        namelen,
+        valuelen,
+        NGHTTP2_NV_FLAG_NONE
+    };
+}
+
+static void append_custom_request_headers(poc_request_headers *headers, zval *headers_zv)
+{
+    zend_string *key;
+    zval *value;
+
+    if (headers_zv == NULL || Z_TYPE_P(headers_zv) != IS_ARRAY) {
+        return;
+    }
+
+    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), key, value) {
+        if (key == NULL) {
+            continue;
+        }
+        if (Z_TYPE_P(value) == IS_ARRAY) {
+            zval *nested;
+            ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), nested) {
+                zend_string *value_str = zval_get_string(nested);
+                if (headers->value_strings != NULL) {
+                    headers->value_strings[headers->value_count++] = value_str;
+                }
+                append_request_header(headers, ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+            } ZEND_HASH_FOREACH_END();
+            continue;
+        }
+
+        zend_string *value_str = zval_get_string(value);
+        if (headers->value_strings != NULL) {
+            headers->value_strings[headers->value_count++] = value_str;
+        }
+        append_request_header(headers, ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    } ZEND_HASH_FOREACH_END();
+}
+
+static void free_request_headers(poc_request_headers *headers)
+{
+    size_t i;
+    if (headers->value_strings != NULL) {
+        for (i = 0; i < headers->value_count; i++) {
+            if (headers->value_strings[i] != NULL) {
+                zend_string_release(headers->value_strings[i]);
+            }
+        }
+        efree(headers->value_strings);
+    }
+    if (headers->nva != NULL) {
+        efree(headers->nva);
+    }
+    headers->nva = NULL;
+    headers->value_strings = NULL;
+    headers->len = 0;
+    headers->capacity = 0;
+    headers->value_count = 0;
+}
+
 static int process_response_messages(poc_client *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us)
 {
     size_t offset = 0;
@@ -2482,10 +2600,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
 {
     poc_client client;
     nghttp2_data_provider data_provider;
-    nghttp2_nv nva[16];
-    size_t nvlen = 0;
-    char header_storage[8][512];
-    size_t header_storage_used = 0;
+    poc_request_headers request_headers;
     int rv;
     char recv_buf[16384];
     uint64_t total_started = 0;
@@ -2526,48 +2641,29 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     nghttp2_session_set_user_data(channel->session, &client);
     user_data_set = true;
     channel->busy = true;
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":scheme", channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", channel->authority, strlen(channel->authority));
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "nghttp2-poc/0.1");
-
-    if (headers_zv != NULL) {
-        zend_string *key;
-        zval *value;
-        ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), key, value) {
-            zend_string *value_str;
-            if (key == NULL || header_storage_used >= 8 || nvlen >= 16) {
-                continue;
-            }
-            value_str = zval_get_string(value);
-            snprintf(header_storage[header_storage_used], sizeof(header_storage[header_storage_used]), "%.*s", (int) ZSTR_LEN(value_str), ZSTR_VAL(value_str));
-            nva[nvlen++] = (nghttp2_nv) {
-                (uint8_t *) ZSTR_VAL(key),
-                (uint8_t *) header_storage[header_storage_used],
-                ZSTR_LEN(key),
-                strlen(header_storage[header_storage_used]),
-                NGHTTP2_NV_FLAG_NONE
-            };
-            header_storage_used++;
-            zend_string_release(value_str);
-        } ZEND_HASH_FOREACH_END();
-    }
+    init_request_headers(&request_headers, count_custom_header_values(headers_zv));
+    append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
+    append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
+    append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, channel->authority, strlen(channel->authority));
+    append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
+    append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
+    append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
+    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
+    append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
     setup_us = monotonic_us() - setup_started;
 
     submit_started = monotonic_us();
-    client.stream_id = nghttp2_submit_request(channel->session, NULL, nva, nvlen, &data_provider, NULL);
+    client.stream_id = nghttp2_submit_request(channel->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     submit_us = monotonic_us() - submit_started;
     if (client.stream_id < 0) {
         if (user_data_set) {
             nghttp2_session_set_user_data(channel->session, NULL);
         }
         channel->busy = false;
+        free_request_headers(&request_headers);
         cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
@@ -2582,6 +2678,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
             nghttp2_session_set_user_data(channel->session, NULL);
         }
         channel->busy = false;
+        free_request_headers(&request_headers);
         cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         return FAILURE;
@@ -2607,6 +2704,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
                 nghttp2_session_set_user_data(channel->session, NULL);
             }
             channel->busy = false;
+            free_request_headers(&request_headers);
             cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
@@ -2618,6 +2716,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
                 nghttp2_session_set_user_data(channel->session, NULL);
             }
             channel->busy = false;
+            free_request_headers(&request_headers);
             cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
             return FAILURE;
@@ -2684,6 +2783,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     add_assoc_long(return_value, "server_stats_out_payload_compressed_bytes", client.server_stats_out_payload_compressed_bytes);
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
+    free_request_headers(&request_headers);
     cleanup_poc_client(&client);
     return SUCCESS;
 }
@@ -2813,10 +2913,7 @@ PHP_FUNCTION(nghttp2_poc_stream_open)
     poc_channel *channel;
     poc_stream *stream;
     nghttp2_data_provider data_provider;
-    nghttp2_nv nva[16];
-    size_t nvlen = 0;
-    char header_storage[8][512];
-    size_t header_storage_used = 0;
+    poc_request_headers request_headers;
     bool persistent_reused = false;
     const char *error_message = NULL;
     int rv;
@@ -2873,40 +2970,21 @@ PHP_FUNCTION(nghttp2_poc_stream_open)
     set_grpc_header(&stream->client, stream->client.request_len);
 
     nghttp2_session_set_user_data(channel->session, &stream->client);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":scheme", channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", channel->authority, strlen(channel->authority));
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "nghttp2-poc/0.1");
-
-    if (headers_zv != NULL) {
-        zend_string *header_key;
-        zval *value;
-        ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), header_key, value) {
-            zend_string *value_str;
-            if (header_key == NULL || header_storage_used >= 8 || nvlen >= 16) {
-                continue;
-            }
-            value_str = zval_get_string(value);
-            snprintf(header_storage[header_storage_used], sizeof(header_storage[header_storage_used]), "%.*s", (int) ZSTR_LEN(value_str), ZSTR_VAL(value_str));
-            nva[nvlen++] = (nghttp2_nv) {
-                (uint8_t *) ZSTR_VAL(header_key),
-                (uint8_t *) header_storage[header_storage_used],
-                ZSTR_LEN(header_key),
-                strlen(header_storage[header_storage_used]),
-                NGHTTP2_NV_FLAG_NONE
-            };
-            header_storage_used++;
-            zend_string_release(value_str);
-        } ZEND_HASH_FOREACH_END();
-    }
+    init_request_headers(&request_headers, count_custom_header_values(headers_zv));
+    append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
+    append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
+    append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, channel->authority, strlen(channel->authority));
+    append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
+    append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
+    append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
+    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
+    append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
-    stream->client.stream_id = nghttp2_submit_request(channel->session, NULL, nva, nvlen, &data_provider, NULL);
+    stream->client.stream_id = nghttp2_submit_request(channel->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (stream->client.stream_id < 0) {
+        free_request_headers(&request_headers);
         destroy_poc_stream(stream);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         RETURN_THROWS();
@@ -2917,12 +2995,14 @@ PHP_FUNCTION(nghttp2_poc_stream_open)
     if (rv != 0) {
         mark_channel_dead(channel, rv);
         channel->busy = false;
+        free_request_headers(&request_headers);
         destroy_poc_stream(stream);
         discard_persistent_channel(key, key_len, channel);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         RETURN_THROWS();
     }
 
+    free_request_headers(&request_headers);
     RETURN_RES(zend_register_resource(stream, le_poc_stream));
 }
 
@@ -3071,11 +3151,8 @@ PHP_FUNCTION(nghttp2_poc_unary)
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session *session = NULL;
     nghttp2_data_provider data_provider;
-    nghttp2_nv nva[16];
-    size_t nvlen = 0;
+    poc_request_headers request_headers;
     char authority[512];
-    char header_storage[8][512];
-    size_t header_storage_used = 0;
     int rv;
     char recv_buf[16384];
     uint64_t total_started = 0;
@@ -3130,47 +3207,28 @@ PHP_FUNCTION(nghttp2_poc_unary)
     nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0);
 
     snprintf(authority, sizeof(authority), "%s:%ld", host, port);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":scheme", "http");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", authority, strlen(authority));
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "nghttp2-poc/0.1");
-
-    if (headers_zv != NULL) {
-        zend_string *key;
-        zval *value;
-        ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), key, value) {
-            zend_string *value_str;
-            if (key == NULL || header_storage_used >= 8 || nvlen >= 16) {
-                continue;
-            }
-            value_str = zval_get_string(value);
-            snprintf(header_storage[header_storage_used], sizeof(header_storage[header_storage_used]), "%.*s", (int) ZSTR_LEN(value_str), ZSTR_VAL(value_str));
-            nva[nvlen++] = (nghttp2_nv) {
-                (uint8_t *) ZSTR_VAL(key),
-                (uint8_t *) header_storage[header_storage_used],
-                ZSTR_LEN(key),
-                strlen(header_storage[header_storage_used]),
-                NGHTTP2_NV_FLAG_NONE
-            };
-            header_storage_used++;
-            zend_string_release(value_str);
-        } ZEND_HASH_FOREACH_END();
-    }
+    init_request_headers(&request_headers, count_custom_header_values(headers_zv));
+    append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
+    append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, "http", sizeof("http") - 1);
+    append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, authority, strlen(authority));
+    append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
+    append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
+    append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
+    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
+    append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
     setup_us = monotonic_us() - setup_started;
 
     submit_started = monotonic_us();
-    client.stream_id = nghttp2_submit_request(session, NULL, nva, nvlen, &data_provider, NULL);
+    client.stream_id = nghttp2_submit_request(session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     submit_us = monotonic_us() - submit_started;
     if (client.stream_id < 0) {
         close(client.fd);
         nghttp2_session_del(session);
         nghttp2_session_callbacks_del(callbacks);
+        free_request_headers(&request_headers);
         cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         RETURN_THROWS();
@@ -3183,6 +3241,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
         close(client.fd);
         nghttp2_session_del(session);
         nghttp2_session_callbacks_del(callbacks);
+        free_request_headers(&request_headers);
         cleanup_poc_client(&client);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         RETURN_THROWS();
@@ -3200,6 +3259,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
             close(client.fd);
             nghttp2_session_del(session);
             nghttp2_session_callbacks_del(callbacks);
+            free_request_headers(&request_headers);
             cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             RETURN_THROWS();
@@ -3209,6 +3269,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
             close(client.fd);
             nghttp2_session_del(session);
             nghttp2_session_callbacks_del(callbacks);
+            free_request_headers(&request_headers);
             cleanup_poc_client(&client);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
             RETURN_THROWS();
@@ -3221,6 +3282,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
     close(client.fd);
     nghttp2_session_del(session);
     nghttp2_session_callbacks_del(callbacks);
+    free_request_headers(&request_headers);
     cleanup_us = monotonic_us() - cleanup_started;
 
     array_init(return_value);
@@ -3297,11 +3359,8 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session *session = NULL;
     nghttp2_data_provider data_provider;
-    nghttp2_nv nva[16];
-    size_t nvlen = 0;
+    poc_request_headers request_headers;
     char authority[512];
-    char header_storage[8][512];
-    size_t header_storage_used = 0;
     int rv;
     char recv_buf[MAX_RECV_BUF_SIZE];
     size_t recv_buf_len = 16384;
@@ -3516,35 +3575,15 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     }
 
     snprintf(authority, sizeof(authority), "%s:%ld", host, port);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":scheme", "http");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", authority, strlen(authority));
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "nghttp2-poc/0.1");
-
-    if (headers_zv != NULL) {
-        zend_string *key;
-        zval *value;
-        ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), key, value) {
-            zend_string *value_str;
-            if (key == NULL || header_storage_used >= 8 || nvlen >= 16) {
-                continue;
-            }
-            value_str = zval_get_string(value);
-            snprintf(header_storage[header_storage_used], sizeof(header_storage[header_storage_used]), "%.*s", (int) ZSTR_LEN(value_str), ZSTR_VAL(value_str));
-            nva[nvlen++] = (nghttp2_nv) {
-                (uint8_t *) ZSTR_VAL(key),
-                (uint8_t *) header_storage[header_storage_used],
-                ZSTR_LEN(key),
-                strlen(header_storage[header_storage_used]),
-                NGHTTP2_NV_FLAG_NONE
-            };
-            header_storage_used++;
-            zend_string_release(value_str);
-        } ZEND_HASH_FOREACH_END();
-    }
+    init_request_headers(&request_headers, count_custom_header_values(headers_zv));
+    append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
+    append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, "http", sizeof("http") - 1);
+    append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, authority, strlen(authority));
+    append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
+    append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
+    append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
+    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
+    append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
@@ -3752,7 +3791,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
         cleanup_poc_client(&client);
         memset(&client.body, 0, sizeof(client.body));
 
-        client.stream_id = nghttp2_submit_request(session, NULL, nva, nvlen, &data_provider, NULL);
+        client.stream_id = nghttp2_submit_request(session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
         if (client.stream_id < 0) {
             failed++;
             break;
@@ -3928,6 +3967,7 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     close(client.fd);
     nghttp2_session_del(session);
     nghttp2_session_callbacks_del(callbacks);
+    free_request_headers(&request_headers);
 
     array_init(return_value);
     add_assoc_long(return_value, "iterations", iterations);
