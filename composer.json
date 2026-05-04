@@ -1,6 +1,6 @@
 {
     "name": "php-grpc-lite/php-grpc-lite",
-    "description": "ext-grpc drop-in replacement: PHP gRPC client with optional native transport",
+    "description": "ext-grpc drop-in replacement candidate: PHP gRPC client with source-build native transport",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -17,7 +17,8 @@
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
-        "ext-protobuf": "Use the protobuf C extension for faster serialization"
+        "ext-protobuf": "Use the protobuf C extension for faster serialization",
+        "ext-grpc": "Build and load this repository's ext/grpc source as grpc.so before relying on the ext-grpc provide entry"
     },
     "autoload": {
         "psr-4": {

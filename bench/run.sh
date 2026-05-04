@@ -45,6 +45,8 @@ run_hot_path() {
 run_lite() {
     local bench_path="${1:-}"
     local log_path="$output_dir/$suite-$timestamp-php-grpc-lite.log"
+    # Keep generic regression baselines on curl unless explicitly overridden.
+    # Release native gates must pass PHP_GRPC_LITE_TRANSPORT=native explicitly.
     local transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
     local cmd=(
         docker compose run --rm -e "PHP_GRPC_LITE_TRANSPORT=$transport" dev bench/phpbench-with-artifacts.sh

@@ -8,9 +8,12 @@
 
 - PHP classes: Composer package `php-grpc-lite/php-grpc-lite` が `Grpc\*` API surfaceをautoloadする。
 - Native extension: このrepositoryの `ext/grpc/` を `phpize` でbuildする。
-- Runtime default: `native` transport。
+- Target runtime default: `native` transport。release readiness is still gated by native memory/lifecycle QA.
 - Stable route: `php_grpc_lite.transport=curl` を明示した場合だけlibcurl経路を使う。
-- Rollback: `extension=grpc.so` を外して公式 `ext-grpc` へ戻すか、アプリ側で `php_grpc_lite.transport=curl` を明示する。
+- Composer metadata: package は `ext-grpc` を `provide` するが、Composerはnative extensionをbuild/loadしない。source buildと `extension=grpc.so` の有効化を完了してから、drop-in replacementとして扱う。
+- Rollback:
+  - transportだけを戻す場合は、このextensionをloadしたまま `php_grpc_lite.transport=curl` を明示する。
+  - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc.so` を無効化し、公式側の `grpc.so` を有効化する。
 
 ## Requirements
 
@@ -42,7 +45,7 @@ composer require php-grpc-lite/php-grpc-lite
 このrepositoryをcloneし、`ext/grpc/` をbuildする。
 
 ```bash
-git clone https://github.com/your-vendor/php-grpc-lite.git
+git clone <php-grpc-lite repository URL> php-grpc-lite
 cd php-grpc-lite/ext/grpc
 phpize
 ./configure --enable-grpc
@@ -54,7 +57,7 @@ sudo make install
 
 ```bash
 docker compose run --rm dev sh -lc 'cd ext/grpc && phpize && ./configure --enable-grpc && make -j$(nproc)'
-docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"));'
+docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_native_persistent_channel_unary"));'
 ```
 
 ## Enable extension
@@ -66,7 +69,7 @@ docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so
 ```bash
 echo 'extension=grpc.so' | sudo tee /etc/php/conf.d/20-php-grpc-lite.ini
 php -m | grep '^grpc$'
-php -r 'var_dump(extension_loaded("grpc"));'
+php -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_native_persistent_channel_unary"));'
 ```
 
 公式 `ext-grpc` が既に有効な環境では、先に公式側の `extension=grpc.so` 設定を外す。同名moduleなので同時loadはできない。
@@ -102,13 +105,22 @@ $stableClient = new SomeGrpcClient($target, [
 ## Verification
 
 ```bash
-php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), class_exists(Grpc\\Channel::class));'
+php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), function_exists("grpc_native_persistent_channel_unary"), class_exists(Grpc\\Channel::class));'
 ```
 
 期待値:
 
 - `extension_loaded("grpc") === true`
+- `function_exists("grpc_native_persistent_channel_unary") === true`
 - `class_exists(Grpc\Channel::class) === true`
+
+`extension_loaded("grpc")` だけでは公式 `ext-grpc` と区別できないため、`grpc_native_*` 関数の存在も確認する。
+
+このrepositoryのDocker環境では、native stream lifecycle smokeも確認できる。
+
+```bash
+ITERATIONS=10 BENCH_TAG=install-smoke ./bench/phase2/check-native-lifecycle-stress.sh
+```
 
 ## Known limitation
 
