@@ -59,7 +59,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
 if ($output === null || $output === '' || $iterations <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $sleepUs < 0) {
     usage('output, iterations, message-count, payload-bytes, and sleep-us must be valid');
 }
-if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+if (!(extension_loaded('grpc'))) {
     throw new \RuntimeException('grpc native extension is required');
 }
 if (!is_file($autoload)) {
@@ -134,7 +134,7 @@ $measurements[] = runScenario('timeout_repeat', $iterations, static function () 
 $rawResourceKey = 'lifecycle-stress-' . getmypid() . '-' . bin2hex(random_bytes(4));
 $measurements[] = runScenario('raw_resource_unset_repeat', $iterations, static function () use ($request, $rawResourceKey): void {
     $serialized = $request->serializeToString();
-    $stream = \nghttp2_poc_stream_open(
+    $stream = \grpc_native_stream_open(
         $rawResourceKey,
         'test-server',
         50051,
@@ -142,14 +142,14 @@ $measurements[] = runScenario('raw_resource_unset_repeat', $iterations, static f
         $serialized,
         [],
     );
-    $next = \nghttp2_poc_stream_next($stream);
+    $next = \grpc_native_stream_next($stream);
     if (($next['done'] ?? false) === true || !is_string($next['payload'] ?? null)) {
         throw new \RuntimeException('raw stream did not yield a payload');
     }
     unset($stream);
     gc_collect_cycles();
 
-    $probe = \nghttp2_poc_stream_open(
+    $probe = \grpc_native_stream_open(
         $rawResourceKey,
         'test-server',
         50051,
@@ -157,11 +157,11 @@ $measurements[] = runScenario('raw_resource_unset_repeat', $iterations, static f
         $serialized,
         [],
     );
-    $probeNext = \nghttp2_poc_stream_next($probe);
+    $probeNext = \grpc_native_stream_next($probe);
     if (($probeNext['done'] ?? false) === true || !is_string($probeNext['payload'] ?? null)) {
         throw new \RuntimeException('raw stream probe did not yield a payload');
     }
-    \nghttp2_poc_stream_cancel($probe);
+    \grpc_native_stream_cancel($probe);
 });
 
 $document = ResultContract::document('native-lifecycle-stress', 'php-grpc-lite', $measurements);

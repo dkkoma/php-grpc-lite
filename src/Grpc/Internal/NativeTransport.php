@@ -25,14 +25,14 @@ final class NativeTransport
         bool $directResponsePayload,
         int $timeoutMicros = 0,
     ): array {
-        if (!function_exists('nghttp2_poc_unary_batch')) {
+        if (!function_exists('grpc_native_unary_batch')) {
             throw new \RuntimeException('grpc native transport extension is not loaded');
         }
 
         [$host, $port] = self::splitTarget($target);
         $payloads = [];
 
-        $result = \nghttp2_poc_unary_batch(
+        $result = \grpc_native_unary_batch(
             $host,
             $port,
             $path,
@@ -89,7 +89,7 @@ final class NativeTransport
         int $timeoutMicros = 0,
         ?\Grpc\ChannelCredentials $credentials = null,
     ): array {
-        if (!function_exists('nghttp2_poc_persistent_channel_unary')) {
+        if (!function_exists('grpc_native_persistent_channel_unary')) {
             throw new \RuntimeException('grpc native persistent channel API is not loaded');
         }
 
@@ -98,7 +98,7 @@ final class NativeTransport
         $key = self::channelKey($host, $port, $credentials);
         try {
             $useTls = $credentials !== null && !$credentials->isInsecure();
-            $result = \nghttp2_poc_persistent_channel_unary(
+            $result = \grpc_native_persistent_channel_unary(
                 $key,
                 $host,
                 $port,
@@ -173,14 +173,14 @@ final class NativeTransport
         int $timeoutMicros = 0,
         ?\Grpc\ChannelCredentials $credentials = null,
     ): mixed {
-        if (!function_exists('nghttp2_poc_stream_open')) {
+        if (!function_exists('grpc_native_stream_open')) {
             throw new \RuntimeException('grpc native stream API is not loaded');
         }
 
         [$host, $port] = self::splitTarget($target);
         $useTls = $credentials !== null && !$credentials->isInsecure();
 
-        return \nghttp2_poc_stream_open(
+        return \grpc_native_stream_open(
             self::channelKey($host, $port, $credentials),
             $host,
             $port,
@@ -198,11 +198,11 @@ final class NativeTransport
     /** @return array{done: bool, payload?: string, raw?: array<string, mixed>, grpc_status?: int, details?: string, http_status?: int, headers?: array<string, list<string>>, trailers?: array<string, list<string>>} */
     public static function streamNext(mixed $stream): array
     {
-        if (!function_exists('nghttp2_poc_stream_next')) {
+        if (!function_exists('grpc_native_stream_next')) {
             throw new \RuntimeException('grpc native stream API is not loaded');
         }
 
-        $result = \nghttp2_poc_stream_next($stream);
+        $result = \grpc_native_stream_next($stream);
         if (($result['done'] ?? false) !== true) {
             return [
                 'done' => false,
@@ -224,8 +224,8 @@ final class NativeTransport
 
     public static function streamCancel(mixed $stream): void
     {
-        if (function_exists('nghttp2_poc_stream_cancel')) {
-            \nghttp2_poc_stream_cancel($stream);
+        if (function_exists('grpc_native_stream_cancel')) {
+            \grpc_native_stream_cancel($stream);
         }
     }
 

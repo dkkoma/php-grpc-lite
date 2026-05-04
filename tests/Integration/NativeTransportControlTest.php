@@ -20,7 +20,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeTlsUnarySucceeds(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -42,7 +42,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeTlsServerStreamingSucceeds(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -70,7 +70,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeMtlsUnarySucceeds(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -96,7 +96,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeMtlsServerStreamingSucceeds(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -128,7 +128,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeTlsWithInvalidRootCertFailsWithoutCurlFallback(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -148,7 +148,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeMtlsWithoutClientCertificateFailsWithoutCurlFallback(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -170,7 +170,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeUnaryTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -192,7 +192,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeServerStreamingTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -221,7 +221,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeBinaryMetadataRoundTripUsesRawPhpValues(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -243,7 +243,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeUnaryHttpStatusWithoutGrpcStatusIsMapped(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -263,7 +263,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeUnaryRejectsNonGrpcContentType(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -281,7 +281,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeUnaryCompressedMessageIsExplicitlyUnsupported(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -301,7 +301,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeUnaryGrpcEncodingIsExplicitlyUnsupported(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -321,7 +321,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeExtensionMissingFailsAsStatusWithoutCurlFallback(): void
     {
-        if ((extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if ((extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is loaded in this process');
         }
 
@@ -359,7 +359,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeUnaryDeadlineExceededIsEnforcedClientSide(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -384,7 +384,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeServerStreamingDeadlineExceededIsEnforcedClientSide(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -413,7 +413,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeServerStreamingCancelDuringIterationReturnsCancelledStatus(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -439,8 +439,8 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeServerStreamingYieldsMessagesIncrementally(): void
     {
-        if (!function_exists('nghttp2_poc_stream_open')) {
-            self::markTestSkipped('nghttp2_poc stream API is not loaded in this process');
+        if (!function_exists('grpc_native_stream_open')) {
+            self::markTestSkipped('grpc_native stream API is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -471,7 +471,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeChannelGoAwayIsNotReusedForNextRpc(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -496,14 +496,14 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativePersistentChannelSurvivesPhpRequestLocalCacheReset(): void
     {
-        if (!function_exists('nghttp2_poc_persistent_channel_unary')) {
-            self::markTestSkipped('nghttp2_poc persistent channel API is not loaded in this process');
+        if (!function_exists('grpc_native_persistent_channel_unary')) {
+            self::markTestSkipped('grpc_native persistent channel API is not loaded in this process');
         }
 
         $key = 'phpunit-persistent-' . bin2hex(random_bytes(8));
         $request = "\0\0\0\0\0";
 
-        $first = \nghttp2_poc_persistent_channel_unary(
+        $first = \grpc_native_persistent_channel_unary(
             $key,
             'test-server',
             50051,
@@ -512,7 +512,7 @@ final class NativeTransportControlTest extends TestCase
             [],
         );
 
-        $second = \nghttp2_poc_persistent_channel_unary(
+        $second = \grpc_native_persistent_channel_unary(
             $key,
             'test-server',
             50051,
@@ -530,8 +530,8 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeStreamResourceDestructReleasesChannelBusyState(): void
     {
-        if (!function_exists('nghttp2_poc_stream_open')) {
-            self::markTestSkipped('nghttp2_poc stream API is not loaded in this process');
+        if (!function_exists('grpc_native_stream_open')) {
+            self::markTestSkipped('grpc_native stream API is not loaded in this process');
         }
 
         $key = 'phpunit-stream-lifecycle-' . bin2hex(random_bytes(8));
@@ -540,7 +540,7 @@ final class NativeTransportControlTest extends TestCase
         $request->setPayloadBytes(100);
         $serialized = $request->serializeToString();
 
-        $stream = \nghttp2_poc_stream_open(
+        $stream = \grpc_native_stream_open(
             $key,
             'test-server',
             50051,
@@ -550,7 +550,7 @@ final class NativeTransportControlTest extends TestCase
         );
 
         try {
-            \nghttp2_poc_stream_open(
+            \grpc_native_stream_open(
                 $key,
                 'test-server',
                 50051,
@@ -565,7 +565,7 @@ final class NativeTransportControlTest extends TestCase
 
         unset($stream);
 
-        $nextStream = \nghttp2_poc_stream_open(
+        $nextStream = \grpc_native_stream_open(
             $key,
             'test-server',
             50051,
@@ -573,16 +573,16 @@ final class NativeTransportControlTest extends TestCase
             $serialized,
             [],
         );
-        $next = \nghttp2_poc_stream_next($nextStream);
+        $next = \grpc_native_stream_next($nextStream);
 
         self::assertFalse($next['done']);
         self::assertIsString($next['payload']);
-        self::assertTrue(\nghttp2_poc_stream_cancel($nextStream));
+        self::assertTrue(\grpc_native_stream_cancel($nextStream));
     }
 
     public function testNativeChannelEofIsDiscardedBeforeNextRpc(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -620,7 +620,7 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativeChannelMidStreamFailureIsDiscardedBeforeNextRpc(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
@@ -652,11 +652,11 @@ final class NativeTransportControlTest extends TestCase
 
     public function testNativePocCanRunConcurrentStreamsOnOneHttp2Session(): void
     {
-        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+        if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
-        $result = \nghttp2_poc_multiplex_unary(
+        $result = \grpc_native_multiplex_unary(
             'test-server',
             50051,
             '/helloworld.Greeter/BenchUnary',

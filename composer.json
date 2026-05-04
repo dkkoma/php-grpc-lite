@@ -1,6 +1,6 @@
 {
     "name": "php-grpc-lite/php-grpc-lite",
-    "description": "ext-grpc drop-in replacement: pure PHP gRPC client (Phase 0)",
+    "description": "ext-grpc drop-in replacement: PHP gRPC client with optional native transport",
     "type": "library",
     "license": "MIT",
     "require": {

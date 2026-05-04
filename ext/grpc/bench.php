@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../vendor/autoload.php';
 
-if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+if (!(extension_loaded('grpc'))) {
     fwrite(STDERR, "grpc native extension is not loaded\n");
     exit(1);
 }
@@ -99,7 +99,7 @@ $responseCallback = match ($responseCallbackMode) {
     default => null,
 };
 
-$result = nghttp2_poc_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
+$result = grpc_native_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',

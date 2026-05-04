@@ -359,14 +359,14 @@ struct _poc_stream {
 static int le_poc_channel;
 static int le_poc_stream;
 
-ZEND_BEGIN_MODULE_GLOBALS(nghttp2_poc)
+ZEND_BEGIN_MODULE_GLOBALS(grpc_native)
     HashTable persistent_channels;
     bool persistent_channels_initialized;
-ZEND_END_MODULE_GLOBALS(nghttp2_poc)
+ZEND_END_MODULE_GLOBALS(grpc_native)
 
-ZEND_DECLARE_MODULE_GLOBALS(nghttp2_poc)
+ZEND_DECLARE_MODULE_GLOBALS(grpc_native)
 
-#define NGHTTP2_POC_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(nghttp2_poc, v)
+#define GRPC_NATIVE_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(grpc_native, v)
 
 static void destroy_poc_channel(poc_channel *channel)
 {
@@ -469,8 +469,8 @@ static void remove_unusable_persistent_channel(const char *key, size_t key_len, 
     if (channel == NULL || channel_usable(channel)) {
         return;
     }
-    if (NGHTTP2_POC_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+    if (GRPC_NATIVE_G(persistent_channels_initialized)) {
+        zend_hash_str_del(&GRPC_NATIVE_G(persistent_channels), key, key_len);
     }
     if (channel->busy) {
         channel->detached_from_cache = true;
@@ -681,12 +681,12 @@ static poc_channel *get_persistent_channel(const char *key, size_t key_len, cons
     poc_channel *channel;
 
     *persistent_reused = false;
-    if (!NGHTTP2_POC_G(persistent_channels_initialized)) {
+    if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
         *error_message = "persistent channel cache is not initialized";
         return NULL;
     }
 
-    channel = zend_hash_str_find_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+    channel = zend_hash_str_find_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len);
     if (channel != NULL && !channel_usable(channel)) {
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
@@ -697,7 +697,7 @@ static poc_channel *get_persistent_channel(const char *key, size_t key_len, cons
         if (channel == NULL) {
             return NULL;
         }
-        zend_hash_str_update_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len, channel);
+        zend_hash_str_update_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len, channel);
         return channel;
     }
 
@@ -710,8 +710,8 @@ static void discard_persistent_channel(const char *key, size_t key_len, poc_chan
     if (channel != NULL) {
         destroy_poc_channel(channel);
     }
-    if (NGHTTP2_POC_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+    if (GRPC_NATIVE_G(persistent_channels_initialized)) {
+        zend_hash_str_del(&GRPC_NATIVE_G(persistent_channels), key, key_len);
     }
 }
 
@@ -2449,7 +2449,7 @@ static int mux_on_stream_close_callback(nghttp2_session *session, int32_t stream
     return 0;
 }
 
-PHP_FUNCTION(nghttp2_poc_multiplex_unary)
+PHP_FUNCTION(grpc_native_multiplex_unary)
 {
     char *host = NULL;
     size_t host_len = 0;
@@ -2565,7 +2565,7 @@ PHP_FUNCTION(nghttp2_poc_multiplex_unary)
     efree(ctx.streams);
 }
 
-PHP_FUNCTION(nghttp2_poc_channel_open)
+PHP_FUNCTION(grpc_native_channel_open)
 {
     char *host = NULL;
     size_t host_len = 0;
@@ -2598,7 +2598,7 @@ PHP_FUNCTION(nghttp2_poc_channel_open)
     RETURN_RES(zend_register_resource(channel, le_poc_channel));
 }
 
-PHP_FUNCTION(nghttp2_poc_channel_is_usable)
+PHP_FUNCTION(grpc_native_channel_is_usable)
 {
     zval *channel_zv = NULL;
     poc_channel *channel;
@@ -2607,7 +2607,7 @@ PHP_FUNCTION(nghttp2_poc_channel_is_usable)
         Z_PARAM_RESOURCE(channel_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "nghttp2_poc_channel", le_poc_channel);
+    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_poc_channel);
     RETURN_BOOL(channel_usable(channel));
 }
 
@@ -2629,7 +2629,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     uint64_t recv_loop_us = 0;
     bool user_data_set = false;
     if (!channel_usable(channel)) {
-        zend_throw_exception(NULL, "invalid nghttp2_poc channel", 0);
+        zend_throw_exception(NULL, "invalid grpc_native channel", 0);
         return FAILURE;
     }
     if (channel->busy) {
@@ -2803,7 +2803,7 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     return SUCCESS;
 }
 
-PHP_FUNCTION(nghttp2_poc_channel_unary)
+PHP_FUNCTION(grpc_native_channel_unary)
 {
     zval *channel_zv = NULL;
     poc_channel *channel;
@@ -2823,13 +2823,13 @@ PHP_FUNCTION(nghttp2_poc_channel_unary)
         Z_PARAM_LONG(timeout_us)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "nghttp2_poc_channel", le_poc_channel);
+    channel = (poc_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_poc_channel);
     if (perform_poc_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, false, return_value) != SUCCESS) {
         RETURN_THROWS();
     }
 }
 
-PHP_FUNCTION(nghttp2_poc_persistent_channel_unary)
+PHP_FUNCTION(grpc_native_persistent_channel_unary)
 {
     char *key = NULL;
     size_t key_len = 0;
@@ -2868,12 +2868,12 @@ PHP_FUNCTION(nghttp2_poc_persistent_channel_unary)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (!NGHTTP2_POC_G(persistent_channels_initialized)) {
+    if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
         zend_throw_exception(NULL, "persistent channel cache is not initialized", 0);
         RETURN_THROWS();
     }
 
-    channel = zend_hash_str_find_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+    channel = zend_hash_str_find_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len);
     if (channel != NULL && !channel_usable(channel)) {
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
@@ -2885,7 +2885,7 @@ PHP_FUNCTION(nghttp2_poc_persistent_channel_unary)
             zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
             RETURN_THROWS();
         }
-        zend_hash_str_update_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len, channel);
+        zend_hash_str_update_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len, channel);
     } else {
         persistent_reused = true;
     }
@@ -2902,7 +2902,7 @@ PHP_FUNCTION(nghttp2_poc_persistent_channel_unary)
     }
 }
 
-PHP_FUNCTION(nghttp2_poc_stream_open)
+PHP_FUNCTION(grpc_native_stream_open)
 {
     char *key = NULL;
     size_t key_len = 0;
@@ -3053,7 +3053,7 @@ static void add_stream_status(zval *return_value, poc_stream *stream)
     add_metadata_map_to_return(return_value, "trailing_metadata", client, true);
 }
 
-PHP_FUNCTION(nghttp2_poc_stream_next)
+PHP_FUNCTION(grpc_native_stream_next)
 {
     zval *stream_zv = NULL;
     poc_stream *stream;
@@ -3063,7 +3063,7 @@ PHP_FUNCTION(nghttp2_poc_stream_next)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    stream = (poc_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "nghttp2_poc_stream", le_poc_stream);
+    stream = (poc_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_poc_stream);
     if (stream == NULL) {
         RETURN_THROWS();
     }
@@ -3130,7 +3130,7 @@ PHP_FUNCTION(nghttp2_poc_stream_next)
     add_stream_status(return_value, stream);
 }
 
-PHP_FUNCTION(nghttp2_poc_stream_cancel)
+PHP_FUNCTION(grpc_native_stream_cancel)
 {
     zval *stream_zv = NULL;
     poc_stream *stream;
@@ -3139,7 +3139,7 @@ PHP_FUNCTION(nghttp2_poc_stream_cancel)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    stream = (poc_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "nghttp2_poc_stream", le_poc_stream);
+    stream = (poc_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_poc_stream);
     if (stream != NULL && !stream->completed && stream->channel != NULL && channel_usable(stream->channel)) {
         stream->cancelled = true;
         stream->completed = true;
@@ -3153,7 +3153,7 @@ PHP_FUNCTION(nghttp2_poc_stream_cancel)
     RETURN_TRUE;
 }
 
-PHP_FUNCTION(nghttp2_poc_unary)
+PHP_FUNCTION(grpc_native_unary)
 {
     char *host = NULL;
     size_t host_len = 0;
@@ -3337,7 +3337,7 @@ PHP_FUNCTION(nghttp2_poc_unary)
     cleanup_poc_client(&client);
 }
 
-PHP_FUNCTION(nghttp2_poc_unary_batch)
+PHP_FUNCTION(grpc_native_unary_batch)
 {
     char *host = NULL;
     size_t host_len = 0;
@@ -4138,46 +4138,46 @@ PHP_FUNCTION(nghttp2_poc_unary_batch)
     cleanup_poc_client(&client);
 }
 
-PHP_GINIT_FUNCTION(nghttp2_poc)
+PHP_GINIT_FUNCTION(grpc_native)
 {
-#if defined(COMPILE_DL_NGHTTP2_POC) && defined(ZTS)
+#if defined(COMPILE_DL_GRPC) && defined(ZTS)
     ZEND_TSRMLS_CACHE_UPDATE();
 #endif
-    zend_hash_init(&nghttp2_poc_globals->persistent_channels, 8, NULL, NULL, 1);
-    nghttp2_poc_globals->persistent_channels_initialized = true;
+    zend_hash_init(&grpc_native_globals->persistent_channels, 8, NULL, NULL, 1);
+    grpc_native_globals->persistent_channels_initialized = true;
 }
 
-PHP_GSHUTDOWN_FUNCTION(nghttp2_poc)
+PHP_GSHUTDOWN_FUNCTION(grpc_native)
 {
     poc_channel *channel;
 
-    if (!nghttp2_poc_globals->persistent_channels_initialized) {
+    if (!grpc_native_globals->persistent_channels_initialized) {
         return;
     }
 
-    ZEND_HASH_FOREACH_PTR(&nghttp2_poc_globals->persistent_channels, channel) {
+    ZEND_HASH_FOREACH_PTR(&grpc_native_globals->persistent_channels, channel) {
         destroy_poc_channel(channel);
     } ZEND_HASH_FOREACH_END();
 
-    zend_hash_destroy(&nghttp2_poc_globals->persistent_channels);
-    nghttp2_poc_globals->persistent_channels_initialized = false;
+    zend_hash_destroy(&grpc_native_globals->persistent_channels);
+    grpc_native_globals->persistent_channels_initialized = false;
 }
 
-PHP_MINIT_FUNCTION(nghttp2_poc)
+PHP_MINIT_FUNCTION(grpc_native)
 {
-    le_poc_channel = zend_register_list_destructors_ex(poc_channel_dtor, NULL, "nghttp2_poc_channel", module_number);
-    le_poc_stream = zend_register_list_destructors_ex(poc_stream_dtor, NULL, "nghttp2_poc_stream", module_number);
+    le_poc_channel = zend_register_list_destructors_ex(poc_channel_dtor, NULL, "grpc_native_channel", module_number);
+    le_poc_stream = zend_register_list_destructors_ex(poc_stream_dtor, NULL, "grpc_native_stream", module_number);
     return SUCCESS;
 }
 
-PHP_MINFO_FUNCTION(nghttp2_poc)
+PHP_MINFO_FUNCTION(grpc_native)
 {
     php_info_print_table_start();
-    php_info_print_table_row(2, "nghttp2_poc support", "enabled");
+    php_info_print_table_row(2, "grpc_native support", "enabled");
     php_info_print_table_end();
 }
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary, 0, 4, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_unary, 0, 4, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
@@ -4185,7 +4185,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary, 0, 4, IS_ARRA
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_multiplex_unary, 0, 5, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_multiplex_unary, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
@@ -4193,7 +4193,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_multiplex_unary, 0, 
     ZEND_ARG_TYPE_INFO(0, stream_count, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_nghttp2_poc_channel_open, 0, 0, 2)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_native_channel_open, 0, 0, 2)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, use_tls, _IS_BOOL, 0, "false")
@@ -4202,11 +4202,11 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_nghttp2_poc_channel_open, 0, 0, 2)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_is_usable, 0, 1, _IS_BOOL, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_channel_is_usable, 0, 1, _IS_BOOL, 0)
     ZEND_ARG_INFO(0, channel)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_unary, 0, 3, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_channel_unary, 0, 3, IS_ARRAY, 0)
     ZEND_ARG_INFO(0, channel)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
@@ -4214,7 +4214,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_channel_unary, 0, 3,
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_persistent_channel_unary, 0, 5, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_persistent_channel_unary, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
@@ -4228,7 +4228,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_persistent_channel_u
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_nghttp2_poc_stream_open, 0, 0, 5)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_native_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
@@ -4242,15 +4242,15 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_nghttp2_poc_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_stream_next, 0, 1, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_stream_next, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_stream_cancel, 0, 1, _IS_BOOL, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_stream_cancel, 0, 1, _IS_BOOL, 0)
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_unary_batch, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
@@ -4279,33 +4279,33 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_nghttp2_poc_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
-static const zend_function_entry nghttp2_poc_functions[] = {
-    PHP_FE(nghttp2_poc_multiplex_unary, arginfo_nghttp2_poc_multiplex_unary)
-    PHP_FE(nghttp2_poc_channel_open, arginfo_nghttp2_poc_channel_open)
-    PHP_FE(nghttp2_poc_channel_is_usable, arginfo_nghttp2_poc_channel_is_usable)
-    PHP_FE(nghttp2_poc_channel_unary, arginfo_nghttp2_poc_channel_unary)
-    PHP_FE(nghttp2_poc_persistent_channel_unary, arginfo_nghttp2_poc_persistent_channel_unary)
-    PHP_FE(nghttp2_poc_stream_open, arginfo_nghttp2_poc_stream_open)
-    PHP_FE(nghttp2_poc_stream_next, arginfo_nghttp2_poc_stream_next)
-    PHP_FE(nghttp2_poc_stream_cancel, arginfo_nghttp2_poc_stream_cancel)
-    PHP_FE(nghttp2_poc_unary, arginfo_nghttp2_poc_unary)
-    PHP_FE(nghttp2_poc_unary_batch, arginfo_nghttp2_poc_unary_batch)
+static const zend_function_entry grpc_native_functions[] = {
+    PHP_FE(grpc_native_multiplex_unary, arginfo_grpc_native_multiplex_unary)
+    PHP_FE(grpc_native_channel_open, arginfo_grpc_native_channel_open)
+    PHP_FE(grpc_native_channel_is_usable, arginfo_grpc_native_channel_is_usable)
+    PHP_FE(grpc_native_channel_unary, arginfo_grpc_native_channel_unary)
+    PHP_FE(grpc_native_persistent_channel_unary, arginfo_grpc_native_persistent_channel_unary)
+    PHP_FE(grpc_native_stream_open, arginfo_grpc_native_stream_open)
+    PHP_FE(grpc_native_stream_next, arginfo_grpc_native_stream_next)
+    PHP_FE(grpc_native_stream_cancel, arginfo_grpc_native_stream_cancel)
+    PHP_FE(grpc_native_unary, arginfo_grpc_native_unary)
+    PHP_FE(grpc_native_unary_batch, arginfo_grpc_native_unary_batch)
     PHP_FE_END
 };
 
 zend_module_entry grpc_module_entry = {
     STANDARD_MODULE_HEADER,
     "grpc",
-    nghttp2_poc_functions,
-    PHP_MINIT(nghttp2_poc),
+    grpc_native_functions,
+    PHP_MINIT(grpc_native),
     NULL,
     NULL,
     NULL,
-    PHP_MINFO(nghttp2_poc),
+    PHP_MINFO(grpc_native),
     "0.1.0",
-    ZEND_MODULE_GLOBALS(nghttp2_poc),
-    PHP_GINIT(nghttp2_poc),
-    PHP_GSHUTDOWN(nghttp2_poc),
+    ZEND_MODULE_GLOBALS(grpc_native),
+    PHP_GINIT(grpc_native),
+    PHP_GSHUTDOWN(grpc_native),
     NULL,
     STANDARD_MODULE_PROPERTIES_EX
 };
