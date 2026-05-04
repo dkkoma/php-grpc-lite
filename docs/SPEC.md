@@ -65,6 +65,8 @@
 | 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | スコープ決定前。`docs/benchmarks/measurement-plan-phase2.md` の多軸計測で候補を選ぶ |
 | 3 | nghttp2 直接呼び出しに置き換え | default transportからlibcurlを外し、明示stable routeとしてlibcurlを維持 | Phase 2 PoC比較により native nghttp2 transport 方向に決定。ただしdrop-in release defaultにはrelease gateを置く。詳細は `docs/native-transport-decision.md` / `docs/native-transport-design.md` |
 
+release default native のQA判定は `docs/release-qa-checklist.md` に集約する。
+
 各フェーズの遷移はベンチマーク結果で判断する。Phase 3 は未確定(libcurl のままで十分かもしれない)。
 
 ### 4.2 HTTP/2 トランスポート

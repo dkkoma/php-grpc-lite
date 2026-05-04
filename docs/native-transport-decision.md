@@ -49,6 +49,8 @@ nativeをdrop-in release defaultにする前に満たす条件:
 
 default nativeを維持する場合、release artifactはnative extensionを同梱・必須化する。extension未導入環境で黙ってcurlへfallbackして動かすのではなく、release packageのinstall/load段階で不整合を検出する。libcurl経路は `php_grpc_lite.transport=curl` の明示選択肢として残す。
 
+release QA の判定表は `docs/release-qa-checklist.md` に集約する。
+
 ## MVP Scope
 
 Native transport MVPに入れるもの:
