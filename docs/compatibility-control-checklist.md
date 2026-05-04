@@ -42,6 +42,7 @@
 ## 5. Metadata Compatibility
 
 詳細な未確認点と次の観測 matrix は `docs/research/metadata-compatibility-gap-2026-05-04.md` に固定する。
+reserved / fixed headers と key/value validation の観測結果は `docs/research/metadata-control-compat-2026-05-04.md` に固定する。
 
 | 項目 | 期待 | テスト観点 |
 |---|---|---|

@@ -286,6 +286,7 @@ func sendBenchAllMetadata(ctx context.Context) {
 	appendMetadataValues(trailing, "x-bench-trailing-duplicate", incoming.Get("x-bench-response-duplicate"))
 	appendMetadataValues(initial, "x-bench-initial-duplicate-bin", incoming.Get("x-bench-response-duplicate-bin"))
 	appendMetadataValues(trailing, "x-bench-trailing-duplicate-bin", incoming.Get("x-bench-response-duplicate-bin"))
+	appendObservedMetadata(initial, incoming)
 
 	if len(initial) > 0 {
 		grpc.SendHeader(ctx, initial)
@@ -298,6 +299,20 @@ func sendBenchAllMetadata(ctx context.Context) {
 func appendMetadataValues(md metadata.MD, key string, values []string) {
 	for _, value := range values {
 		md.Append(key, value)
+	}
+}
+
+func appendObservedMetadata(md metadata.MD, incoming metadata.MD) {
+	keys := incoming.Get("x-bench-observe-metadata-key")
+	for keyIndex, key := range keys {
+		values := incoming.Get(key)
+		prefix := fmt.Sprintf("x-bench-seen-%03d", keyIndex)
+		md.Append(prefix+"-key-bin", key)
+		md.Append(prefix+"-count", strconv.Itoa(len(values)))
+		for valueIndex, value := range values {
+			valueKey := fmt.Sprintf("%s-value-%03d-bin", prefix, valueIndex)
+			md.Append(valueKey, value)
+		}
 	}
 }
 

@@ -24,6 +24,7 @@
 #   ./bench/phase2/run.sh metadata-header
 #   ./bench/phase2/run.sh metadata-header-diagnostic
 #   ./bench/phase2/run.sh metadata-compat
+#   ./bench/phase2/run.sh metadata-control-compat
 #
 set -euo pipefail
 
@@ -193,11 +194,18 @@ case "$suite" in
             tools/phase2/metadata-compat.php \
             --transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
         ;;
+    metadata-control-compat)
+        run_phase2_php \
+            "Phase 2 metadata control compatibility observation" \
+            "phase2-$suite-$timestamp-$implementation.json" \
+            tools/phase2/metadata-control-compat.php \
+            --transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
+        ;;
     *)
         cat >&2 <<EOF
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic|metadata-compat]
+Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic|metadata-compat|metadata-control-compat]
 EOF
         exit 2
         ;;
