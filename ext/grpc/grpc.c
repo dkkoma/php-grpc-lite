@@ -340,7 +340,6 @@ struct _h2_stream {
     bool cancelled;
 };
 
-static int le_h2_channel;
 static int le_h2_stream;
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_native)
@@ -374,11 +373,6 @@ static void destroy_h2_channel(h2_channel *channel)
         nghttp2_session_callbacks_del(channel->callbacks);
     }
     pefree(channel, channel->persistent);
-}
-
-static void h2_channel_dtor(zend_resource *rsrc)
-{
-    destroy_h2_channel((h2_channel *) rsrc->ptr);
 }
 
 static void destroy_h2_stream(h2_stream *stream)
@@ -2570,52 +2564,6 @@ PHP_FUNCTION(grpc_native_multiplex_unary)
     efree(ctx.streams);
 }
 
-PHP_FUNCTION(grpc_native_channel_open)
-{
-    char *host = NULL;
-    size_t host_len = 0;
-    zend_long port = 0;
-    bool use_tls = false;
-    char *root_certs = NULL;
-    size_t root_certs_len = 0;
-    char *cert_chain = NULL;
-    size_t cert_chain_len = 0;
-    char *private_key = NULL;
-    size_t private_key_len = 0;
-    h2_channel *channel;
-    const char *error_message = NULL;
-    char error_detail[256] = {0};
-
-    ZEND_PARSE_PARAMETERS_START(2, 6)
-        Z_PARAM_STRING(host, host_len)
-        Z_PARAM_LONG(port)
-        Z_PARAM_OPTIONAL
-        Z_PARAM_BOOL(use_tls)
-        Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
-        Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
-        Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
-    ZEND_PARSE_PARAMETERS_END();
-
-    channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, false, 0, error_detail, sizeof(error_detail), &error_message);
-    if (channel == NULL) {
-        zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open channel", 0);
-        RETURN_THROWS();
-    }
-    RETURN_RES(zend_register_resource(channel, le_h2_channel));
-}
-
-PHP_FUNCTION(grpc_native_channel_is_usable)
-{
-    zval *channel_zv = NULL;
-    h2_channel *channel;
-
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_RESOURCE(channel_zv)
-    ZEND_PARSE_PARAMETERS_END();
-
-    channel = (h2_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_h2_channel);
-    RETURN_BOOL(channel_usable(channel));
-}
 
 static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool channel_reused, bool persistent_reused, zval *return_value)
 {
@@ -2821,31 +2769,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     return SUCCESS;
 }
 
-PHP_FUNCTION(grpc_native_channel_unary)
-{
-    zval *channel_zv = NULL;
-    h2_channel *channel;
-    char *path = NULL;
-    size_t path_len = 0;
-    char *request = NULL;
-    size_t request_len = 0;
-    zval *headers_zv = NULL;
-    zend_long timeout_us = 0;
 
-    ZEND_PARSE_PARAMETERS_START(3, 5)
-        Z_PARAM_RESOURCE(channel_zv)
-        Z_PARAM_STRING(path, path_len)
-        Z_PARAM_STRING(request, request_len)
-        Z_PARAM_OPTIONAL
-        Z_PARAM_ARRAY(headers_zv)
-        Z_PARAM_LONG(timeout_us)
-    ZEND_PARSE_PARAMETERS_END();
-
-    channel = (h2_channel *) zend_fetch_resource(Z_RES_P(channel_zv), "grpc_native_channel", le_h2_channel);
-    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, false, return_value) != SUCCESS) {
-        RETURN_THROWS();
-    }
-}
 
 PHP_FUNCTION(grpc_native_persistent_channel_unary)
 {
@@ -4192,7 +4116,6 @@ PHP_GSHUTDOWN_FUNCTION(grpc_native)
 
 PHP_MINIT_FUNCTION(grpc_native)
 {
-    le_h2_channel = zend_register_list_destructors_ex(h2_channel_dtor, NULL, "grpc_native_channel", module_number);
     le_h2_stream = zend_register_list_destructors_ex(h2_stream_dtor, NULL, "grpc_native_stream", module_number);
     return SUCCESS;
 }
@@ -4220,26 +4143,6 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_multiplex_unary, 0, 
     ZEND_ARG_TYPE_INFO(0, stream_count, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_native_channel_open, 0, 0, 2)
-    ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
-    ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, use_tls, _IS_BOOL, 0, "false")
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, root_certs, IS_STRING, 1, "null")
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_channel_is_usable, 0, 1, _IS_BOOL, 0)
-    ZEND_ARG_INFO(0, channel)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_channel_unary, 0, 3, IS_ARRAY, 0)
-    ZEND_ARG_INFO(0, channel)
-    ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
-    ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
-ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_persistent_channel_unary, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
@@ -4307,9 +4210,6 @@ ZEND_END_ARG_INFO()
 
 static const zend_function_entry grpc_native_functions[] = {
     PHP_FE(grpc_native_multiplex_unary, arginfo_grpc_native_multiplex_unary)
-    PHP_FE(grpc_native_channel_open, arginfo_grpc_native_channel_open)
-    PHP_FE(grpc_native_channel_is_usable, arginfo_grpc_native_channel_is_usable)
-    PHP_FE(grpc_native_channel_unary, arginfo_grpc_native_channel_unary)
     PHP_FE(grpc_native_persistent_channel_unary, arginfo_grpc_native_persistent_channel_unary)
     PHP_FE(grpc_native_stream_open, arginfo_grpc_native_stream_open)
     PHP_FE(grpc_native_stream_next, arginfo_grpc_native_stream_next)
