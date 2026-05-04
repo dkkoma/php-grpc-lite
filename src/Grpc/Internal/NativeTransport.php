@@ -6,10 +6,9 @@ namespace Grpc\Internal;
 /**
  * Thin PHP wrapper around the Phase 2 nghttp2 transport MVP extension.
  *
- * This is benchmark-oriented glue for the current MVP extension. It supports
- * production packaging and true streaming resources are still release gates for
- * native default. Unary native channels support request-crossing process/thread
- * local persistence in the C extension.
+ * This is benchmark-oriented glue for the current MVP extension. True
+ * streaming resources and request-crossing persistent channels are present;
+ * production packaging and native memory checking remain release gates.
  */
 final class NativeTransport
 {
