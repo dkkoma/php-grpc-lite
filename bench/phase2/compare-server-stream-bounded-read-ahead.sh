@@ -91,7 +91,7 @@ for case_spec in "${cases[@]}"; do
         args="${candidate_spec#* }"
         file="$output_dir/phase2-server-stream-bounded-read-ahead-$timestamp-$case_name-$candidate.json"
         docker compose run --rm dev sh -lc \
-            "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size $args" \
+            "php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/ext/grpc/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size $args" \
             > "$file"
         append_summary "$case_name" "$candidate" "$message_count" "$file"
     done

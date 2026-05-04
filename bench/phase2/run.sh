@@ -56,7 +56,7 @@ run_phase2_php() {
     local output_path="$output_dir/$output_name"
     local php_args=()
     if [[ "$implementation" == "php-grpc-lite" && "${PHP_GRPC_LITE_TRANSPORT:-}" == "native" ]]; then
-        php_args=(-d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so)
+        php_args=(-d extension=/workspace/ext/grpc/modules/grpc.so)
     fi
 
     echo

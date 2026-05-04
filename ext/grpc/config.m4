@@ -8,5 +8,5 @@ if test "$PHP_GRPC" != "no"; then
   PHP_EVAL_LIBLINE([$NGHTTP2_LIBS $OPENSSL_LIBS -lpthread], GRPC_SHARED_LIBADD)
   PHP_SUBST(GRPC_SHARED_LIBADD)
   AC_DEFINE(HAVE_GRPC, 1, [Have php-grpc-lite native grpc extension])
-  PHP_NEW_EXTENSION(grpc, nghttp2_poc.c, $ext_shared)
+  PHP_NEW_EXTENSION(grpc, grpc.c, $ext_shared)
 fi

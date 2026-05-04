@@ -4,7 +4,7 @@
 # php-grpc-lite and ext-grpc with the same BenchServerStream shapes.
 #
 # This is an exploratory Phase 2 runner. It is not part of the regression
-# baseline because it depends on the nghttp2 transport PoC extension.
+# baseline because it depends on the grpc native transport extension.
 #
 set -euo pipefail
 
@@ -142,7 +142,7 @@ run_poc() {
     local file="$output_dir/phase2-server-stream-poc-goal-$timestamp-$case_name-$implementation.json"
 
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size ${extra_args[*]}" \
+        "php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/ext/grpc/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size ${extra_args[*]}" \
         > "$file"
     append_poc_summary "$case_name" "$implementation" "$file" "$message_count"
 }
