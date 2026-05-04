@@ -97,7 +97,7 @@ $responseCallback = match ($responseCallbackMode) {
     default => null,
 };
 
-$result = grpc_native_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
+$result = grpc_native_bench_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',

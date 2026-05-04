@@ -186,28 +186,14 @@ class UnaryCall extends AbstractCall
         try {
             $headers = $this->buildNativeRequestHeaders();
             $transportStartedNs = hrtime(true);
-            if ($this->shouldUseNativeUnarySimple($headers)) {
-                $result = Internal\NativeTransport::unarySimple(
-                    $this->channel->getTarget(),
-                    $this->method,
-                    $this->nativeSerializedRequest ?? '',
-                    $headers,
-                    isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
-                    $this->channel->credentials,
-                );
-                $this->recordDiagnostic('native_unary_simple', 1);
-            } else {
-                $result = Internal\NativeTransport::unaryBatch(
-                    $this->channel->getTarget(),
-                    $this->method,
-                    $this->nativeSerializedRequest ?? '',
-                    $headers,
-                    false,
-                    true,
-                    isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
-                );
-                $this->recordDiagnostic('native_unary_simple', 0);
-            }
+            $result = Internal\NativeTransport::unarySimple(
+                $this->channel->getTarget(),
+                $this->method,
+                $this->nativeSerializedRequest ?? '',
+                $headers,
+                isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+                $this->channel->credentials,
+            );
             $this->recordDiagnostic('native_transport_call_ns', hrtime(true) - $transportStartedNs);
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'native transport deadline exceeded') {
@@ -257,26 +243,6 @@ class UnaryCall extends AbstractCall
                 $this->recordDiagnostic('native_raw_' . $name, str_ends_with($name, '_us') ? $value * 1000 : $value);
             }
         }
-    }
-
-    /** @param array<string, string> $headers */
-    private function shouldUseNativeUnarySimple(array $headers): bool
-    {
-        $mode = (string) ($this->options['php_grpc_lite.native_unary_mode']
-            ?? $this->channel->opts['php_grpc_lite.native_unary_mode']
-            ?? 'simple');
-        if ($mode === 'batch') {
-            return false;
-        }
-        if ($mode !== 'simple') {
-            throw new \InvalidArgumentException("php_grpc_lite.native_unary_mode must be 'simple' or 'batch'");
-        }
-        foreach (['x-bench-server-stats', 'x-bench-server-timing'] as $diagnosticHeader) {
-            if (array_key_exists($diagnosticHeader, $headers)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public function cancel(): void

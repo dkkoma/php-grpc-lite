@@ -3311,7 +3311,7 @@ PHP_FUNCTION(grpc_native_unary)
     cleanup_grpc_call(&client);
 }
 
-PHP_FUNCTION(grpc_native_unary_batch)
+PHP_FUNCTION(grpc_native_bench_unary_batch)
 {
     char *host = NULL;
     size_t host_len = 0;
@@ -4180,7 +4180,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_stream_cancel, 0, 1,
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_unary_batch, 0, 5, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_bench_unary_batch, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
@@ -4215,7 +4215,7 @@ static const zend_function_entry grpc_native_functions[] = {
     PHP_FE(grpc_native_stream_next, arginfo_grpc_native_stream_next)
     PHP_FE(grpc_native_stream_cancel, arginfo_grpc_native_stream_cancel)
     PHP_FE(grpc_native_unary, arginfo_grpc_native_unary)
-    PHP_FE(grpc_native_unary_batch, arginfo_grpc_native_unary_batch)
+    PHP_FE(grpc_native_bench_unary_batch, arginfo_grpc_native_bench_unary_batch)
     PHP_FE_END
 };
 

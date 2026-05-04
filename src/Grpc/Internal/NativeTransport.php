@@ -4,79 +4,13 @@ declare(strict_types=1);
 namespace Grpc\Internal;
 
 /**
- * Thin PHP wrapper around the Phase 2 native grpc transport extension.
+ * Thin PHP wrapper around the native grpc transport extension.
  *
- * This is benchmark-oriented glue for the current MVP extension. True
- * streaming resources, request-crossing persistent channels, and grpc.so
- * packaging are present; native memory checking remains a release gate.
+ * Production unary and server-streaming calls use C-owned persistent channels;
+ * benchmark-only extension entrypoints are called directly from bench scripts.
  */
 final class NativeTransport
 {
-    /**
-     * @param array<string, list<string>> $headers
-     * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, headers: array<string, list<string>>, trailers: array<string, list<string>>, raw: array<string, mixed>}
-     */
-    public static function unaryBatch(
-        string $target,
-        string $path,
-        string $serializedRequest,
-        array $headers,
-        bool $compactResponseBuffer,
-        bool $directResponsePayload,
-        int $timeoutMicros = 0,
-    ): array {
-        if (!function_exists('grpc_native_unary_batch')) {
-            throw new \RuntimeException('grpc native transport extension is not loaded');
-        }
-
-        [$host, $port] = self::splitTarget($target);
-        $payloads = [];
-
-        $result = \grpc_native_unary_batch(
-            $host,
-            $port,
-            $path,
-            $serializedRequest,
-            1,
-            $headers,
-            true,
-            true,
-            0,
-            true,
-            false,
-            16 * 1024 * 1024,
-            16 * 1024 * 1024,
-            64 * 1024,
-            true,
-            false,
-            static function (string $payload) use (&$payloads): null {
-                $payloads[] = $payload;
-                return null;
-            },
-            true,
-            $compactResponseBuffer,
-            65536,
-            $directResponsePayload,
-            false,
-            0,
-            0,
-            false,
-            $timeoutMicros,
-        );
-
-        [$grpcStatus, $details] = self::normalizeStatus($result);
-
-        return [
-            'payloads' => $payloads,
-            'grpc_status' => $grpcStatus,
-            'details' => $details,
-            'http_status' => (int) ($result['http_status'] ?? 0),
-            'headers' => self::extractInitialMetadata($result),
-            'trailers' => self::extractTrailers($result, $grpcStatus, $details),
-            'raw' => $result,
-        ];
-    }
-
     /**
      * @param array<string, list<string>> $headers
      * @return array{payloads: list<string>, grpc_status: int, details: string, http_status: int, headers: array<string, list<string>>, trailers: array<string, list<string>>, raw: array<string, mixed>}
