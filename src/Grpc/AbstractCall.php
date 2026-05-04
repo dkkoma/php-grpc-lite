@@ -10,6 +10,20 @@ namespace Grpc;
  */
 abstract class AbstractCall
 {
+    private const METADATA_KEY_PATTERN = '/^[0-9a-z_.-]+$/';
+
+    private const LIBRARY_OWNED_METADATA = [
+        'content-type' => true,
+        'grpc-accept-encoding' => true,
+        'grpc-encoding' => true,
+        'grpc-message' => true,
+        'grpc-status' => true,
+        'grpc-status-details-bin' => true,
+        'grpc-timeout' => true,
+        'te' => true,
+        'user-agent' => true,
+    ];
+
     protected ?\CurlHandle $ch = null;
 
     /** @var callable|array{class-string, string}|null */
@@ -70,20 +84,7 @@ abstract class AbstractCall
      */
     protected function buildRequestHeaders(): array
     {
-        $metadata = $this->metadata;
-
-        $updateMetadata = $this->channel->opts['update_metadata'] ?? null;
-        if (is_callable($updateMetadata)) {
-            $metadata = $updateMetadata($metadata);
-        }
-
-        $callCredCb = $this->options['call_credentials_callback'] ?? null;
-        if (is_callable($callCredCb)) {
-            $extra = $callCredCb($this->buildUrl(), $this->method);
-            foreach ((array) $extra as $k => $v) {
-                $metadata[$k] = is_array($v) ? $v : [$v];
-            }
-        }
+        $metadata = $this->buildRequestMetadata();
 
         $headers = [
             'Content-Type: application/grpc',
@@ -97,9 +98,13 @@ abstract class AbstractCall
 
         foreach ($metadata as $key => $values) {
             foreach ((array) $values as $v) {
+                if ($v === '') {
+                    $headers[] = $key . ';';
+                    continue;
+                }
                 $value = $this->isBinaryMetadataKey($key)
-                    ? base64_encode((string) $v)
-                    : (string) $v;
+                    ? base64_encode($v)
+                    : $v;
                 $headers[] = $key . ': ' . $value;
             }
         }
@@ -111,16 +116,97 @@ abstract class AbstractCall
     protected function buildNativeRequestHeaders(): array
     {
         $headers = [];
-        foreach ($this->buildRequestHeaders() as $line) {
-            [$key, $value] = array_pad(explode(':', $line, 2), 2, '');
-            $key = strtolower(trim($key));
-            if ($key === '' || $key === 'content-type' || $key === 'te' || $key === 'user-agent') {
-                continue;
+        foreach ($this->buildRequestMetadata() as $key => $values) {
+            foreach ($values as $value) {
+                $headers[$key][] = $this->isBinaryMetadataKey($key)
+                    ? base64_encode($value)
+                    : $value;
             }
-            $headers[$key][] = ltrim($value);
         }
 
         return $headers;
+    }
+
+    /** @return array<string, list<string>> */
+    protected function buildRequestMetadata(): array
+    {
+        $metadata = $this->metadata;
+
+        $updateMetadata = $this->channel->opts['update_metadata'] ?? null;
+        if (is_callable($updateMetadata)) {
+            $updated = $updateMetadata($metadata);
+            if (!is_array($updated)) {
+                throw new \InvalidArgumentException('update_metadata must return an array');
+            }
+            $metadata = $updated;
+        }
+
+        $callCredCb = $this->options['call_credentials_callback'] ?? null;
+        if (is_callable($callCredCb)) {
+            $extra = $callCredCb($this->buildUrl(), $this->method);
+            foreach ((array) $extra as $k => $v) {
+                $metadata[$k] = is_array($v) ? $v : [$v];
+            }
+        }
+
+        return $this->normalizeRequestMetadata($metadata);
+    }
+
+    /**
+     * @param array<array-key, mixed> $metadata
+     * @return array<string, list<string>>
+     */
+    private function normalizeRequestMetadata(array $metadata): array
+    {
+        $normalized = [];
+        foreach ($metadata as $key => $values) {
+            if (!is_string($key)) {
+                throw new \InvalidArgumentException('metadata key must be a string');
+            }
+
+            $normalizedKey = strtolower($key);
+            $this->assertValidMetadataKey($normalizedKey, $key);
+            if (isset(self::LIBRARY_OWNED_METADATA[$normalizedKey])) {
+                continue;
+            }
+
+            foreach ((array) $values as $value) {
+                if (!is_scalar($value) && $value !== null) {
+                    throw new \InvalidArgumentException("metadata value for '$key' must be scalar");
+                }
+                $stringValue = (string) $value;
+                $this->assertValidMetadataValue($normalizedKey, $stringValue);
+                $normalized[$normalizedKey][] = $stringValue;
+            }
+        }
+
+        return $normalized;
+    }
+
+    private function assertValidMetadataKey(string $normalizedKey, string $originalKey): void
+    {
+        if ($normalizedKey === '' || str_starts_with($normalizedKey, ':')) {
+            throw new \InvalidArgumentException("invalid metadata key: $originalKey");
+        }
+        if (preg_match('/[^\x00-\x7f]/', $originalKey) === 1) {
+            throw new \InvalidArgumentException("invalid metadata key: $originalKey");
+        }
+        if (preg_match(self::METADATA_KEY_PATTERN, $normalizedKey) !== 1) {
+            throw new \InvalidArgumentException("invalid metadata key: $originalKey");
+        }
+    }
+
+    private function assertValidMetadataValue(string $key, string $value): void
+    {
+        if ($this->isBinaryMetadataKey($key)) {
+            return;
+        }
+        if (str_contains($value, "\r") || str_contains($value, "\n")) {
+            throw new \InvalidArgumentException("invalid metadata value for '$key': CR/LF is not allowed");
+        }
+        if (preg_match('/[^\x00-\x7f]/', $value) === 1) {
+            throw new \InvalidArgumentException("invalid metadata value for '$key': non-ASCII is not allowed");
+        }
     }
 
     protected function shouldUseNativeTransport(): bool

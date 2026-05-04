@@ -83,6 +83,5 @@ BENCH_TAG=metadata-compat-20260504-final ./bench/phase2/compare-metadata-compat.
 
 ## Next step
 
-1. reserved / fixed headers と key/value validation の policy を `docs/research/metadata-control-compat-2026-05-04.md` の観測結果から確定する。
-2. curl/native両経路で request metadata validation / filtering を実装する。
-3. HTTP/2 header list size 境界の観測 fixture を追加する。
+1. HTTP/2 header list size 境界の観測 fixture を追加する。
+2. request metadata validation / filtering 後の残差分として、curl stable route の leading space value strip を扱うか判断する。

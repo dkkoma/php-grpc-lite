@@ -8,56 +8,56 @@ reserved / fixed headers injection と key/value validation の実測記録。
 ## Command
 
 ```sh
-BENCH_TAG=metadata-control-20260504-final ./bench/phase2/compare-metadata-control-compat.sh
+BENCH_TAG=metadata-control-validation-20260504 ./bench/phase2/compare-metadata-control-compat.sh
 ```
 
 Saved JSON:
 
-- `var/bench-results/phase2-metadata-control-compat-metadata-control-20260504-final-curl-php-grpc-lite.json`
-- `var/bench-results/phase2-metadata-control-compat-metadata-control-20260504-final-native-php-grpc-lite.json`
-- `var/bench-results/phase2-metadata-control-compat-metadata-control-20260504-final-ext-ext-grpc.json`
+- `var/bench-results/phase2-metadata-control-compat-metadata-control-validation-20260504-curl-php-grpc-lite.json`
+- `var/bench-results/phase2-metadata-control-compat-metadata-control-validation-20260504-native-php-grpc-lite.json`
+- `var/bench-results/phase2-metadata-control-compat-metadata-control-validation-20260504-ext-ext-grpc.json`
 
 ## Summary
 
 | ケース | curl | native | ext-grpc | 見解 |
 |---|---|---|---|---|
-| `grpc-status` metadata | OK、server app からは値なし | OK、server app からは値なし | OK、server app からは値なし | gRPC system metadata として app metadata には出ない。user metadata としては送信前 reject が安全 |
+| `grpc-status` metadata | OK、server app からは値なし | OK、server app からは値なし | OK、server app からは値なし | php-grpc-lite は library-owned metadata として送信前に落とす |
 | `grpc-message` metadata | OK、server app からは値なし | OK、server app からは値なし | OK、server app からは値なし | `grpc-status` と同様 |
-| `grpc-timeout` metadata | OK、server app からは値なし | OK、server app からは値なし | OK、server app からは値なし | library option が所有すべき。user metadata では reject/ignore 対象 |
-| `grpc-encoding: gzip` | status 12 | status 12 | status 12 | request compression 指定として解釈され、server が gzip decompressor 不在で失敗 |
+| `grpc-timeout` metadata | OK、server app からは値なし | OK、server app からは値なし | OK、server app からは値なし | `timeout` option からのみ生成する |
+| `grpc-encoding: gzip` | OK、server app からは値なし | OK、server app からは値なし | status 12 | php-grpc-lite は user metadata から落とす。ext-grpc は request compression 指定として解釈する |
 | `te` override | OK、server app からは値なし | OK、server app からは値なし | OK、server app からは値なし | fixed header として library が所有 |
-| `content-type` override | server app は `application/grpc` のみ | server app は `application/grpc` のみ | server app は `application/grpc` のみ | override は効かない。user metadata では reject/ignore 対象 |
-| `user-agent` override | fixed UA + user value の2値が app に見える | fixed UA のみ | fixed UA のみ | curl 経路だけ user value が漏れる。filter が必要 |
-| `:authority` / `:path` | actual pseudo value or empty、成功 | actual pseudo value or empty、成功 | `InvalidArgumentException` | pseudo header 相当は送信前 reject が妥当 |
-| uppercase key | OK、server app に見える | OK、server app に見える | OK、server app に見える | gRPC keyは lower-case normalize 方針を決める必要あり |
+| `content-type` override | server app は `application/grpc` のみ | server app は `application/grpc` のみ | server app は `application/grpc` のみ | user metadata からは落とし、固定値のみ送信 |
+| `user-agent` override | fixed UA のみ | fixed UA のみ | fixed UA のみ | curl 経路の user value leak は解消済み |
+| `:authority` / `:path` | `InvalidArgumentException` | `InvalidArgumentException` | `InvalidArgumentException` | pseudo header 相当は送信前 reject |
+| uppercase key | OK、server app に見える | OK、server app に見える | OK、server app に見える | php-grpc-lite は送信前に lower-case normalize する |
 | `_` / `.` key | OK | OK | OK | gRPC header-name範囲内 |
-| space / UTF-8 key | status 14 / protocol error | status 14 / stream reset | `InvalidArgumentException` | 送信前 validation で reject する |
-| empty value | curl は server app 値なし | native は empty value あり | ext-grpc は empty value あり | curl 経路で empty value preservation が不足 |
-| leading space value | curl/native は leading space が落ちる | curl/native は leading space が落ちる | ext-grpc は保持 | gRPC仕様上はstripされ得るが、経路差あり |
+| space / UTF-8 key | `InvalidArgumentException` | `InvalidArgumentException` | `InvalidArgumentException` | 送信前 validation で reject |
+| empty value | OK、保持 | OK、保持 | OK、保持 | curl 経路の empty value 欠落は解消済み |
+| leading space value | leading space は落ちる | 保持 | 保持 | gRPC仕様上はstripされ得るため、curl stable route では非保証 |
 | trailing space value | OK、保持 | OK、保持 | OK、保持 | 全経路で保持 |
 | comma value | OK、保持 | OK、保持 | OK、保持 | ASCII metadataではそのまま保持 |
-| CRLF value | curl bad argument / status 14 | stream reset / status 14 | `LogicException` | 送信前 validation で reject する |
-| UTF-8 value | OK、server app に見える | OK、server app に見える | `LogicException` | ASCII metadata value範囲外。送信前 validation で reject する |
+| CRLF value | `InvalidArgumentException` | `InvalidArgumentException` | `LogicException` | php-grpc-lite は送信前 validation で reject |
+| UTF-8 value | `InvalidArgumentException` | `InvalidArgumentException` | `LogicException` | ASCII metadata value範囲外として reject |
 
 ## Implementation implications
 
-観測結果から、php-grpc-lite 側で実装方針を決めるべき点:
+php-grpc-lite 側の実装方針:
 
 1. request metadata key validation
    - 許可: `0-9`, `a-z`, `A-Z`, `_`, `-`, `.`
    - normalize: uppercase は lowercase へ寄せる
    - reject: pseudo header `:*`、space、non-ASCII、その他 HTTP/2/gRPC key範囲外
 2. reserved / fixed header filtering
-   - reject or ignore: `grpc-status`, `grpc-message`, `grpc-encoding`, `te`, `content-type`, `user-agent`
+   - filter: `grpc-status`, `grpc-message`, `grpc-encoding`, `te`, `content-type`, `user-agent`
    - `grpc-timeout` は user metadata ではなく call option `timeout` のみが生成する
 3. ASCII value validation
    - reject: CR/LF、non-ASCII
    - accept: empty、comma、trailing space
-   - leading space は仕様上 strip され得るが、curl/native/ext-grpcで差があるため方針決定が必要
-4. curl parity gap
-   - empty value が curl 経路で欠落する
-   - `user-agent` user metadata が curl 経路だけ app metadata に漏れる
+   - leading space は仕様上 strip され得るため、curl stable route では保持を保証しない
+4. curl parity gap after validation
+   - leading space value は curl 経路では strip される
+   - native default route と ext-grpc は leading space を保持する
 
 ## Next step
 
-P1観測は完了。次は上記 policy を `docs/SPEC.md` に確定し、curl/native両経路で送信前 validation / filtering を実装する。
+P1観測と request metadata validation / filtering は完了。残る細部互換は HTTP/2 header list size 境界の観測。

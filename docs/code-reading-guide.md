@@ -133,11 +133,12 @@ return $scheme . '://' . $this->channel->hostname . $this->method;
 
 [src/Grpc/AbstractCall.php:71 `buildRequestHeaders`](src/Grpc/AbstractCall.php:71)
 
-3 段階で構築:
+4 段階で構築:
 
 1. **Channel の `update_metadata` callback** があれば、ユーザ metadata を変換させる
 2. **per-call の `call_credentials_callback`** があれば、URL と method を渡して追加ヘッダ(典型的には `authorization`)を取得し、metadata にマージ
-3. **必須ヘッダ + オプショナル `grpc-timeout` + ユーザ metadata** を curl 形式の `'Key: value'` 文字列リストに展開
+3. request metadata key/value を validation し、uppercase key を lowercase へ正規化し、`content-type` / `te` / `user-agent` / 既知の `grpc-*` 制御 header を user metadata から除外
+4. **必須ヘッダ + オプショナル `grpc-timeout` + 正規化済み metadata** を curl 形式の `'Key: value'` 文字列リストに展開
 
 ここがいわゆる **gax から `'call_credentials_callback'` で渡された ADC コールバック** が呼ばれる場所。
 

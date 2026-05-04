@@ -195,6 +195,12 @@ gRPC metadata は同一 key に複数 values を持てる。php-grpc-lite の PH
 
 2026-05-04 の観測では、公式 ext-grpc PHP API は同一 key 複数 values の最後 value のみを返した。これは gRPC Core / HTTP/2 metadata semantics ではなく PHP extension surface の情報落ちとして扱う。drop-in 互換のために php-grpc-lite 側で metadata values を最後値へ畳む処理は入れない。
 
+### 6.2 Request metadata control policy
+
+request metadata は transport へ渡す前に共通正規化する。key は lowercase に寄せ、HTTP/2 pseudo header(`:*`)・space入り key・non-ASCII key・HTTP/2/gRPC metadata key範囲外の key は `InvalidArgumentException` で拒否する。ASCII metadata value は CR/LF と non-ASCII を拒否する。`*-bin` metadata value は PHP API 上 raw binary として受け付け、wire では base64 化する。
+
+`content-type`、`te`、`user-agent`、`grpc-status`、`grpc-message`、`grpc-status-details-bin`、`grpc-timeout`、`grpc-encoding`、`grpc-accept-encoding` は library-owned metadata とし、user metadata からは送信しない。`grpc-timeout` は call option `timeout` からのみ生成し、`user-agent` は channel option `grpc.primary_user_agent` からのみ生成する。
+
 互換性・制御系の実装時チェックリストは `docs/compatibility-control-checklist.md` に集約する。性能ベンチに入れる項目は `docs/benchmarks/README.md` に置き、deadline/error/cancellation などの semantics 検証と混ぜない。
 
 ---
