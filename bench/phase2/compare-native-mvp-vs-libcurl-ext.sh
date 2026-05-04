@@ -96,13 +96,13 @@ append_unary_result "libcurl" "$libcurl_unary"
 
 mvp_unary="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-large-request-unary-mvp-upload.json"
 docker compose run --rm dev sh -lc \
-    "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=unary --iterations=1000 --request-bytes=1048576 --response-bytes=100 --split-grpc-frame --no-copy --poll-loop" \
+    "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=unary --iterations=1000 --request-bytes=1048576 --response-bytes=100 --split-grpc-frame --no-copy --poll-loop" \
     > "$mvp_unary"
 append_unary_poc_result "mvp-upload" "$mvp_unary"
 
 native_surface_unary="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-large-request-unary-native-surface.json"
 docker compose run --rm dev sh -lc \
-    "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/request-unary.php --suite=request-unary --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_surface_unary' --duration=2 --request-payload-sizes=1048576 --warmup-calls=3 --max-calls=1000 --transport=native"
+    "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so tools/phase2/request-unary.php --suite=request-unary --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_surface_unary' --duration=2 --request-payload-sizes=1048576 --warmup-calls=3 --max-calls=1000 --transport=native"
 append_unary_result "native-surface" "$native_surface_unary"
 
 ext_unary="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-large-request-unary-ext-grpc.json"
@@ -144,18 +144,18 @@ for case_spec in "${stream_cases[@]}"; do
 
     mvp_direct="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-mvp-direct.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size --direct-response-payload" \
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size --direct-response-payload" \
         > "$mvp_direct"
     append_stream_poc_result "$case_name" "mvp-direct" "$mvp_direct" "$message_count"
 
     native_surface_stream="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-native-surface-stream.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_surface_stream' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=stream"
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_surface_stream' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=stream"
     append_stream_result "$case_name" "native-surface-stream" "$native_surface_stream"
 
     mvp_compact="$output_dir/phase2-native-mvp-vs-libcurl-ext-$timestamp-$case_name-mvp-compact64.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size --compact-response-buffer --response-compact-threshold=65536" \
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so /workspace/poc/nghttp2-client-ext/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=$window_size --recv-connection-window-size=$window_size --recv-buffer-size=$recv_buffer_size --compact-response-buffer --response-compact-threshold=65536" \
         > "$mvp_compact"
     append_stream_poc_result "$case_name" "mvp-compact64" "$mvp_compact" "$message_count"
 

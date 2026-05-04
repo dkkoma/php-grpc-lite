@@ -8,8 +8,8 @@ release default を native にするための判定表。
 
 | gate | status | 判定 | evidence / next |
 |---|---|---|---|
-| native extension packaging | open | release artifact として `grpc` extension をbuild/install/loadできること | PoC名 `nghttp2_poc` からproduction extension構成へ移す |
-| extension-required default native | open | default nativeを維持するなら、install/load段階でnative extension必須を保証すること | packagingで解く。runtime fallbackでは解かない |
+| native extension packaging | partial | release artifact として `grpc` extension をbuild/install/loadできること | module名とbuild targetは `grpc.so` 化済み。install artifact整理は継続 |
+| extension-required default native | partial | default nativeを維持するなら、install/load段階でnative extension必須を保証すること | `extension_loaded('grpc')` は満たした。package install時の必須化は継続 |
 | native memory checker | open | ASAN/UBSANまたはValgrindでnative lifecycle fixtureがcleanであること | `VALGRIND=1 ./bench/phase2/check-native-lifecycle-stress.sh` 入口は追加済み |
 | long lifecycle stress | open | repeated open/close, break, cancel, timeout, raw resource unsetでFD/RSSがiteration比例増加しないこと | 100 iterationは済み。release前に10k+または時間固定stressへ拡張 |
 | FPM / worker lifecycle | open | FPM worker process / FrankenPHP workerでrequestまたぎpersistent channelが安全に再利用・破棄されること | CLI stressとは別に実行環境fixtureが必要 |

@@ -151,8 +151,8 @@ final class MetadataControlTest extends TestCase
 
     private function requireNativeTransport(): void
     {
-        if (!extension_loaded('nghttp2_poc')) {
-            self::markTestSkipped('nghttp2_poc is not loaded in this process');
+        if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+            self::markTestSkipped('grpc native extension is not loaded in this process');
         }
     }
 }

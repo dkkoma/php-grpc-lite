@@ -59,8 +59,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
 if ($output === null || $output === '' || $iterations <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $sleepUs < 0) {
     usage('output, iterations, message-count, payload-bytes, and sleep-us must be valid');
 }
-if (!extension_loaded('nghttp2_poc')) {
-    throw new \RuntimeException('nghttp2_poc extension is required');
+if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+    throw new \RuntimeException('grpc native extension is required');
 }
 if (!is_file($autoload)) {
     throw new \RuntimeException("autoload file not found: $autoload");

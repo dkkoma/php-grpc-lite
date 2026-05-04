@@ -4,11 +4,11 @@ declare(strict_types=1);
 namespace Grpc\Internal;
 
 /**
- * Thin PHP wrapper around the Phase 2 nghttp2 transport MVP extension.
+ * Thin PHP wrapper around the Phase 2 native grpc transport extension.
  *
  * This is benchmark-oriented glue for the current MVP extension. True
- * streaming resources and request-crossing persistent channels are present;
- * production packaging and native memory checking remain release gates.
+ * streaming resources, request-crossing persistent channels, and grpc.so
+ * packaging are present; native memory checking remains a release gate.
  */
 final class NativeTransport
 {
@@ -26,7 +26,7 @@ final class NativeTransport
         int $timeoutMicros = 0,
     ): array {
         if (!function_exists('nghttp2_poc_unary_batch')) {
-            throw new \RuntimeException('nghttp2_poc extension is not loaded');
+            throw new \RuntimeException('grpc native transport extension is not loaded');
         }
 
         [$host, $port] = self::splitTarget($target);
@@ -90,7 +90,7 @@ final class NativeTransport
         ?\Grpc\ChannelCredentials $credentials = null,
     ): array {
         if (!function_exists('nghttp2_poc_persistent_channel_unary')) {
-            throw new \RuntimeException('nghttp2_poc persistent channel API is not loaded');
+            throw new \RuntimeException('grpc native persistent channel API is not loaded');
         }
 
         [$host, $port] = self::splitTarget($target);
@@ -174,7 +174,7 @@ final class NativeTransport
         ?\Grpc\ChannelCredentials $credentials = null,
     ): mixed {
         if (!function_exists('nghttp2_poc_stream_open')) {
-            throw new \RuntimeException('nghttp2_poc stream API is not loaded');
+            throw new \RuntimeException('grpc native stream API is not loaded');
         }
 
         [$host, $port] = self::splitTarget($target);
@@ -199,7 +199,7 @@ final class NativeTransport
     public static function streamNext(mixed $stream): array
     {
         if (!function_exists('nghttp2_poc_stream_next')) {
-            throw new \RuntimeException('nghttp2_poc stream API is not loaded');
+            throw new \RuntimeException('grpc native stream API is not loaded');
         }
 
         $result = \nghttp2_poc_stream_next($stream);

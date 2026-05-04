@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../vendor/autoload.php';
 
-if (!extension_loaded('nghttp2_poc')) {
-    fwrite(STDERR, "nghttp2_poc extension is not loaded\n");
+if (!(extension_loaded('grpc') || extension_loaded('nghttp2_poc'))) {
+    fwrite(STDERR, "grpc native extension is not loaded\n");
     exit(1);
 }
 

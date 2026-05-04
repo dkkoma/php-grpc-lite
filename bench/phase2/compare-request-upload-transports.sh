@@ -40,7 +40,7 @@ else
     docker compose up -d test-server
 fi
 
-docker compose run --rm dev sh -lc 'cd poc/nghttp2-client-ext && phpize >/tmp/nghttp2-poc-phpize.log && ./configure --enable-nghttp2-poc >/tmp/nghttp2-poc-configure.log && make -j$(nproc) >/tmp/nghttp2-poc-make.log'
+docker compose run --rm dev sh -lc 'cd poc/nghttp2-client-ext && phpize >/tmp/nghttp2-poc-phpize.log && ./configure --enable-grpc >/tmp/nghttp2-poc-configure.log && make -j$(nproc) >/tmp/nghttp2-poc-make.log'
 
 BENCH_TAG="${timestamp}-php" \
 BENCH_IMPLEMENTATION=php-grpc-lite \
@@ -65,7 +65,7 @@ for size in "${sizes[@]}"; do
     output_path="$output_dir/${poc_label}-${timestamp}-${size}.json"
     echo "RUN nghttp2 PoC flow sweep: request=${size} output=${output_path}"
     docker compose run --rm dev php \
-        -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so \
+        -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so \
         poc/nghttp2-client-ext/bench.php \
         --iterations="$poc_iterations" \
         --response-bytes="$response_bytes" \

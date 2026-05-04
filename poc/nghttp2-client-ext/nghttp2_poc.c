@@ -4293,9 +4293,9 @@ static const zend_function_entry nghttp2_poc_functions[] = {
     PHP_FE_END
 };
 
-zend_module_entry nghttp2_poc_module_entry = {
+zend_module_entry grpc_module_entry = {
     STANDARD_MODULE_HEADER,
-    "nghttp2_poc",
+    "grpc",
     nghttp2_poc_functions,
     PHP_MINIT(nghttp2_poc),
     NULL,
@@ -4310,9 +4310,9 @@ zend_module_entry nghttp2_poc_module_entry = {
     STANDARD_MODULE_PROPERTIES_EX
 };
 
-#ifdef COMPILE_DL_NGHTTP2_POC
+#ifdef COMPILE_DL_GRPC
 # ifdef ZTS
 ZEND_TSRMLS_CACHE_DEFINE()
 # endif
-ZEND_GET_MODULE(nghttp2_poc)
+ZEND_GET_MODULE(grpc)
 #endif

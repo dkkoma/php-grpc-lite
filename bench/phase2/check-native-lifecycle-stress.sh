@@ -19,7 +19,7 @@ mkdir -p "$output_dir"
 json="$output_dir/phase2-native-lifecycle-stress-$timestamp.json"
 valgrind_log="$output_dir/phase2-native-lifecycle-stress-$timestamp.valgrind.log"
 
-php_args="-d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so"
+php_args="-d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so"
 tool_args="tools/phase2/native-lifecycle-stress.php --output='$json' --iterations=$iterations --message-count=$message_count --payload-bytes=$payload_bytes --sleep-us=$sleep_us"
 
 if [[ "$valgrind" == "1" ]]; then

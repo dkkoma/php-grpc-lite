@@ -58,12 +58,12 @@ for repeat in $(seq 1 "$repeats"); do
 
     native_direct_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-native-direct.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_direct_json' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=direct"
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_direct_json' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=direct"
     append_result "$repeat" "php-grpc-lite" "native-direct" "$native_direct_json"
 
     native_compact_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-native-compact64.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_compact_json' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=compact64"
+        "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_compact_json' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=compact64"
     append_result "$repeat" "php-grpc-lite" "native-compact64" "$native_compact_json"
 
     ext_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-ext-grpc.json"

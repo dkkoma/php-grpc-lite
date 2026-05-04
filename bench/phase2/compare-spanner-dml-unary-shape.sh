@@ -68,7 +68,7 @@ append_results php-grpc-lite curl "$curl_json"
 
 native_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-native.json"
 docker compose run --rm dev sh -lc \
-    "php -d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so tools/phase2/unary-shape.php --suite=spanner-dml-unary-shape --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_json' --duration='$duration' --warmup-calls='$warmup_calls' --max-calls='$max_calls' --transport=native"
+    "php -d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so tools/phase2/unary-shape.php --suite=spanner-dml-unary-shape --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_json' --duration='$duration' --warmup-calls='$warmup_calls' --max-calls='$max_calls' --transport=native"
 append_results php-grpc-lite native "$native_json"
 
 ext_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-ext-grpc.json"

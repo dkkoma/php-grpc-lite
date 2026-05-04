@@ -104,7 +104,7 @@ run_ext() {
 printf "implementation\tvariant\tstreams\tmessages_per_stream\tpayload_bytes\tsleep_us\tmessages\twall_ms\tfirst_yield_p50_us\tstream_p50_us\tstream_p99_us\tmessages_per_second\tmemory_usage_max_bytes\tmemory_usage_real_max_bytes\tdiagnostic_rss_max_kib\tdiagnostic_rss_max_delta_kib\tmemory_peak_delta_bytes\tmemory_usage_delta_bytes\tjson\n" > "$summary_tsv"
 
 run_lite curl curl ""
-run_lite native-stream native "-d extension=/workspace/poc/nghttp2-client-ext/modules/nghttp2_poc.so"
+run_lite native-stream native "-d extension=/workspace/poc/nghttp2-client-ext/modules/grpc.so"
 run_ext
 
 echo
