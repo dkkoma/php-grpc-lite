@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <openssl/err.h>
@@ -93,6 +94,9 @@ typedef struct {
     size_t poll_timeouts;
     size_t poll_errors;
     bool timed_out;
+    int last_io_errno;
+    int last_ssl_error;
+    char last_io_error_detail[256];
     uint64_t deadline_abs_us;
     uint64_t max_write_syscall_us;
     size_t max_send_callback_len;
@@ -254,7 +258,7 @@ static void add_metadata_map_to_return(zval *return_value, const char *name, grp
 static void cleanup_grpc_call(grpc_call *client);
 static void compact_response_body_if_needed(grpc_call *client);
 static bool channel_usable(h2_channel *channel);
-static int connect_tcp(const char *host, zend_long port);
+static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
@@ -317,6 +321,11 @@ struct _h2_channel {
     bool busy;
     bool detached_from_cache;
     int last_error;
+    int last_io_errno;
+    int last_ssl_error;
+    long tls_verify_result;
+    char last_error_detail[256];
+    char negotiated_protocol[16];
     uint32_t last_goaway_error_code;
     int32_t last_goaway_stream_id;
 };
@@ -422,6 +431,18 @@ static void mark_channel_dead(h2_channel *channel, int error_code)
     }
     channel->dead = true;
     channel->last_error = error_code;
+    channel->last_io_errno = errno;
+    if (channel->last_error_detail[0] == '\0' && errno != 0) {
+        snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "%s", strerror(errno));
+    }
+}
+
+static void set_channel_error_detail(h2_channel *channel, const char *detail)
+{
+    if (channel == NULL || detail == NULL) {
+        return;
+    }
+    snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "%s", detail);
 }
 
 static void mark_channel_draining(h2_channel *channel, int32_t last_stream_id, uint32_t error_code)
@@ -474,6 +495,73 @@ static int set_socket_timeout_us(int fd, zend_long timeout_us)
         return -1;
     }
     return 0;
+}
+
+static int set_fd_nonblocking_mode(int fd, bool nonblocking)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return -1;
+    }
+    if (nonblocking) {
+        flags |= O_NONBLOCK;
+    } else {
+        flags &= ~O_NONBLOCK;
+    }
+    return fcntl(fd, F_SETFL, flags);
+}
+
+static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us)
+{
+    if (deadline_abs_us == 0) {
+        return -1;
+    }
+    uint64_t now = monotonic_us();
+    if (now >= deadline_abs_us) {
+        return 0;
+    }
+    uint64_t remaining_us = deadline_abs_us - now;
+    uint64_t remaining_ms = (remaining_us + 999) / 1000;
+    return remaining_ms > INT_MAX ? INT_MAX : (int) remaining_ms;
+}
+
+static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us)
+{
+    if (deadline_abs_us == 0) {
+        return 0;
+    }
+    uint64_t now = monotonic_us();
+    if (now >= deadline_abs_us) {
+        return -1;
+    }
+    uint64_t remaining = deadline_abs_us - now;
+    return remaining > (uint64_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) remaining;
+}
+
+static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us)
+{
+    while (true) {
+        struct pollfd pfd;
+        int timeout_ms = poll_timeout_ms_for_deadline(deadline_abs_us);
+        if (timeout_ms == 0) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        pfd.fd = fd;
+        pfd.events = events;
+        pfd.revents = 0;
+        int rv = poll(&pfd, 1, timeout_ms);
+        if (rv > 0) {
+            return pfd.revents & (events | POLLERR | POLLHUP | POLLNVAL) ? 0 : -1;
+        }
+        if (rv == 0) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        if (errno != EINTR) {
+            return -1;
+        }
+    }
 }
 
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len)
@@ -534,30 +622,35 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
     return ok ? 0 : -1;
 }
 
-static int configure_tls_channel(h2_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+static int configure_tls_channel(h2_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
 {
     channel->ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (channel->ssl_ctx == NULL) {
+        set_channel_error_detail(channel, "failed to create SSL_CTX");
         return -1;
     }
     SSL_CTX_set_verify(channel->ssl_ctx, SSL_VERIFY_PEER, NULL);
 
     if (root_certs != NULL && root_certs_len > 0) {
         if (add_pem_certs_to_store(SSL_CTX_get_cert_store(channel->ssl_ctx), root_certs, root_certs_len) != 0) {
+            set_channel_error_detail(channel, "failed to load root certificates");
             return -1;
         }
     } else if (SSL_CTX_set_default_verify_paths(channel->ssl_ctx) != 1) {
+        set_channel_error_detail(channel, "failed to load default root certificates");
         return -1;
     }
 
     if (cert_chain != NULL && private_key != NULL && cert_chain_len > 0 && private_key_len > 0) {
         if (configure_client_certificate(channel->ssl_ctx, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
+            set_channel_error_detail(channel, "failed to configure client certificate");
             return -1;
         }
     }
 
     channel->ssl = SSL_new(channel->ssl_ctx);
     if (channel->ssl == NULL) {
+        set_channel_error_detail(channel, "failed to create SSL object");
         return -1;
     }
     static const unsigned char alpn[] = {2, 'h', '2'};
@@ -565,9 +658,66 @@ static int configure_tls_channel(h2_channel *channel, const char *host, const ch
     SSL_set_tlsext_host_name(channel->ssl, host);
     SSL_set1_host(channel->ssl, host);
     SSL_set_fd(channel->ssl, channel->fd);
-    if (SSL_connect(channel->ssl) != 1) {
+    if (set_fd_nonblocking_mode(channel->fd, true) != 0) {
+        set_channel_error_detail(channel, "failed to set TLS socket nonblocking");
         return -1;
     }
+    while (true) {
+        int rv = SSL_connect(channel->ssl);
+        if (rv == 1) {
+            break;
+        }
+        int ssl_error = SSL_get_error(channel->ssl, rv);
+        channel->last_ssl_error = ssl_error;
+        if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+            short events = ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+            if (poll_fd_until_deadline(channel->fd, events, deadline_abs_us) == 0) {
+                continue;
+            }
+            channel->last_io_errno = errno;
+            if (errno == ETIMEDOUT) {
+                set_channel_error_detail(channel, "native transport deadline exceeded");
+            } else {
+                snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "TLS handshake poll failed: %s", strerror(errno));
+            }
+            set_fd_nonblocking_mode(channel->fd, false);
+            return -1;
+        }
+        channel->tls_verify_result = SSL_get_verify_result(channel->ssl);
+        if (channel->tls_verify_result != X509_V_OK) {
+            snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "TLS certificate verification failed: %s", X509_verify_cert_error_string(channel->tls_verify_result));
+        } else {
+            unsigned long err = ERR_get_error();
+            if (err != 0) {
+                ERR_error_string_n(err, channel->last_error_detail, sizeof(channel->last_error_detail));
+            } else {
+                snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "TLS handshake failed: SSL_get_error=%d", ssl_error);
+            }
+        }
+        set_fd_nonblocking_mode(channel->fd, false);
+        return -1;
+    }
+    set_fd_nonblocking_mode(channel->fd, false);
+    channel->tls_verify_result = SSL_get_verify_result(channel->ssl);
+    if (channel->tls_verify_result != X509_V_OK) {
+        snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "TLS certificate verification failed: %s", X509_verify_cert_error_string(channel->tls_verify_result));
+        return -1;
+    }
+    const unsigned char *selected_alpn = NULL;
+    unsigned int selected_alpn_len = 0;
+    SSL_get0_alpn_selected(channel->ssl, &selected_alpn, &selected_alpn_len);
+    if (selected_alpn_len != 2 || selected_alpn == NULL || memcmp(selected_alpn, "h2", 2) != 0) {
+        if (selected_alpn_len > 0 && selected_alpn != NULL) {
+            size_t copy_len = selected_alpn_len < sizeof(channel->negotiated_protocol) - 1 ? selected_alpn_len : sizeof(channel->negotiated_protocol) - 1;
+            memcpy(channel->negotiated_protocol, selected_alpn, copy_len);
+            channel->negotiated_protocol[copy_len] = '\0';
+            snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "TLS ALPN did not negotiate h2: %s", channel->negotiated_protocol);
+        } else {
+            set_channel_error_detail(channel, "TLS ALPN did not negotiate h2");
+        }
+        return -1;
+    }
+    snprintf(channel->negotiated_protocol, sizeof(channel->negotiated_protocol), "h2");
     channel->tls = true;
     return 0;
 }
@@ -578,12 +728,27 @@ static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t lengt
         int written = SSL_write(client->channel->ssl, data, (int) length);
         if (written <= 0) {
             int ssl_error = SSL_get_error(client->channel->ssl, written);
+            client->last_ssl_error = ssl_error;
+            client->channel->last_ssl_error = ssl_error;
             errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
+            client->last_io_errno = errno;
+            client->channel->last_io_errno = errno;
+            snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
+            set_channel_error_detail(client->channel, client->last_io_error_detail);
             return -1;
         }
         return written;
     }
-    return send(client->fd, data, length, 0);
+    ssize_t written = send(client->fd, data, length, 0);
+    if (written < 0) {
+        client->last_io_errno = errno;
+        snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "send failed: %s", strerror(errno));
+        if (client->channel != NULL) {
+            client->channel->last_io_errno = errno;
+            set_channel_error_detail(client->channel, client->last_io_error_detail);
+        }
+    }
+    return written;
 }
 
 static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length)
@@ -592,15 +757,23 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length)
         int nread = SSL_read(channel->ssl, data, (int) length);
         if (nread <= 0) {
             int ssl_error = SSL_get_error(channel->ssl, nread);
+            channel->last_ssl_error = ssl_error;
             errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
+            channel->last_io_errno = errno;
+            snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "SSL_read failed: SSL_get_error=%d", ssl_error);
             return -1;
         }
         return nread;
     }
-    return recv(channel->fd, data, length, 0);
+    ssize_t nread = recv(channel->fd, data, length, 0);
+    if (nread < 0 && channel != NULL) {
+        channel->last_io_errno = errno;
+        snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "recv failed: %s", strerror(errno));
+    }
+    return nread;
 }
 
-static h2_channel *create_h2_channel(const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, const char **error_message)
+static h2_channel *create_h2_channel(const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
 {
     h2_channel *channel;
     grpc_call open_client;
@@ -609,15 +782,25 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, bool use_
     channel = pecalloc(1, sizeof(h2_channel), persistent);
     channel->persistent = persistent;
     channel->fd = -1;
-    channel->fd = connect_tcp(host, port);
+    channel->tls_verify_result = X509_V_OK;
+    channel->fd = connect_tcp(host, port, deadline_abs_us);
     if (channel->fd < 0) {
+        if (errno == ETIMEDOUT) {
+            *error_message = "native transport deadline exceeded";
+        } else {
+            *error_message = "failed to connect";
+        }
         pefree(channel, persistent);
-        *error_message = "failed to connect";
         return NULL;
     }
-    if (use_tls && configure_tls_channel(channel, host, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
+    if (use_tls && configure_tls_channel(channel, host, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us) != 0) {
+        if (channel->last_error_detail[0] != '\0') {
+            snprintf(error_detail, error_detail_len, "%s", channel->last_error_detail);
+            *error_message = error_detail;
+        } else {
+            *error_message = "failed to establish TLS";
+        }
         destroy_h2_channel(channel);
-        *error_message = "failed to establish TLS";
         return NULL;
     }
 
@@ -651,7 +834,7 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, bool use_
     return channel;
 }
 
-static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool *persistent_reused, const char **error_message)
+static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
 {
     h2_channel *channel;
 
@@ -668,7 +851,7 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
     }
 
     if (channel == NULL) {
-        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, error_message);
+        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, error_detail_len, error_message);
         if (channel == NULL) {
             return NULL;
         }
@@ -690,7 +873,7 @@ static void discard_persistent_channel(const char *key, size_t key_len, h2_chann
     }
 }
 
-static int connect_tcp(const char *host, zend_long port)
+static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us)
 {
     char port_buf[16];
     struct addrinfo hints;
@@ -708,13 +891,39 @@ static int connect_tcp(const char *host, zend_long port)
     }
 
     for (rp = result; rp != NULL; rp = rp->ai_next) {
+        int socket_error = 0;
+        socklen_t socket_error_len = sizeof(socket_error);
         fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (fd == -1) {
+            continue;
+        }
+        if (set_fd_nonblocking_mode(fd, true) != 0) {
+            close(fd);
+            fd = -1;
             continue;
         }
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
             int one = 1;
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+            set_fd_nonblocking_mode(fd, false);
+            break;
+        }
+        if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
+            if (poll_fd_until_deadline(fd, POLLOUT, deadline_abs_us) == 0
+                && getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len) == 0
+                && socket_error == 0) {
+                int one = 1;
+                setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+                set_fd_nonblocking_mode(fd, false);
+                break;
+            }
+            if (socket_error != 0) {
+                errno = socket_error;
+            }
+        }
+        if (deadline_abs_us > 0 && monotonic_us() >= deadline_abs_us) {
+            close(fd);
+            fd = -1;
             break;
         }
         close(fd);
@@ -727,11 +936,7 @@ static int connect_tcp(const char *host, zend_long port)
 
 static int set_nonblocking(int fd)
 {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) {
-        return -1;
-    }
-    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    return set_fd_nonblocking_mode(fd, true);
 }
 
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
@@ -2283,7 +2488,7 @@ PHP_FUNCTION(grpc_native_multiplex_unary)
     }
 
     memset(&ctx, 0, sizeof(ctx));
-    ctx.fd = connect_tcp(host, port);
+    ctx.fd = connect_tcp(host, port, 0);
     if (ctx.fd < 0) {
         zend_throw_exception(NULL, "failed to connect", 0);
         RETURN_THROWS();
@@ -2379,6 +2584,7 @@ PHP_FUNCTION(grpc_native_channel_open)
     size_t private_key_len = 0;
     h2_channel *channel;
     const char *error_message = NULL;
+    char error_detail[256] = {0};
 
     ZEND_PARSE_PARAMETERS_START(2, 6)
         Z_PARAM_STRING(host, host_len)
@@ -2390,7 +2596,7 @@ PHP_FUNCTION(grpc_native_channel_open)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, false, &error_message);
+    channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, false, 0, error_detail, sizeof(error_detail), &error_message);
     if (channel == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open channel", 0);
         RETURN_THROWS();
@@ -2502,6 +2708,11 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     while (!client.stream_closed) {
         ssize_t nread = channel_recv(channel, (uint8_t *) recv_buf, sizeof(recv_buf));
         if (nread <= 0) {
+            if (nread < 0) {
+                client.last_io_errno = errno;
+                client.last_ssl_error = channel->last_ssl_error;
+                snprintf(client.last_io_error_detail, sizeof(client.last_io_error_detail), "%s", channel->last_error_detail);
+            }
             if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client.deadline_abs_us > 0 && monotonic_us() >= client.deadline_abs_us) {
                 client.timed_out = true;
             }
@@ -2565,6 +2776,9 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     add_assoc_long(return_value, "sent_frames", client.sent_frames);
     add_assoc_long(return_value, "recv_frames", client.recv_frames);
     add_assoc_long(return_value, "not_sent_frames", client.not_sent_frames);
+    add_assoc_long(return_value, "last_io_errno", client.last_io_errno);
+    add_assoc_long(return_value, "last_ssl_error", client.last_ssl_error);
+    add_assoc_string(return_value, "last_io_error_detail", client.last_io_error_detail);
     add_assoc_long(return_value, "total_us", (zend_long) (monotonic_us() - total_started));
     add_assoc_long(return_value, "connect_us", 0);
     add_assoc_long(return_value, "setup_us", (zend_long) setup_us);
@@ -2578,6 +2792,11 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     add_assoc_bool(return_value, "channel_dead", channel->dead);
     add_assoc_bool(return_value, "channel_draining", channel->draining);
     add_assoc_long(return_value, "channel_last_error", channel->last_error);
+    add_assoc_long(return_value, "channel_last_io_errno", channel->last_io_errno);
+    add_assoc_long(return_value, "channel_last_ssl_error", channel->last_ssl_error);
+    add_assoc_long(return_value, "channel_tls_verify_result", (zend_long) channel->tls_verify_result);
+    add_assoc_string(return_value, "channel_last_error_detail", channel->last_error_detail);
+    add_assoc_string(return_value, "channel_negotiated_protocol", channel->negotiated_protocol);
     add_assoc_long(return_value, "channel_last_goaway_error_code", channel->last_goaway_error_code);
     add_assoc_long(return_value, "channel_last_goaway_stream_id", channel->last_goaway_stream_id);
     add_assoc_long(return_value, "server_handler_ns", client.server_handler_ns);
@@ -2651,6 +2870,9 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
     h2_channel *channel;
     bool persistent_reused = false;
     const char *error_message = NULL;
+    char error_detail[256] = {0};
+    uint64_t deadline_abs_us = 0;
+    zend_long remaining_timeout_us = 0;
 
     ZEND_PARSE_PARAMETERS_START(5, 11)
         Z_PARAM_STRING(key, key_len)
@@ -2678,8 +2900,9 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
         channel = NULL;
     }
 
+    deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
     if (channel == NULL) {
-        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, &error_message);
+        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, sizeof(error_detail), &error_message);
         if (channel == NULL) {
             zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
             RETURN_THROWS();
@@ -2689,7 +2912,13 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
         persistent_reused = true;
     }
 
-    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, persistent_reused, return_value) != SUCCESS) {
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        zend_throw_exception(NULL, "native transport deadline exceeded", 0);
+        RETURN_THROWS();
+    }
+
+    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, remaining_timeout_us, true, persistent_reused, return_value) != SUCCESS) {
         if (channel != NULL && !channel_usable(channel)) {
             remove_unusable_persistent_channel(key, key_len, channel);
         }
@@ -2727,6 +2956,9 @@ PHP_FUNCTION(grpc_native_stream_open)
     h2_request_headers request_headers;
     bool persistent_reused = false;
     const char *error_message = NULL;
+    char error_detail[256] = {0};
+    uint64_t deadline_abs_us = 0;
+    zend_long remaining_timeout_us = 0;
     int rv;
 
     ZEND_PARSE_PARAMETERS_START(5, 11)
@@ -2744,7 +2976,8 @@ PHP_FUNCTION(grpc_native_stream_open)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    channel = get_persistent_channel(key, key_len, host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, &persistent_reused, &error_message);
+    deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
+    channel = get_persistent_channel(key, key_len, host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (channel == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
         RETURN_THROWS();
@@ -2753,7 +2986,12 @@ PHP_FUNCTION(grpc_native_stream_open)
         zend_throw_exception(NULL, "native channel already has an active stream", 0);
         RETURN_THROWS();
     }
-    if (set_socket_timeout_us(channel->fd, timeout_us) != 0) {
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        zend_throw_exception(NULL, "native transport deadline exceeded", 0);
+        RETURN_THROWS();
+    }
+    if (set_socket_timeout_us(channel->fd, remaining_timeout_us) != 0) {
         mark_channel_dead(channel, errno);
         discard_persistent_channel(key, key_len, channel);
         zend_throw_exception(NULL, "failed to set socket timeout", 0);
@@ -2774,7 +3012,7 @@ PHP_FUNCTION(grpc_native_stream_open)
     stream->client.request = (const uint8_t *) ZSTR_VAL(stream->request);
     stream->client.request_len = ZSTR_LEN(stream->request);
     stream->client.call_started_us = monotonic_us();
-    stream->client.deadline_abs_us = timeout_us > 0 ? stream->client.call_started_us + (uint64_t) timeout_us : 0;
+    stream->client.deadline_abs_us = deadline_abs_us > 0 ? deadline_abs_us : 0;
     stream->client.decode_response_incrementally = true;
     stream->client.direct_response_payload = true;
     stream->client.queue_response_payloads = true;
@@ -2832,6 +3070,12 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_long(return_value, "bytes_received", client->bytes_received);
     add_assoc_bool(return_value, "channel_dead", stream->channel != NULL ? stream->channel->dead : true);
     add_assoc_bool(return_value, "channel_draining", stream->channel != NULL ? stream->channel->draining : true);
+    add_assoc_long(return_value, "channel_last_error", stream->channel != NULL ? stream->channel->last_error : 0);
+    add_assoc_long(return_value, "channel_last_io_errno", stream->channel != NULL ? stream->channel->last_io_errno : client->last_io_errno);
+    add_assoc_long(return_value, "channel_last_ssl_error", stream->channel != NULL ? stream->channel->last_ssl_error : client->last_ssl_error);
+    add_assoc_long(return_value, "channel_tls_verify_result", stream->channel != NULL ? (zend_long) stream->channel->tls_verify_result : 0);
+    add_assoc_string(return_value, "channel_last_error_detail", stream->channel != NULL ? stream->channel->last_error_detail : client->last_io_error_detail);
+    add_assoc_string(return_value, "channel_negotiated_protocol", stream->channel != NULL ? stream->channel->negotiated_protocol : "");
     add_assoc_long(return_value, "server_handler_ns", client->server_handler_ns);
     add_assoc_long(return_value, "server_payload_alloc_ns", client->server_payload_alloc_ns);
     add_assoc_long(return_value, "server_payload_bytes", client->server_payload_bytes);
@@ -2885,6 +3129,11 @@ PHP_FUNCTION(grpc_native_stream_next)
         }
         nread = channel_recv(stream->channel, (uint8_t *) stream->recv_buf, stream->recv_buf_len);
         if (nread <= 0) {
+            if (nread < 0) {
+                client->last_io_errno = errno;
+                client->last_ssl_error = stream->channel->last_ssl_error;
+                snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "%s", stream->channel->last_error_detail);
+            }
             if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
                 client->timed_out = true;
             } else {
@@ -3001,7 +3250,7 @@ PHP_FUNCTION(grpc_native_unary)
     total_started = monotonic_us();
 
     connect_started = monotonic_us();
-    client.fd = connect_tcp(host, port);
+    client.fd = connect_tcp(host, port, 0);
     connect_us = monotonic_us() - connect_started;
     if (client.fd < 0) {
         zend_throw_exception(NULL, "failed to connect", 0);
@@ -3064,6 +3313,10 @@ PHP_FUNCTION(grpc_native_unary)
     while (!client.stream_closed) {
         ssize_t nread = recv(client.fd, recv_buf, sizeof(recv_buf), 0);
         if (nread <= 0) {
+            if (nread < 0) {
+                client.last_io_errno = errno;
+                snprintf(client.last_io_error_detail, sizeof(client.last_io_error_detail), "recv failed: %s", strerror(errno));
+            }
             break;
         }
         client.bytes_received += (size_t) nread;
@@ -3350,9 +3603,10 @@ PHP_FUNCTION(grpc_native_unary_batch)
         set_grpc_header(&client, request_len);
     }
 
-    client.fd = connect_tcp(host, port);
+    client.deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
+    client.fd = connect_tcp(host, port, client.deadline_abs_us);
     if (client.fd < 0) {
-        zend_throw_exception(NULL, "failed to connect", 0);
+        zend_throw_exception(NULL, errno == ETIMEDOUT ? "native transport deadline exceeded" : "failed to connect", 0);
         RETURN_THROWS();
     }
     if (poll_loop && set_nonblocking(client.fd) != 0) {
@@ -3617,6 +3871,10 @@ PHP_FUNCTION(grpc_native_unary_batch)
             while (!client.stream_closed) {
                 ssize_t nread = recv(client.fd, recv_buf, recv_buf_len, 0);
                 if (nread <= 0) {
+                    if (nread < 0) {
+                        client.last_io_errno = errno;
+                        snprintf(client.last_io_error_detail, sizeof(client.last_io_error_detail), "recv failed: %s", strerror(errno));
+                    }
                     failed++;
                     break;
                 }
@@ -3772,6 +4030,9 @@ PHP_FUNCTION(grpc_native_unary_batch)
     add_assoc_bool(return_value, "direct_response_payload", client.direct_response_payload);
     add_assoc_bool(return_value, "read_ahead_delivery", client.read_ahead_delivery);
     add_assoc_bool(return_value, "timed_out", client.timed_out);
+    add_assoc_long(return_value, "last_io_errno", client.last_io_errno);
+    add_assoc_long(return_value, "last_ssl_error", client.last_ssl_error);
+    add_assoc_string(return_value, "last_io_error_detail", client.last_io_error_detail);
     add_assoc_bool(return_value, "compact_response_buffer", client.compact_response_buffer);
     add_assoc_long(return_value, "response_compact_threshold", (zend_long) client.response_compact_threshold);
     add_assoc_long(return_value, "request_wire_bytes", client.grpc_header_len + client.request_len);

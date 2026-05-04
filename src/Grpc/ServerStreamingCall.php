@@ -217,6 +217,10 @@ class ServerStreamingCall extends AbstractCall
                 $this->channel->credentials,
             );
         } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'native transport deadline exceeded') {
+                $this->finalStatus = $this->makeStatus(STATUS_DEADLINE_EXCEEDED, $e->getMessage());
+                return;
+            }
             $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage());
             return;
         }

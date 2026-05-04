@@ -210,6 +210,9 @@ class UnaryCall extends AbstractCall
             }
             $this->recordDiagnostic('native_transport_call_ns', hrtime(true) - $transportStartedNs);
         } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'native transport deadline exceeded') {
+                return [null, $this->makeStatus(STATUS_DEADLINE_EXCEEDED, $e->getMessage())];
+            }
             return [null, $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage())];
         }
 

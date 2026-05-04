@@ -143,7 +143,70 @@ final class NativeTransportControlTest extends TestCase
 
         self::assertNull($response);
         self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
-        self::assertSame('failed to establish TLS', $status->details);
+        self::assertSame('failed to load root certificates', $status->details);
+    }
+
+    public function testNativeTlsHandshakeUsesRpcDeadlineAsUpperBound(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc native extension is not loaded in this process');
+        }
+        if (!function_exists('proc_open')) {
+            self::markTestSkipped('proc_open is required for the local stalled TLS fixture');
+        }
+
+        $serverCode = <<<'PHP'
+$server = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+if (!is_resource($server)) {
+    fwrite(STDERR, $errstr . PHP_EOL);
+    exit(1);
+}
+echo stream_socket_get_name($server, false), PHP_EOL;
+flush();
+$conn = @stream_socket_accept($server, 5);
+if (is_resource($conn)) {
+    usleep(500_000);
+    fclose($conn);
+}
+fclose($server);
+PHP;
+        $process = proc_open(
+            [\PHP_BINARY, '-r', $serverCode],
+            [
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes,
+        );
+        if (!is_resource($process)) {
+            self::markTestSkipped('failed to spawn local stalled TLS fixture');
+        }
+        $address = trim((string) fgets($pipes[1]));
+        self::assertNotSame('', $address);
+
+        try {
+            $rootCerts = file_get_contents(self::CA_PATH);
+            self::assertNotFalse($rootCerts);
+            $client = new GreeterClient($address, [
+                'credentials' => ChannelCredentials::createSsl($rootCerts),
+                'php_grpc_lite.transport' => 'native',
+            ]);
+
+            $request = new HelloRequest();
+            $request->setName('TLS deadline');
+            $started = hrtime(true);
+            [$response, $status] = $client->SayHello($request, [], ['timeout' => 50_000])->wait();
+            $elapsedMs = (hrtime(true) - $started) / 1_000_000;
+
+            self::assertNull($response);
+            self::assertSame(\Grpc\STATUS_DEADLINE_EXCEEDED, $status->code, $status->details);
+            self::assertLessThan(400, $elapsedMs);
+        } finally {
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            proc_terminate($process);
+            proc_close($process);
+        }
     }
 
     public function testNativeMtlsWithoutClientCertificateFailsWithoutCurlFallback(): void

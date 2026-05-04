@@ -256,6 +256,11 @@ final class NativeTransport
             return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
         }
 
+        if (($result['channel_dead'] ?? false) === true) {
+            $detail = $result['channel_last_error_detail'] ?? '';
+            return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'native transport I/O error'];
+        }
+
         $httpStatus = (int) ($result['http_status'] ?? 0);
         if ($httpStatus !== 200) {
             return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
