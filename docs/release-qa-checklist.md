@@ -13,7 +13,7 @@ release default を native にするための判定表。
 | native memory checker | open | ASAN/UBSANまたはValgrindでnative lifecycle fixtureがcleanであること | `VALGRIND=1 ./bench/phase2/check-native-lifecycle-stress.sh` 入口は追加済み |
 | long lifecycle stress | open | repeated open/close, break, cancel, timeout, raw resource unsetでFD/RSSがiteration比例増加しないこと | 100 iterationは済み。release前に10k+または時間固定stressへ拡張 |
 | FPM / worker lifecycle | open | FPM worker process / FrankenPHP workerでrequestまたぎpersistent channelが安全に再利用・破棄されること | CLI stressとは別に実行環境fixtureが必要 |
-| large response decision | open | `100x100KiB` などlarge response例外形状をrelease defaultの対象に含めるか明示すること | small Spanner主用途と分離。large response tuningまたはknown limitation化 |
+| large response decision | done | `100x100KiB` などlarge response例外形状をrelease defaultの対象に含めるか明示すること | release blockerではなくtransport selection guide対象。large bulk streaming閾値は `>=64KiB/message` かつ `>=8MiB/stream` またはlarge payload `>=50 messages` |
 
 ## High-priority compatibility gates
 

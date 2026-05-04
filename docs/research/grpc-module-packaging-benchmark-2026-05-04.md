@@ -70,5 +70,6 @@ summary: `var/bench-results/phase2-native-mvp-vs-libcurl-ext-grpc-module-major.t
 
 - 案Aの `grpc.so` packaging後も、主用途のsmall unary / small SELECT streamingではnative defaultを維持できる数値。
 - `grpc.so` 化そのものによる明確な退行は見えていない。
-- large responseでは `100x100KiB` のnative surface悪化が残る。release defaultの主用途からは外れるが、known limitation化するか、stream resourceのbuffer/delivery差分を追加で潰す必要がある。
+- large responseでは `100x100KiB` のnative surface悪化が残る。release defaultの主用途からは外し、transport selection guideのknown limitationとして扱う。
+- large bulk streamingの運用閾値は、1 message `>=64KiB` かつ stream total `>=8MiB`、またはlarge payload `>=50 messages` とする。この閾値を超えてp99/throughputがSLOに入る場合は `native` / `curl` を事前比較する。
 - release gateとしては、packagingは「module名とbuild targetは完了、install artifactは継続」。次はproduction extension packagingの配布形整理、native memory checker、FPM/worker lifecycle QAを詰める。

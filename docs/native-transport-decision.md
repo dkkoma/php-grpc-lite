@@ -102,9 +102,25 @@ Native transportに残すがMVP必須ではないもの:
 
 これは自動fallbackではない。ユーザーまたはベンチが `php_grpc_lite.transport=curl` を指定した場合だけlibcurl経路を使う。
 
+## Transport Selection Guide
+
+nativeをdefaultにする。ただし、server streamingのlarge response bulk transferは、release時点ではworkloadごとに `native` / `curl` を比較する。
+
+ここでのlarge判定はgRPC仕様上の制限ではなく、2026-05-04時点のcontrolled benchmarkに基づく運用閾値。
+
+| 区分 | 目安 | 推奨 |
+|---|---|---|
+| small unary / small streaming | unary request/responseが数百B〜数KiB、server streamingが `1x100B` / `1x1KiB` / `1x4KiB` / `1x10KiB` 相当 | `native` を推奨 |
+| many-small streaming | 1 messageが小さい。例: `1000x100B` / `10000x100B` | `native` を推奨。ただしp99 SLOが厳しい場合は `curl` も比較 |
+| single-large response | 1 messageが `>= 1MiB`、ただしmessage数は少ない | `native` は利用可能。p99/throughputが重要なら `curl` も比較 |
+| medium-large streaming | 1 messageが `>= 64KiB`、またはstream totalが `>= 1MiB` | 事前ベンチ推奨 |
+| large bulk streaming | 1 messageが `>= 64KiB` かつ stream totalが `>= 8MiB`、または `>= 50` messagesのlarge payload stream | known limitation対象。`native` / `curl` を比較し、p99やworker占有がSLOに入るなら `curl` を選択肢に入れる |
+
+代表例として `10x100KiB` はnativeがcurlより改善するがext-grpcより遅く、`100x100KiB` はnative stream resource surfaceがcurl/ext-grpcより明確に遅い。したがってlargeの実務閾値は「100KiB級messageが数十件以上、合計8〜10MiB級」と置く。
+
 ## Known Exceptions
 
-- `100×100KiB` server streamingはnative stream resource化後もext-grpcよりstream p99が遅いケースがある。small SELECT主ワークロードのrelease判断とは分け、large response tuningとして扱う。
+- `100×100KiB` server streamingはnative stream resource化後もext-grpcよりstream p99が遅いケースがある。small SELECT主ワークロードのrelease判断とは分け、transport selection guideのlarge bulk streaming known limitationとして扱う。
 
 ## Rejected
 
