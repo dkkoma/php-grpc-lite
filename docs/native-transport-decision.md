@@ -44,7 +44,7 @@ nativeをdrop-in release defaultにする前に満たす条件:
 - `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。Phase 2 stream resourceでMVP検証済み。
 - Channel lifetimeでHTTP/2 session/socketを再利用できる。unary simple経路はC側persistent channelでrequestまたぎ再利用する。production server streaming resourceも同じlifecycleへ載せる。
 - RST_STREAM / missing trailers / metadata / status / deadlineの主要互換性をext-grpcまたはlibcurl経路と照合済み。Phase 2 native compatibility gateでmetadata/status/compression/error semanticsの代表条件は検証済み。
-- native resource lifecycleが整理され、stream resource destructor、unary failure path、persistent channel busy状態の代表条件を検証済み。production packaging後のnative memory checkerはrelease hardeningで扱う。
+- native resource lifecycleが整理され、stream resource destructor、unary failure path、persistent channel busy状態の代表条件と100 iteration stressを検証済み。production packaging後のnative memory checkerはrelease hardeningで扱う。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 
 ## MVP Scope
