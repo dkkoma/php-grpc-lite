@@ -173,7 +173,7 @@
 ## 6. 未決事項
 
 - [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/api-surface.md` で完了(2026-04-25)
-- [ ] `Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)
+- [x] ~~`Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)~~ → callback wrapperとして実装し、per-call option `call_credentials` から metadata を生成する(2026-05-04)
 - [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
 - [x] ~~`ServerStreamingCall::responses()` Generator の実装戦略~~ → **(B) `curl_multi_*` で真の incremental streaming** に決定(2026-04-25 PoC で実機検証 `poc/client/server_streaming_multi.php`)。実装パターン: WRITEFUNCTION で完成したフレームを queue に push、Generator 関数本体が `curl_multi_exec` → queue 排出 → yield → `curl_multi_select` のループ。長時間ストリーム(Pubsub StreamingPull 等)対応に必須
 - [ ] テスト用 gRPC サーバーの選定(Go の helloworld を `compose.yaml` に並べる案が有力)
@@ -184,7 +184,7 @@
 - [x] ~~trailers-only error response の扱い(`grpc-status` が body 前 header block に来るケース)~~ → body 前でも `grpc-status` / `grpc-message` / `grpc-status-details-bin` は trailing status metadata として扱う(2026-04-27)
 - [x] ~~`grpc-message` の percent decode~~ → status details へ入れる前に `rawurldecode()` する(2026-04-27)
 - [x] ~~HTTP status / `content-type: application/grpc` validation~~ → `grpc-status` が無い非 gRPC 応答は HTTP status から gRPC status を合成し、HTTP 200 でも `content-type` が `application/grpc` でなければ `STATUS_UNKNOWN` とする(2026-04-28)
-- [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなく libcurl timeout にも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともに `CURLOPT_TIMEOUT_MS` / `CURLOPT_CONNECTTIMEOUT_MS` を設定し、curl timeout を `STATUS_DEADLINE_EXCEEDED` に変換する(2026-04-27)
+- [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなく libcurl timeout にも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともに `CURLOPT_TIMEOUT_MS` / `CURLOPT_CONNECTTIMEOUT_MS` を設定し、curl timeout を `STATUS_DEADLINE_EXCEEDED` に変換する。`grpc-timeout` は8桁制限に収まるよう `u` / `m` / `S` / `M` / `H` へ単位変換する(2026-05-04)
 - [x] ~~圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化~~ → 未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` にする(2026-04-28)
 - [x] ~~binary metadata(`*-bin`)の ext-grpc 互換確認~~ → PHP API の値は raw binary、HTTP/2 wire は base64 として扱う。単一 raw binary value の request/initial/trailing round-trip を ext-grpc と照合(2026-04-28)
 - [x] ~~binary metadata の同一 key 複数 value における ext-grpc 互換確認~~ → 公式 ext-grpc PHP API は最後 value のみ可視だが、php-grpc-lite は gRPC 仕様準拠を優先し、同一 key 複数 values を `array<string, list<string>>` として保持する(2026-05-04)

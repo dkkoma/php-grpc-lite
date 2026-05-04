@@ -340,6 +340,7 @@ struct _poc_channel {
     bool dead;
     bool draining;
     bool busy;
+    bool detached_from_cache;
     int last_error;
     uint32_t last_goaway_error_code;
     int32_t last_goaway_stream_id;
@@ -461,6 +462,21 @@ static void mark_channel_draining(poc_channel *channel, int32_t last_stream_id, 
 static bool channel_usable(poc_channel *channel)
 {
     return channel != NULL && channel->fd >= 0 && channel->session != NULL && !channel->dead && !channel->draining;
+}
+
+static void remove_unusable_persistent_channel(const char *key, size_t key_len, poc_channel *channel)
+{
+    if (channel == NULL || channel_usable(channel)) {
+        return;
+    }
+    if (NGHTTP2_POC_G(persistent_channels_initialized)) {
+        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+    }
+    if (channel->busy) {
+        channel->detached_from_cache = true;
+        return;
+    }
+    destroy_poc_channel(channel);
 }
 
 static int set_socket_timeout_us(int fd, zend_long timeout_us)
@@ -672,8 +688,7 @@ static poc_channel *get_persistent_channel(const char *key, size_t key_len, cons
 
     channel = zend_hash_str_find_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len);
     if (channel != NULL && !channel_usable(channel)) {
-        destroy_poc_channel(channel);
-        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+        remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
     }
 
@@ -2860,8 +2875,7 @@ PHP_FUNCTION(nghttp2_poc_persistent_channel_unary)
 
     channel = zend_hash_str_find_ptr(&NGHTTP2_POC_G(persistent_channels), key, key_len);
     if (channel != NULL && !channel_usable(channel)) {
-        destroy_poc_channel(channel);
-        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+        remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
     }
 
@@ -2878,15 +2892,13 @@ PHP_FUNCTION(nghttp2_poc_persistent_channel_unary)
 
     if (perform_poc_channel_unary(channel, path, path_len, request, request_len, headers_zv, timeout_us, true, persistent_reused, return_value) != SUCCESS) {
         if (channel != NULL && !channel_usable(channel)) {
-            destroy_poc_channel(channel);
-            zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+            remove_unusable_persistent_channel(key, key_len, channel);
         }
         RETURN_THROWS();
     }
 
     if (!channel_usable(channel)) {
-        destroy_poc_channel(channel);
-        zend_hash_str_del(&NGHTTP2_POC_G(persistent_channels), key, key_len);
+        remove_unusable_persistent_channel(key, key_len, channel);
     }
 }
 
@@ -3110,6 +3122,10 @@ PHP_FUNCTION(nghttp2_poc_stream_next)
     if (stream->channel != NULL) {
         nghttp2_session_set_user_data(stream->channel->session, NULL);
         stream->channel->busy = false;
+        if (stream->channel->detached_from_cache) {
+            destroy_poc_channel(stream->channel);
+            stream->channel = NULL;
+        }
     }
     add_stream_status(return_value, stream);
 }

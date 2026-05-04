@@ -47,6 +47,8 @@ nativeをdrop-in release defaultにする前に満たす条件:
 - native resource lifecycleが整理され、stream resource destructor、unary failure path、persistent channel busy状態の代表条件と100 iteration stressを検証済み。production packaging後のnative memory checkerはrelease hardeningで扱う。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 
+default nativeを維持する場合、release artifactはnative extensionを同梱・必須化する。extension未導入環境で黙ってcurlへfallbackして動かすのではなく、release packageのinstall/load段階で不整合を検出する。libcurl経路は `php_grpc_lite.transport=curl` の明示選択肢として残す。
+
 ## MVP Scope
 
 Native transport MVPに入れるもの:

@@ -52,14 +52,21 @@ final class TransportSelectionTest extends TestCase
         });
     }
 
+    public function testGrpcTimeoutHeaderUsesLargestSafeUnit(): void
+    {
+        $headers = $this->call([], ['timeout' => 120_000_000])->requestHeaders();
+
+        self::assertContains('grpc-timeout: 120000m', $headers);
+    }
+
     /** @param array<string, mixed> $options */
-    private function call(array $options = []): ExposedTransportSelectionCall
+    private function call(array $options = [], array $callOptions = []): ExposedTransportSelectionCall
     {
         $channel = new Channel('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-        ]);
+        ] + $options);
 
-        return new ExposedTransportSelectionCall($channel, '/test.Service/Method', null, [], $options);
+        return new ExposedTransportSelectionCall($channel, '/test.Service/Method', null, [], $callOptions);
     }
 
     private function withTransportEnv(?string $value, callable $callback): void
@@ -88,6 +95,11 @@ final class ExposedTransportSelectionCall extends AbstractCall
     public function usesNativeTransport(): bool
     {
         return $this->shouldUseNativeTransport();
+    }
+
+    public function requestHeaders(): array
+    {
+        return $this->buildRequestHeaders();
     }
 
     public function cancel(): void

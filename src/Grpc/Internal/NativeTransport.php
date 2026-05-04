@@ -138,6 +138,17 @@ final class NativeTransport
                 $payloads[] = substr($body, $offset + 5, $payloadLength);
                 $offset += 5 + $payloadLength;
             }
+            if ($grpcStatus === \Grpc\STATUS_OK && $offset !== $bodyLength) {
+                $grpcStatus = \Grpc\STATUS_INTERNAL;
+                $details = 'malformed gRPC response frame: incomplete trailing bytes';
+                $payloads = [];
+            } elseif ($grpcStatus === \Grpc\STATUS_OK && count($payloads) !== 1) {
+                $grpcStatus = \Grpc\STATUS_INTERNAL;
+                $details = count($payloads) === 0
+                    ? 'malformed gRPC response frame: missing frame header'
+                    : 'malformed unary gRPC response: multiple frames';
+                $payloads = [];
+            }
         }
 
         return [

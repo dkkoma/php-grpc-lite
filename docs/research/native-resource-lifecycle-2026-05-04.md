@@ -98,6 +98,33 @@ summary: `var/bench-results/phase2-native-lifecycle-stress-20260504-native-lifec
 
 FD delta `1` はpersistent channelが1本残るケースで、iterationに比例した増加ではない。途中break、cancel、timeoutではFD deltaは0で、stream resource destructor / cancel pathがchannel busy状態を解除して次RPCへ戻せている。
 
+## Ownership review follow-up
+
+PHP extension reviewで、stream resource が `poc_channel*` 裸ポインタを保持している間に、persistent channel cache 側が unusable channel を破棄すると UAF になり得る、という指摘があった。
+
+対策:
+
+- unusable かつ busy な persistent channel は即 destroy しない。
+- cache からは外し、`detached_from_cache` として印を付ける。
+- stream resource destructor が channel busy 状態を解除した後、detached channel を破棄する。
+- unusable だが busy ではない channel は従来どおり cache から外して破棄する。
+
+再検証:
+
+```bash
+BENCH_TAG=20260504-native-lifecycle-ownership ITERATIONS=100 MESSAGE_COUNT=20 PAYLOAD_BYTES=1024 ./bench/phase2/check-native-lifecycle-stress.sh
+```
+
+summary: `var/bench-results/phase2-native-lifecycle-stress-20260504-native-lifecycle-ownership.json`
+
+| scenario | iterations | failures | wall ms | PHP memory delta | RSS max delta | FD delta |
+|---|---:|---:|---:|---:|---:|---:|
+| `full_drain_repeat` | 100 | 0 | 10.0 | 272296 B | 708 KiB | 1 |
+| `break_unset_repeat` | 100 | 0 | 13.3 | 116928 B | 48 KiB | 0 |
+| `cancel_mid_stream_repeat` | 100 | 0 | 15.7 | 0 B | 0 KiB | 0 |
+| `timeout_repeat` | 100 | 0 | 1606.2 | 0 B | 16 KiB | 0 |
+| `raw_resource_unset_repeat` | 100 | 0 | 41.5 | 0 B | 32 KiB | 1 |
+
 ## 判断
 
 Phase 2 MVPとしてのnative resource lifecycle整理は完了と扱う。

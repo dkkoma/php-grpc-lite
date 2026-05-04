@@ -93,7 +93,7 @@ abstract class AbstractCall
         ];
 
         if (isset($this->options['timeout'])) {
-            $headers[] = 'grpc-timeout: ' . (int) $this->options['timeout'] . 'u';
+            $headers[] = 'grpc-timeout: ' . $this->encodeGrpcTimeout((int) $this->options['timeout']);
         }
 
         foreach ($metadata as $key => $values) {
@@ -148,8 +148,33 @@ abstract class AbstractCall
                 $metadata[$k] = is_array($v) ? $v : [$v];
             }
         }
+        $callCredentials = $this->options['call_credentials'] ?? null;
+        if ($callCredentials instanceof CallCredentials) {
+            foreach ($callCredentials->getMetadata($this->buildUrl(), $this->method) as $k => $v) {
+                $metadata[$k] = is_array($v) ? $v : [$v];
+            }
+        }
 
         return $this->normalizeRequestMetadata($metadata);
+    }
+
+    protected function encodeGrpcTimeout(int $timeoutMicros): string
+    {
+        $timeoutMicros = max(1, $timeoutMicros);
+        foreach ([
+            'u' => 1,
+            'm' => 1_000,
+            'S' => 1_000_000,
+            'M' => 60_000_000,
+            'H' => 3_600_000_000,
+        ] as $unit => $microsPerUnit) {
+            $value = (int) ceil($timeoutMicros / $microsPerUnit);
+            if ($value <= 99_999_999) {
+                return $value . $unit;
+            }
+        }
+
+        return '99999999H';
     }
 
     /**

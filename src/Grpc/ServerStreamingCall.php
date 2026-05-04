@@ -76,6 +76,10 @@ class ServerStreamingCall extends AbstractCall
     public function responses(): \Generator
     {
         if ($this->ch === null) {
+            if ($this->cancelled) {
+                $this->finalStatus ??= $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
+                return;
+            }
             if ($this->nativeTransport && $this->nativeSerializedRequest !== null) {
                 yield from $this->responsesNative();
                 return;
@@ -122,6 +126,11 @@ class ServerStreamingCall extends AbstractCall
 
             if ($this->compressionStatus !== null) {
                 $this->finalStatus = $this->compressionStatus;
+            } elseif ($this->buffer !== '') {
+                $this->finalStatus = $this->makeStatus(
+                    STATUS_INTERNAL,
+                    'malformed gRPC response frame: incomplete trailing bytes',
+                );
             } elseif ($errCode !== null && $errCode !== CURLE_OK) {
                 $code = $errCode === CURLE_OPERATION_TIMEDOUT
                     ? STATUS_DEADLINE_EXCEEDED
@@ -165,12 +174,10 @@ class ServerStreamingCall extends AbstractCall
     public function cancel(): void
     {
         $this->cancelled = true;
+        $this->finalStatus ??= $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
         if ($this->nativeStream !== null) {
             Internal\NativeTransport::streamCancel($this->nativeStream);
             $this->nativeStream = null;
-            if ($this->finalStatus === null) {
-                $this->finalStatus = $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
-            }
         }
         if ($this->ch !== null) {
             $this->discardCurl($this->ch);

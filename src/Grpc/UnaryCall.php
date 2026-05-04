@@ -109,6 +109,9 @@ class UnaryCall extends AbstractCall
     public function wait(): array
     {
         if ($this->ch === null) {
+            if ($this->cancelled) {
+                return [null, $this->makeStatus(STATUS_CANCELLED, 'call cancelled')];
+            }
             if ($this->nativeTransport && $this->nativeSerializedRequest !== null) {
                 return $this->waitNative();
             }
@@ -157,6 +160,11 @@ class UnaryCall extends AbstractCall
         if ($compressionStatus !== null) {
             $this->recordDiagnostic('wait_after_curl_userland_ns', hrtime(true) - $afterCurlStartedNs);
             return [null, $compressionStatus];
+        }
+        $frameStatus = $this->validateResponseFrame();
+        if ($frameStatus !== null) {
+            $this->recordDiagnostic('wait_after_curl_userland_ns', hrtime(true) - $afterCurlStartedNs);
+            return [null, $frameStatus];
         }
         $response = $this->parseResponseFrame();
         $statusStartedNs = hrtime(true);
@@ -291,7 +299,7 @@ class UnaryCall extends AbstractCall
 
     private function parseResponseFrame(): ?object
     {
-        if ($this->bodyBytes < 5) {
+        if ($this->bodyBytes === 0) {
             return null;
         }
         $body = $this->assembleResponseBody();
@@ -311,6 +319,31 @@ class UnaryCall extends AbstractCall
         $response = Internal\Deserialize::apply($this->deserialize, $payload);
         $this->recordDiagnostic('response_deserialize_ns', hrtime(true) - $deserializeStartedNs);
         return $response;
+    }
+
+    private function validateResponseFrame(): ?\stdClass
+    {
+        $trailerStatus = isset($this->responseTrailers['grpc-status'])
+            ? (int) $this->responseTrailers['grpc-status'][0]
+            : STATUS_UNKNOWN;
+        if ($trailerStatus !== STATUS_OK && $this->bodyBytes === 0) {
+            return null;
+        }
+        if ($this->bodyBytes < 5) {
+            return $this->makeStatus(STATUS_INTERNAL, 'malformed gRPC response frame: missing frame header');
+        }
+
+        $body = $this->assembleResponseBody();
+        $payloadLength = unpack('N', substr($body, 1, 4))[1];
+        $expectedBodyBytes = 5 + $payloadLength;
+        if ($this->bodyBytes < $expectedBodyBytes) {
+            return $this->makeStatus(STATUS_INTERNAL, 'malformed gRPC response frame: truncated payload');
+        }
+        if ($this->bodyBytes > $expectedBodyBytes) {
+            return $this->makeStatus(STATUS_INTERNAL, 'malformed unary gRPC response: multiple or trailing frames');
+        }
+
+        return null;
     }
 
     private function validateCompression(): ?\stdClass

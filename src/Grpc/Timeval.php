@@ -28,6 +28,11 @@ final class Timeval
         return new self((int) (microtime(true) * 1_000_000));
     }
 
+    public function microtime(): int
+    {
+        return $this->microseconds;
+    }
+
     public function add(Timeval $other): self
     {
         return new self($this->microseconds + $other->microseconds);
