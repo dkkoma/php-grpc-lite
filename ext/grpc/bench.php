@@ -31,7 +31,6 @@ $options = getopt('', [
     'read-ahead-delivery',
     'read-ahead-max-messages::',
     'read-ahead-max-bytes::',
-    'transport-thread',
     'poll-loop',
     'discard-response-body',
 ]);
@@ -58,7 +57,6 @@ $directResponsePayload = array_key_exists('direct-response-payload', $options);
 $readAheadDelivery = array_key_exists('read-ahead-delivery', $options);
 $readAheadMaxMessages = (int) ($options['read-ahead-max-messages'] ?? 0);
 $readAheadMaxBytes = (int) ($options['read-ahead-max-bytes'] ?? 0);
-$transportThread = array_key_exists('transport-thread', $options);
 $pollLoop = array_key_exists('poll-loop', $options);
 $discardResponseBody = array_key_exists('discard-response-body', $options);
 if ($responseCallbackMode !== 'none') {
@@ -103,7 +101,7 @@ $result = grpc_native_unary_batch('test-server', 50051, $path, $requestBody, $it
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',
-], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold, $directResponsePayload, $readAheadDelivery, $readAheadMaxMessages, $readAheadMaxBytes, $transportThread);
+], $splitGrpcFrame, $noCopy, $dataFrameSize, $pollLoop, $discardResponseBody, $recvStreamWindowSize, $recvConnectionWindowSize, $recvBufferSize, $flushAfterMemRecv, $readFirstPollLoop, $responseCallback, $incrementalDecode, $compactResponseBuffer, $responseCompactThreshold, $directResponsePayload, $readAheadDelivery, $readAheadMaxMessages, $readAheadMaxBytes, 0);
 
 $rawLatencies = $result['latencies_us'];
 $latencies = $rawLatencies;
@@ -246,7 +244,6 @@ $result += [
     'read_ahead_delivery' => $readAheadDelivery,
     'read_ahead_max_messages' => $readAheadMaxMessages,
     'read_ahead_max_bytes' => $readAheadMaxBytes,
-    'transport_thread' => $transportThread,
     'poll_loop' => $pollLoop,
     'discard_response_body' => $discardResponseBody,
     'p50_us' => $p50,

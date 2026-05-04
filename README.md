@@ -10,6 +10,7 @@ Current review status:
 - Official `ext-grpc` and this native extension must not be loaded at the same time.
 - `native` is the target default transport in the current code; release readiness is still gated by native memory/lifecycle QA.
 - `curl` remains an explicit stable route via `php_grpc_lite.transport=curl`.
+- Unary and server streaming are the current compatibility scope. Client streaming and bidirectional streaming are not implemented yet.
 
 ## Install
 

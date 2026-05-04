@@ -16,7 +16,6 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <poll.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -39,13 +38,6 @@ typedef struct queued_payload {
     uint64_t ready_abs_us;
     struct queued_payload *next;
 } queued_payload;
-
-typedef struct queued_raw_payload {
-    char *payload;
-    size_t len;
-    uint64_t ready_abs_us;
-    struct queued_raw_payload *next;
-} queued_raw_payload;
 
 typedef struct metadata_entry {
     zend_string *key;
@@ -152,7 +144,6 @@ typedef struct {
     bool read_ahead_delivery;
     size_t read_ahead_max_messages;
     size_t read_ahead_max_bytes;
-    bool transport_thread;
     bool queue_response_payloads;
     queued_payload *response_queue_head;
     queued_payload *response_queue_tail;
@@ -162,11 +153,8 @@ typedef struct {
     size_t call_max_response_queue_bytes;
     uint64_t call_response_queue_wait_us;
     uint64_t call_max_response_queue_wait_us;
-    queued_raw_payload *raw_response_queue_head;
-    queued_raw_payload *raw_response_queue_tail;
     metadata_entry *metadata_head;
     metadata_entry *metadata_tail;
-    char *response_raw_payload;
     bool compact_response_buffer;
     size_t response_compact_threshold;
     size_t response_parse_offset;
@@ -260,10 +248,6 @@ static int deliver_response_payload(poc_client *client, zend_string *payload, ui
 static int deliver_queued_response_payloads(poc_client *client);
 static int deliver_queued_response_payloads_if_bounded(poc_client *client);
 static void free_queued_response_payloads(poc_client *client);
-static int enqueue_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us);
-static int deliver_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us);
-static int deliver_queued_raw_response_payloads(poc_client *client);
-static void free_queued_raw_response_payloads(poc_client *client);
 static int add_metadata_entry(poc_client *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
 static void free_metadata_entries(poc_client *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, poc_client *client, bool trailing);
@@ -318,15 +302,6 @@ static ssize_t mux_data_source_read_callback(nghttp2_session *session, int32_t s
 static int mux_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int mux_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int mux_on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
-
-typedef struct {
-    nghttp2_session *session;
-    poc_client *client;
-    size_t recv_buf_len;
-    int rv;
-} transport_thread_args;
-
-static void *transport_thread_main(void *arg);
 
 struct _poc_channel {
     int fd;
@@ -1679,11 +1654,6 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
                     client->response_payload_offset = 0;
                     client->response_current_compressed = false;
                 }
-            } else if (client->transport_thread) {
-                client->response_raw_payload = client->response_payload_len > 0 ? malloc(client->response_payload_len) : malloc(1);
-                if (client->response_raw_payload == NULL) {
-                    return -1;
-                }
             } else {
                 client->response_payload = zend_string_alloc(client->response_payload_len, 0);
                 if (client->response_payload_len == 0) {
@@ -1702,42 +1672,6 @@ static int process_response_data_direct(poc_client *client, const uint8_t *data,
                 client->response_payload_len = 0;
                 client->response_payload_offset = 0;
                 client->response_current_compressed = false;
-            }
-        } else if (client->transport_thread && client->response_raw_payload != NULL) {
-            size_t need = client->response_payload_len - client->response_payload_offset;
-            size_t take = need < len - offset ? need : len - offset;
-            uint64_t payload_string_started = monotonic_us();
-            uint64_t payload_string_elapsed;
-            if (take > 0) {
-                memcpy(client->response_raw_payload + client->response_payload_offset, data + offset, take);
-                client->response_payload_offset += take;
-                offset += take;
-            }
-            payload_string_elapsed = monotonic_us() - payload_string_started;
-            client->call_response_payload_string_us += payload_string_elapsed;
-            if (payload_string_elapsed > client->call_max_response_payload_string_us) {
-                client->call_max_response_payload_string_us = payload_string_elapsed;
-            }
-            if (client->response_payload_offset == client->response_payload_len) {
-                char *payload = client->response_raw_payload;
-                size_t payload_len = client->response_payload_len;
-                uint64_t ready_abs_us = monotonic_us();
-
-                if (client->call_started_us != 0) {
-                    uint64_t ready_us = ready_abs_us - client->call_started_us;
-                    if (client->first_response_message_ready_us == 0) {
-                        client->first_response_message_ready_us = ready_us;
-                    }
-                    client->last_response_message_ready_us = ready_us;
-                }
-                client->response_raw_payload = NULL;
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
-                if (enqueue_raw_response_payload(client, payload, payload_len, ready_abs_us) != 0) {
-                    free(payload);
-                    return -1;
-                }
             }
         } else if (client->response_payload != NULL) {
             size_t need = client->response_payload_len - client->response_payload_offset;
@@ -1983,132 +1917,13 @@ static void cleanup_poc_client(poc_client *client)
         zend_string_release(client->response_payload);
         client->response_payload = NULL;
     }
-    if (client->response_raw_payload != NULL) {
-        free(client->response_raw_payload);
-        client->response_raw_payload = NULL;
-    }
     free_queued_response_payloads(client);
-    free_queued_raw_response_payloads(client);
     free_metadata_entries(client);
     if (client->grpc_message != NULL) {
         zend_string_release(client->grpc_message);
         client->grpc_message = NULL;
     }
     smart_str_free(&client->body);
-}
-
-static int enqueue_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us)
-{
-    queued_raw_payload *entry = malloc(sizeof(queued_raw_payload));
-    if (entry == NULL) {
-        return -1;
-    }
-    entry->payload = payload;
-    entry->len = len;
-    entry->ready_abs_us = ready_abs_us;
-    entry->next = NULL;
-
-    if (client->raw_response_queue_tail == NULL) {
-        client->raw_response_queue_head = entry;
-    } else {
-        client->raw_response_queue_tail->next = entry;
-    }
-    client->raw_response_queue_tail = entry;
-    client->response_queue_count++;
-    client->response_queue_bytes += len;
-    if (client->response_queue_count > client->call_max_response_queue_count) {
-        client->call_max_response_queue_count = client->response_queue_count;
-    }
-    if (client->response_queue_bytes > client->call_max_response_queue_bytes) {
-        client->call_max_response_queue_bytes = client->response_queue_bytes;
-    }
-
-    return 0;
-}
-
-static int deliver_raw_response_payload(poc_client *client, char *payload, size_t len, uint64_t ready_abs_us)
-{
-    zval params[1];
-    zval retval;
-    uint64_t started;
-    uint64_t elapsed;
-    uint64_t now = monotonic_us();
-    uint64_t queue_wait = ready_abs_us > 0 && now >= ready_abs_us ? now - ready_abs_us : 0;
-
-    client->call_response_queue_wait_us += queue_wait;
-    if (queue_wait > client->call_max_response_queue_wait_us) {
-        client->call_max_response_queue_wait_us = queue_wait;
-    }
-
-    ZVAL_STRINGL(&params[0], payload, len);
-    ZVAL_UNDEF(&retval);
-    client->response_fci->params = params;
-    client->response_fci->param_count = 1;
-    client->response_fci->retval = &retval;
-
-    started = monotonic_us();
-    if (zend_call_function(client->response_fci, client->response_fcc) != SUCCESS) {
-        zval_ptr_dtor(&params[0]);
-        if (!Z_ISUNDEF(retval)) {
-            zval_ptr_dtor(&retval);
-        }
-        return -1;
-    }
-    elapsed = monotonic_us() - started;
-    if (client->call_started_us != 0) {
-        uint64_t done_us = monotonic_us() - client->call_started_us;
-        if (client->first_response_callback_done_us == 0) {
-            client->first_response_callback_done_us = done_us;
-        }
-        client->last_response_callback_done_us = done_us;
-    }
-    client->call_response_decode_us += elapsed;
-    if (elapsed > client->call_max_response_decode_us) {
-        client->call_max_response_decode_us = elapsed;
-    }
-    client->call_decoded_messages++;
-
-    zval_ptr_dtor(&params[0]);
-    if (!Z_ISUNDEF(retval)) {
-        zval_ptr_dtor(&retval);
-    }
-
-    return 0;
-}
-
-static int deliver_queued_raw_response_payloads(poc_client *client)
-{
-    while (client->raw_response_queue_head != NULL) {
-        queued_raw_payload *entry = client->raw_response_queue_head;
-        client->raw_response_queue_head = entry->next;
-        if (client->raw_response_queue_head == NULL) {
-            client->raw_response_queue_tail = NULL;
-        }
-        client->response_queue_count--;
-        client->response_queue_bytes -= entry->len;
-        if (deliver_raw_response_payload(client, entry->payload, entry->len, entry->ready_abs_us) != 0) {
-            free(entry->payload);
-            free(entry);
-            return -1;
-        }
-        free(entry->payload);
-        free(entry);
-    }
-
-    return 0;
-}
-
-static void free_queued_raw_response_payloads(poc_client *client)
-{
-    while (client->raw_response_queue_head != NULL) {
-        queued_raw_payload *entry = client->raw_response_queue_head;
-        client->raw_response_queue_head = entry->next;
-        free(entry->payload);
-        free(entry);
-    }
-    client->raw_response_queue_tail = NULL;
-    client->response_queue_count = 0;
-    client->response_queue_bytes = 0;
 }
 
 static void compact_response_body_if_needed(poc_client *client)
@@ -2351,21 +2166,6 @@ static int drive_stream_poll(nghttp2_session *session, poc_client *client, char 
     return client->stream_closed ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
 }
 
-static void *transport_thread_main(void *arg)
-{
-    transport_thread_args *args = (transport_thread_args *) arg;
-    char *recv_buf = malloc(args->recv_buf_len);
-    if (recv_buf == NULL) {
-        args->rv = NGHTTP2_ERR_CALLBACK_FAILURE;
-        return NULL;
-    }
-
-    args->rv = drive_stream_poll(args->session, args->client, recv_buf, args->recv_buf_len);
-    free(recv_buf);
-
-    return NULL;
-}
-
 static ssize_t mux_send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
 {
     mux_context *ctx = (mux_context *) user_data;
@@ -2506,7 +2306,7 @@ PHP_FUNCTION(grpc_native_multiplex_unary)
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
     nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "nghttp2-poc/0.1");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "php-grpc-lite/0.1.0-dev");
 
     for (size_t i = 0; i < ctx.stream_count; i++) {
         nghttp2_data_provider data_provider;
@@ -2663,7 +2463,6 @@ static int perform_poc_channel_unary(poc_channel *channel, const char *path, siz
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
-    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
     append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
@@ -2989,7 +2788,6 @@ PHP_FUNCTION(grpc_native_stream_open)
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
-    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
     append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
@@ -3230,7 +3028,6 @@ PHP_FUNCTION(grpc_native_unary)
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
-    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
     append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
@@ -3363,7 +3160,6 @@ PHP_FUNCTION(grpc_native_unary_batch)
     bool read_ahead_delivery = false;
     zend_long read_ahead_max_messages = 0;
     zend_long read_ahead_max_bytes = 0;
-    bool transport_thread = false;
     zend_long timeout_us = 0;
     bool compact_response_buffer = false;
     zend_long response_compact_threshold = 0;
@@ -3472,7 +3268,7 @@ PHP_FUNCTION(grpc_native_unary_batch)
     memset(&response_fci, 0, sizeof(response_fci));
     memset(&response_fcc, 0, sizeof(response_fcc));
 
-    ZEND_PARSE_PARAMETERS_START(5, 26)
+    ZEND_PARSE_PARAMETERS_START(5, 25)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
         Z_PARAM_STRING(path, path_len)
@@ -3498,7 +3294,6 @@ PHP_FUNCTION(grpc_native_unary_batch)
         Z_PARAM_BOOL(read_ahead_delivery)
         Z_PARAM_LONG(read_ahead_max_messages)
         Z_PARAM_LONG(read_ahead_max_bytes)
-        Z_PARAM_BOOL(transport_thread)
         Z_PARAM_LONG(timeout_us)
     ZEND_PARSE_PARAMETERS_END();
 
@@ -3530,7 +3325,6 @@ PHP_FUNCTION(grpc_native_unary_batch)
     client.read_ahead_delivery = read_ahead_delivery && client.direct_response_payload;
     client.read_ahead_max_messages = read_ahead_max_messages > 0 ? (size_t) read_ahead_max_messages : 0;
     client.read_ahead_max_bytes = read_ahead_max_bytes > 0 ? (size_t) read_ahead_max_bytes : 0;
-    client.transport_thread = transport_thread && client.direct_response_payload;
     client.compact_response_buffer = compact_response_buffer && decode_response_incrementally && !client.direct_response_payload;
     client.response_compact_threshold = response_compact_threshold > 0 ? (size_t) response_compact_threshold : 1;
     if (response_callback_enabled) {
@@ -3598,7 +3392,6 @@ PHP_FUNCTION(grpc_native_unary_batch)
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
-    append_request_header(&request_headers, "user-agent", sizeof("user-agent") - 1, "nghttp2-poc/0.1", sizeof("nghttp2-poc/0.1") - 1);
     append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
@@ -3780,11 +3573,6 @@ PHP_FUNCTION(grpc_native_unary_batch)
         client.call_response_queue_wait_us = 0;
         client.call_max_response_queue_wait_us = 0;
         free_queued_response_payloads(&client);
-        free_queued_raw_response_payloads(&client);
-        if (client.response_raw_payload != NULL) {
-            free(client.response_raw_payload);
-            client.response_raw_payload = NULL;
-        }
         client.call_response_payload_string_us = 0;
         client.call_max_response_payload_string_us = 0;
         client.call_response_decode_us = 0;
@@ -3813,28 +3601,7 @@ PHP_FUNCTION(grpc_native_unary_batch)
             break;
         }
 
-        if (client.transport_thread) {
-            pthread_t thread;
-            transport_thread_args thread_args;
-            thread_args.session = session;
-            thread_args.client = &client;
-            thread_args.recv_buf_len = recv_buf_len;
-            thread_args.rv = 0;
-            if (pthread_create(&thread, NULL, transport_thread_main, &thread_args) != 0) {
-                failed++;
-                break;
-            }
-            pthread_join(thread, NULL);
-            rv = thread_args.rv;
-            if (rv != 0) {
-                failed++;
-                break;
-            }
-            if (deliver_queued_raw_response_payloads(&client) != 0) {
-                failed++;
-                break;
-            }
-        } else if (poll_loop) {
+        if (poll_loop) {
             rv = drive_stream_poll(session, &client, recv_buf, recv_buf_len);
             if (rv != 0) {
                 failed++;
@@ -3878,7 +3645,7 @@ PHP_FUNCTION(grpc_native_unary_batch)
                 failed++;
                 break;
             }
-        } else if (response_callback_enabled && decode_response_incrementally && client.direct_response_payload && (client.response_header_len != 0 || client.response_payload != NULL || client.response_raw_payload != NULL || client.response_queue_head != NULL || client.raw_response_queue_head != NULL)) {
+        } else if (response_callback_enabled && decode_response_incrementally && client.direct_response_payload && (client.response_header_len != 0 || client.response_payload != NULL || client.response_queue_head != NULL)) {
             failed++;
             break;
         } else if (response_callback_enabled && decode_response_incrementally && !client.direct_response_payload && client.response_parse_offset != (client.body.s ? ZSTR_LEN(client.body.s) : 0)) {
@@ -4004,7 +3771,6 @@ PHP_FUNCTION(grpc_native_unary_batch)
     add_assoc_bool(return_value, "decode_response_incrementally", decode_response_incrementally);
     add_assoc_bool(return_value, "direct_response_payload", client.direct_response_payload);
     add_assoc_bool(return_value, "read_ahead_delivery", client.read_ahead_delivery);
-    add_assoc_bool(return_value, "transport_thread", client.transport_thread);
     add_assoc_bool(return_value, "timed_out", client.timed_out);
     add_assoc_bool(return_value, "compact_response_buffer", client.compact_response_buffer);
     add_assoc_long(return_value, "response_compact_threshold", (zend_long) client.response_compact_threshold);
@@ -4275,7 +4041,6 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_unary_batch, 0, 5, I
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_delivery, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_max_messages, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_max_bytes, IS_LONG, 0, "0")
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, transport_thread, _IS_BOOL, 0, "false")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 

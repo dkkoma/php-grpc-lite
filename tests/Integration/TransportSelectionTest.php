@@ -59,6 +59,24 @@ final class TransportSelectionTest extends TestCase
         self::assertContains('grpc-timeout: 120000m', $headers);
     }
 
+    public function testNativeHeadersCarryTimeoutAndUserAgent(): void
+    {
+        $headers = $this->call(
+            ['grpc.primary_user_agent' => 'review-agent/1.0'],
+            ['timeout' => 120_000_000],
+        )->nativeRequestHeaders();
+
+        self::assertSame(['review-agent/1.0 php-grpc-lite/' . \Grpc\VERSION], $headers['user-agent'] ?? null);
+        self::assertSame(['120000m'], $headers['grpc-timeout'] ?? null);
+    }
+
+    public function testCurlHeadersCarryPrimaryUserAgentAsPrefix(): void
+    {
+        $headers = $this->call(['grpc.primary_user_agent' => 'review-agent/1.0'])->requestHeaders();
+
+        self::assertContains('User-Agent: review-agent/1.0 php-grpc-lite/' . \Grpc\VERSION, $headers);
+    }
+
     /** @param array<string, mixed> $options */
     private function call(array $options = [], array $callOptions = []): ExposedTransportSelectionCall
     {
@@ -100,6 +118,11 @@ final class ExposedTransportSelectionCall extends AbstractCall
     public function requestHeaders(): array
     {
         return $this->buildRequestHeaders();
+    }
+
+    public function nativeRequestHeaders(): array
+    {
+        return $this->buildNativeRequestHeaders();
     }
 
     public function cancel(): void

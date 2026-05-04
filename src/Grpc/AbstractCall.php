@@ -89,7 +89,7 @@ abstract class AbstractCall
         $headers = [
             'Content-Type: application/grpc',
             'TE: trailers',
-            'User-Agent: ' . ($this->channel->opts['grpc.primary_user_agent'] ?? 'php-grpc-lite/0.0.1'),
+            'User-Agent: ' . $this->buildUserAgent(),
         ];
 
         if (isset($this->options['timeout'])) {
@@ -115,7 +115,13 @@ abstract class AbstractCall
     /** @return array<string, list<string>> */
     protected function buildNativeRequestHeaders(): array
     {
-        $headers = [];
+        $headers = [
+            'user-agent' => [$this->buildUserAgent()],
+        ];
+        if (isset($this->options['timeout'])) {
+            $headers['grpc-timeout'] = [$this->encodeGrpcTimeout((int) $this->options['timeout'])];
+        }
+
         foreach ($this->buildRequestMetadata() as $key => $values) {
             foreach ($values as $value) {
                 $headers[$key][] = $this->isBinaryMetadataKey($key)
@@ -125,6 +131,13 @@ abstract class AbstractCall
         }
 
         return $headers;
+    }
+
+    protected function buildUserAgent(): string
+    {
+        $default = 'php-grpc-lite/' . (defined(__NAMESPACE__ . '\\VERSION') ? constant(__NAMESPACE__ . '\\VERSION') : '0.1.0-dev');
+        $primary = trim((string) ($this->channel->opts['grpc.primary_user_agent'] ?? ''));
+        return $primary === '' ? $default : $primary . ' ' . $default;
     }
 
     /** @return array<string, list<string>> */

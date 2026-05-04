@@ -7,6 +7,7 @@ namespace Grpc;
 // loaded alongside this package. The native extension wins, our autoloader
 // classes stay dormant, and these constant defines become no-ops.
 if (!defined(__NAMESPACE__ . '\\STATUS_OK')) {
+    define(__NAMESPACE__ . '\\VERSION', '0.1.0-dev');
     define(__NAMESPACE__ . '\\STATUS_OK', 0);
     define(__NAMESPACE__ . '\\STATUS_CANCELLED', 1);
     define(__NAMESPACE__ . '\\STATUS_UNKNOWN', 2);

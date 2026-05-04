@@ -102,6 +102,12 @@ $stableClient = new SomeGrpcClient($target, [
 
 `curl` は自動fallbackではなく、workloadや運用安定性に応じてユーザーが明示選択するstable route。
 
+## Compatibility scope
+
+現時点のdrop-in replacement対象は unary と server streaming。client streaming と bidirectional streaming は API surface だけを予約しており、呼び出すと明示的な未実装例外を投げる。
+
+Pub/Sub StreamingPull など bidi streaming を使うclientは、現時点では公式 `ext-grpc` を使う。
+
 ## Verification
 
 ```bash

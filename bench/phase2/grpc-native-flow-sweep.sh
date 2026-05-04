@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
-output_dir="${BENCH_OUTPUT_DIR:-var/bench-results/nghttp2-poc-flow-$timestamp}"
+output_dir="${BENCH_OUTPUT_DIR:-var/bench-results/grpc-native-flow-$timestamp}"
 iterations="${BENCH_ITERATIONS:-1000}"
 request_sizes="${BENCH_REQUEST_PAYLOAD_SIZES:-102400,524288,1048576,2097152}"
 response_bytes="${BENCH_RESPONSE_BYTES:-100}"
