@@ -1,3 +1,5 @@
+#include "grpc_internal.h"
+
 /*
  * Bench-only HTTP/2 transport entrypoints.
  *

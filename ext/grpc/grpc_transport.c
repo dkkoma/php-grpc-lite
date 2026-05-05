@@ -1,3 +1,5 @@
+#include "grpc_internal.h"
+
 /*
  * HTTP/2 transport helpers included by grpc.c.
  *
@@ -203,8 +205,8 @@ static void remove_unusable_persistent_channel(const char *key, size_t key_len, 
     if (channel == NULL || channel_usable(channel)) {
         return;
     }
-    if (GRPC_LITE_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&GRPC_LITE_G(persistent_channels), key, key_len);
+    if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
     }
     if (channel->busy) {
         channel->detached_from_cache = true;
@@ -654,12 +656,12 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
     h2_channel *channel;
 
     *persistent_reused = false;
-    if (!GRPC_LITE_G(persistent_channels_initialized)) {
+    if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
         *error_message = "persistent channel cache is not initialized";
         return NULL;
     }
 
-    channel = zend_hash_str_find_ptr(&GRPC_LITE_G(persistent_channels), key, key_len);
+    channel = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
     if (channel != NULL && !channel_usable(channel)) {
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
@@ -674,7 +676,7 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
         if (channel == NULL) {
             return NULL;
         }
-        zend_hash_str_update_ptr(&GRPC_LITE_G(persistent_channels), key, key_len, channel);
+        zend_hash_str_update_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len, channel);
         return channel;
     }
 
@@ -684,8 +686,8 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
 
 static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel)
 {
-    if (GRPC_LITE_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&GRPC_LITE_G(persistent_channels), key, key_len);
+    if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
     }
     if (channel == NULL) {
         return;

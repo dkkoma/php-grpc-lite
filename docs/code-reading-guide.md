@@ -223,7 +223,7 @@ public wrapper:
 
 ## 8. C extension
 
-`ext/grpc/grpc.c` がproduction HTTP/2 transportです。`ext/grpc/grpc_bench.c` はbench/diagnostic entrypointで、通常の `Grpc\` APIからは通りません。
+`ext/grpc/grpc.c` はPHP extension entrypoint/module lifecycleを持ち、HTTP/2 transport本体は `ext/grpc/grpc_transport.c` に分離されています。共有struct・prototype・module globals macroは内部専用の `ext/grpc/grpc_internal.h` にあります。`ext/grpc/grpc_bench.c` はbench/diagnostic entrypointで、通常の `Grpc\` APIからは通りません。
 
 ### 主要構造体
 
@@ -231,7 +231,7 @@ public wrapper:
 |---|---|
 | `h2_channel` | socket/TLS/nghttp2 session/persistent state |
 | `grpc_call` | 1 RPCのrequest/response parser state |
-| `grpc_stream_resource` | PHP stream resourceとactive call/channelの紐付け |
+| `h2_stream` | PHP stream resourceとactive call/channelの紐付け |
 
 ### Channel lifecycle
 
