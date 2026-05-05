@@ -172,7 +172,7 @@ final class NativeTransport
 
         $metadata = self::extractInitialMetadata($result);
         $grpcStatus = (int) ($result['grpc_status'] ?? -1);
-        if ($grpcStatus >= 0) {
+        if ($grpcStatus >= 0 && ($result['response_message_too_large'] ?? false) !== true) {
             $message = $result['grpc_message'] ?? '';
             return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
         }
@@ -195,6 +195,10 @@ final class NativeTransport
         $contentType = strtolower($metadata['content-type'][0] ?? '');
         if (!str_starts_with($contentType, 'application/grpc')) {
             return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
+        }
+
+        if (($result['response_message_too_large'] ?? false) === true) {
+            return [\Grpc\STATUS_RESOURCE_EXHAUSTED, 'received message exceeds maximum size'];
         }
 
         $unsupportedEncoding = self::unsupportedGrpcEncoding($metadata);

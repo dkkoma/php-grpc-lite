@@ -30,6 +30,7 @@
 #define MAKE_NV(NAME, VALUE) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, sizeof(VALUE) - 1, NGHTTP2_NV_FLAG_NONE}
 #define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
 #define MAX_RECV_BUF_SIZE 262144
+#define GRPC_NATIVE_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
 
 typedef struct _h2_channel h2_channel;
 typedef struct _h2_stream h2_stream;
@@ -57,6 +58,7 @@ typedef struct {
     uint32_t stream_error_code;
     int http_status;
     bool compressed_response_seen;
+    bool response_message_too_large;
     size_t bytes_sent;
     size_t bytes_received;
     size_t data_read_calls;
@@ -280,6 +282,8 @@ static void init_request_headers(h2_request_headers *headers, size_t custom_valu
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static void append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
+static int set_socket_timeout_us(int fd, zend_long timeout_us);
+static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
 
 struct _h2_channel {
     int fd;
@@ -294,6 +298,8 @@ struct _h2_channel {
     bool draining;
     bool busy;
     bool detached_from_cache;
+    grpc_call *active_call_owner;
+    h2_stream *active_stream_owner;
     int last_error;
     int last_io_errno;
     int last_ssl_error;
@@ -349,19 +355,61 @@ static void destroy_h2_channel(h2_channel *channel)
     pefree(channel, channel->persistent);
 }
 
+static bool channel_owned_by_stream(h2_channel *channel, h2_stream *stream)
+{
+    return channel != NULL && stream != NULL && channel->active_stream_owner == stream;
+}
+
+static bool channel_owned_by_call(h2_channel *channel, grpc_call *client)
+{
+    return channel != NULL && client != NULL && channel->active_call_owner == client;
+}
+
+static void clear_channel_stream_owner(h2_stream *stream)
+{
+    h2_channel *channel;
+
+    if (stream == NULL || stream->channel == NULL) {
+        return;
+    }
+    channel = stream->channel;
+    if (!channel_owned_by_stream(channel, stream)) {
+        return;
+    }
+
+    if (channel->session != NULL) {
+        nghttp2_session_set_user_data(channel->session, NULL);
+    }
+    channel->busy = false;
+    channel->active_stream_owner = NULL;
+    if (channel->detached_from_cache) {
+        stream->channel = NULL;
+        destroy_h2_channel(channel);
+    }
+}
+
+static void clear_channel_call_owner(h2_channel *channel, grpc_call *client)
+{
+    if (!channel_owned_by_call(channel, client)) {
+        return;
+    }
+    if (channel->session != NULL) {
+        nghttp2_session_set_user_data(channel->session, NULL);
+    }
+    channel->busy = false;
+    channel->active_call_owner = NULL;
+}
+
 static void destroy_h2_stream(h2_stream *stream)
 {
     if (stream == NULL) {
         return;
     }
-    if (!stream->completed && stream->channel != NULL && channel_usable(stream->channel) && stream->client.stream_id > 0) {
+    if (!stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel) && stream->client.stream_id > 0) {
         nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, NGHTTP2_CANCEL);
         nghttp2_session_send(stream->channel->session);
     }
-    if (stream->channel != NULL) {
-        nghttp2_session_set_user_data(stream->channel->session, NULL);
-        stream->channel->busy = false;
-    }
+    clear_channel_stream_owner(stream);
     if (stream->request != NULL) {
         zend_string_release(stream->request);
     }
@@ -558,6 +606,9 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
 {
     BIO *cert_bio = BIO_new_mem_buf(cert, (int) cert_len);
     BIO *key_bio = BIO_new_mem_buf(key, (int) key_len);
+    X509 *x509 = NULL;
+    EVP_PKEY *pkey = NULL;
+    int ok = 0;
     if (cert_bio == NULL || key_bio == NULL) {
         if (cert_bio != NULL) {
             BIO_free(cert_bio);
@@ -568,9 +619,8 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
         return -1;
     }
 
-    X509 *x509 = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
-    BIO_free(cert_bio);
+    x509 = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
+    pkey = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
     BIO_free(key_bio);
     if (x509 == NULL || pkey == NULL) {
         if (x509 != NULL) {
@@ -579,15 +629,34 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
         if (pkey != NULL) {
             EVP_PKEY_free(pkey);
         }
+        BIO_free(cert_bio);
         return -1;
     }
 
-    int ok = SSL_CTX_use_certificate(ctx, x509) == 1
+    ok = SSL_CTX_use_certificate(ctx, x509) == 1
         && SSL_CTX_use_PrivateKey(ctx, pkey) == 1
         && SSL_CTX_check_private_key(ctx) == 1;
     X509_free(x509);
     EVP_PKEY_free(pkey);
-    return ok ? 0 : -1;
+    if (!ok) {
+        BIO_free(cert_bio);
+        return -1;
+    }
+
+    while (true) {
+        X509 *chain_cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
+        if (chain_cert == NULL) {
+            break;
+        }
+        if (SSL_CTX_add_extra_chain_cert(ctx, chain_cert) != 1) {
+            X509_free(chain_cert);
+            BIO_free(cert_bio);
+            return -1;
+        }
+    }
+    BIO_free(cert_bio);
+    ERR_clear_error();
+    return 0;
 }
 
 static int configure_tls_channel(h2_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
@@ -622,10 +691,22 @@ static int configure_tls_channel(h2_channel *channel, const char *host, const ch
         return -1;
     }
     static const unsigned char alpn[] = {2, 'h', '2'};
-    SSL_set_alpn_protos(channel->ssl, alpn, sizeof(alpn));
-    SSL_set_tlsext_host_name(channel->ssl, host);
-    SSL_set1_host(channel->ssl, host);
-    SSL_set_fd(channel->ssl, channel->fd);
+    if (SSL_set_alpn_protos(channel->ssl, alpn, sizeof(alpn)) != 0) {
+        set_channel_error_detail(channel, "failed to configure TLS ALPN h2");
+        return -1;
+    }
+    if (SSL_set_tlsext_host_name(channel->ssl, host) != 1) {
+        set_channel_error_detail(channel, "failed to configure TLS SNI host");
+        return -1;
+    }
+    if (SSL_set1_host(channel->ssl, host) != 1) {
+        set_channel_error_detail(channel, "failed to configure TLS verification host");
+        return -1;
+    }
+    if (SSL_set_fd(channel->ssl, channel->fd) != 1) {
+        set_channel_error_detail(channel, "failed to attach TLS socket");
+        return -1;
+    }
     if (set_fd_nonblocking_mode(channel->fd, true) != 0) {
         set_channel_error_detail(channel, "failed to set TLS socket nonblocking");
         return -1;
@@ -692,6 +773,20 @@ static int configure_tls_channel(h2_channel *channel, const char *host, const ch
 
 static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length)
 {
+    zend_long remaining_timeout_us;
+    if (client == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    remaining_timeout_us = remaining_timeout_us_for_deadline(client->deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        errno = ETIMEDOUT;
+        client->timed_out = true;
+        return -1;
+    }
+    if (client->channel != NULL && set_socket_timeout_us(client->channel->fd, remaining_timeout_us) != 0) {
+        return -1;
+    }
     if (client->channel != NULL && client->channel->ssl != NULL) {
         int written = SSL_write(client->channel->ssl, data, (int) length);
         if (written <= 0) {
@@ -719,8 +814,21 @@ static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t lengt
     return written;
 }
 
-static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length)
+static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, uint64_t deadline_abs_us)
 {
+    zend_long remaining_timeout_us;
+    if (channel == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        errno = ETIMEDOUT;
+        return -1;
+    }
+    if (set_socket_timeout_us(channel->fd, remaining_timeout_us) != 0) {
+        return -1;
+    }
     if (channel != NULL && channel->ssl != NULL) {
         int nread = SSL_read(channel->ssl, data, (int) length);
         if (nread <= 0) {
@@ -857,6 +965,11 @@ static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_u
     if (getaddrinfo(host, port_buf, &hints, &result) != 0) {
         return -1;
     }
+    if (deadline_abs_us > 0 && monotonic_us() >= deadline_abs_us) {
+        freeaddrinfo(result);
+        errno = ETIMEDOUT;
+        return -1;
+    }
 
     for (rp = result; rp != NULL; rp = rp->ai_next) {
         int socket_error = 0;
@@ -914,6 +1027,9 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     (void) session;
     (void) flags;
 
+    if (client == NULL) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
     client->send_callback_calls++;
     if (length > client->max_send_callback_len) {
         client->max_send_callback_len = length;
@@ -1540,6 +1656,12 @@ static int process_response_data_direct(grpc_call *client, const uint8_t *data, 
                 | ((uint32_t) client->response_header_buf[2] << 16)
                 | ((uint32_t) client->response_header_buf[3] << 8)
                 | (uint32_t) client->response_header_buf[4];
+            if (client->response_payload_len > GRPC_NATIVE_MAX_RECEIVE_MESSAGE_BYTES) {
+                client->response_message_too_large = true;
+                client->response_current_compressed = true;
+                client->response_payload_offset = 0;
+                continue;
+            }
             client->response_current_compressed = client->response_header_buf[0] != 0;
             if (client->response_header_buf[0] != 0) {
                 client->compressed_response_seen = true;
@@ -1890,7 +2012,6 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     uint64_t initial_send_us = 0;
     uint64_t recv_loop_started = 0;
     uint64_t recv_loop_us = 0;
-    bool user_data_set = false;
     if (!channel_usable(channel)) {
         zend_throw_exception(NULL, "invalid grpc_native channel", 0);
         return FAILURE;
@@ -1917,8 +2038,8 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
 
     setup_started = monotonic_us();
     nghttp2_session_set_user_data(channel->session, &client);
-    user_data_set = true;
     channel->busy = true;
+    channel->active_call_owner = &client;
     init_request_headers(&request_headers, count_custom_header_values(headers_zv));
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
     append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
@@ -1936,10 +2057,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     client.stream_id = nghttp2_submit_request(channel->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     submit_us = monotonic_us() - submit_started;
     if (client.stream_id < 0) {
-        if (user_data_set) {
-            nghttp2_session_set_user_data(channel->session, NULL);
-        }
-        channel->busy = false;
+        clear_channel_call_owner(channel, &client);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
@@ -1951,10 +2069,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
         mark_channel_dead(channel, rv);
-        if (user_data_set) {
-            nghttp2_session_set_user_data(channel->session, NULL);
-        }
-        channel->busy = false;
+        clear_channel_call_owner(channel, &client);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
@@ -1963,7 +2078,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
 
     recv_loop_started = monotonic_us();
     while (!client.stream_closed) {
-        ssize_t nread = channel_recv(channel, (uint8_t *) recv_buf, sizeof(recv_buf));
+        ssize_t nread = channel_recv(channel, (uint8_t *) recv_buf, sizeof(recv_buf), client.deadline_abs_us);
         if (nread <= 0) {
             if (nread < 0) {
                 client.last_io_errno = errno;
@@ -1982,10 +2097,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
         rv = nghttp2_session_mem_recv(channel->session, (const uint8_t *) recv_buf, (size_t) nread);
         if (rv < 0) {
             mark_channel_dead(channel, rv);
-            if (user_data_set) {
-                nghttp2_session_set_user_data(channel->session, NULL);
-            }
-            channel->busy = false;
+            clear_channel_call_owner(channel, &client);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
@@ -1994,10 +2106,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
         rv = nghttp2_session_send(channel->session);
         if (rv != 0) {
             mark_channel_dead(channel, rv);
-            if (user_data_set) {
-                nghttp2_session_set_user_data(channel->session, NULL);
-            }
-            channel->busy = false;
+            clear_channel_call_owner(channel, &client);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
@@ -2006,8 +2115,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
         client.last_session_error = rv;
     }
     recv_loop_us = monotonic_us() - recv_loop_started;
-    nghttp2_session_set_user_data(channel->session, NULL);
-    channel->busy = false;
+    clear_channel_call_owner(channel, &client);
 
     array_init(return_value);
     smart_str_0(&client.body);
@@ -2017,6 +2125,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     add_assoc_long(return_value, "http_status", client.http_status);
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
     add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
+    add_assoc_bool(return_value, "response_message_too_large", client.response_message_too_large);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_long(return_value, "request_offset", client.request_offset);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
@@ -2252,6 +2361,8 @@ PHP_FUNCTION(grpc_native_stream_open)
     set_grpc_header(&stream->client, stream->client.request_len);
 
     nghttp2_session_set_user_data(channel->session, &stream->client);
+    channel->busy = true;
+    channel->active_stream_owner = stream;
     init_request_headers(&request_headers, count_custom_header_values(headers_zv));
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
     append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
@@ -2271,11 +2382,9 @@ PHP_FUNCTION(grpc_native_stream_open)
         RETURN_THROWS();
     }
 
-    channel->busy = true;
     rv = nghttp2_session_send(channel->session);
     if (rv != 0) {
         mark_channel_dead(channel, rv);
-        channel->busy = false;
         free_request_headers(&request_headers);
         destroy_h2_stream(stream);
         discard_persistent_channel(key, key_len, channel);
@@ -2296,6 +2405,7 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_long(return_value, "http_status", client->http_status);
     add_assoc_long(return_value, "stream_error_code", client->stream_error_code);
     add_assoc_bool(return_value, "compressed_response_seen", client->compressed_response_seen);
+    add_assoc_bool(return_value, "response_message_too_large", client->response_message_too_large);
     add_assoc_bool(return_value, "timed_out", client->timed_out);
     add_assoc_bool(return_value, "cancelled", stream->cancelled);
     add_assoc_long(return_value, "body_bytes", 0);
@@ -2360,7 +2470,7 @@ PHP_FUNCTION(grpc_native_stream_next)
             stream->completed = true;
             break;
         }
-        nread = channel_recv(stream->channel, (uint8_t *) stream->recv_buf, stream->recv_buf_len);
+        nread = channel_recv(stream->channel, (uint8_t *) stream->recv_buf, stream->recv_buf_len, client->deadline_abs_us);
         if (nread <= 0) {
             if (nread < 0) {
                 client->last_io_errno = errno;
@@ -2399,14 +2509,7 @@ PHP_FUNCTION(grpc_native_stream_next)
     }
 
     stream->completed = true;
-    if (stream->channel != NULL) {
-        nghttp2_session_set_user_data(stream->channel->session, NULL);
-        stream->channel->busy = false;
-        if (stream->channel->detached_from_cache) {
-            destroy_h2_channel(stream->channel);
-            stream->channel = NULL;
-        }
-    }
+    clear_channel_stream_owner(stream);
     add_stream_status(return_value, stream);
 }
 
@@ -2420,14 +2523,13 @@ PHP_FUNCTION(grpc_native_stream_cancel)
     ZEND_PARSE_PARAMETERS_END();
 
     stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_h2_stream);
-    if (stream != NULL && !stream->completed && stream->channel != NULL && channel_usable(stream->channel)) {
+    if (stream != NULL && !stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
         stream->cancelled = true;
         stream->completed = true;
         stream->client.grpc_status = 1;
         nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, NGHTTP2_CANCEL);
         nghttp2_session_send(stream->channel->session);
-        nghttp2_session_set_user_data(stream->channel->session, NULL);
-        stream->channel->busy = false;
+        clear_channel_stream_owner(stream);
     }
 
     RETURN_TRUE;
