@@ -258,7 +258,9 @@ connect_tcp()
   -> nghttp2_submit_settings()
 ```
 
-TLSではOpenSSLを直接使い、ALPNで `h2` がnegotiatedされたことを確認します。certificate verification errorやALPN mismatchはchannel error detailに残します。
+TLSではOpenSSLを直接使い、ALPNで `h2` がnegotiatedされたことを確認します。certificate verification error、ALPN mismatch、mTLS handshake failureはchannel error detailに残し、PHP側では `STATUS_UNAVAILABLE` のdetailsとして返します。
+
+response message sizeは `grpc.max_receive_message_length` で制御します。channel optionを基本とし、call optionで上書きできます。未指定時は64MiB、`-1` は上限なしです。上限超過時はC側でbody集約・payload allocationを止め、PHP側で `STATUS_RESOURCE_EXHAUSTED` に正規化します。
 
 ### Unary path
 

@@ -22,6 +22,7 @@ final class NativeTransport
         array $headers,
         int $timeoutMicros = 0,
         ?\Grpc\ChannelCredentials $credentials = null,
+        int $maxReceiveMessageLength = 0,
     ): array {
         if (!function_exists('grpc_native_persistent_channel_unary')) {
             throw new \RuntimeException('grpc native persistent channel API is not loaded');
@@ -44,6 +45,7 @@ final class NativeTransport
                 $credentials?->rootCerts,
                 $credentials?->certChain,
                 $credentials?->privateKey,
+                $maxReceiveMessageLength,
             );
         } catch (\Throwable $e) {
             throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
@@ -106,6 +108,7 @@ final class NativeTransport
         array $headers,
         int $timeoutMicros = 0,
         ?\Grpc\ChannelCredentials $credentials = null,
+        int $maxReceiveMessageLength = 0,
     ): mixed {
         if (!function_exists('grpc_native_stream_open')) {
             throw new \RuntimeException('grpc native stream API is not loaded');
@@ -126,6 +129,7 @@ final class NativeTransport
             $credentials?->rootCerts,
             $credentials?->certChain,
             $credentials?->privateKey,
+            $maxReceiveMessageLength,
         );
     }
 
@@ -177,11 +181,6 @@ final class NativeTransport
             return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
         }
 
-        $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
-        if ($streamErrorCode !== 0) {
-            return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
-        }
-
         if (($result['channel_dead'] ?? false) === true) {
             $detail = $result['channel_last_error_detail'] ?? '';
             return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'native transport I/O error'];
@@ -199,6 +198,11 @@ final class NativeTransport
 
         if (($result['response_message_too_large'] ?? false) === true) {
             return [\Grpc\STATUS_RESOURCE_EXHAUSTED, 'received message exceeds maximum size'];
+        }
+
+        $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
+        if ($streamErrorCode !== 0) {
+            return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
         }
 
         $unsupportedEncoding = self::unsupportedGrpcEncoding($metadata);

@@ -141,6 +141,108 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame('failed to load root certificates', $status->details);
     }
 
+    public function testNativeTlsCertificateVerificationFailureIncludesDetail(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc native extension is not loaded in this process');
+        }
+
+        $rootCerts = file_get_contents(self::CLIENT_CERT_PATH);
+        self::assertNotFalse($rootCerts);
+
+        $client = new GreeterClient(self::TLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl($rootCerts),
+        ]);
+
+        $request = new HelloRequest();
+        $request->setName('TLS verify');
+        [$response, $status] = $client->SayHello($request)->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
+        self::assertStringContainsString('TLS certificate verification failed', $status->details);
+    }
+
+    public function testNativeTlsAlpnMismatchIncludesDetail(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc native extension is not loaded in this process');
+        }
+        if (!function_exists('proc_open')) {
+            self::markTestSkipped('proc_open is required for the local TLS fixture');
+        }
+
+        $serverCert = realpath(__DIR__ . '/../../poc/test-server/certs/server.crt');
+        $serverKey = realpath(__DIR__ . '/../../poc/test-server/certs/server.key');
+        self::assertIsString($serverCert);
+        self::assertIsString($serverKey);
+
+        $serverCode = <<<'PHP'
+$serverCert = getenv('GRPC_TEST_SERVER_CERT');
+$serverKey = getenv('GRPC_TEST_SERVER_KEY');
+$context = stream_context_create([
+    'ssl' => [
+        'local_cert' => $serverCert,
+        'local_pk' => $serverKey,
+        'allow_self_signed' => true,
+    ],
+]);
+$server = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr, STREAM_SERVER_BIND | STREAM_SERVER_LISTEN, $context);
+if (!is_resource($server)) {
+    fwrite(STDERR, $errstr . PHP_EOL);
+    exit(1);
+}
+echo stream_socket_get_name($server, false), PHP_EOL;
+flush();
+$conn = @stream_socket_accept($server, 5);
+if (is_resource($conn)) {
+    @stream_socket_enable_crypto($conn, true, STREAM_CRYPTO_METHOD_TLS_SERVER);
+    usleep(100_000);
+    fclose($conn);
+}
+fclose($server);
+PHP;
+        $process = proc_open(
+            [\PHP_BINARY, '-r', $serverCode],
+            [
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes,
+            null,
+            [
+                'GRPC_TEST_SERVER_CERT' => $serverCert,
+                'GRPC_TEST_SERVER_KEY' => $serverKey,
+            ],
+        );
+        if (!is_resource($process)) {
+            self::markTestSkipped('failed to spawn local TLS fixture');
+        }
+        $address = trim((string) fgets($pipes[1]));
+        self::assertNotSame('', $address);
+
+        try {
+            $rootCerts = file_get_contents(self::CA_PATH);
+            self::assertNotFalse($rootCerts);
+            $client = new GreeterClient($address, [
+                'credentials' => ChannelCredentials::createSsl($rootCerts),
+            ]);
+
+            $request = new HelloRequest();
+            $request->setName('TLS ALPN');
+            [$response, $status] = $client->SayHello($request, [], ['timeout' => 500_000])->wait();
+
+            self::assertNull($response);
+            self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
+            self::assertStringContainsString('TLS ALPN did not negotiate h2', $status->details);
+        } finally {
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            proc_terminate($process);
+            proc_close($process);
+        }
+    }
+
     public function testNativeTlsHandshakeUsesRpcDeadlineAsUpperBound(): void
     {
         if (!(extension_loaded('grpc'))) {
@@ -222,6 +324,54 @@ PHP;
 
         self::assertNull($response);
         self::assertNotSame(\Grpc\STATUS_OK, $status->code);
+        self::assertNotSame('', $status->details);
+    }
+
+    public function testNativeUnaryHonorsMaxReceiveMessageLength(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc native extension is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'grpc.max_receive_message_length' => 16,
+        ]);
+
+        $request = new BenchRequest();
+        $request->setPayloadBytes(100);
+
+        [$response, $status] = $client->BenchUnary($request)->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $status->code);
+        self::assertSame('received message exceeds maximum size', $status->details);
+    }
+
+    public function testNativeServerStreamingHonorsMaxReceiveMessageLength(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc native extension is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'grpc.max_receive_message_length' => 16,
+        ]);
+
+        $request = new BenchRequest();
+        $request->setMessageCount(1);
+        $request->setPayloadBytes(100);
+
+        $call = $client->BenchServerStream($request);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(0, $count);
+        self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $call->getStatus()->code);
+        self::assertSame('received message exceeds maximum size', $call->getStatus()->details);
     }
 
     public function testNativeUnaryTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void

@@ -67,6 +67,7 @@ class UnaryCall extends AbstractCall
                 $headers,
                 isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
                 $this->channel->credentials,
+                $this->maxReceiveMessageLength(),
             );
             $this->recordDiagnostic('native_transport_call_ns', hrtime(true) - $transportStartedNs);
         } catch (\RuntimeException $e) {

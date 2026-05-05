@@ -217,6 +217,21 @@ abstract class AbstractCall
         return rawurldecode($message);
     }
 
+    protected function maxReceiveMessageLength(): int
+    {
+        $value = $this->options['grpc.max_receive_message_length']
+            ?? $this->channel->opts['grpc.max_receive_message_length']
+            ?? 0;
+        if (!is_int($value)) {
+            throw new \InvalidArgumentException('grpc.max_receive_message_length must be an integer');
+        }
+        if ($value < -1) {
+            throw new \InvalidArgumentException('grpc.max_receive_message_length must be -1 or non-negative');
+        }
+
+        return $value;
+    }
+
     protected function isBinaryMetadataKey(string $key): bool
     {
         return str_ends_with(strtolower($key), '-bin');

@@ -30,7 +30,7 @@
 #define MAKE_NV(NAME, VALUE) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, sizeof(VALUE) - 1, NGHTTP2_NV_FLAG_NONE}
 #define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
 #define MAX_RECV_BUF_SIZE 262144
-#define GRPC_NATIVE_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
+#define GRPC_NATIVE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
 
 typedef struct _h2_channel h2_channel;
 typedef struct _h2_stream h2_stream;
@@ -59,6 +59,7 @@ typedef struct {
     int http_status;
     bool compressed_response_seen;
     bool response_message_too_large;
+    size_t max_receive_message_bytes;
     size_t bytes_sent;
     size_t bytes_received;
     size_t data_read_calls;
@@ -249,6 +250,7 @@ static void record_data_sent(grpc_call *client);
 static int process_response_messages(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us);
 static int process_response_messages_from_offset(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us);
 static int process_response_data_direct(grpc_call *client, const uint8_t *data, size_t len);
+static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
 static int enqueue_response_payload(grpc_call *client, zend_string *payload);
 static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us);
 static int deliver_queued_response_payloads(grpc_call *client);
@@ -552,6 +554,17 @@ static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us)
     }
     uint64_t remaining = deadline_abs_us - now;
     return remaining > (uint64_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) remaining;
+}
+
+static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length)
+{
+    if (max_receive_message_length == -1) {
+        return SIZE_MAX;
+    }
+    if (max_receive_message_length > 0) {
+        return (size_t) max_receive_message_length;
+    }
+    return GRPC_NATIVE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES;
 }
 
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us)
@@ -1210,6 +1223,12 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
         } else if (!client->discard_response_body) {
+            if (validate_response_message_lengths(session, client, data, len) != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            if (client->discard_response_body) {
+                return 0;
+            }
             uint64_t append_started = monotonic_us();
             uint64_t append_elapsed;
             smart_str_appendl(&client->body, (const char *) data, len);
@@ -1544,6 +1563,61 @@ static int process_response_messages(grpc_call *client, zend_fcall_info *fci, ze
     return process_response_messages_from_offset(client, fci, fcc, &offset, true, decoded_messages, &payload_string_us, &max_payload_string_us, decode_us, max_decode_us);
 }
 
+static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len)
+{
+    size_t offset = 0;
+
+    while (offset < len && !client->response_message_too_large) {
+        if (client->response_header_len < 5) {
+            size_t need = 5 - client->response_header_len;
+            size_t take = need < len - offset ? need : len - offset;
+            memcpy(client->response_header_buf + client->response_header_len, data + offset, take);
+            client->response_header_len += take;
+            offset += take;
+            if (client->response_header_len < 5) {
+                continue;
+            }
+
+            client->response_payload_len = ((uint32_t) client->response_header_buf[1] << 24)
+                | ((uint32_t) client->response_header_buf[2] << 16)
+                | ((uint32_t) client->response_header_buf[3] << 8)
+                | (uint32_t) client->response_header_buf[4];
+            if (client->response_header_buf[0] != 0) {
+                client->compressed_response_seen = true;
+            }
+            client->response_payload_offset = 0;
+            if ((size_t) client->response_payload_len > client->max_receive_message_bytes) {
+                client->response_message_too_large = true;
+                client->discard_response_body = true;
+                if (session != NULL && client->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+                }
+                return 0;
+            }
+            if (client->response_payload_len == 0) {
+                client->response_header_len = 0;
+                client->response_payload_len = 0;
+                client->response_payload_offset = 0;
+                continue;
+            }
+        }
+
+        if (client->response_payload_len > 0) {
+            size_t need = client->response_payload_len - client->response_payload_offset;
+            size_t take = need < len - offset ? need : len - offset;
+            client->response_payload_offset += take;
+            offset += take;
+            if (client->response_payload_offset == client->response_payload_len) {
+                client->response_header_len = 0;
+                client->response_payload_len = 0;
+                client->response_payload_offset = 0;
+            }
+        }
+    }
+
+    return 0;
+}
+
 static int process_response_messages_from_offset(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us)
 {
     zend_string *body;
@@ -1656,7 +1730,7 @@ static int process_response_data_direct(grpc_call *client, const uint8_t *data, 
                 | ((uint32_t) client->response_header_buf[2] << 16)
                 | ((uint32_t) client->response_header_buf[3] << 8)
                 | (uint32_t) client->response_header_buf[4];
-            if (client->response_payload_len > GRPC_NATIVE_MAX_RECEIVE_MESSAGE_BYTES) {
+            if ((size_t) client->response_payload_len > client->max_receive_message_bytes) {
                 client->response_message_too_large = true;
                 client->response_current_compressed = true;
                 client->response_payload_offset = 0;
@@ -1996,7 +2070,7 @@ static void record_data_sent(grpc_call *client)
     client->last_data_sent_us = elapsed;
 }
 
-static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool channel_reused, bool persistent_reused, zval *return_value)
+static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value)
 {
     grpc_call client;
     nghttp2_data_provider data_provider;
@@ -2028,6 +2102,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     client.http_status = -1;
     client.request = (const uint8_t *) request;
     client.request_len = request_len;
+    client.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     total_started = monotonic_us();
     client.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
     if (set_socket_timeout_us(channel->fd, timeout_us) != 0) {
@@ -2126,6 +2201,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
     add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client.response_message_too_large);
+    add_assoc_long(return_value, "max_receive_message_length", client.max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client.max_receive_message_bytes);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_long(return_value, "request_offset", client.request_offset);
     add_assoc_long(return_value, "bytes_sent", client.bytes_sent);
@@ -2209,6 +2285,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
     size_t cert_chain_len = 0;
     char *private_key = NULL;
     size_t private_key_len = 0;
+    zend_long max_receive_message_length = 0;
     h2_channel *channel;
     bool persistent_reused = false;
     const char *error_message = NULL;
@@ -2216,7 +2293,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
     uint64_t deadline_abs_us = 0;
     zend_long remaining_timeout_us = 0;
 
-    ZEND_PARSE_PARAMETERS_START(5, 11)
+    ZEND_PARSE_PARAMETERS_START(5, 12)
         Z_PARAM_STRING(key, key_len)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
@@ -2229,6 +2306,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
         Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
         Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
+        Z_PARAM_LONG(max_receive_message_length)
     ZEND_PARSE_PARAMETERS_END();
 
     if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
@@ -2260,7 +2338,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
         RETURN_THROWS();
     }
 
-    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, remaining_timeout_us, true, persistent_reused, return_value) != SUCCESS) {
+    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, true, persistent_reused, return_value) != SUCCESS) {
         if (channel != NULL && !channel_usable(channel)) {
             remove_unusable_persistent_channel(key, key_len, channel);
         }
@@ -2292,6 +2370,7 @@ PHP_FUNCTION(grpc_native_stream_open)
     size_t cert_chain_len = 0;
     char *private_key = NULL;
     size_t private_key_len = 0;
+    zend_long max_receive_message_length = 0;
     h2_channel *channel;
     h2_stream *stream;
     nghttp2_data_provider data_provider;
@@ -2303,7 +2382,7 @@ PHP_FUNCTION(grpc_native_stream_open)
     zend_long remaining_timeout_us = 0;
     int rv;
 
-    ZEND_PARSE_PARAMETERS_START(5, 11)
+    ZEND_PARSE_PARAMETERS_START(5, 12)
         Z_PARAM_STRING(key, key_len)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
@@ -2316,6 +2395,7 @@ PHP_FUNCTION(grpc_native_stream_open)
         Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
         Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
+        Z_PARAM_LONG(max_receive_message_length)
     ZEND_PARSE_PARAMETERS_END();
 
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
@@ -2353,6 +2433,7 @@ PHP_FUNCTION(grpc_native_stream_open)
     stream->client.http_status = -1;
     stream->client.request = (const uint8_t *) ZSTR_VAL(stream->request);
     stream->client.request_len = ZSTR_LEN(stream->request);
+    stream->client.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     stream->client.call_started_us = monotonic_us();
     stream->client.deadline_abs_us = deadline_abs_us > 0 ? deadline_abs_us : 0;
     stream->client.decode_response_incrementally = true;
@@ -2406,6 +2487,7 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_long(return_value, "stream_error_code", client->stream_error_code);
     add_assoc_bool(return_value, "compressed_response_seen", client->compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client->response_message_too_large);
+    add_assoc_long(return_value, "max_receive_message_length", client->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client->max_receive_message_bytes);
     add_assoc_bool(return_value, "timed_out", client->timed_out);
     add_assoc_bool(return_value, "cancelled", stream->cancelled);
     add_assoc_long(return_value, "body_bytes", 0);
@@ -2587,6 +2669,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_persistent_channel_u
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, root_certs, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_native_stream_open, 0, 0, 5)
@@ -2601,6 +2684,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_native_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, root_certs, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_stream_next, 0, 1, IS_ARRAY, 0)
