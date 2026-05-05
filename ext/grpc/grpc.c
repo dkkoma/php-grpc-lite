@@ -6,6 +6,7 @@
 
 ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 
+static int le_h2_stream;
 
 #include "grpc_transport.c"
 

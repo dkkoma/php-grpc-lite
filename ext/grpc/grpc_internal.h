@@ -277,31 +277,6 @@ struct _grpc_call {
     size_t pending_write_payload_len;
 };
 
-static uint64_t monotonic_us(void);
-#ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
-#endif
-static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
-static int process_response_data_direct(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
-static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
-static int enqueue_response_payload(grpc_call *client, zend_string *payload);
-static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us);
-static int deliver_queued_response_payloads(grpc_call *client);
-static void free_queued_response_payloads(grpc_call *client);
-static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void free_metadata_entries(grpc_call *client);
-static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
-static void cleanup_grpc_call(grpc_call *client);
-static bool channel_usable(h2_channel *channel);
-static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
-static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
-static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
-static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
-static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
-static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
-static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
-static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);
-
 typedef struct {
     nghttp2_nv *nva;
     size_t len;
@@ -309,18 +284,6 @@ typedef struct {
     zend_string **value_strings;
     size_t value_count;
 } h2_request_headers;
-
-static size_t count_custom_header_values(zval *headers_zv);
-static void init_request_headers(h2_request_headers *headers, size_t custom_values);
-static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
-static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
-static void free_request_headers(h2_request_headers *headers);
-static int set_socket_timeout_us(int fd, zend_long timeout_us);
-static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
-static void mark_channel_dead(h2_channel *channel, int error_code);
-static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel);
-static bool preflight_persistent_channel(h2_channel *channel);
-static void cancel_active_stream(h2_stream *stream, uint32_t error_code);
 
 struct _h2_channel {
     int fd;
@@ -357,7 +320,29 @@ struct _h2_stream {
     bool cancelled;
 };
 
-static int le_h2_stream;
+/*
+ * Cross-file helpers used by grpc_bench.c. Helpers used only within the HTTP/2
+ * transport implementation are declared in grpc_transport.c.
+ */
+static uint64_t monotonic_us(void);
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
+#endif
+static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length);
+static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
+static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
+static int process_response_data_direct(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
+static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
+static int deliver_queued_response_payloads(grpc_call *client);
+static void free_queued_response_payloads(grpc_call *client);
+static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+static void cleanup_grpc_call(grpc_call *client);
+static size_t count_custom_header_values(zval *headers_zv);
+static void init_request_headers(h2_request_headers *headers, size_t custom_values);
+static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
+static void free_request_headers(h2_request_headers *headers);
+static void set_grpc_header(grpc_call *client, size_t payload_len);
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_channels;
