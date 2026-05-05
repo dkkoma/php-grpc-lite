@@ -116,7 +116,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     while (!client.stream_closed) {
         ssize_t nread = channel_recv(channel, (uint8_t *) recv_buf, sizeof(recv_buf), client.deadline_abs_us);
         if (nread <= 0) {
-            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client.deadline_abs_us > 0;
+            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && client.deadline_abs_us > 0;
             if (nread < 0) {
                 client.last_io_errno = errno;
                 client.last_ssl_error = channel->last_ssl_error;
@@ -516,7 +516,7 @@ PHP_FUNCTION(grpc_lite_stream_next)
         }
         nread = channel_recv(stream->channel, (uint8_t *) stream->recv_buf, stream->recv_buf_len, client->deadline_abs_us);
         if (nread <= 0) {
-            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0;
+            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && client->deadline_abs_us > 0;
             if (nread < 0) {
                 client->last_io_errno = errno;
                 client->last_ssl_error = stream->channel->last_ssl_error;
@@ -593,10 +593,14 @@ PHP_FUNCTION(grpc_lite_stream_cancel)
         rv = nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, NGHTTP2_CANCEL);
         if (rv != 0) {
             mark_channel_dead(stream->channel, rv);
+            clear_channel_stream_owner(stream);
+            RETURN_FALSE;
         } else {
             rv = nghttp2_session_send(stream->channel->session);
             if (rv != 0) {
                 mark_channel_dead(stream->channel, rv);
+                clear_channel_stream_owner(stream);
+                RETURN_FALSE;
             }
         }
         clear_channel_stream_owner(stream);

@@ -237,11 +237,6 @@ final class Http2Transport
         }
 
         $metadata = self::extractInitialMetadata($result);
-        if (($result['channel_dead'] ?? false) === true) {
-            $detail = $result['channel_last_error_detail'] ?? '';
-            return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'HTTP/2 transport I/O error'];
-        }
-
         $httpStatus = (int) ($result['http_status'] ?? 0);
         if ($httpStatus !== 0 && $httpStatus !== 200) {
             return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
@@ -268,6 +263,11 @@ final class Http2Transport
         }
         if (($result['compressed_response_seen'] ?? false) === true) {
             return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
+        }
+
+        if (($result['channel_dead'] ?? false) === true) {
+            $detail = $result['channel_last_error_detail'] ?? '';
+            return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'HTTP/2 transport I/O error'];
         }
 
         $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);

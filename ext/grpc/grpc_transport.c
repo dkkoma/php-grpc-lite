@@ -173,7 +173,7 @@ static void destroy_h2_stream(h2_stream *stream)
     if (stream == NULL) {
         return;
     }
-    if (!stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel) && stream->client.stream_id > 0) {
+    if (!stream->completed && !stream->client.stream_closed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel) && stream->client.stream_id > 0) {
         set_channel_error_detail(stream->channel, "active stream resource destroyed before completion");
         mark_channel_dead(stream->channel, NGHTTP2_CANCEL);
     }
@@ -769,6 +769,8 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, u
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
         errno = ETIMEDOUT;
+        channel->last_io_errno = errno;
+        set_channel_error_detail(channel, "HTTP/2 transport deadline exceeded");
         return -1;
     }
     if (set_socket_timeout_us(channel->fd, remaining_timeout_us) != 0) {
@@ -780,6 +782,9 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, u
             int ssl_error = SSL_get_error(channel->ssl, nread);
             channel->last_ssl_error = ssl_error;
             errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
+                errno = ETIMEDOUT;
+            }
             channel->last_io_errno = errno;
             snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "SSL_read failed: SSL_get_error=%d", ssl_error);
             return -1;
@@ -788,6 +793,9 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, u
     }
     ssize_t nread = recv(channel->fd, data, length, 0);
     if (nread < 0) {
+        if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
+            errno = ETIMEDOUT;
+        }
         channel->last_io_errno = errno;
         snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "recv failed: %s", strerror(errno));
     }
@@ -830,6 +838,7 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, const cha
     open_client.channel = channel;
     open_client.grpc_status = -1;
     open_client.http_status = -1;
+    open_client.deadline_abs_us = deadline_abs_us;
 
     if (configure_callbacks(&channel->callbacks) != 0) {
         destroy_h2_channel(channel);
@@ -845,8 +854,12 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, const cha
     nghttp2_submit_settings(channel->session, NGHTTP2_FLAG_NONE, NULL, 0);
     rv = nghttp2_session_send(channel->session);
     if (rv != 0) {
+        if (open_client.timed_out) {
+            *error_message = "HTTP/2 transport deadline exceeded";
+        } else {
+            *error_message = "nghttp2_session_send failed";
+        }
         destroy_h2_channel(channel);
-        *error_message = "nghttp2_session_send failed";
         return NULL;
     }
     nghttp2_session_set_user_data(channel->session, NULL);
@@ -1350,6 +1363,9 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
 {
     zend_string *value_str = zval_get_string(value);
 
+    if (EG(exception) || value_str == NULL) {
+        return -1;
+    }
     if (is_invalid_custom_request_header_value(value_str)) {
         zend_string_release(value_str);
         zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
