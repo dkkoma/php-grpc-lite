@@ -23,6 +23,7 @@ final class NativeTransport
         int $timeoutMicros = 0,
         ?\Grpc\ChannelCredentials $credentials = null,
         int $maxReceiveMessageLength = 0,
+        ?string $authority = null,
     ): array {
         if (!function_exists('grpc_lite_unary')) {
             throw new \RuntimeException('grpc lite extension bridge is not loaded');
@@ -33,7 +34,7 @@ final class NativeTransport
 
         [$host, $port] = self::splitTarget($target);
         $framedRequest = "\0" . pack('N', strlen($serializedRequest)) . $serializedRequest;
-        $key = self::channelKey($host, $port, $credentials);
+        $key = self::channelKey($host, $port, $credentials, $authority);
         try {
             $useTls = $credentials !== null && !$credentials->isInsecure();
             $result = \grpc_lite_unary(
@@ -49,6 +50,7 @@ final class NativeTransport
                 $credentials?->certChain,
                 $credentials?->privateKey,
                 $maxReceiveMessageLength,
+                $authority,
             );
         } catch (\Throwable $e) {
             throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
@@ -112,6 +114,7 @@ final class NativeTransport
         int $timeoutMicros = 0,
         ?\Grpc\ChannelCredentials $credentials = null,
         int $maxReceiveMessageLength = 0,
+        ?string $authority = null,
     ): mixed {
         if (!function_exists('grpc_lite_stream_open')) {
             throw new \RuntimeException('grpc lite extension bridge is not loaded');
@@ -121,7 +124,7 @@ final class NativeTransport
         $useTls = $credentials !== null && !$credentials->isInsecure();
 
         return \grpc_lite_stream_open(
-            self::channelKey($host, $port, $credentials),
+            self::channelKey($host, $port, $credentials, $authority),
             $host,
             $port,
             $path,
@@ -133,6 +136,7 @@ final class NativeTransport
             $credentials?->certChain,
             $credentials?->privateKey,
             $maxReceiveMessageLength,
+            $authority,
         );
     }
 
@@ -170,6 +174,39 @@ final class NativeTransport
         }
     }
 
+    public static function closeChannel(
+        string $target,
+        ?\Grpc\ChannelCredentials $credentials = null,
+        ?string $authority = null,
+    ): void
+    {
+        if (!function_exists('grpc_lite_channel_close')) {
+            return;
+        }
+
+        [$host, $port] = self::splitTarget($target);
+        \grpc_lite_channel_close(self::channelKey($host, $port, $credentials, $authority));
+    }
+
+    /** @param array<string, mixed> $opts */
+    public static function authorityOverride(array $opts): ?string
+    {
+        $authority = $opts['grpc.default_authority']
+            ?? $opts['grpc.ssl_target_name_override']
+            ?? null;
+        if ($authority === null) {
+            return null;
+        }
+        if (!is_string($authority)) {
+            throw new \InvalidArgumentException('grpc.default_authority must be a string');
+        }
+        if ($authority === '' || str_contains($authority, "\r") || str_contains($authority, "\n")) {
+            throw new \InvalidArgumentException('invalid grpc.default_authority');
+        }
+
+        return $authority;
+    }
+
     /** @param array<string, mixed> $result */
     private static function normalizeStatus(array $result): array
     {
@@ -195,6 +232,9 @@ final class NativeTransport
 
         if (($result['response_message_too_large'] ?? false) === true) {
             return [\Grpc\STATUS_RESOURCE_EXHAUSTED, 'received message exceeds maximum size'];
+        }
+        if (($result['metadata_too_large'] ?? false) === true) {
+            return [\Grpc\STATUS_RESOURCE_EXHAUSTED, 'received metadata exceeds maximum size'];
         }
         if (($result['malformed_response_frame'] ?? false) === true) {
             return [\Grpc\STATUS_INTERNAL, 'malformed gRPC response frame: incomplete trailing bytes'];
@@ -314,10 +354,11 @@ final class NativeTransport
         return $trailers;
     }
 
-    private static function channelKey(string $host, int $port, ?\Grpc\ChannelCredentials $credentials): string
+    private static function channelKey(string $host, int $port, ?\Grpc\ChannelCredentials $credentials, ?string $authority): string
     {
         return implode('|', [
             $host . ':' . $port,
+            $authority ?? '',
             $credentials?->type ?? \Grpc\ChannelCredentials::TYPE_INSECURE,
             sha1($credentials?->rootCerts ?? ''),
             sha1($credentials?->certChain ?? ''),

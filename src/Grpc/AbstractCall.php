@@ -94,6 +94,11 @@ abstract class AbstractCall
         return $primary === '' ? $default : $primary . ' ' . $default;
     }
 
+    protected function authorityOverride(): ?string
+    {
+        return Internal\NativeTransport::authorityOverride($this->channel->opts);
+    }
+
     /** @return array<string, list<string>> */
     protected function buildRequestMetadata(): array
     {

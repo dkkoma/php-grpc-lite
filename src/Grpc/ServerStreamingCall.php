@@ -97,6 +97,7 @@ class ServerStreamingCall extends AbstractCall
                 isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
                 $this->channel->credentials,
                 $this->maxReceiveMessageLength(),
+                $this->authorityOverride(),
             );
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'native transport deadline exceeded') {

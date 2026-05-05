@@ -404,6 +404,15 @@ func envInt(key string) (int, bool) {
 
 func serveNonGrpcH2C() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-bench-observe-authority") == "1" {
+			w.Header().Set("content-type", "application/grpc")
+			w.Header().Set("x-bench-authority", r.Host)
+			w.Header().Set("trailer", "grpc-status")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			w.Header().Set("grpc-status", "0")
+			return
+		}
 		if r.Header.Get("x-bench-grpc-response") == "compressed-flag" {
 			w.Header().Set("content-type", "application/grpc")
 			if grpcStatus := r.Header.Get("x-bench-grpc-status"); grpcStatus != "" {

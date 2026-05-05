@@ -31,6 +31,8 @@
 #define MAKE_NV(NAME, VALUE) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, sizeof(VALUE) - 1, NGHTTP2_NV_FLAG_NONE}
 #define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
 #define GRPC_NATIVE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
+#define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
+#define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
 
 typedef struct _h2_channel h2_channel;
 typedef struct _h2_stream h2_stream;
@@ -207,6 +209,7 @@ struct _grpc_call {
     bool compressed_response_seen;
     bool response_message_too_large;
     bool malformed_response_frame;
+    bool metadata_too_large;
     bool discard_response_body;
     bool invalid_grpc_status;
     size_t max_receive_message_bytes;
@@ -245,6 +248,8 @@ struct _grpc_call {
     grpc_call_queue_limit_observer flush_queue_if_limited;
     metadata_entry *metadata_head;
     metadata_entry *metadata_tail;
+    size_t metadata_entry_count;
+    size_t metadata_bytes;
     size_t response_parse_offset;
     uint8_t response_header_buf[5];
     size_t response_header_len;
@@ -309,6 +314,8 @@ static void free_request_headers(h2_request_headers *headers);
 static int set_socket_timeout_us(int fd, zend_long timeout_us);
 static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
 static void mark_channel_dead(h2_channel *channel, int error_code);
+static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel);
+static bool preflight_persistent_channel(h2_channel *channel);
 static void cancel_active_stream(h2_stream *stream, uint32_t error_code);
 
 struct _h2_channel {
@@ -515,6 +522,37 @@ static void mark_channel_draining(h2_channel *channel, int32_t last_stream_id, u
 static bool channel_usable(h2_channel *channel)
 {
     return channel != NULL && channel->fd >= 0 && channel->session != NULL && !channel->dead && !channel->draining;
+}
+
+static bool preflight_persistent_channel(h2_channel *channel)
+{
+    char byte;
+    ssize_t rv;
+
+    if (!channel_usable(channel) || channel->busy) {
+        return channel_usable(channel);
+    }
+    if (channel->ssl != NULL) {
+        return true;
+    }
+
+    rv = recv(channel->fd, &byte, sizeof(byte), MSG_PEEK | MSG_DONTWAIT);
+    if (rv == 0) {
+        set_channel_error_detail(channel, "persistent channel closed by peer before reuse");
+        mark_channel_dead(channel, 0);
+        return false;
+    }
+    if (rv < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        mark_channel_dead(channel, errno);
+        return false;
+    }
+    if (rv > 0) {
+        mark_channel_draining(channel, 0, NGHTTP2_NO_ERROR);
+        set_channel_error_detail(channel, "persistent channel has pending control data before reuse");
+        return false;
+    }
+
+    return true;
 }
 
 static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_channel *channel)
@@ -901,7 +939,7 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, u
     return nread;
 }
 
-static h2_channel *create_h2_channel(const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
+static h2_channel *create_h2_channel(const char *host, zend_long port, const char *authority, size_t authority_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
 {
     h2_channel *channel;
     grpc_call open_client;
@@ -958,11 +996,17 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, bool use_
     }
     nghttp2_session_set_user_data(channel->session, NULL);
 
-    snprintf(channel->authority, sizeof(channel->authority), "%s:%ld", host, port);
+    if (authority != NULL && authority_len > 0) {
+        size_t copy_len = authority_len < sizeof(channel->authority) - 1 ? authority_len : sizeof(channel->authority) - 1;
+        memcpy(channel->authority, authority, copy_len);
+        channel->authority[copy_len] = '\0';
+    } else {
+        snprintf(channel->authority, sizeof(channel->authority), "%s:%ld", host, port);
+    }
     return channel;
 }
 
-static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
+static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
 {
     h2_channel *channel;
 
@@ -977,9 +1021,13 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
     }
+    if (channel != NULL && !preflight_persistent_channel(channel)) {
+        remove_unusable_persistent_channel(key, key_len, channel);
+        channel = NULL;
+    }
 
     if (channel == NULL) {
-        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, error_detail_len, error_message);
+        channel = create_h2_channel(host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, error_detail_len, error_message);
         if (channel == NULL) {
             return NULL;
         }
@@ -993,12 +1041,17 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
 
 static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel)
 {
-    if (channel != NULL) {
-        destroy_h2_channel(channel);
-    }
     if (GRPC_NATIVE_G(persistent_channels_initialized)) {
         zend_hash_str_del(&GRPC_NATIVE_G(persistent_channels), key, key_len);
     }
+    if (channel == NULL) {
+        return;
+    }
+    if (channel->busy) {
+        channel->detached_from_cache = true;
+        return;
+    }
+    destroy_h2_channel(channel);
 }
 
 static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us)
@@ -1252,6 +1305,10 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     client->last_recv_frame_flags = frame->hd.flags;
     if (frame->hd.type == NGHTTP2_GOAWAY) {
         mark_channel_draining(client->channel, frame->goaway.last_stream_id, frame->goaway.error_code);
+        if (client->stream_id > 0 && frame->goaway.last_stream_id < client->stream_id) {
+            client->stream_error_code = NGHTTP2_REFUSED_STREAM;
+            client->stream_closed = true;
+        }
     }
     return 0;
 }
@@ -1685,8 +1742,16 @@ static void free_queued_response_payloads(grpc_call *client)
 static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
 {
     metadata_entry *entry;
+    size_t entry_bytes = namelen + valuelen;
 
     if (namelen == 0 || name[0] == ':') {
+        return 0;
+    }
+    if (client->metadata_too_large
+        || client->metadata_entry_count >= GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES
+        || entry_bytes > GRPC_LITE_MAX_RESPONSE_METADATA_BYTES
+        || client->metadata_bytes > GRPC_LITE_MAX_RESPONSE_METADATA_BYTES - entry_bytes) {
+        client->metadata_too_large = true;
         return 0;
     }
 
@@ -1702,6 +1767,8 @@ static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t nam
         client->metadata_tail->next = entry;
     }
     client->metadata_tail = entry;
+    client->metadata_entry_count++;
+    client->metadata_bytes += entry_bytes;
 
     return 0;
 }
@@ -1856,12 +1923,13 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     while (!client.stream_closed) {
         ssize_t nread = channel_recv(channel, (uint8_t *) recv_buf, sizeof(recv_buf), client.deadline_abs_us);
         if (nread <= 0) {
+            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client.deadline_abs_us > 0;
             if (nread < 0) {
                 client.last_io_errno = errno;
                 client.last_ssl_error = channel->last_ssl_error;
                 snprintf(client.last_io_error_detail, sizeof(client.last_io_error_detail), "%s", channel->last_error_detail);
             }
-            if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client.deadline_abs_us > 0 && monotonic_us() >= client.deadline_abs_us) {
+            if (socket_timeout) {
                 client.timed_out = true;
             }
             if (!client.stream_closed) {
@@ -1903,6 +1971,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     add_assoc_bool(return_value, "invalid_grpc_status", client.invalid_grpc_status);
     add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client.response_message_too_large);
+    add_assoc_bool(return_value, "metadata_too_large", client.metadata_too_large);
     add_assoc_long(return_value, "max_receive_message_length", client.max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client.max_receive_message_bytes);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_long(return_value, "request_offset", client.request_offset);
@@ -1973,6 +2042,8 @@ PHP_FUNCTION(grpc_lite_unary)
     char *private_key = NULL;
     size_t private_key_len = 0;
     zend_long max_receive_message_length = 0;
+    char *authority = NULL;
+    size_t authority_len = 0;
     h2_channel *channel;
     bool persistent_reused = false;
     const char *error_message = NULL;
@@ -1980,7 +2051,7 @@ PHP_FUNCTION(grpc_lite_unary)
     uint64_t deadline_abs_us = 0;
     zend_long remaining_timeout_us = 0;
 
-    ZEND_PARSE_PARAMETERS_START(5, 12)
+    ZEND_PARSE_PARAMETERS_START(5, 13)
         Z_PARAM_STRING(key, key_len)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
@@ -1994,6 +2065,7 @@ PHP_FUNCTION(grpc_lite_unary)
         Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
         Z_PARAM_LONG(max_receive_message_length)
+        Z_PARAM_STRING_OR_NULL(authority, authority_len)
     ZEND_PARSE_PARAMETERS_END();
 
     if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
@@ -2006,10 +2078,14 @@ PHP_FUNCTION(grpc_lite_unary)
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
     }
+    if (channel != NULL && !preflight_persistent_channel(channel)) {
+        remove_unusable_persistent_channel(key, key_len, channel);
+        channel = NULL;
+    }
 
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
     if (channel == NULL) {
-        channel = create_h2_channel(host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, sizeof(error_detail), &error_message);
+        channel = create_h2_channel(host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, sizeof(error_detail), &error_message);
         if (channel == NULL) {
             zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
             RETURN_THROWS();
@@ -2058,6 +2134,8 @@ PHP_FUNCTION(grpc_lite_stream_open)
     char *private_key = NULL;
     size_t private_key_len = 0;
     zend_long max_receive_message_length = 0;
+    char *authority = NULL;
+    size_t authority_len = 0;
     h2_channel *channel;
     h2_stream *stream;
     nghttp2_data_provider data_provider;
@@ -2069,7 +2147,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
     zend_long remaining_timeout_us = 0;
     int rv;
 
-    ZEND_PARSE_PARAMETERS_START(5, 12)
+    ZEND_PARSE_PARAMETERS_START(5, 13)
         Z_PARAM_STRING(key, key_len)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
@@ -2083,6 +2161,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
         Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
         Z_PARAM_LONG(max_receive_message_length)
+        Z_PARAM_STRING_OR_NULL(authority, authority_len)
     ZEND_PARSE_PARAMETERS_END();
 
     if (request_len > UINT32_MAX) {
@@ -2090,7 +2169,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
         RETURN_THROWS();
     }
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    channel = get_persistent_channel(key, key_len, host, port, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
+    channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (channel == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
         RETURN_THROWS();
@@ -2183,6 +2262,7 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_bool(return_value, "compressed_response_seen", client->compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client->response_message_too_large);
     add_assoc_bool(return_value, "malformed_response_frame", client->malformed_response_frame);
+    add_assoc_bool(return_value, "metadata_too_large", client->metadata_too_large);
     add_assoc_long(return_value, "max_receive_message_length", client->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client->max_receive_message_bytes);
     add_assoc_bool(return_value, "timed_out", client->timed_out);
     add_assoc_bool(return_value, "cancelled", stream->cancelled);
@@ -2236,12 +2316,13 @@ PHP_FUNCTION(grpc_lite_stream_next)
         }
         nread = channel_recv(stream->channel, (uint8_t *) stream->recv_buf, stream->recv_buf_len, client->deadline_abs_us);
         if (nread <= 0) {
+            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0;
             if (nread < 0) {
                 client->last_io_errno = errno;
                 client->last_ssl_error = stream->channel->last_ssl_error;
                 snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "%s", stream->channel->last_error_detail);
             }
-            if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
+            if (socket_timeout) {
                 client->timed_out = true;
                 cancel_active_stream(stream, NGHTTP2_CANCEL);
             } else {
@@ -2313,6 +2394,29 @@ PHP_FUNCTION(grpc_lite_stream_cancel)
     RETURN_TRUE;
 }
 
+PHP_FUNCTION(grpc_lite_channel_close)
+{
+    char *key = NULL;
+    size_t key_len = 0;
+    h2_channel *channel;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STRING(key, key_len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
+        RETURN_FALSE;
+    }
+
+    channel = zend_hash_str_find_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len);
+    if (channel == NULL) {
+        RETURN_FALSE;
+    }
+
+    discard_persistent_channel(key, key_len, channel);
+    RETURN_TRUE;
+}
+
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 #include "grpc_bench.c"
 #endif
@@ -2368,6 +2472,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_unary, 0, 5, IS_ARRAY,
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, authority, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
@@ -2383,6 +2488,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, authority, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_next, 0, 1, IS_ARRAY, 0)
@@ -2393,11 +2499,16 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_cancel, 0, 1, _
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_channel_close, 0, 1, _IS_BOOL, 0)
+    ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 static const zend_function_entry grpc_native_functions[] = {
     PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
     PHP_FE(grpc_lite_stream_open, arginfo_grpc_lite_stream_open)
     PHP_FE(grpc_lite_stream_next, arginfo_grpc_lite_stream_next)
     PHP_FE(grpc_lite_stream_cancel, arginfo_grpc_lite_stream_cancel)
+    PHP_FE(grpc_lite_channel_close, arginfo_grpc_lite_channel_close)
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     PHP_FE(grpc_lite_multiplex_unary, arginfo_grpc_lite_multiplex_unary)
     PHP_FE(grpc_lite_bench_unary_batch, arginfo_grpc_lite_bench_unary_batch)

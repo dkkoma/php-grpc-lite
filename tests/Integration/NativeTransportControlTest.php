@@ -721,6 +721,86 @@ PHP;
         self::assertSame(0, $second['connect_us']);
     }
 
+    public function testNativePersistentChannelCloseEvictsCachedChannel(): void
+    {
+        if (!function_exists('grpc_lite_channel_close')) {
+            self::markTestSkipped('grpc_lite_channel_close is not loaded in this process');
+        }
+
+        $credentials = ChannelCredentials::createInsecure();
+        NativeTransport::closeChannel('test-server:50051', $credentials);
+
+        $first = NativeTransport::unarySimple(
+            'test-server:50051',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [],
+            credentials: $credentials,
+        );
+        $second = NativeTransport::unarySimple(
+            'test-server:50051',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [],
+            credentials: $credentials,
+        );
+        NativeTransport::closeChannel('test-server:50051', $credentials);
+        $third = NativeTransport::unarySimple(
+            'test-server:50051',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [],
+            credentials: $credentials,
+        );
+
+        self::assertSame(\Grpc\STATUS_OK, $first['grpc_status']);
+        self::assertSame(\Grpc\STATUS_OK, $second['grpc_status']);
+        self::assertSame(\Grpc\STATUS_OK, $third['grpc_status']);
+        self::assertTrue($second['raw']['persistent_reused'] ?? false);
+        self::assertFalse($third['raw']['persistent_reused'] ?? true);
+    }
+
+    public function testNativeAuthorityOverrideControlsHttp2Authority(): void
+    {
+        if (!function_exists('grpc_lite_unary')) {
+            self::markTestSkipped('grpc_lite_unary is not loaded in this process');
+        }
+
+        $result = NativeTransport::unarySimple(
+            'test-server:50054',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            ['x-bench-observe-authority' => ['1']],
+            credentials: ChannelCredentials::createInsecure(),
+            authority: 'custom.authority:443',
+        );
+
+        self::assertSame(\Grpc\STATUS_OK, $result['grpc_status'], $result['details']);
+        self::assertSame(['custom.authority:443'], $result['headers']['x-bench-authority'] ?? null);
+    }
+
+    public function testNativeResponseMetadataCapFailsAsResourceExhausted(): void
+    {
+        if (!function_exists('grpc_lite_unary')) {
+            self::markTestSkipped('grpc_lite_unary is not loaded in this process');
+        }
+
+        $result = NativeTransport::unarySimple(
+            'test-server:50051',
+            '/helloworld.Greeter/BenchUnary',
+            '',
+            [
+                'x-bench-response-metadata-count' => ['200'],
+                'x-bench-response-metadata-value-bytes' => ['600'],
+            ],
+            credentials: ChannelCredentials::createInsecure(),
+        );
+
+        self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $result['grpc_status']);
+        self::assertSame('received metadata exceeds maximum size', $result['details']);
+        self::assertTrue($result['raw']['metadata_too_large'] ?? false);
+    }
+
     public function testNativeStreamResourceDestructReleasesChannelBusyState(): void
     {
         if (!function_exists('grpc_lite_stream_open')) {
@@ -904,5 +984,6 @@ PHP;
         self::assertTrue(function_exists('grpc_lite_stream_open'));
         self::assertTrue(function_exists('grpc_lite_stream_next'));
         self::assertTrue(function_exists('grpc_lite_stream_cancel'));
+        self::assertTrue(function_exists('grpc_lite_channel_close'));
     }
 }
