@@ -112,6 +112,19 @@ php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), functi
 ITERATIONS=10 BENCH_TAG=install-smoke ./bench/phase2/check-native-lifecycle-stress.sh
 ```
 
+release hardeningに近い確認をまとめて実行する場合:
+
+```bash
+BENCH_TAG=release-hardening ./bench/phase2/check-native-release-hardening.sh
+```
+
+このrunnerは以下を実行する。
+
+- lifecycle stress smoke
+- Valgrind lifecycle smoke
+- long lifecycle stress
+- PHP-FPM request boundaryでのpersistent channel reuse確認
+
 ## Known limitation
 
 large server streaming bulk transferは事前ベンチを推奨する。目安は `>=64KiB/message` かつ `>=8MiB/stream`、またはlarge payload `>=50 messages`。

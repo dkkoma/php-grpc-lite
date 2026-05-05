@@ -11,6 +11,17 @@ services:
       - test-server
       - spanner-emulator
 
+  fpm-lifecycle:
+    build:
+      context: .
+      dockerfile: Dockerfile.fpm
+    image: php-grpc-lite-fpm-lifecycle
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    depends_on:
+      - test-server
+
   test-server:
     build:
       context: ./poc
