@@ -633,7 +633,7 @@ PHP;
 
     public function testNativeServerStreamingYieldsMessagesIncrementally(): void
     {
-        if (!function_exists('grpc_native_stream_open')) {
+        if (!function_exists('grpc_lite_stream_open')) {
             self::markTestSkipped('grpc_native stream API is not loaded in this process');
         }
 
@@ -689,14 +689,14 @@ PHP;
 
     public function testNativePersistentChannelSurvivesPhpRequestLocalCacheReset(): void
     {
-        if (!function_exists('grpc_native_persistent_channel_unary')) {
+        if (!function_exists('grpc_lite_unary')) {
             self::markTestSkipped('grpc_native persistent channel API is not loaded in this process');
         }
 
         $key = 'phpunit-persistent-' . bin2hex(random_bytes(8));
         $request = "\0\0\0\0\0";
 
-        $first = \grpc_native_persistent_channel_unary(
+        $first = \grpc_lite_unary(
             $key,
             'test-server',
             50051,
@@ -705,7 +705,7 @@ PHP;
             [],
         );
 
-        $second = \grpc_native_persistent_channel_unary(
+        $second = \grpc_lite_unary(
             $key,
             'test-server',
             50051,
@@ -723,7 +723,7 @@ PHP;
 
     public function testNativeStreamResourceDestructReleasesChannelBusyState(): void
     {
-        if (!function_exists('grpc_native_stream_open')) {
+        if (!function_exists('grpc_lite_stream_open')) {
             self::markTestSkipped('grpc_native stream API is not loaded in this process');
         }
 
@@ -733,7 +733,7 @@ PHP;
         $request->setPayloadBytes(100);
         $serialized = $request->serializeToString();
 
-        $stream = \grpc_native_stream_open(
+        $stream = \grpc_lite_stream_open(
             $key,
             'test-server',
             50051,
@@ -743,7 +743,7 @@ PHP;
         );
 
         try {
-            \grpc_native_stream_open(
+            \grpc_lite_stream_open(
                 $key,
                 'test-server',
                 50051,
@@ -758,7 +758,7 @@ PHP;
 
         unset($stream);
 
-        $nextStream = \grpc_native_stream_open(
+        $nextStream = \grpc_lite_stream_open(
             $key,
             'test-server',
             50051,
@@ -766,11 +766,11 @@ PHP;
             $serialized,
             [],
         );
-        $next = \grpc_native_stream_next($nextStream);
+        $next = \grpc_lite_stream_next($nextStream);
 
         self::assertFalse($next['done']);
         self::assertIsString($next['payload']);
-        self::assertTrue(\grpc_native_stream_cancel($nextStream));
+        self::assertTrue(\grpc_lite_stream_cancel($nextStream));
     }
 
     public function testNativeChannelEofIsDiscardedBeforeNextRpc(): void
@@ -843,35 +843,20 @@ PHP;
         self::assertSame(\Grpc\STATUS_OK, $next['grpc_status']);
     }
 
-    public function testNativeBenchCanRunConcurrentStreamsOnOneHttp2Session(): void
-    {
-        if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
-        }
-
-        $result = \grpc_native_multiplex_unary(
-            'test-server',
-            50051,
-            '/helloworld.Greeter/BenchUnary',
-            "\0\0\0\0\0",
-            8,
-        );
-
-        self::assertTrue($result['ok']);
-        self::assertSame(8, $result['streams']);
-        self::assertSame(8, $result['closed']);
-        self::assertSame(array_fill(0, 8, \Grpc\STATUS_OK), $result['grpc_statuses']);
-    }
-
-    public function testNativeExtensionDoesNotExposeLegacyOneShotUnaryDiagnostic(): void
+    public function testNativeExtensionExposesOnlyGrpcLiteProductionBridge(): void
     {
         if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
         }
 
         self::assertFalse(function_exists('grpc_native_unary'));
-        self::assertTrue(function_exists('grpc_native_persistent_channel_unary'));
-        self::assertTrue(function_exists('grpc_native_stream_open'));
-        self::assertTrue(function_exists('grpc_native_bench_unary_batch'));
+        self::assertFalse(function_exists('grpc_native_persistent_channel_unary'));
+        self::assertFalse(function_exists('grpc_native_stream_open'));
+        self::assertFalse(function_exists('grpc_lite_multiplex_unary'));
+        self::assertFalse(function_exists('grpc_lite_bench_unary_batch'));
+        self::assertTrue(function_exists('grpc_lite_unary'));
+        self::assertTrue(function_exists('grpc_lite_stream_open'));
+        self::assertTrue(function_exists('grpc_lite_stream_next'));
+        self::assertTrue(function_exists('grpc_lite_stream_cancel'));
     }
 }

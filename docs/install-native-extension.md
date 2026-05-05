@@ -55,7 +55,7 @@ sudo make install
 
 ```bash
 docker compose run --rm dev sh -lc 'cd ext/grpc && phpize && ./configure --enable-grpc && make -j$(nproc)'
-docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_native_persistent_channel_unary"));'
+docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_lite_unary"));'
 ```
 
 ## Enable extension
@@ -67,7 +67,7 @@ docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so
 ```bash
 echo 'extension=grpc.so' | sudo tee /etc/php/conf.d/20-php-grpc-lite.ini
 php -m | grep '^grpc$'
-php -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_native_persistent_channel_unary"));'
+php -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_lite_unary"));'
 ```
 
 公式 `ext-grpc` が既に有効な環境では、先に公式側の `extension=grpc.so` 設定を外す。同名moduleなので同時loadはできない。
@@ -95,16 +95,18 @@ Pub/Sub StreamingPull など bidi streaming を使うclientは、現時点では
 ## Verification
 
 ```bash
-php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), function_exists("grpc_native_persistent_channel_unary"), class_exists(Grpc\\Channel::class));'
+php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), function_exists("grpc_lite_unary"), class_exists(Grpc\\Channel::class));'
 ```
 
 期待値:
 
 - `extension_loaded("grpc") === true`
-- `function_exists("grpc_native_persistent_channel_unary") === true`
+- `function_exists("grpc_lite_unary") === true`
 - `class_exists(Grpc\Channel::class) === true`
 
-`extension_loaded("grpc")` だけでは公式 `ext-grpc` と区別できないため、`grpc_native_*` 関数の存在も確認する。
+`extension_loaded("grpc")` だけでは公式 `ext-grpc` と区別できないため、`grpc_lite_unary()` の存在も確認する。
+
+通常buildでは production bridge のみを公開する。`ext/grpc/bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
 
 このrepositoryのDocker環境では、native stream lifecycle smokeも確認できる。
 

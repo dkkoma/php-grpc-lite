@@ -47,7 +47,7 @@ Build/load the native extension in Docker:
 
 ```bash
 docker compose run --rm dev sh -lc 'cd ext/grpc && phpize && ./configure --enable-grpc && make -j$(nproc)'
-docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_native_persistent_channel_unary"));'
+docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_lite_unary"));'
 ```
 
 Design and QA status:

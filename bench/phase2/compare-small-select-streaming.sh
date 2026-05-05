@@ -24,6 +24,10 @@ mkdir -p "$output_dir"
 
 summary_tsv="$output_dir/phase2-small-select-streaming-$timestamp.tsv"
 
+if [[ "$include_poc" == "1" ]]; then
+    docker compose run --rm dev sh -lc 'cd ext/grpc && phpize >/tmp/grpc-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-configure.log && make -j$(nproc) >/tmp/grpc-make.log'
+fi
+
 declare -a cases=(
     "1x100b 1000 1 100"
     "1x1k 1000 1 1024"

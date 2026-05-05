@@ -217,6 +217,7 @@ typedef struct {
     size_t call_max_bytes_per_drain;
     int32_t call_min_session_remote_window;
     int32_t call_min_stream_remote_window;
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zend_long server_handler_ns;
     zend_long server_payload_alloc_ns;
     zend_long server_payload_bytes;
@@ -232,6 +233,7 @@ typedef struct {
     zend_long server_stats_out_payload_bytes;
     zend_long server_stats_out_payload_wire_bytes;
     zend_long server_stats_out_payload_compressed_bytes;
+#endif
     smart_str body;
     uint8_t grpc_header[5];
     size_t grpc_header_len;
@@ -246,7 +248,9 @@ typedef struct {
 } grpc_call;
 
 static uint64_t monotonic_us(void);
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
+#endif
 static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
 static void record_data_sent(grpc_call *client);
 static int process_response_messages(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us);
@@ -1298,6 +1302,7 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         memcpy(status_buf, value, copy_len);
         status_buf[copy_len] = '\0';
         client->http_status = atoi(status_buf);
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     } else if (namelen == sizeof("x-bench-server-handler-ns") - 1 && memcmp(name, "x-bench-server-handler-ns", namelen) == 0) {
         client->server_handler_ns = header_value_to_long(value, valuelen);
     } else if (namelen == sizeof("x-bench-server-payload-alloc-ns") - 1 && memcmp(name, "x-bench-server-payload-alloc-ns", namelen) == 0) {
@@ -1328,6 +1333,7 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         client->server_stats_out_payload_wire_bytes = header_value_to_long(value, valuelen);
     } else if (namelen == sizeof("x-bench-server-stats-out-payload-compressed-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-compressed-bytes", namelen) == 0) {
         client->server_stats_out_payload_compressed_bytes = header_value_to_long(value, valuelen);
+#endif
     }
     if (add_metadata_entry(client, name, namelen, value, valuelen, trailing) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -1443,6 +1449,7 @@ static uint64_t monotonic_us(void)
     return ((uint64_t) ts.tv_sec * 1000000ULL) + ((uint64_t) ts.tv_nsec / 1000ULL);
 }
 
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
 {
     char buf[32];
@@ -1451,6 +1458,7 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
     buf[copy_len] = '\0';
     return (zend_long) atoll(buf);
 }
+#endif
 
 static int parse_grpc_status_value(const uint8_t *value, size_t valuelen)
 {
@@ -2261,21 +2269,6 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     add_assoc_string(return_value, "channel_negotiated_protocol", channel->negotiated_protocol);
     add_assoc_long(return_value, "channel_last_goaway_error_code", channel->last_goaway_error_code);
     add_assoc_long(return_value, "channel_last_goaway_stream_id", channel->last_goaway_stream_id);
-    add_assoc_long(return_value, "server_handler_ns", client.server_handler_ns);
-    add_assoc_long(return_value, "server_payload_alloc_ns", client.server_payload_alloc_ns);
-    add_assoc_long(return_value, "server_payload_bytes", client.server_payload_bytes);
-    add_assoc_long(return_value, "server_request_payload_bytes", client.server_request_payload_bytes);
-    add_assoc_long(return_value, "server_stats_handler_start_ns", client.server_stats_handler_start_ns);
-    add_assoc_long(return_value, "server_stats_handler_end_ns", client.server_stats_handler_end_ns);
-    add_assoc_long(return_value, "server_stats_in_payload_ns", client.server_stats_in_payload_ns);
-    add_assoc_long(return_value, "server_stats_out_header_ns", client.server_stats_out_header_ns);
-    add_assoc_long(return_value, "server_stats_out_payload_ns", client.server_stats_out_payload_ns);
-    add_assoc_long(return_value, "server_stats_first_out_payload_ns", client.server_stats_first_out_payload_ns);
-    add_assoc_long(return_value, "server_stats_last_out_payload_ns", client.server_stats_last_out_payload_ns);
-    add_assoc_long(return_value, "server_stats_out_payload_count", client.server_stats_out_payload_count);
-    add_assoc_long(return_value, "server_stats_out_payload_bytes", client.server_stats_out_payload_bytes);
-    add_assoc_long(return_value, "server_stats_out_payload_wire_bytes", client.server_stats_out_payload_wire_bytes);
-    add_assoc_long(return_value, "server_stats_out_payload_compressed_bytes", client.server_stats_out_payload_compressed_bytes);
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
     free_request_headers(&request_headers);
@@ -2285,7 +2278,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
 
 
 
-PHP_FUNCTION(grpc_native_persistent_channel_unary)
+PHP_FUNCTION(grpc_lite_unary)
 {
     char *key = NULL;
     size_t key_len = 0;
@@ -2370,7 +2363,7 @@ PHP_FUNCTION(grpc_native_persistent_channel_unary)
     }
 }
 
-PHP_FUNCTION(grpc_native_stream_open)
+PHP_FUNCTION(grpc_lite_stream_open)
 {
     char *key = NULL;
     size_t key_len = 0;
@@ -2522,26 +2515,11 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_long(return_value, "channel_tls_verify_result", stream->channel != NULL ? (zend_long) stream->channel->tls_verify_result : 0);
     add_assoc_string(return_value, "channel_last_error_detail", stream->channel != NULL ? stream->channel->last_error_detail : client->last_io_error_detail);
     add_assoc_string(return_value, "channel_negotiated_protocol", stream->channel != NULL ? stream->channel->negotiated_protocol : "");
-    add_assoc_long(return_value, "server_handler_ns", client->server_handler_ns);
-    add_assoc_long(return_value, "server_payload_alloc_ns", client->server_payload_alloc_ns);
-    add_assoc_long(return_value, "server_payload_bytes", client->server_payload_bytes);
-    add_assoc_long(return_value, "server_request_payload_bytes", client->server_request_payload_bytes);
-    add_assoc_long(return_value, "server_stats_handler_start_ns", client->server_stats_handler_start_ns);
-    add_assoc_long(return_value, "server_stats_handler_end_ns", client->server_stats_handler_end_ns);
-    add_assoc_long(return_value, "server_stats_in_payload_ns", client->server_stats_in_payload_ns);
-    add_assoc_long(return_value, "server_stats_out_header_ns", client->server_stats_out_header_ns);
-    add_assoc_long(return_value, "server_stats_out_payload_ns", client->server_stats_out_payload_ns);
-    add_assoc_long(return_value, "server_stats_first_out_payload_ns", client->server_stats_first_out_payload_ns);
-    add_assoc_long(return_value, "server_stats_last_out_payload_ns", client->server_stats_last_out_payload_ns);
-    add_assoc_long(return_value, "server_stats_out_payload_count", client->server_stats_out_payload_count);
-    add_assoc_long(return_value, "server_stats_out_payload_bytes", client->server_stats_out_payload_bytes);
-    add_assoc_long(return_value, "server_stats_out_payload_wire_bytes", client->server_stats_out_payload_wire_bytes);
-    add_assoc_long(return_value, "server_stats_out_payload_compressed_bytes", client->server_stats_out_payload_compressed_bytes);
     add_metadata_map_to_return(return_value, "initial_metadata", client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", client, true);
 }
 
-PHP_FUNCTION(grpc_native_stream_next)
+PHP_FUNCTION(grpc_lite_stream_next)
 {
     zval *stream_zv = NULL;
     h2_stream *stream;
@@ -2551,7 +2529,7 @@ PHP_FUNCTION(grpc_native_stream_next)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_h2_stream);
+    stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_lite_stream", le_h2_stream);
     if (stream == NULL) {
         RETURN_THROWS();
     }
@@ -2616,7 +2594,7 @@ PHP_FUNCTION(grpc_native_stream_next)
     add_stream_status(return_value, stream);
 }
 
-PHP_FUNCTION(grpc_native_stream_cancel)
+PHP_FUNCTION(grpc_lite_stream_cancel)
 {
     zval *stream_zv = NULL;
     h2_stream *stream;
@@ -2625,7 +2603,7 @@ PHP_FUNCTION(grpc_native_stream_cancel)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_native_stream", le_h2_stream);
+    stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_lite_stream", le_h2_stream);
     if (stream != NULL && !stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
         stream->cancelled = true;
         stream->completed = true;
@@ -2638,7 +2616,9 @@ PHP_FUNCTION(grpc_native_stream_cancel)
     RETURN_TRUE;
 }
 
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 #include "grpc_bench.c"
+#endif
 
 PHP_GINIT_FUNCTION(grpc_native)
 {
@@ -2667,18 +2647,18 @@ PHP_GSHUTDOWN_FUNCTION(grpc_native)
 
 PHP_MINIT_FUNCTION(grpc_native)
 {
-    le_h2_stream = zend_register_list_destructors_ex(h2_stream_dtor, NULL, "grpc_native_stream", module_number);
+    le_h2_stream = zend_register_list_destructors_ex(h2_stream_dtor, NULL, "grpc_lite_stream", module_number);
     return SUCCESS;
 }
 
 PHP_MINFO_FUNCTION(grpc_native)
 {
     php_info_print_table_start();
-    php_info_print_table_row(2, "grpc_native support", "enabled");
+    php_info_print_table_row(2, "grpc_lite bridge", "enabled");
     php_info_print_table_end();
 }
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_persistent_channel_unary, 0, 5, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_unary, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
@@ -2693,7 +2673,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_persistent_channel_u
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_native_stream_open, 0, 0, 5)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
@@ -2708,21 +2688,23 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_native_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_stream_next, 0, 1, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_next, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_stream_cancel, 0, 1, _IS_BOOL, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_cancel, 0, 1, _IS_BOOL, 0)
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry grpc_native_functions[] = {
-    PHP_FE(grpc_native_multiplex_unary, arginfo_grpc_native_multiplex_unary)
-    PHP_FE(grpc_native_persistent_channel_unary, arginfo_grpc_native_persistent_channel_unary)
-    PHP_FE(grpc_native_stream_open, arginfo_grpc_native_stream_open)
-    PHP_FE(grpc_native_stream_next, arginfo_grpc_native_stream_next)
-    PHP_FE(grpc_native_stream_cancel, arginfo_grpc_native_stream_cancel)
-    PHP_FE(grpc_native_bench_unary_batch, arginfo_grpc_native_bench_unary_batch)
+    PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
+    PHP_FE(grpc_lite_stream_open, arginfo_grpc_lite_stream_open)
+    PHP_FE(grpc_lite_stream_next, arginfo_grpc_lite_stream_next)
+    PHP_FE(grpc_lite_stream_cancel, arginfo_grpc_lite_stream_cancel)
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+    PHP_FE(grpc_lite_multiplex_unary, arginfo_grpc_lite_multiplex_unary)
+    PHP_FE(grpc_lite_bench_unary_batch, arginfo_grpc_lite_bench_unary_batch)
+#endif
     PHP_FE_END
 };
 

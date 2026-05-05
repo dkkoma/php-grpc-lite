@@ -40,7 +40,7 @@ else
     docker compose up -d test-server
 fi
 
-docker compose run --rm dev sh -lc 'cd ext/grpc && phpize >/tmp/grpc-phpize.log && ./configure --enable-grpc >/tmp/grpc-configure.log && make -j$(nproc) >/tmp/grpc-make.log'
+docker compose run --rm dev sh -lc 'cd ext/grpc && phpize >/tmp/grpc-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-configure.log && make -j$(nproc) >/tmp/grpc-make.log'
 
 BENCH_TAG="${timestamp}-php" \
 BENCH_IMPLEMENTATION=php-grpc-lite \

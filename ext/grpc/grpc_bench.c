@@ -595,7 +595,7 @@ static int mux_on_stream_close_callback(nghttp2_session *session, int32_t stream
     return 0;
 }
 
-PHP_FUNCTION(grpc_native_multiplex_unary)
+PHP_FUNCTION(grpc_lite_multiplex_unary)
 {
     char *host = NULL;
     size_t host_len = 0;
@@ -711,7 +711,7 @@ PHP_FUNCTION(grpc_native_multiplex_unary)
     efree(ctx.streams);
 }
 
-PHP_FUNCTION(grpc_native_bench_unary_batch)
+PHP_FUNCTION(grpc_lite_bench_unary_batch)
 {
     char *host = NULL;
     size_t host_len = 0;
@@ -1489,7 +1489,7 @@ PHP_FUNCTION(grpc_native_bench_unary_batch)
     cleanup_grpc_call(&client);
 }
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_multiplex_unary, 0, 5, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_multiplex_unary, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
@@ -1497,7 +1497,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_multiplex_unary, 0, 
     ZEND_ARG_TYPE_INFO(0, stream_count, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_bench_unary_batch, 0, 5, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_bench_unary_batch, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
     ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)

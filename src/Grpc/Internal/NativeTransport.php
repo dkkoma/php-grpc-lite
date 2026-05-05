@@ -24,8 +24,8 @@ final class NativeTransport
         ?\Grpc\ChannelCredentials $credentials = null,
         int $maxReceiveMessageLength = 0,
     ): array {
-        if (!function_exists('grpc_native_persistent_channel_unary')) {
-            throw new \RuntimeException('grpc native persistent channel API is not loaded');
+        if (!function_exists('grpc_lite_unary')) {
+            throw new \RuntimeException('grpc lite extension bridge is not loaded');
         }
 
         [$host, $port] = self::splitTarget($target);
@@ -33,7 +33,7 @@ final class NativeTransport
         $key = self::channelKey($host, $port, $credentials);
         try {
             $useTls = $credentials !== null && !$credentials->isInsecure();
-            $result = \grpc_native_persistent_channel_unary(
+            $result = \grpc_lite_unary(
                 $key,
                 $host,
                 $port,
@@ -110,14 +110,14 @@ final class NativeTransport
         ?\Grpc\ChannelCredentials $credentials = null,
         int $maxReceiveMessageLength = 0,
     ): mixed {
-        if (!function_exists('grpc_native_stream_open')) {
-            throw new \RuntimeException('grpc native stream API is not loaded');
+        if (!function_exists('grpc_lite_stream_open')) {
+            throw new \RuntimeException('grpc lite extension bridge is not loaded');
         }
 
         [$host, $port] = self::splitTarget($target);
         $useTls = $credentials !== null && !$credentials->isInsecure();
 
-        return \grpc_native_stream_open(
+        return \grpc_lite_stream_open(
             self::channelKey($host, $port, $credentials),
             $host,
             $port,
@@ -136,11 +136,11 @@ final class NativeTransport
     /** @return array{done: bool, payload?: string, raw?: array<string, mixed>, grpc_status?: int, details?: string, http_status?: int, headers?: array<string, list<string>>, trailers?: array<string, list<string>>} */
     public static function streamNext(mixed $stream): array
     {
-        if (!function_exists('grpc_native_stream_next')) {
-            throw new \RuntimeException('grpc native stream API is not loaded');
+        if (!function_exists('grpc_lite_stream_next')) {
+            throw new \RuntimeException('grpc lite extension bridge is not loaded');
         }
 
-        $result = \grpc_native_stream_next($stream);
+        $result = \grpc_lite_stream_next($stream);
         if (($result['done'] ?? false) !== true) {
             return [
                 'done' => false,
@@ -162,8 +162,8 @@ final class NativeTransport
 
     public static function streamCancel(mixed $stream): void
     {
-        if (function_exists('grpc_native_stream_cancel')) {
-            \grpc_native_stream_cancel($stream);
+        if (function_exists('grpc_lite_stream_cancel')) {
+            \grpc_lite_stream_cancel($stream);
         }
     }
 
@@ -305,54 +305,7 @@ final class NativeTransport
             $trailers['grpc-message'] = [rawurlencode($details)];
         }
 
-        $serverStatsFields = [
-            'server_stats_handler_start_ns',
-            'server_stats_handler_end_ns',
-            'server_stats_in_payload_ns',
-            'server_stats_out_header_ns',
-            'server_stats_out_payload_ns',
-            'server_stats_first_out_payload_ns',
-            'server_stats_last_out_payload_ns',
-            'server_stats_out_payload_count',
-            'server_stats_out_payload_bytes',
-            'server_stats_out_payload_wire_bytes',
-            'server_stats_out_payload_compressed_bytes',
-        ];
-
-        $hasServerStats = false;
-        foreach ($serverStatsFields as $field) {
-            $value = self::firstScalarValue($result[$field] ?? null);
-            if ($value !== null && (string) $value !== '0') {
-                $hasServerStats = true;
-                break;
-            }
-        }
-        if (!$hasServerStats) {
-            return $trailers;
-        }
-
-        foreach ($serverStatsFields as $field) {
-            $value = self::firstScalarValue($result[$field] ?? null);
-            if ($value === null) {
-                continue;
-            }
-            $trailers['x-bench-' . str_replace('_', '-', $field)] = [(string) $value];
-        }
-
         return $trailers;
-    }
-
-    private static function firstScalarValue(mixed $value): int|string|null
-    {
-        if (is_int($value) || is_string($value)) {
-            return $value;
-        }
-        if (!is_array($value) || $value === []) {
-            return null;
-        }
-
-        $first = reset($value);
-        return is_int($first) || is_string($first) ? $first : null;
     }
 
     private static function channelKey(string $host, int $port, ?\Grpc\ChannelCredentials $credentials): string

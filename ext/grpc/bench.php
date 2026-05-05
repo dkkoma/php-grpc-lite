@@ -89,6 +89,11 @@ $payload = $request->serializeToString();
 $requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) . $payload;
 $path = $rpc === 'server-stream' ? '/helloworld.Greeter/BenchServerStream' : '/helloworld.Greeter/BenchUnary';
 
+if (!function_exists('grpc_lite_bench_unary_batch')) {
+    fwrite(STDERR, "grpc_lite_bench_unary_batch is not available. Rebuild ext/grpc with PHP_GRPC_LITE_ENABLE_BENCH for this diagnostic script.\n");
+    exit(2);
+}
+
 $responseCallback = match ($responseCallbackMode) {
     'noop' => static fn (string $payload): null => null,
     'strlen' => static fn (string $payload): int => strlen($payload),
@@ -97,7 +102,7 @@ $responseCallback = match ($responseCallbackMode) {
     default => null,
 };
 
-$result = grpc_native_bench_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
+$result = grpc_lite_bench_unary_batch('test-server', 50051, $path, $requestBody, $iterations, [
     'x-bench-server-cached-payload' => '1',
     'x-bench-server-timing' => '1',
     'x-bench-server-stats' => '1',

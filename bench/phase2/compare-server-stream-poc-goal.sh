@@ -16,6 +16,8 @@ mkdir -p "$output_dir"
 
 summary_tsv="$output_dir/phase2-server-stream-poc-goal-$timestamp.tsv"
 
+docker compose run --rm dev sh -lc 'cd ext/grpc && phpize >/tmp/grpc-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-configure.log && make -j$(nproc) >/tmp/grpc-make.log'
+
 declare -a cases=(
     "1000x100b 300 1000 100 8388608 32768"
     "10x100k 500 10 102400 8388608 65536"

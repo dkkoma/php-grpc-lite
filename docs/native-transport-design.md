@@ -162,7 +162,7 @@ response message sizeは `grpc.max_receive_message_length` で制御する。cha
 
 ## Multiplex PoC
 
-HTTP/2 session自体は複数streamを同時にin-flightにできる。native extensionのbench/diagnostic entrypointである `grpc_native_multiplex_unary()` で同一session上に複数unary streamをsubmitし、全streamが独立に完了することを検証した。
+HTTP/2 session自体は複数streamを同時にin-flightにできる。`--enable-grpc-bench` 付きbuildのbench/diagnostic entrypointである `grpc_lite_multiplex_unary()` で同一session上に複数unary streamをsubmitし、全streamが独立に完了することを検証した。通常buildではこのentrypointを公開しない。
 
 2026-05-05のnative mux spikeでは、production pathを `h2_channel` owner + stream table dispatch に寄せれば、server streamingを開いたまま同一channel上に別server streaming / unaryをsubmitできることを確認した。ただしmain比でsmall unary / small streamingに退行が出たため、現時点ではmainへ採用しない。
 
