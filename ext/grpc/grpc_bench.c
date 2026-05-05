@@ -200,8 +200,10 @@ static int bench_process_response_messages_from_offset(grpc_call *client, zend_f
             *max_payload_string_us = payload_string_elapsed;
         }
         ZVAL_UNDEF(&retval);
+        // cppcheck-suppress autoVariables
         fci->params = params;
         fci->param_count = 1;
+        // cppcheck-suppress autoVariables
         fci->retval = &retval;
 
         started = monotonic_us();

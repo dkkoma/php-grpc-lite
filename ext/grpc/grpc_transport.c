@@ -1394,8 +1394,10 @@ static int deliver_response_payload(grpc_call *client, zend_string *payload, uin
 
     ZVAL_STR(&params[0], payload);
     ZVAL_UNDEF(&retval);
+    // cppcheck-suppress autoVariables
     client->payload_callback_fci->params = params;
     client->payload_callback_fci->param_count = 1;
+    // cppcheck-suppress autoVariables
     client->payload_callback_fci->retval = &retval;
 
     if (zend_call_function(client->payload_callback_fci, client->payload_callback_fcc) != SUCCESS || EG(exception)) {

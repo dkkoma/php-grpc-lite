@@ -56,8 +56,10 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     }
 
     setup_started = monotonic_us();
+    // cppcheck-suppress autoVariables
     nghttp2_session_set_user_data(channel->session, &client);
     channel->busy = true;
+    // cppcheck-suppress autoVariables
     channel->active_call_owner = &client;
     init_request_headers(&request_headers, count_custom_header_values(headers_zv));
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);

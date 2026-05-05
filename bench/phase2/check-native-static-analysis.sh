@@ -22,7 +22,6 @@ docker compose run --rm dev sh -lc '
         --suppress=normalCheckLevelMaxBranches \
         --suppress=toomanyconfigs \
         --suppress=missingReturn:/usr/local/include/php/* \
-        --suppress=autoVariables:ext/grpc/grpc.c \
         --std=c99 \
         $php_includes \
         $pkg_includes \
@@ -37,8 +36,6 @@ docker compose run --rm dev sh -lc '
         --suppress=normalCheckLevelMaxBranches \
         --suppress=toomanyconfigs \
         --suppress=missingReturn:/usr/local/include/php/* \
-        --suppress=autoVariables:ext/grpc/grpc.c \
-        --suppress=autoVariables:ext/grpc/grpc_bench.c \
         --std=c99 \
         -DPHP_GRPC_LITE_ENABLE_BENCH=1 \
         $php_includes \
