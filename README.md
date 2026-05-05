@@ -8,8 +8,8 @@ Current review status:
 - Native transport is provided by this repository's source-build extension in `ext/grpc/`.
 - The native extension builds a PHP module named `grpc` and produces `grpc.so`.
 - Official `ext-grpc` and this native extension must not be loaded at the same time.
-- `native` is the target default transport in the current code; release readiness is still gated by native memory/lifecycle QA.
-- `curl` remains an explicit stable route via `php_grpc_lite.transport=curl`.
+- Runtime transport is native nghttp2 only. There is no libcurl fallback and no transport selection option.
+- Release readiness is still gated by native memory/lifecycle QA.
 - Unary and server streaming are the current compatibility scope. Client streaming and bidirectional streaming are not implemented yet.
 
 ## Install
@@ -40,7 +40,7 @@ Full install notes, verification commands, rollback notes, and large-streaming g
 Run tests in Docker:
 
 ```bash
-docker compose run --rm dev vendor/bin/phpunit
+docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
 Build/load the native extension in Docker:
