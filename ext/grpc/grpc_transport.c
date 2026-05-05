@@ -215,9 +215,17 @@ static void mark_channel_dead(h2_channel *channel, int error_code)
     }
     channel->dead = true;
     channel->last_error = error_code;
-    channel->last_io_errno = errno;
-    if (channel->last_error_detail[0] == '\0' && errno != 0) {
-        snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "%s", strerror(errno));
+    if (error_code > 0) {
+        channel->last_io_errno = error_code;
+        if (channel->last_error_detail[0] == '\0') {
+            snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "%s", strerror(error_code));
+        }
+    } else if (error_code < 0) {
+        if (channel->last_error_detail[0] == '\0') {
+            snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "nghttp2 error: %s", nghttp2_strerror(error_code));
+        }
+    } else if (channel->last_error_detail[0] == '\0') {
+        snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "connection closed");
     }
 }
 
