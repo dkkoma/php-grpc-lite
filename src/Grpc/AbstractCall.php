@@ -5,7 +5,7 @@ namespace Grpc;
 
 /**
  * Common base for all gRPC call objects. Holds the channel reference,
- * request metadata, and helpers for building native transport inputs.
+ * request metadata, and helpers for building HTTP/2 transport inputs.
  */
 abstract class AbstractCall
 {
@@ -67,7 +67,7 @@ abstract class AbstractCall
     }
 
     /** @return array<string, list<string>> */
-    protected function buildNativeRequestHeaders(): array
+    protected function buildHttp2RequestHeaders(): array
     {
         $headers = [
             'user-agent' => [$this->buildUserAgent()],
@@ -96,7 +96,7 @@ abstract class AbstractCall
 
     protected function authorityOverride(): ?string
     {
-        return Internal\NativeTransport::authorityOverride($this->channel->opts);
+        return Internal\Http2Transport::authorityOverride($this->channel->opts);
     }
 
     /** @return array<string, list<string>> */

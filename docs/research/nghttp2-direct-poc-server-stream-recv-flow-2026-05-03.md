@@ -88,11 +88,11 @@ default server 条件:
 | poll scheduling | 単独の処理 cost ではない。p99 と一致するが、実態は DATA / trailers 到着待ち。 |
 | receive-side flow-control | 主因の一部。client receive window を広げると WINDOW_UPDATE がほぼ消え、p50/p99 が改善する。 |
 | server send / write buffer | 残差に効く。ただし client receive flow-control と相互作用するため、server-only 問題とは扱わない。 |
-| ext-grpc 差分 | ext-grpc は receive-side flow-control / read progression が良く、server send progress も早い。native transport では C-core と同様に広い receive window と積極的な read loop を採るべき。 |
+| ext-grpc 差分 | ext-grpc は receive-side flow-control / read progression が良く、server send progress も早い。HTTP/2 transport では C-core と同様に広い receive window と積極的な read loop を採るべき。 |
 
 ## 実装判断
 
-server streaming large response の native transport では、libcurl を外すだけでは不足する。
+server streaming large response の HTTP/2 transport では、libcurl を外すだけでは不足する。
 
 最低限必要なのは以下。
 

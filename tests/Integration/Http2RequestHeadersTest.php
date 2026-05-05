@@ -8,26 +8,26 @@ use Grpc\Channel;
 use Grpc\ChannelCredentials;
 use PHPUnit\Framework\TestCase;
 
-final class NativeRequestHeadersTest extends TestCase
+final class Http2RequestHeadersTest extends TestCase
 {
-    public function testNativeHeadersCarryTimeoutAndUserAgent(): void
+    public function testHttp2HeadersCarryTimeoutAndUserAgent(): void
     {
         $headers = $this->call(
             ['grpc.primary_user_agent' => 'review-agent/1.0'],
             ['timeout' => 120_000_000],
-        )->nativeRequestHeaders();
+        )->http2RequestHeaders();
 
         self::assertSame(['review-agent/1.0 php-grpc-lite/' . \Grpc\VERSION], $headers['user-agent'] ?? null);
         self::assertSame(['120000m'], $headers['grpc-timeout'] ?? null);
     }
 
-    public function testNativeHeadersFilterLibraryOwnedMetadata(): void
+    public function testHttp2HeadersFilterLibraryOwnedMetadata(): void
     {
         $headers = $this->call([], [], [
             'content-type' => ['text/plain'],
             'te' => ['not-trailers'],
             'x-custom' => ['ok'],
-        ])->nativeRequestHeaders();
+        ])->http2RequestHeaders();
 
         self::assertArrayNotHasKey('content-type', $headers);
         self::assertArrayNotHasKey('te', $headers);
@@ -35,21 +35,21 @@ final class NativeRequestHeadersTest extends TestCase
     }
 
     /** @param array<string, mixed> $options */
-    private function call(array $options = [], array $callOptions = [], array $metadata = []): ExposedNativeRequestHeadersCall
+    private function call(array $options = [], array $callOptions = [], array $metadata = []): ExposedHttp2RequestHeadersCall
     {
         $channel = new Channel('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
         ] + $options);
 
-        return new ExposedNativeRequestHeadersCall($channel, '/test.Service/Method', null, $metadata, $callOptions);
+        return new ExposedHttp2RequestHeadersCall($channel, '/test.Service/Method', null, $metadata, $callOptions);
     }
 }
 
-final class ExposedNativeRequestHeadersCall extends AbstractCall
+final class ExposedHttp2RequestHeadersCall extends AbstractCall
 {
-    public function nativeRequestHeaders(): array
+    public function http2RequestHeaders(): array
     {
-        return $this->buildNativeRequestHeaders();
+        return $this->buildHttp2RequestHeaders();
     }
 
     public function cancel(): void

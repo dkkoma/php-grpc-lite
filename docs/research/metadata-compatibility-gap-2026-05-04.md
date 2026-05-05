@@ -77,7 +77,7 @@ BENCH_TAG=metadata-compat-20260504-final ./bench/phase2/compare-metadata-compat.
 
 ## Native-specific implementation risks
 
-- `buildNativeRequestHeaders()` が request metadata を `array<string,string>` に畳む問題は修正済み。
+- `buildHttp2RequestHeaders()` が request metadata を `array<string,string>` に畳む問題は修正済み。
 - C extension 側の request header assembly が固定長配列・固定長文字列 buffer を使う問題は、persistent unary / stream / diagnostic unary / unary batch で修正済み。
 - response metadata は linked list と PHP normalize で duplicate values を保持する。
 

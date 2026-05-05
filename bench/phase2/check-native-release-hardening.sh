@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Run the native transport release-hardening QA gates that are practical in the
+# Run the HTTP/2 transport release-hardening QA gates that are practical in the
 # local Docker environment.
 #
 set -euo pipefail

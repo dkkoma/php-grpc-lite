@@ -76,4 +76,4 @@ server streaming large response の主な設計要点は引き続き以下。
 2. `nghttp2_session_mem_recv()` 後に WINDOW_UPDATE / ACK を即 flush する。
 3. receive buffer 256KiB は効果があるケースもあるが、default 固定ではなく tuning knob として扱う。
 
-native transport の server streaming は、decode/yield込みでも ext-grpc に近い、または一部ケースで上回る見込みがある。
+HTTP/2 transport の server streaming は、decode/yield込みでも ext-grpc に近い、または一部ケースで上回る見込みがある。

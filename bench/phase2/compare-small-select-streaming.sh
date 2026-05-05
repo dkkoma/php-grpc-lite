@@ -7,9 +7,9 @@
 #
 # This runner compares:
 #   1. php-grpc-lite libcurl transport
-#   2. php-grpc-lite native transport
+#   2. php-grpc-lite HTTP/2 transport
 #   3. official ext-grpc
-#   4. native transport PoC variants when INCLUDE_POC=1
+#   4. HTTP/2 transport PoC variants when INCLUDE_POC=1
 #
 set -euo pipefail
 

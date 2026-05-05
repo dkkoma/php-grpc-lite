@@ -4,13 +4,13 @@ declare(strict_types=1);
 namespace PhpGrpcLite\Tests\Integration;
 
 use Grpc\ChannelCredentials;
-use Grpc\Internal\NativeTransport;
+use Grpc\Internal\Http2Transport;
 use Helloworld\BenchRequest;
 use Helloworld\HelloRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
 use PHPUnit\Framework\TestCase;
 
-final class NativeTransportControlTest extends TestCase
+final class Http2TransportControlTest extends TestCase
 {
     private const TLS_TARGET = 'test-server:50052';
     private const MTLS_TARGET = 'test-server:50053';
@@ -18,10 +18,10 @@ final class NativeTransportControlTest extends TestCase
     private const CLIENT_CERT_PATH = __DIR__ . '/../../poc/test-server/certs/client.crt';
     private const CLIENT_KEY_PATH = __DIR__ . '/../../poc/test-server/certs/client.key';
 
-    public function testNativeTlsUnarySucceeds(): void
+    public function testHttp2TlsUnarySucceeds(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $rootCerts = file_get_contents(self::CA_PATH);
@@ -39,10 +39,10 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame('Hello, TLS', $response?->getMessage());
     }
 
-    public function testNativeTlsServerStreamingSucceeds(): void
+    public function testHttp2TlsServerStreamingSucceeds(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $rootCerts = file_get_contents(self::CA_PATH);
@@ -66,10 +66,10 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame(\Grpc\STATUS_OK, $call->getStatus()->code, $call->getStatus()->details);
     }
 
-    public function testNativeMtlsUnarySucceeds(): void
+    public function testHttp2MtlsUnarySucceeds(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $rootCerts = file_get_contents(self::CA_PATH);
@@ -91,10 +91,10 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame('Hello, mTLS', $response?->getMessage());
     }
 
-    public function testNativeMtlsServerStreamingSucceeds(): void
+    public function testHttp2MtlsServerStreamingSucceeds(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $rootCerts = file_get_contents(self::CA_PATH);
@@ -122,10 +122,10 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame(\Grpc\STATUS_OK, $call->getStatus()->code, $call->getStatus()->details);
     }
 
-    public function testNativeTlsWithInvalidRootCertFails(): void
+    public function testHttp2TlsWithInvalidRootCertFails(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient(self::TLS_TARGET, [
@@ -141,10 +141,10 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame('failed to load root certificates', $status->details);
     }
 
-    public function testNativeTlsCertificateVerificationFailureIncludesDetail(): void
+    public function testHttp2TlsCertificateVerificationFailureIncludesDetail(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $rootCerts = file_get_contents(self::CLIENT_CERT_PATH);
@@ -163,10 +163,10 @@ final class NativeTransportControlTest extends TestCase
         self::assertStringContainsString('TLS certificate verification failed', $status->details);
     }
 
-    public function testNativeTlsAlpnMismatchIncludesDetail(): void
+    public function testHttp2TlsAlpnMismatchIncludesDetail(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
         if (!function_exists('proc_open')) {
             self::markTestSkipped('proc_open is required for the local TLS fixture');
@@ -243,10 +243,10 @@ PHP;
         }
     }
 
-    public function testNativeTlsHandshakeUsesRpcDeadlineAsUpperBound(): void
+    public function testHttp2TlsHandshakeUsesRpcDeadlineAsUpperBound(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
         if (!function_exists('proc_open')) {
             self::markTestSkipped('proc_open is required for the local stalled TLS fixture');
@@ -305,10 +305,10 @@ PHP;
         }
     }
 
-    public function testNativeMtlsWithoutClientCertificateFails(): void
+    public function testHttp2MtlsWithoutClientCertificateFails(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $rootCerts = file_get_contents(self::CA_PATH);
@@ -327,10 +327,10 @@ PHP;
         self::assertNotSame('', $status->details);
     }
 
-    public function testNativeUnaryHonorsMaxReceiveMessageLength(): void
+    public function testHttp2UnaryHonorsMaxReceiveMessageLength(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -348,10 +348,10 @@ PHP;
         self::assertSame('received message exceeds maximum size', $status->details);
     }
 
-    public function testNativeServerStreamingHonorsMaxReceiveMessageLength(): void
+    public function testHttp2ServerStreamingHonorsMaxReceiveMessageLength(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -374,10 +374,10 @@ PHP;
         self::assertSame('received message exceeds maximum size', $call->getStatus()->details);
     }
 
-    public function testNativeUnaryTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
+    public function testHttp2UnaryTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -395,10 +395,10 @@ PHP;
         self::assertSame(['3'], $status->metadata['grpc-status'] ?? null);
     }
 
-    public function testNativeServerStreamingTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
+    public function testHttp2ServerStreamingTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -423,10 +423,10 @@ PHP;
         self::assertSame('bench error with spaces', $call->getStatus()->details);
     }
 
-    public function testNativeBinaryMetadataRoundTripUsesRawPhpValues(): void
+    public function testHttp2BinaryMetadataRoundTripUsesRawPhpValues(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -444,10 +444,10 @@ PHP;
         self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-bin'] ?? null);
     }
 
-    public function testNativeUnaryHttpStatusWithoutGrpcStatusIsMapped(): void
+    public function testHttp2UnaryHttpStatusWithoutGrpcStatusIsMapped(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50054', [
@@ -463,10 +463,10 @@ PHP;
         self::assertSame('HTTP status 503 without grpc-status', $status->details);
     }
 
-    public function testNativeUnaryRejectsNonGrpcContentType(): void
+    public function testHttp2UnaryRejectsNonGrpcContentType(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50054', [
@@ -480,10 +480,10 @@ PHP;
         self::assertSame('invalid gRPC content-type: text/plain', $status->details);
     }
 
-    public function testNativeUnaryCompressedMessageIsExplicitlyUnsupported(): void
+    public function testHttp2UnaryCompressedMessageIsExplicitlyUnsupported(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50054', [
@@ -499,10 +499,10 @@ PHP;
         self::assertSame('compressed gRPC messages are not supported', $status->details);
     }
 
-    public function testNativeUnaryGrpcEncodingIsExplicitlyUnsupported(): void
+    public function testHttp2UnaryGrpcEncodingIsExplicitlyUnsupported(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50054', [
@@ -518,10 +518,10 @@ PHP;
         self::assertSame('unsupported grpc-encoding: gzip', $status->details);
     }
 
-    public function testNativeExtensionMissingFailsAsStatus(): void
+    public function testHttp2ExtensionMissingFailsAsStatus(): void
     {
         if ((extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is loaded in this process');
+            self::markTestSkipped('grpc extension is loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -529,15 +529,15 @@ PHP;
         ]);
 
         $request = new HelloRequest();
-        $request->setName('NativeMissing');
+        $request->setName('Http2Missing');
         [$response, $status] = $client->SayHello($request)->wait();
 
         self::assertNull($response);
         self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
-        self::assertSame('grpc native persistent channel API is not loaded', $status->details);
+        self::assertSame('grpc lite extension bridge is not loaded', $status->details);
     }
 
-    public function testNativeUnaryCancelBeforeWaitReturnsCancelledStatus(): void
+    public function testHttp2UnaryCancelBeforeWaitReturnsCancelledStatus(): void
     {
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
@@ -554,10 +554,10 @@ PHP;
         self::assertSame(\Grpc\STATUS_CANCELLED, $status->code);
     }
 
-    public function testNativeUnaryDeadlineExceededIsEnforcedClientSide(): void
+    public function testHttp2UnaryDeadlineExceededIsEnforcedClientSide(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -578,10 +578,10 @@ PHP;
         self::assertLessThan(80.0, $elapsedMs);
     }
 
-    public function testNativeServerStreamingDeadlineExceededIsEnforcedClientSide(): void
+    public function testHttp2ServerStreamingDeadlineExceededIsEnforcedClientSide(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -606,10 +606,10 @@ PHP;
         self::assertSame(\Grpc\STATUS_DEADLINE_EXCEEDED, $call->getStatus()->code);
     }
 
-    public function testNativeServerStreamingCancelDuringIterationReturnsCancelledStatus(): void
+    public function testHttp2ServerStreamingCancelDuringIterationReturnsCancelledStatus(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -631,10 +631,10 @@ PHP;
         self::assertSame(\Grpc\STATUS_CANCELLED, $call->getStatus()->code);
     }
 
-    public function testNativeServerStreamingYieldsMessagesIncrementally(): void
+    public function testHttp2ServerStreamingYieldsMessagesIncrementally(): void
     {
         if (!function_exists('grpc_lite_stream_open')) {
-            self::markTestSkipped('grpc_native stream API is not loaded in this process');
+            self::markTestSkipped('grpc_lite stream API is not loaded in this process');
         }
 
         $client = new GreeterClient('test-server:50051', [
@@ -662,19 +662,19 @@ PHP;
         self::assertSame(\Grpc\STATUS_CANCELLED, $call->getStatus()->code);
     }
 
-    public function testNativeChannelGoAwayIsNotReusedForNextRpc(): void
+    public function testHttp2ChannelGoAwayIsNotReusedForNextRpc(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
-        $first = NativeTransport::unarySimple(
+        $first = Http2Transport::unarySimple(
             'test-server:50055',
             '/helloworld.Greeter/BenchUnary',
             '',
             [],
         );
-        $second = NativeTransport::unarySimple(
+        $second = Http2Transport::unarySimple(
             'test-server:50055',
             '/helloworld.Greeter/BenchUnary',
             '',
@@ -687,10 +687,10 @@ PHP;
         self::assertTrue($second['raw']['channel_draining'] ?? false);
     }
 
-    public function testNativePersistentChannelSurvivesPhpRequestLocalCacheReset(): void
+    public function testHttp2PersistentChannelSurvivesPhpRequestLocalCacheReset(): void
     {
         if (!function_exists('grpc_lite_unary')) {
-            self::markTestSkipped('grpc_native persistent channel API is not loaded in this process');
+            self::markTestSkipped('grpc_lite persistent channel API is not loaded in this process');
         }
 
         $key = 'phpunit-persistent-' . bin2hex(random_bytes(8));
@@ -721,31 +721,31 @@ PHP;
         self::assertSame(0, $second['connect_us']);
     }
 
-    public function testNativePersistentChannelCloseEvictsCachedChannel(): void
+    public function testHttp2PersistentChannelCloseEvictsCachedChannel(): void
     {
         if (!function_exists('grpc_lite_channel_close')) {
             self::markTestSkipped('grpc_lite_channel_close is not loaded in this process');
         }
 
         $credentials = ChannelCredentials::createInsecure();
-        NativeTransport::closeChannel('test-server:50051', $credentials);
+        Http2Transport::closeChannel('test-server:50051', $credentials);
 
-        $first = NativeTransport::unarySimple(
+        $first = Http2Transport::unarySimple(
             'test-server:50051',
             '/helloworld.Greeter/BenchUnary',
             '',
             [],
             credentials: $credentials,
         );
-        $second = NativeTransport::unarySimple(
+        $second = Http2Transport::unarySimple(
             'test-server:50051',
             '/helloworld.Greeter/BenchUnary',
             '',
             [],
             credentials: $credentials,
         );
-        NativeTransport::closeChannel('test-server:50051', $credentials);
-        $third = NativeTransport::unarySimple(
+        Http2Transport::closeChannel('test-server:50051', $credentials);
+        $third = Http2Transport::unarySimple(
             'test-server:50051',
             '/helloworld.Greeter/BenchUnary',
             '',
@@ -760,13 +760,13 @@ PHP;
         self::assertFalse($third['raw']['persistent_reused'] ?? true);
     }
 
-    public function testNativeAuthorityOverrideControlsHttp2Authority(): void
+    public function testHttp2AuthorityOverrideControlsHttp2Authority(): void
     {
         if (!function_exists('grpc_lite_unary')) {
             self::markTestSkipped('grpc_lite_unary is not loaded in this process');
         }
 
-        $result = NativeTransport::unarySimple(
+        $result = Http2Transport::unarySimple(
             'test-server:50054',
             '/helloworld.Greeter/BenchUnary',
             '',
@@ -779,13 +779,13 @@ PHP;
         self::assertSame(['custom.authority:443'], $result['headers']['x-bench-authority'] ?? null);
     }
 
-    public function testNativeResponseMetadataCapFailsAsResourceExhausted(): void
+    public function testHttp2ResponseMetadataCapFailsAsResourceExhausted(): void
     {
         if (!function_exists('grpc_lite_unary')) {
             self::markTestSkipped('grpc_lite_unary is not loaded in this process');
         }
 
-        $result = NativeTransport::unarySimple(
+        $result = Http2Transport::unarySimple(
             'test-server:50051',
             '/helloworld.Greeter/BenchUnary',
             '',
@@ -801,10 +801,10 @@ PHP;
         self::assertTrue($result['raw']['metadata_too_large'] ?? false);
     }
 
-    public function testNativeStreamResourceDestructReleasesChannelBusyState(): void
+    public function testHttp2StreamResourceDestructReleasesChannelBusyState(): void
     {
         if (!function_exists('grpc_lite_stream_open')) {
-            self::markTestSkipped('grpc_native stream API is not loaded in this process');
+            self::markTestSkipped('grpc_lite stream API is not loaded in this process');
         }
 
         $key = 'phpunit-stream-lifecycle-' . bin2hex(random_bytes(8));
@@ -831,7 +831,7 @@ PHP;
                 $serialized,
                 [],
             );
-            self::fail('second stream on a busy native channel unexpectedly opened');
+            self::fail('second stream on a busy HTTP/2 channel unexpectedly opened');
         } catch (\Throwable $e) {
             self::assertStringContainsString('active stream', $e->getMessage());
         }
@@ -853,10 +853,10 @@ PHP;
         self::assertTrue(\grpc_lite_stream_cancel($nextStream));
     }
 
-    public function testNativeStreamDeadlineReleasesPersistentChannel(): void
+    public function testHttp2StreamDeadlineReleasesPersistentChannel(): void
     {
         if (!function_exists('grpc_lite_stream_open')) {
-            self::markTestSkipped('grpc_native stream API is not loaded in this process');
+            self::markTestSkipped('grpc_lite stream API is not loaded in this process');
         }
 
         $key = 'phpunit-stream-deadline-' . bin2hex(random_bytes(8));
@@ -899,16 +899,16 @@ PHP;
         self::assertTrue(\grpc_lite_stream_cancel($nextStream));
     }
 
-    public function testNativeChannelEofIsDiscardedBeforeNextRpc(): void
+    public function testHttp2ChannelEofIsDiscardedBeforeNextRpc(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $failed = false;
         for ($attempt = 0; $attempt < 4; $attempt++) {
             try {
-                $result = NativeTransport::unarySimple(
+                $result = Http2Transport::unarySimple(
                     'test-server:50056',
                     '/helloworld.Greeter/BenchUnary',
                     '',
@@ -926,7 +926,7 @@ PHP;
 
         self::assertTrue($failed, 'EOF fixture did not produce a failed RPC');
 
-        $next = NativeTransport::unarySimple(
+        $next = Http2Transport::unarySimple(
             'test-server:50056',
             '/helloworld.Greeter/BenchUnary',
             '',
@@ -937,15 +937,15 @@ PHP;
         self::assertFalse($next['raw']['channel_dead'] ?? true);
     }
 
-    public function testNativeChannelMidStreamFailureIsDiscardedBeforeNextRpc(): void
+    public function testHttp2ChannelMidStreamFailureIsDiscardedBeforeNextRpc(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
         $failed = false;
         try {
-            $result = NativeTransport::unarySimple(
+            $result = Http2Transport::unarySimple(
                 'test-server:50057',
                 '/helloworld.Greeter/BenchUnary',
                 '',
@@ -959,7 +959,7 @@ PHP;
 
         self::assertTrue($failed, 'mid-stream failure fixture did not produce a failed RPC');
 
-        $next = NativeTransport::unarySimple(
+        $next = Http2Transport::unarySimple(
             'test-server:50051',
             '/helloworld.Greeter/BenchUnary',
             '',
@@ -969,15 +969,12 @@ PHP;
         self::assertSame(\Grpc\STATUS_OK, $next['grpc_status']);
     }
 
-    public function testNativeExtensionExposesOnlyGrpcLiteProductionBridge(): void
+    public function testHttp2ExtensionExposesOnlyGrpcLiteProductionBridge(): void
     {
         if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
+            self::markTestSkipped('grpc extension is not loaded in this process');
         }
 
-        self::assertFalse(function_exists('grpc_native_unary'));
-        self::assertFalse(function_exists('grpc_native_persistent_channel_unary'));
-        self::assertFalse(function_exists('grpc_native_stream_open'));
         self::assertFalse(function_exists('grpc_lite_multiplex_unary'));
         self::assertFalse(function_exists('grpc_lite_bench_unary_batch'));
         self::assertTrue(function_exists('grpc_lite_unary'));

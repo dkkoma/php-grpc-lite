@@ -1,5 +1,5 @@
 /*
- * Native HTTP/2 transport helpers included by grpc.c.
+ * HTTP/2 transport helpers included by grpc.c.
  *
  * This file intentionally shares grpc.c's static scope: it owns channel
  * lifecycle, socket/TLS I/O, nghttp2 callbacks, request header assembly,
@@ -203,8 +203,8 @@ static void remove_unusable_persistent_channel(const char *key, size_t key_len, 
     if (channel == NULL || channel_usable(channel)) {
         return;
     }
-    if (GRPC_NATIVE_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&GRPC_NATIVE_G(persistent_channels), key, key_len);
+    if (GRPC_LITE_G(persistent_channels_initialized)) {
+        zend_hash_str_del(&GRPC_LITE_G(persistent_channels), key, key_len);
     }
     if (channel->busy) {
         channel->detached_from_cache = true;
@@ -284,7 +284,7 @@ static size_t effective_max_receive_message_bytes(zend_long max_receive_message_
     if (max_receive_message_length > 0) {
         return (size_t) max_receive_message_length;
     }
-    return GRPC_NATIVE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES;
+    return GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES;
 }
 
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us)
@@ -458,7 +458,7 @@ static int configure_tls_channel(h2_channel *channel, const char *host, const ch
             }
             channel->last_io_errno = errno;
             if (errno == ETIMEDOUT) {
-                set_channel_error_detail(channel, "native transport deadline exceeded");
+                set_channel_error_detail(channel, "HTTP/2 transport deadline exceeded");
             } else {
                 snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "TLS handshake poll failed: %s", strerror(errno));
             }
@@ -595,7 +595,7 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, const cha
     channel->fd = connect_tcp(host, port, deadline_abs_us);
     if (channel->fd < 0) {
         if (errno == ETIMEDOUT) {
-            *error_message = "native transport deadline exceeded";
+            *error_message = "HTTP/2 transport deadline exceeded";
         } else {
             *error_message = "failed to connect";
         }
@@ -654,12 +654,12 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
     h2_channel *channel;
 
     *persistent_reused = false;
-    if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
+    if (!GRPC_LITE_G(persistent_channels_initialized)) {
         *error_message = "persistent channel cache is not initialized";
         return NULL;
     }
 
-    channel = zend_hash_str_find_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len);
+    channel = zend_hash_str_find_ptr(&GRPC_LITE_G(persistent_channels), key, key_len);
     if (channel != NULL && !channel_usable(channel)) {
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
@@ -674,7 +674,7 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
         if (channel == NULL) {
             return NULL;
         }
-        zend_hash_str_update_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len, channel);
+        zend_hash_str_update_ptr(&GRPC_LITE_G(persistent_channels), key, key_len, channel);
         return channel;
     }
 
@@ -684,8 +684,8 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
 
 static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel)
 {
-    if (GRPC_NATIVE_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&GRPC_NATIVE_G(persistent_channels), key, key_len);
+    if (GRPC_LITE_G(persistent_channels_initialized)) {
+        zend_hash_str_del(&GRPC_LITE_G(persistent_channels), key, key_len);
     }
     if (channel == NULL) {
         return;

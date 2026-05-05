@@ -1,4 +1,4 @@
-# Native transport 主要ベンチ再計測 2026-05-05
+# HTTP/2 transport 主要ベンチ再計測 2026-05-05
 
 ## 条件
 
@@ -6,7 +6,7 @@
 - 環境: local Docker compose / OrbStack
 - 対向: `poc/test-server` Go gRPC/h2c/TLS fixtures
 - tag: `20260505-major-native`
-- php-grpc-lite: native nghttp2 transport
+- php-grpc-lite: HTTP/2 transport
 - 比較対象: official `ext-grpc`
 
 ## 実行

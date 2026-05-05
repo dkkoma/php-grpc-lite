@@ -58,9 +58,9 @@ class UnaryCall extends AbstractCall
         }
 
         try {
-            $headers = $this->buildNativeRequestHeaders();
+            $headers = $this->buildHttp2RequestHeaders();
             $transportStartedNs = hrtime(true);
-            $result = Internal\NativeTransport::unarySimple(
+            $result = Internal\Http2Transport::unarySimple(
                 $this->channel->getTarget(),
                 $this->method,
                 $this->serializedRequest,
@@ -70,9 +70,9 @@ class UnaryCall extends AbstractCall
                 $this->maxReceiveMessageLength(),
                 $this->authorityOverride(),
             );
-            $this->recordDiagnostic('native_transport_call_ns', hrtime(true) - $transportStartedNs);
+            $this->recordDiagnostic('http2_transport_call_ns', hrtime(true) - $transportStartedNs);
         } catch (\RuntimeException $e) {
-            if ($e->getMessage() === 'native transport deadline exceeded') {
+            if ($e->getMessage() === 'HTTP/2 transport deadline exceeded') {
                 return [null, $this->makeStatus(STATUS_DEADLINE_EXCEEDED, $e->getMessage())];
             }
             return [null, $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage())];
@@ -83,24 +83,24 @@ class UnaryCall extends AbstractCall
         $this->responseHeaders = $result['headers'];
         $this->responseTrailers = $result['trailers'];
         $payload = $result['payloads'][0] ?? null;
-        $this->recordDiagnostic('native_result_normalize_ns', hrtime(true) - $normalizeStartedNs);
-        $this->recordNativeRawDiagnostics($result['raw']);
+        $this->recordDiagnostic('http2_result_normalize_ns', hrtime(true) - $normalizeStartedNs);
+        $this->recordHttp2RawDiagnostics($result['raw']);
 
         $response = null;
         if ($payload !== null && $this->deserialize !== null) {
             $deserializeStartedNs = hrtime(true);
             $response = Internal\Deserialize::apply($this->deserialize, $payload);
-            $this->recordDiagnostic('native_response_deserialize_ns', hrtime(true) - $deserializeStartedNs);
+            $this->recordDiagnostic('http2_response_deserialize_ns', hrtime(true) - $deserializeStartedNs);
         }
 
         $statusStartedNs = hrtime(true);
         $status = $this->makeStatus($code, $result['details']);
-        $this->recordDiagnostic('native_status_build_ns', hrtime(true) - $statusStartedNs);
+        $this->recordDiagnostic('http2_status_build_ns', hrtime(true) - $statusStartedNs);
         return [$response, $status];
     }
 
     /** @param array<string, mixed> $raw */
-    private function recordNativeRawDiagnostics(array $raw): void
+    private function recordHttp2RawDiagnostics(array $raw): void
     {
         foreach ([
             'total_us',
@@ -117,7 +117,7 @@ class UnaryCall extends AbstractCall
         ] as $name) {
             $value = $raw[$name] ?? null;
             if (is_int($value) || is_float($value)) {
-                $this->recordDiagnostic('native_raw_' . $name, str_ends_with($name, '_us') ? $value * 1000 : $value);
+                $this->recordDiagnostic('http2_raw_' . $name, str_ends_with($name, '_us') ? $value * 1000 : $value);
             }
         }
     }

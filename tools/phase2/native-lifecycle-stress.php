@@ -60,7 +60,7 @@ if ($output === null || $output === '' || $iterations <= 0 || $messageCount <= 0
     usage('output, iterations, message-count, payload-bytes, and sleep-us must be valid');
 }
 if (!(extension_loaded('grpc'))) {
-    throw new \RuntimeException('grpc native extension is required');
+    throw new \RuntimeException('grpc extension is required');
 }
 if (!is_file($autoload)) {
     throw new \RuntimeException("autoload file not found: $autoload");

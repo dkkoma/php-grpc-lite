@@ -62,23 +62,23 @@
 |---|---|---|---|
 | 0 | 純 PHP PoC。libcurl + ext-curl で HTTP/2 を喋り、gRPC framing を PHP で実装。`Grpc\` 互換 API を提供 | unary と server streaming の sample が動く | **2026-04-25 完了** |
 | 1 | ベンチマーク基盤整備 | レイテンシ/スループット/メモリ計測を継続比較できる | **2026-04-28 完了**。Docker ローカル実行・ログ保存・JSON/TSV 抽出・baseline check/update・ext-grpc 比較入口を整備済み |
-| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | Phase 2 PoC比較により native nghttp2 transport 方向に決定。詳細は `docs/native-transport-decision.md` |
-| 3 | nghttp2 直接呼び出しに置き換え | runtime transportからlibcurlを外し、native nghttp2 transport 1系統にする | 実装中。drop-in releaseにはpackaging / lifecycle / memory QAのrelease gateを置く。詳細は `docs/native-transport-design.md` / `docs/release-qa-checklist.md` |
+| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | Phase 2 PoC比較により HTTP/2 transport 方向に決定。詳細は `docs/http2-transport-decision.md` |
+| 3 | nghttp2 直接呼び出しに置き換え | runtime transportからlibcurlを外し、HTTP/2 transport 1系統にする | 実装中。drop-in releaseにはpackaging / lifecycle / memory QAのrelease gateを置く。詳細は `docs/http2-transport-design.md` / `docs/release-qa-checklist.md` |
 
-release default native のQA判定は `docs/release-qa-checklist.md` に集約する。
+release default nghttp2 のQA判定は `docs/release-qa-checklist.md` に集約する。
 
-各フェーズの遷移はベンチマーク結果で判断する。2026-05時点ではPhase 3の本線を native nghttp2 transport 1系統とし、libcurl runtime routeは残さない。
+各フェーズの遷移はベンチマーク結果で判断する。2026-05時点ではPhase 3の本線を HTTP/2 transport 1系統とし、libcurl runtime routeは残さない。
 
 ### 4.2 HTTP/2 トランスポート
 
-runtime transportは native nghttp2 + 自前socket/TLS の1系統とする。PHP userlandの `Grpc\` surfaceはtransport選択optionを持たず、native extension未ロードやtransport errorは別経路へfallbackしない。
+runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userlandの `Grpc\` surfaceはtransport選択optionを持たず、source-built grpc extension未ロードやtransport errorは別経路へfallbackしない。
 
 #### Call 種別ごとのtransport利用パターン
 
 | Call 種別 | 関数 | 理由 |
 |---|---|---|
-| Unary | native persistent channel + 1 HTTP/2 stream | 単発往復。C側でHTTP/2 session/socketをprocess-local / thread-localに再利用する |
-| Server streaming | native stream resource + Generator pull | message単位でyieldし、slow consumer時はread/WINDOW_UPDATE進行を抑える |
+| Unary | persistent HTTP/2 channel + 1 HTTP/2 stream | 単発往復。C側でHTTP/2 session/socketをprocess-local / thread-localに再利用する |
+| Server streaming | HTTP/2 stream resource + Generator pull | message単位でyieldし、slow consumer時はread/WINDOW_UPDATE進行を抑える |
 | Client streaming(後回し) | 未実装 | 後続フェーズで設計 |
 | Bidi streaming(後回し) | 未実装 | 後続フェーズで設計 |
 
@@ -93,7 +93,7 @@ runtime transportは native nghttp2 + 自前socket/TLS の1系統とする。PHP
 
 - システム OpenSSL を使用する。PHP の `ext-openssl` と同じ libssl を共有する。
 - BoringSSL は同梱しない。
-- native transportは nghttp2 + OpenSSL を直接使う。
+- HTTP/2 transportは nghttp2 + OpenSSL を直接使う。
 - mTLS(client cert)、CallCredentials によるトークン付与は OpenSSL の機能で完全に実現可能。
 - **PEM の渡し方**: `ChannelCredentials` のroot cert / client cert / private keyをC extensionへ渡し、OpenSSLの `SSL_CTX` に設定する。
 - **実機検証済**: Trixie の OpenSSL 3.5 で h2 ALPN ネゴシエーション、自己署名 CA 経由の cert verification、cert mismatch 時の `STATUS_UNAVAILABLE` エラー伝播を確認。
@@ -173,7 +173,7 @@ runtime transportは native nghttp2 + 自前socket/TLS の1系統とする。PHP
 - [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/api-surface.md` で完了(2026-04-25)
 - [x] ~~`Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)~~ → callback wrapperとして実装し、per-call option `call_credentials` から metadata を生成する(2026-05-04)
 - [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
-- [x] ~~`ServerStreamingCall::responses()` Generator の実装戦略~~ → native stream resourceをGeneratorがpullし、message単位でyieldする。slow consumer時はread/WINDOW_UPDATE進行を抑え、stream resource destructor / `cancel()` で `RST_STREAM(CANCEL)` を送る。
+- [x] ~~`ServerStreamingCall::responses()` Generator の実装戦略~~ → HTTP/2 stream resourceをGeneratorがpullし、message単位でyieldする。slow consumer時はread/WINDOW_UPDATE進行を抑え、stream resource destructor / `cancel()` で `RST_STREAM(CANCEL)` を送る。
 - [ ] テスト用 gRPC サーバーの選定(Go の helloworld を `compose.yaml` に並べる案が有力)
 - [ ] ベンチマーク手法とターゲット環境(計測対象、繰り返し回数、コンパレータ)
 - [ ] Persistent channel pool の互換要件(ext-grpc は `grpc.use_local_subchannel_pool` 等の INI で制御)
@@ -227,8 +227,8 @@ request metadata は transport へ渡す前に共通正規化する。key は lo
 - **2026-04-28**: Phase 1 のベンチ追加を完了扱いに整理。既存の `cold` / `warm` / `stream` / `stream-smoke` / `hot-path` に加え、実用性能軸として `stream-slow`、`metadata`、`tls` を追加し、php-grpc-lite vs 公式 ext-grpc の実測結果を `docs/benchmarks/` に記録した。手元運用・継続比較基盤は完成とし、残タスクは CI で回す smoke の選定、regression baseline 運用、`mem_peak` の回帰判定に限定する。
 - **2026-04-28**: regression baseline 運用入口として `bench/baseline.sh` を追加。`check` は `cold` / `warm` / `stream-smoke` の php-grpc-lite 側だけを実行して `bench/baselines/regression.json` と比較し、`mode_ns` と `mem_peak_bytes` の回帰を判定する。`update` は意図した性能変化や環境変更を受け入れる時だけ現在値から baseline を更新する。Phase 1 の残タスクは CI で `check` をどのタイミングで回すかの決定に絞る。
 - **2026-04-28**: Phase 1 を完了扱いに変更。CI 実行設定は通常の保守運用タスクとして残すが、Phase 1 の完了条件はローカルで再現可能な継続比較、公式 ext-grpc 比較、php-grpc-lite 自身の regression baseline 運用が揃った時点で満たしたと判断する。Phase 2 は C 拡張化へ直接入らず、`docs/benchmarks/measurement-plan-phase2.md` の多軸計測で persistent pool / per-frame streaming / per-byte decode / header parser などの優先順位を決める。
-- **2026-05-03**: Phase 2 native transport MVP比較を実施。current libcurl transport、nghttp2 native MVP PoC、公式 ext-grpcをlarge request unary / server streaming代表形状で比較し、default transportはnative nghttp2経路へ進める判断に更新した。その後、実装とQAを単純化するためlibcurl runtime経路は削除し、transportはnative 1系統に絞る方針へ更新した。MVP scopeは upload no-copy + poll loop、response compact/ring buffer、direct payload assembly。詳細: `docs/research/native-transport-mvp-comparison-2026-05-03.md`、`docs/native-transport-decision.md`、`docs/native-transport-design.md`。
-- **2026-05-03**: native transportのactual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを測るvariantをPhase 2比較runnerへ追加し、`100×100KiB` server streaming例外形状のfocused repeat runnerを追加した。native wrapperからserver stats trailer相当も公開し、PoC APIだけでなく本体surface経由でclient/server timingを並べられるようにした。詳細: `docs/research/native-surface-repeat-2026-05-03.md`。
-- **2026-05-03**: native control semanticsをMVP surfaceで進めた。bench専用buildの `grpc_lite_bench_unary_batch()` にdeadlineを追加してnative制御系を検証し、PHP wrapperでは `STATUS_DEADLINE_EXCEEDED`、API-level `cancel()`、missing `grpc-status` の `STATUS_UNKNOWN` 合成、HTTP/2 stream resetの基本status変換、TLS/mTLS明示未対応時の `STATUS_UNAVAILABLE` を扱う。server streamingはまだbatch drain後yieldなので、transport-level `RST_STREAM` と真のbackpressureはproduction streaming resource化後に残す。詳細: `docs/research/native-control-semantics-2026-05-03.md`。
-- **2026-05-04**: native server streamingをC stream resource化し、`ServerStreamingCall::responses()` が `grpc_lite_stream_next()` をpullしてmessageごとにyieldする経路へ切り替えた。`cancel()` は `RST_STREAM(CANCEL)` を送る。small SELECT代表形状(`1x100B` / `1x1KiB` / `1x4KiB` / `1x10KiB`)ではnativeがcurl/ext-grpcよりp50/p99とも良好、Spanner DML unary shapeでもnativeが最良。一方、`100x100KiB` server streamingなどlarge response surfaceではPoC direct/compactやext-grpcに対して未解明の差が残る。詳細: `docs/research/native-stream-resource-2026-05-04.md`。
-- **2026-05-04**: metadata shape policyを確定。同一 key 複数 values は公式 ext-grpc PHP APIだと最後 value のみ可視だが、php-grpc-lite はgRPC仕様準拠を優先して `array<string, list<string>>` で全 values を保持する。native request metadataの畳み込みとC extension固定header buffer制限は修正済み。詳細: `docs/research/metadata-compatibility-gap-2026-05-04.md`。
+- **2026-05-03**: Phase 2 HTTP/2 transport MVP比較を実施。current libcurl transport、HTTP/2 direct MVP PoC、公式 ext-grpcをlarge request unary / server streaming代表形状で比較し、default transportはHTTP/2経路へ進める判断に更新した。その後、実装とQAを単純化するためlibcurl runtime経路は削除し、transportはHTTP/2 1系統に絞る方針へ更新した。MVP scopeは upload no-copy + poll loop、response compact/ring buffer、direct payload assembly。詳細: `docs/research/http2-transport-mvp-comparison-2026-05-03.md`、`docs/http2-transport-decision.md`、`docs/http2-transport-design.md`。
+- **2026-05-03**: HTTP/2 transportのactual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを測るvariantをPhase 2比較runnerへ追加し、`100×100KiB` server streaming例外形状のfocused repeat runnerを追加した。HTTP/2 wrapperからserver stats trailer相当も公開し、PoC APIだけでなく本体surface経由でclient/server timingを並べられるようにした。詳細: `docs/research/native-surface-repeat-2026-05-03.md`。
+- **2026-05-03**: HTTP/2 control semanticsをMVP surfaceで進めた。bench専用buildの `grpc_lite_bench_unary_batch()` にdeadlineを追加してHTTP/2制御系を検証し、PHP wrapperでは `STATUS_DEADLINE_EXCEEDED`、API-level `cancel()`、missing `grpc-status` の `STATUS_UNKNOWN` 合成、HTTP/2 stream resetの基本status変換、TLS/mTLS明示未対応時の `STATUS_UNAVAILABLE` を扱う。server streamingはまだbatch drain後yieldなので、transport-level `RST_STREAM` と真のbackpressureはproduction streaming resource化後に残す。詳細: `docs/research/native-control-semantics-2026-05-03.md`。
+- **2026-05-04**: HTTP/2 server streamingをC stream resource化し、`ServerStreamingCall::responses()` が `grpc_lite_stream_next()` をpullしてmessageごとにyieldする経路へ切り替えた。`cancel()` は `RST_STREAM(CANCEL)` を送る。small SELECT代表形状(`1x100B` / `1x1KiB` / `1x4KiB` / `1x10KiB`)ではHTTP/2がcurl/ext-grpcよりp50/p99とも良好、Spanner DML unary shapeでもHTTP/2が最良。一方、`100x100KiB` server streamingなどlarge response surfaceではPoC direct/compactやext-grpcに対して未解明の差が残る。詳細: `docs/research/native-stream-resource-2026-05-04.md`。
+- **2026-05-04**: metadata shape policyを確定。同一 key 複数 values は公式 ext-grpc PHP APIだと最後 value のみ可視だが、php-grpc-lite はgRPC仕様準拠を優先して `array<string, list<string>>` で全 values を保持する。HTTP/2 request metadataの畳み込みとC extension固定header buffer制限は修正済み。詳細: `docs/research/metadata-compatibility-gap-2026-05-04.md`。

@@ -72,4 +72,4 @@ nghttp2 summary:
 
 したがって、1MiB warm request の主な構造的コストは「flow-control待ち」ではなく、libcurl が request body を 64KiB 前後で供給し、nghttp2 が 16KiB frame に分割し、provider deferred/resume を繰り返す送信ループにある。
 
-この結果から、PHP userland で `POSTFIELDS` を `READFUNCTION` に置き換えるだけでは根本的な改善にはなりにくい。大きな改善を狙うなら、libcurl 経由の provider/resume 進行単位を受け入れるか、native transport / C extension 側で request body buffer と nghttp2 send loop をより直接制御する必要がある。
+この結果から、PHP userland で `POSTFIELDS` を `READFUNCTION` に置き換えるだけでは根本的な改善にはなりにくい。大きな改善を狙うなら、libcurl 経由の provider/resume 進行単位を受け入れるか、HTTP/2 transport / C extension 側で request body buffer と nghttp2 send loop をより直接制御する必要がある。

@@ -5,13 +5,13 @@
 Spanner `ExecuteStreamingSql` の小さい `SELECT` 結果を近似する server streaming 形状で、以下の系統を同じ Go test-server 条件で比較した。
 
 - `php-grpc-lite` curl transport
-- `php-grpc-lite` native transport
+- `php-grpc-lite` HTTP/2 transport
 - official `ext-grpc`
-- native transport PoC compact/direct variants
+- HTTP/2 transport PoC compact/direct variants
 
 これは Spanner emulator 実測ではなく、`BenchServerStream` による制御可能な近似である。small SELECT軸では1つの `PartialResultSet` 相当で返る形だけを見る。複数messageへの分割やchunkingは、many-small / streaming count系の別ベンチで扱う。
 
-small streamingは実運用上の主経路であり、large payloadだけでnative transportを採用判断しない。small SELECT相当のactual surfaceでext-grpc同等または優位を示せない状態はrelease defaultの条件を満たさない。
+small streamingは実運用上の主経路であり、large payloadだけでHTTP/2 transportを採用判断しない。small SELECT相当のactual surfaceでext-grpc同等または優位を示せない状態はrelease defaultの条件を満たさない。
 
 Spanner emulator上の実測では、2 DATE + 2 STRING + 合計10 columnsの1行SELECTは1つの `PartialResultSet` / 267Bだった。詳細は `docs/research/spanner-emulator-streaming-shape-2026-05-03.md`。
 
@@ -21,7 +21,7 @@ Spanner emulator上の実測では、2 DATE + 2 STRING + 合計10 columnsの1行
 BENCH_TAG=20260503-small-select-streaming-poc bench/phase2/compare-small-select-streaming.sh
 ```
 
-Native transport は `NATIVE_RESPONSE_MODE=compact64` のdefaultで計測した。
+HTTP/2 transport は `NATIVE_RESPONSE_MODE=compact64` のdefaultで計測した。
 
 Summary TSV:
 
@@ -56,8 +56,8 @@ var/bench-results/phase2-small-select-streaming-20260503-small-select-streaming-
 
 ## Interpretation
 
-- actual native surfaceはp50ではcurlより速いが、ext-grpcには届いていない。small SELECT相当ではこの状態をrelease default可能とは見なさない。
-- PoC direct/compactは `1x100b` / `1x1k` / `1x4k` でext-grpc同等以上のp50/p99とthroughputを示した。nghttp2 native transport自体にsmallで勝てない構造的制約がある、とはまだ言えない。
+- actual HTTP/2 surfaceはp50ではcurlより速いが、ext-grpcには届いていない。small SELECT相当ではこの状態をrelease default可能とは見なさない。
+- PoC direct/compactは `1x100b` / `1x1k` / `1x4k` でext-grpc同等以上のp50/p99とthroughputを示した。HTTP/2 transport自体にsmallで勝てない構造的制約がある、とはまだ言えない。
 - `1x10k` はPoC directがext-grpcとほぼ同等レンジ、compactはtailが悪い。payloadが少し大きい単一messageではdirect寄りが有利。
 - 主なギャップはPoC transport pathとactual `ServerStreamingCall::responses()` surfaceの間にある。true streaming resource化とmessage delivery strategyが次の主対象になる。
 

@@ -1,6 +1,6 @@
 # Native extension install guide
 
-`php-grpc-lite` のPHP userland実装はComposerで導入し、native transport extensionはこのrepositoryをcloneしてsource buildする。
+`php-grpc-lite` のPHP userland実装はComposerで導入し、HTTP/2 transport extensionはこのrepositoryをcloneしてsource buildする。
 
 このextensionはPHP module名として `grpc` を使い、`grpc.so` を生成する。これはdrop-in検証のために `extension_loaded('grpc')` を満たす設計であり、公式 `grpc/grpc` の `ext-grpc` と同時にloadしてはいけない。
 
@@ -8,8 +8,8 @@
 
 - PHP classes: Composer package `php-grpc-lite/php-grpc-lite` が `Grpc\*` API surfaceをautoloadする。
 - Native extension: このrepositoryの `ext/grpc/` を `phpize` でbuildする。
-- Runtime transport: native nghttp2 transportのみ。release readiness is still gated by native memory/lifecycle QA.
-- Composer metadata: package は `ext-grpc` を `provide` するが、Composerはnative extensionをbuild/loadしない。source buildと `extension=grpc.so` の有効化を完了してから、drop-in replacementとして扱う。
+- Runtime transport: HTTP/2 transportのみ。release readiness is still gated by C extension memory/lifecycle QA.
+- Composer metadata: package は `ext-grpc` を `provide` するが、Composerはsource-built grpc extensionをbuild/loadしない。source buildと `extension=grpc.so` の有効化を完了してから、drop-in replacementとして扱う。
 - Rollback:
   - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc.so` を無効化し、公式側の `grpc.so` を有効化する。
 
@@ -36,9 +36,9 @@ sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl
 composer require php-grpc-lite/php-grpc-lite
 ```
 
-`Grpc\Channel`、`Grpc\BaseStub`、`Grpc\ChannelCredentials` などのclassはComposer autoloadが提供する。native extensionはこれらのclassをCで登録しない。
+`Grpc\Channel`、`Grpc\BaseStub`、`Grpc\ChannelCredentials` などのclassはComposer autoloadが提供する。source-built grpc extensionはこれらのclassをCで登録しない。
 
-## Build native extension
+## Build source-built grpc extension
 
 このrepositoryをcloneし、`ext/grpc/` をbuildする。
 
@@ -84,7 +84,7 @@ $client = new SomeGrpcClient('example.com:443', [
 ]);
 ```
 
-transport選択optionはない。native extension未ロード、未対応機能、transport errorは別経路へfallbackせず、選択されたRPCの失敗として返す。
+transport選択optionはない。source-built grpc extension未ロード、未対応機能、transport errorは別経路へfallbackせず、選択されたRPCの失敗として返す。
 
 ## Compatibility scope
 
@@ -108,7 +108,7 @@ php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), functi
 
 通常buildでは production bridge のみを公開する。`ext/grpc/bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
 
-このrepositoryのDocker環境では、native stream lifecycle smokeも確認できる。
+このrepositoryのDocker環境では、HTTP/2 stream lifecycle smokeも確認できる。
 
 ```bash
 ITERATIONS=10 BENCH_TAG=install-smoke ./bench/phase2/check-native-lifecycle-stress.sh

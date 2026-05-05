@@ -2,7 +2,7 @@
 #
 # Compare the three Phase 2 transport lines:
 #   1. current php-grpc-lite libcurl transport
-#   2. nghttp2 native MVP extension PoC
+#   2. HTTP/2 MVP extension PoC
 #   3. official ext-grpc
 #
 set -euo pipefail

@@ -2,7 +2,7 @@
 #
 # Compare sequential vs shared curl_multi event loop for concurrent
 # server-streaming calls. This is a libcurl-level PoC for channel transport
-# shape, not a native nghttp2 implementation.
+# shape, not a HTTP/2 transport implementation.
 #
 set -euo pipefail
 

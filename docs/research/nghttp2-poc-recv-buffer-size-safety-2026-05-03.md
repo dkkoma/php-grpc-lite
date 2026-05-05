@@ -59,7 +59,7 @@ stream 1×1MiB は悪化の疑いがあるため、3回反復した。
 - stream 1×1MiB では p50 は改善したが、反復平均の p99 は 16KiB より悪化した。
 - throughput 平均はほぼ同等だった。
 
-したがって native transport の default に 256KiB を固定採用するにはまだ弱い。
+したがって HTTP/2 transport の default に 256KiB を固定採用するにはまだ弱い。
 
 実装判断としては以下が妥当。
 

@@ -4,12 +4,12 @@ declare(strict_types=1);
 namespace Grpc\Internal;
 
 /**
- * Thin PHP wrapper around the native grpc transport extension.
+ * Thin PHP wrapper around the HTTP/2 transport extension.
  *
  * Production unary and server-streaming calls use C-owned persistent channels;
  * benchmark-only extension entrypoints are called directly from bench scripts.
  */
-final class NativeTransport
+final class Http2Transport
 {
     /**
      * @param array<string, list<string>> $headers
@@ -211,13 +211,13 @@ final class NativeTransport
     private static function normalizeStatus(array $result): array
     {
         if (($result['timed_out'] ?? false) === true) {
-            return [\Grpc\STATUS_DEADLINE_EXCEEDED, 'native transport deadline exceeded'];
+            return [\Grpc\STATUS_DEADLINE_EXCEEDED, 'HTTP/2 transport deadline exceeded'];
         }
 
         $metadata = self::extractInitialMetadata($result);
         if (($result['channel_dead'] ?? false) === true) {
             $detail = $result['channel_last_error_detail'] ?? '';
-            return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'native transport I/O error'];
+            return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'HTTP/2 transport I/O error'];
         }
 
         $httpStatus = (int) ($result['http_status'] ?? 0);

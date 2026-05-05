@@ -30,7 +30,7 @@
 
 #define MAKE_NV(NAME, VALUE) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, sizeof(VALUE) - 1, NGHTTP2_NV_FLAG_NONE}
 #define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
-#define GRPC_NATIVE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
+#define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
 
@@ -355,14 +355,14 @@ struct _h2_stream {
 
 static int le_h2_stream;
 
-ZEND_BEGIN_MODULE_GLOBALS(grpc_native)
+ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_channels;
     bool persistent_channels_initialized;
-ZEND_END_MODULE_GLOBALS(grpc_native)
+ZEND_END_MODULE_GLOBALS(grpc_lite)
 
-ZEND_DECLARE_MODULE_GLOBALS(grpc_native)
+ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 
-#define GRPC_NATIVE_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(grpc_native, v)
+#define GRPC_LITE_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(grpc_lite, v)
 
 #include "grpc_transport.c"
 
@@ -387,7 +387,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
         return FAILURE;
     }
     if (channel->busy) {
-        zend_throw_exception(NULL, "native channel already has an active stream", 0);
+        zend_throw_exception(NULL, "HTTP/2 channel already has an active stream", 0);
         return FAILURE;
     }
     if (request_len > UINT32_MAX) {
@@ -605,12 +605,12 @@ PHP_FUNCTION(grpc_lite_unary)
         Z_PARAM_STRING_OR_NULL(authority, authority_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
+    if (!GRPC_LITE_G(persistent_channels_initialized)) {
         zend_throw_exception(NULL, "persistent channel cache is not initialized", 0);
         RETURN_THROWS();
     }
 
-    channel = zend_hash_str_find_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len);
+    channel = zend_hash_str_find_ptr(&GRPC_LITE_G(persistent_channels), key, key_len);
     if (channel != NULL && !channel_usable(channel)) {
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
@@ -627,14 +627,14 @@ PHP_FUNCTION(grpc_lite_unary)
             zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
             RETURN_THROWS();
         }
-        zend_hash_str_update_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len, channel);
+        zend_hash_str_update_ptr(&GRPC_LITE_G(persistent_channels), key, key_len, channel);
     } else {
         persistent_reused = true;
     }
 
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
-        zend_throw_exception(NULL, "native transport deadline exceeded", 0);
+        zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
         RETURN_THROWS();
     }
 
@@ -712,12 +712,12 @@ PHP_FUNCTION(grpc_lite_stream_open)
         RETURN_THROWS();
     }
     if (channel->busy) {
-        zend_throw_exception(NULL, "native channel already has an active stream", 0);
+        zend_throw_exception(NULL, "HTTP/2 channel already has an active stream", 0);
         RETURN_THROWS();
     }
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
-        zend_throw_exception(NULL, "native transport deadline exceeded", 0);
+        zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
         RETURN_THROWS();
     }
     if (set_socket_timeout_us(channel->fd, remaining_timeout_us) != 0) {
@@ -941,11 +941,11 @@ PHP_FUNCTION(grpc_lite_channel_close)
         Z_PARAM_STRING(key, key_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (!GRPC_NATIVE_G(persistent_channels_initialized)) {
+    if (!GRPC_LITE_G(persistent_channels_initialized)) {
         RETURN_FALSE;
     }
 
-    channel = zend_hash_str_find_ptr(&GRPC_NATIVE_G(persistent_channels), key, key_len);
+    channel = zend_hash_str_find_ptr(&GRPC_LITE_G(persistent_channels), key, key_len);
     if (channel == NULL) {
         RETURN_FALSE;
     }
@@ -958,38 +958,38 @@ PHP_FUNCTION(grpc_lite_channel_close)
 #include "grpc_bench.c"
 #endif
 
-PHP_GINIT_FUNCTION(grpc_native)
+PHP_GINIT_FUNCTION(grpc_lite)
 {
 #if defined(COMPILE_DL_GRPC) && defined(ZTS)
     ZEND_TSRMLS_CACHE_UPDATE();
 #endif
-    zend_hash_init(&grpc_native_globals->persistent_channels, 8, NULL, NULL, 1);
-    grpc_native_globals->persistent_channels_initialized = true;
+    zend_hash_init(&grpc_lite_globals->persistent_channels, 8, NULL, NULL, 1);
+    grpc_lite_globals->persistent_channels_initialized = true;
 }
 
-PHP_GSHUTDOWN_FUNCTION(grpc_native)
+PHP_GSHUTDOWN_FUNCTION(grpc_lite)
 {
     h2_channel *channel;
 
-    if (!grpc_native_globals->persistent_channels_initialized) {
+    if (!grpc_lite_globals->persistent_channels_initialized) {
         return;
     }
 
-    ZEND_HASH_FOREACH_PTR(&grpc_native_globals->persistent_channels, channel) {
+    ZEND_HASH_FOREACH_PTR(&grpc_lite_globals->persistent_channels, channel) {
         destroy_h2_channel(channel);
     } ZEND_HASH_FOREACH_END();
 
-    zend_hash_destroy(&grpc_native_globals->persistent_channels);
-    grpc_native_globals->persistent_channels_initialized = false;
+    zend_hash_destroy(&grpc_lite_globals->persistent_channels);
+    grpc_lite_globals->persistent_channels_initialized = false;
 }
 
-PHP_MINIT_FUNCTION(grpc_native)
+PHP_MINIT_FUNCTION(grpc_lite)
 {
     le_h2_stream = zend_register_list_destructors_ex(h2_stream_dtor, NULL, "grpc_lite_stream", module_number);
     return SUCCESS;
 }
 
-PHP_MINFO_FUNCTION(grpc_native)
+PHP_MINFO_FUNCTION(grpc_lite)
 {
     php_info_print_table_start();
     php_info_print_table_row(2, "grpc_lite bridge", "enabled");
@@ -1040,7 +1040,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_channel_close, 0, 1, _
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
-static const zend_function_entry grpc_native_functions[] = {
+static const zend_function_entry grpc_lite_functions[] = {
     PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
     PHP_FE(grpc_lite_stream_open, arginfo_grpc_lite_stream_open)
     PHP_FE(grpc_lite_stream_next, arginfo_grpc_lite_stream_next)
@@ -1056,16 +1056,16 @@ static const zend_function_entry grpc_native_functions[] = {
 zend_module_entry grpc_module_entry = {
     STANDARD_MODULE_HEADER,
     "grpc",
-    grpc_native_functions,
-    PHP_MINIT(grpc_native),
+    grpc_lite_functions,
+    PHP_MINIT(grpc_lite),
     NULL,
     NULL,
     NULL,
-    PHP_MINFO(grpc_native),
+    PHP_MINFO(grpc_lite),
     "0.1.0",
-    ZEND_MODULE_GLOBALS(grpc_native),
-    PHP_GINIT(grpc_native),
-    PHP_GSHUTDOWN(grpc_native),
+    ZEND_MODULE_GLOBALS(grpc_lite),
+    PHP_GINIT(grpc_lite),
+    PHP_GSHUTDOWN(grpc_lite),
     NULL,
     STANDARD_MODULE_PROPERTIES_EX
 };

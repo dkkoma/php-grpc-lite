@@ -1,4 +1,4 @@
-# native transport unary large request PoC conclusion (2026-05-03)
+# HTTP/2 transport unary large request PoC conclusion (2026-05-03)
 
 ## 対象
 
@@ -32,7 +32,7 @@ C 拡張実装に進む場合の結論は以下。
 
 ## 実装方針
 
-本実装では `Channel` / call lifecycle の API surface を守りつつ、transport backend として native nghttp2 経路を追加するのが妥当。
+本実装では `Channel` / call lifecycle の API surface を守りつつ、transport backend として nghttp2 経路を追加するのが妥当。
 
 最小の本実装単位は以下。
 

@@ -4,7 +4,7 @@
 # php-grpc-lite and ext-grpc with the same BenchServerStream shapes.
 #
 # This is an exploratory Phase 2 runner. It is not part of the regression
-# baseline because it depends on the grpc native transport extension.
+# baseline because it depends on the grpc HTTP/2 transport extension.
 #
 set -euo pipefail
 

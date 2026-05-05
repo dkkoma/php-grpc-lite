@@ -1,14 +1,14 @@
-# native transport MVP comparison (2026-05-03)
+# HTTP/2 transport MVP comparison (2026-05-03)
 
 ## 目的
 
 Phase 2 のチェックポイントとして、以下の三者を同じGo test-server条件で比較した。
 
 1. current `php-grpc-lite` libcurl transport。
-2. nghttp2 native MVP extension PoC。
+2. nghttp2 direct MVP extension PoC。
 3. official `ext-grpc`。
 
-ここでのMVPはproduction API完成版ではなく、`poc/nghttp2-client-ext` のnative nghttp2経路を使った比較対象である。request uploadは `no-copy + poll loop`、server streaming responseは `direct payload assembly` と `compact64` を代表パターンとして測った。
+ここでのMVPはproduction API完成版ではなく、`poc/nghttp2-client-ext` のHTTP/2経路を使った比較対象である。request uploadは `no-copy + poll loop`、server streaming responseは `direct payload assembly` と `compact64` を代表パターンとして測った。
 
 ## 再実行方法
 
@@ -106,12 +106,12 @@ MVPは多くのstreaming shapeでext-grpcと同等以上にいる。
 
 ## 総合判断
 
-native transport MVPはPhase 2の実装方向として十分成立する。
+HTTP/2 transport MVPはPhase 2の実装方向として十分成立する。
 
 - large request unaryではlibcurlを明確に上回り、ext-grpcと同等レンジ。
 - server streaming large responseでは多くの代表形状でext-grpc同等以上。
 - response pathは `direct payload assembly` と `compact/ring buffer` の両方が必要。
-- default transportはnativeへ進める判断でよい。
+- default transportはHTTP/2へ進める判断でよい。
 - libcurl経路は自動fallbackではなく、workload選択・安定経路・互換性oracleとして `php_grpc_lite.transport=curl` で明示的に残す。
 
 ただしMVPのproduction化には以下が残る。

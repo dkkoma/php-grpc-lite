@@ -65,7 +65,7 @@ bounded read-aheadは万能ではない。
 
 ## 判断
 
-bounded read-aheadをnative transportの標準経路に入れる根拠はまだ弱い。
+bounded read-aheadをHTTP/2 transportの標準経路に入れる根拠はまだ弱い。
 
 採用するなら以下の限定条件にする。
 

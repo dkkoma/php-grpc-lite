@@ -6,7 +6,7 @@ namespace Grpc;
 /**
  * One request → stream of responses. Constructed via
  * `BaseStub::_serverStreamRequest`, which calls `start($argument)` to stage the
- * native stream. The caller then iterates `responses()`.
+ * HTTP/2 stream. The caller then iterates `responses()`.
  */
 class ServerStreamingCall extends AbstractCall
 {
@@ -19,7 +19,7 @@ class ServerStreamingCall extends AbstractCall
     private ?\stdClass $finalStatus = null;
     private bool $cancelled = false;
     private ?string $serializedRequest = null;
-    private mixed $nativeStream = null;
+    private mixed $http2Stream = null;
 
     /**
      * @param object $argument message instance with serializeToString()
@@ -48,7 +48,7 @@ class ServerStreamingCall extends AbstractCall
             throw new \RuntimeException('ServerStreamingCall::responses() called before start()');
         }
 
-        yield from $this->responsesNative();
+        yield from $this->responsesHttp2();
     }
 
     public function getStatus(): \stdClass
@@ -65,9 +65,9 @@ class ServerStreamingCall extends AbstractCall
     {
         $this->cancelled = true;
         $this->finalStatus ??= $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
-        if ($this->nativeStream !== null) {
-            Internal\NativeTransport::streamCancel($this->nativeStream);
-            $this->nativeStream = null;
+        if ($this->http2Stream !== null) {
+            Internal\Http2Transport::streamCancel($this->http2Stream);
+            $this->http2Stream = null;
         }
     }
 
@@ -86,21 +86,21 @@ class ServerStreamingCall extends AbstractCall
     /**
      * @return \Generator<int, object>
      */
-    private function responsesNative(): \Generator
+    private function responsesHttp2(): \Generator
     {
         try {
-            $this->nativeStream = Internal\NativeTransport::streamOpen(
+            $this->http2Stream = Internal\Http2Transport::streamOpen(
                 $this->channel->getTarget(),
                 $this->method,
                 $this->serializedRequest ?? '',
-                $this->buildNativeRequestHeaders(),
+                $this->buildHttp2RequestHeaders(),
                 isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
                 $this->channel->credentials,
                 $this->maxReceiveMessageLength(),
                 $this->authorityOverride(),
             );
         } catch (\RuntimeException $e) {
-            if ($e->getMessage() === 'native transport deadline exceeded') {
+            if ($e->getMessage() === 'HTTP/2 transport deadline exceeded') {
                 $this->finalStatus = $this->makeStatus(STATUS_DEADLINE_EXCEEDED, $e->getMessage());
                 return;
             }
@@ -111,15 +111,15 @@ class ServerStreamingCall extends AbstractCall
         try {
             while (true) {
                 if ($this->cancelled) {
-                    if ($this->nativeStream !== null) {
-                        Internal\NativeTransport::streamCancel($this->nativeStream);
-                        $this->nativeStream = null;
+                    if ($this->http2Stream !== null) {
+                        Internal\Http2Transport::streamCancel($this->http2Stream);
+                        $this->http2Stream = null;
                     }
                     $this->finalStatus ??= $this->makeStatus(STATUS_CANCELLED, 'call cancelled');
                     return;
                 }
 
-                $next = Internal\NativeTransport::streamNext($this->nativeStream);
+                $next = Internal\Http2Transport::streamNext($this->http2Stream);
                 if (($next['done'] ?? false) === true) {
                     $this->responseHeaders = $next['headers'] ?? [];
                     $this->responseTrailers = $next['trailers'] ?? [];
@@ -133,7 +133,7 @@ class ServerStreamingCall extends AbstractCall
             $this->finalStatus = $this->makeStatus(STATUS_UNAVAILABLE, $e->getMessage());
             return;
         } finally {
-            $this->nativeStream = null;
+            $this->http2Stream = null;
         }
     }
 

@@ -4,7 +4,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../vendor/autoload.php';
 
 if (!(extension_loaded('grpc'))) {
-    fwrite(STDERR, "grpc native extension is not loaded\n");
+    fwrite(STDERR, "grpc extension is not loaded\n");
     exit(1);
 }
 

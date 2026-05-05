@@ -1,8 +1,8 @@
 /*
- * Bench-only native transport entrypoints.
+ * Bench-only HTTP/2 transport entrypoints.
  *
  * This file is included from grpc.c intentionally. The benchmark harness uses
- * the same low-level HTTP/2 helpers and diagnostics as the production native
+ * the same low-level HTTP/2 helpers and diagnostics as the production HTTP/2
  * transport, but those helpers should remain file-local instead of becoming a
  * wider extension ABI.
  */
@@ -1482,7 +1482,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     client.deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
     client.fd = connect_tcp(host, port, client.deadline_abs_us);
     if (client.fd < 0) {
-        zend_throw_exception(NULL, errno == ETIMEDOUT ? "native transport deadline exceeded" : "failed to connect", 0);
+        zend_throw_exception(NULL, errno == ETIMEDOUT ? "HTTP/2 transport deadline exceeded" : "failed to connect", 0);
         RETURN_THROWS();
     }
     if (poll_loop && set_nonblocking(client.fd) != 0) {

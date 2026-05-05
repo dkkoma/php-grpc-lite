@@ -9,7 +9,7 @@ processをまたぐHTTP/2 session共有は対象外。公式 ext-grpc もprocess
 ## spike branch
 
 - branch: `spike/native-mux-event-loop`
-- commit: `d6386cd Native transport mux spike: 同一HTTP/2 sessionで複数RPCを扱う`
+- commit: `d6386cd HTTP/2 transport mux spike: 同一HTTP/2 sessionで複数RPCを扱う`
 
 spikeでは以下を実装して検証した。
 

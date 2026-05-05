@@ -1,4 +1,4 @@
-# native surface / 100x100KiB repeat check (2026-05-03)
+# HTTP/2 surface / 100x100KiB repeat check (2026-05-03)
 
 ## 目的
 
@@ -6,7 +6,7 @@
 
 - PoC batch APIだけではなく、actual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを通るnative測定variant。
 - `100×100KiB` server streaming例外ケースのfocused repeat runner。
-- native surfaceでもserver stats trailerを回収できるよう、`NativeTransport` wrapperから `x-bench-*` trailer相当を公開。
+- HTTP/2 surfaceでもserver stats trailerを回収できるよう、`Http2Transport` wrapperから `x-bench-*` trailer相当を公開。
 - transport選択の制御テスト。
 
 ## 追加した入口
@@ -25,7 +25,7 @@ REPEATS=3 BENCH_TAG=20260503-100x100k-repeat bench/phase2/repeat-server-stream-1
 
 ## Smoke
 
-actual native surfaceの最小疎通:
+actual HTTP/2 surfaceの最小疎通:
 
 | case | p50 | p99 | throughput |
 | --- | ---: | ---: | ---: |

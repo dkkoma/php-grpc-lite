@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../vendor/autoload.php';
 
-use Grpc\Internal\NativeTransport;
+use Grpc\Internal\Http2Transport;
 
 header('content-type: application/json');
 
@@ -13,7 +13,7 @@ if (!extension_loaded('grpc')) {
     return;
 }
 
-$result = NativeTransport::unarySimple(
+$result = Http2Transport::unarySimple(
     'test-server:50051',
     '/helloworld.Greeter/BenchUnary',
     '',

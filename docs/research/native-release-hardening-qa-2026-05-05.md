@@ -2,7 +2,7 @@
 
 ## 目的
 
-native transportをrelease defaultにする前のblockerである memory / lifecycle / FPM worker request boundary を、手元とCIで再実行できる形にする。
+HTTP/2 transportをrelease defaultにする前のblockerである memory / lifecycle / FPM worker request boundary を、手元とCIで再実行できる形にする。
 
 ## 追加した入口
 

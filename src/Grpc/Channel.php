@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Grpc;
 
-use Grpc\Internal\NativeTransport;
+use Grpc\Internal\Http2Transport;
 
 /**
  * Holds the address and channel-level options for a gRPC peer.
@@ -42,10 +42,10 @@ class Channel
 
     public function close(): void
     {
-        NativeTransport::closeChannel(
+        Http2Transport::closeChannel(
             $this->hostname,
             $this->credentials,
-            NativeTransport::authorityOverride($this->opts),
+            Http2Transport::authorityOverride($this->opts),
         );
     }
 }
