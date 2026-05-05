@@ -16,7 +16,7 @@ if (!extension_loaded('grpc')) {
 $result = NativeTransport::unarySimple(
     'test-server:50051',
     '/helloworld.Greeter/BenchUnary',
-    "\0\0\0\0\0",
+    '',
     [],
 );
 
