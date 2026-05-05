@@ -159,7 +159,7 @@ runtime transportは native nghttp2 + 自前socket/TLS の1系統とする。PHP
 - ベースイメージ: `php:8.4-cli-trixie`
 - ホスト OS 非依存(macOS の LibreSSL/Homebrew には依存しない)
 - 起動方法: `docker compose run --rm dev`
-- 同梱ツール: build-essential, autoconf, pkg-config, libcurl4-openssl-dev, libssl-dev, libnghttp2-dev, protobuf-compiler, composer, pecl protobuf 拡張
+- 同梱ツール: build-essential, autoconf, pkg-config, libssl-dev, libnghttp2-dev, protobuf-compiler, composer, pecl protobuf 拡張
 
 ### 5.3 ビルド/配布
 

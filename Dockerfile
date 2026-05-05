@@ -6,7 +6,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         git \
         unzip \
-        libcurl4-openssl-dev \
         libssl-dev \
         libnghttp2-dev \
         protobuf-compiler \
