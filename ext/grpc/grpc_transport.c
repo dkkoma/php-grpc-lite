@@ -1505,7 +1505,6 @@ static int process_response_data_direct(nghttp2_session *session, grpc_call *cli
                         return -1;
                     }
                 } else if (deliver_response_payload(client, payload, ready_abs_us) != 0) {
-                    zend_string_release(payload);
                     return -1;
                 }
             }
