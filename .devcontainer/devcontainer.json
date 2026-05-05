@@ -1,0 +1,17 @@
+{
+  "name": "php-grpc-lite",
+  "dockerComposeFile": "../compose.yaml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools"
+      ],
+      "settings": {
+        "C_Cpp.default.configuration": "Dev Container"
+      }
+    }
+  }
+}
