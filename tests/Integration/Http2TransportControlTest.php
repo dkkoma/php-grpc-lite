@@ -350,6 +350,30 @@ PHP;
         self::assertNotSame('', $status->details);
     }
 
+    public function testHttp2MtlsRejectsOneSidedClientCertificateConfig(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc extension is not loaded in this process');
+        }
+
+        $rootCerts = file_get_contents(self::CA_PATH);
+        $clientKey = file_get_contents(self::CLIENT_KEY_PATH);
+        self::assertNotFalse($rootCerts);
+        self::assertNotFalse($clientKey);
+
+        $client = new GreeterClient(self::MTLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl($rootCerts, $clientKey, null),
+        ]);
+
+        $request = new HelloRequest();
+        $request->setName('mTLS');
+        [$response, $status] = $client->SayHello($request)->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
+        self::assertSame('client certificate and private key must be configured together', $status->details);
+    }
+
     public function testHttp2UnaryHonorsMaxReceiveMessageLength(): void
     {
         if (!(extension_loaded('grpc'))) {

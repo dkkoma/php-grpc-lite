@@ -471,6 +471,9 @@ static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us
 
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len)
 {
+    if (pem_len > INT_MAX) {
+        return -1;
+    }
     BIO *bio = BIO_new_mem_buf(pem, (int) pem_len);
     if (bio == NULL) {
         return -1;
@@ -493,6 +496,9 @@ static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem
 
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len)
 {
+    if (cert_len > INT_MAX || key_len > INT_MAX) {
+        return -1;
+    }
     BIO *cert_bio = BIO_new_mem_buf(cert, (int) cert_len);
     BIO *key_bio = BIO_new_mem_buf(key, (int) key_len);
     X509 *x509 = NULL;
@@ -569,6 +575,10 @@ static int configure_tls_channel(h2_channel *channel, const char *host, const ch
         return -1;
     }
 
+    if ((cert_chain != NULL && cert_chain_len > 0) != (private_key != NULL && private_key_len > 0)) {
+        set_channel_error_detail(channel, "client certificate and private key must be configured together");
+        return -1;
+    }
     if (cert_chain != NULL && private_key != NULL && cert_chain_len > 0 && private_key_len > 0) {
         if (configure_client_certificate(channel->ssl_ctx, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
             set_channel_error_detail(channel, "failed to configure client certificate");
