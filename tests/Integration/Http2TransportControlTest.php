@@ -1004,6 +1004,22 @@ PHP;
         self::assertTrue(\grpc_lite_stream_cancel($nextStream));
     }
 
+    public function testHttp2StreamCancelRejectsWrongResourceType(): void
+    {
+        if (!function_exists('grpc_lite_stream_cancel')) {
+            self::markTestSkipped('grpc_lite_stream_cancel is not loaded in this process');
+        }
+
+        $handle = fopen('php://memory', 'rb');
+        self::assertIsResource($handle);
+        try {
+            $this->expectException(\TypeError::class);
+            \grpc_lite_stream_cancel($handle);
+        } finally {
+            fclose($handle);
+        }
+    }
+
     public function testHttp2StreamDeadlineReleasesPersistentChannel(): void
     {
         if (!function_exists('grpc_lite_stream_open')) {

@@ -563,6 +563,9 @@ PHP_FUNCTION(grpc_lite_stream_cancel)
     ZEND_PARSE_PARAMETERS_END();
 
     stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_lite_stream", le_h2_stream);
+    if (stream == NULL) {
+        RETURN_THROWS();
+    }
     if (stream != NULL && !stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
         stream->cancelled = true;
         stream->completed = true;
