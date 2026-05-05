@@ -773,6 +773,52 @@ PHP;
         self::assertTrue(\grpc_lite_stream_cancel($nextStream));
     }
 
+    public function testNativeStreamDeadlineReleasesPersistentChannel(): void
+    {
+        if (!function_exists('grpc_lite_stream_open')) {
+            self::markTestSkipped('grpc_native stream API is not loaded in this process');
+        }
+
+        $key = 'phpunit-stream-deadline-' . bin2hex(random_bytes(8));
+        $request = new BenchRequest();
+        $request->setMessageCount(10);
+        $request->setPayloadBytes(100);
+        $request->setServerDelayMs(50);
+        $serialized = $request->serializeToString();
+
+        $stream = \grpc_lite_stream_open(
+            $key,
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchServerStream',
+            $serialized,
+            [],
+            20_000,
+        );
+        $done = null;
+        while ($done === null || ($done['done'] ?? false) !== true) {
+            $done = \grpc_lite_stream_next($stream);
+        }
+        self::assertTrue($done['timed_out'] ?? false);
+
+        $nextRequest = new BenchRequest();
+        $nextRequest->setMessageCount(1);
+        $nextRequest->setPayloadBytes(100);
+        $nextStream = \grpc_lite_stream_open(
+            $key,
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchServerStream',
+            $nextRequest->serializeToString(),
+            [],
+        );
+        $next = \grpc_lite_stream_next($nextStream);
+
+        self::assertFalse($next['done']);
+        self::assertIsString($next['payload']);
+        self::assertTrue(\grpc_lite_stream_cancel($nextStream));
+    }
+
     public function testNativeChannelEofIsDiscardedBeforeNextRpc(): void
     {
         if (!(extension_loaded('grpc'))) {

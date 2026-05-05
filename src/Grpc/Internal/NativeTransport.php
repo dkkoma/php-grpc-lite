@@ -27,6 +27,9 @@ final class NativeTransport
         if (!function_exists('grpc_lite_unary')) {
             throw new \RuntimeException('grpc lite extension bridge is not loaded');
         }
+        if (strlen($serializedRequest) > 0xffffffff) {
+            throw new \RuntimeException('gRPC request message exceeds 32-bit frame length');
+        }
 
         [$host, $port] = self::splitTarget($target);
         $framedRequest = "\0" . pack('N', strlen($serializedRequest)) . $serializedRequest;
@@ -193,10 +196,8 @@ final class NativeTransport
         if (($result['response_message_too_large'] ?? false) === true) {
             return [\Grpc\STATUS_RESOURCE_EXHAUSTED, 'received message exceeds maximum size'];
         }
-
-        $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
-        if ($streamErrorCode !== 0) {
-            return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
+        if (($result['malformed_response_frame'] ?? false) === true) {
+            return [\Grpc\STATUS_INTERNAL, 'malformed gRPC response frame: incomplete trailing bytes'];
         }
 
         $unsupportedEncoding = self::unsupportedGrpcEncoding($metadata);
@@ -205,6 +206,11 @@ final class NativeTransport
         }
         if (($result['compressed_response_seen'] ?? false) === true) {
             return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
+        }
+
+        $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
+        if ($streamErrorCode !== 0) {
+            return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
         }
 
         if (($result['invalid_grpc_status'] ?? false) === true) {

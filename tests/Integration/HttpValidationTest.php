@@ -83,4 +83,22 @@ final class HttpValidationTest extends TestCase
         self::assertSame(\Grpc\STATUS_UNKNOWN, $call->getStatus()->code);
         self::assertSame('invalid gRPC content-type: text/plain', $call->getStatus()->details);
     }
+
+    public function testServerStreamingRejectsPartialGrpcFrame(): void
+    {
+        $request = new BenchRequest();
+        $request->setMessageCount(10);
+
+        $call = $this->client->BenchServerStream($request, [
+            'x-bench-grpc-response' => ['partial-frame'],
+        ]);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(0, $count);
+        self::assertSame(\Grpc\STATUS_INTERNAL, $call->getStatus()->code);
+        self::assertSame('malformed gRPC response frame: incomplete trailing bytes', $call->getStatus()->details);
+    }
 }

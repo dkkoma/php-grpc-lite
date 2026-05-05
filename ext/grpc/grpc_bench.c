@@ -201,7 +201,7 @@ static int bench_process_response_messages_from_offset(grpc_call *client, zend_f
         fci->retval = &retval;
 
         started = monotonic_us();
-        if (zend_call_function(fci, fcc) != SUCCESS) {
+        if (zend_call_function(fci, fcc) != SUCCESS || EG(exception)) {
             zval_ptr_dtor(&params[0]);
             if (!Z_ISUNDEF(retval)) {
                 zval_ptr_dtor(&retval);
@@ -323,7 +323,7 @@ static int bench_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t f
             client->bench.awaiting_data_after_window_update_sent = false;
         }
         if (client->direct_response_payload && client->decode_response_incrementally && ((client->payload_callback_fci != NULL && client->payload_callback_fcc != NULL) || client->queue_response_payloads)) {
-            if (process_response_data_direct(client, data, len) != 0) {
+            if (process_response_data_direct(session, client, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
         } else if (!client->discard_response_body) {
@@ -1171,12 +1171,23 @@ PHP_FUNCTION(grpc_lite_multiplex_unary)
     ctx.stream_count = (size_t) stream_count;
     ctx.streams = ecalloc(ctx.stream_count, sizeof(mux_stream));
 
-    nghttp2_session_callbacks_new(&callbacks);
+    if (nghttp2_session_callbacks_new(&callbacks) != 0) {
+        close(ctx.fd);
+        efree(ctx.streams);
+        zend_throw_exception(NULL, "failed to configure callbacks", 0);
+        RETURN_THROWS();
+    }
     nghttp2_session_callbacks_set_send_callback(callbacks, mux_send_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, mux_on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_header_callback(callbacks, mux_on_header_callback);
     nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, mux_on_stream_close_callback);
-    nghttp2_session_client_new(&session, callbacks, &ctx);
+    if (nghttp2_session_client_new(&session, callbacks, &ctx) != 0) {
+        close(ctx.fd);
+        nghttp2_session_callbacks_del(callbacks);
+        efree(ctx.streams);
+        zend_throw_exception(NULL, "failed to create nghttp2 session", 0);
+        RETURN_THROWS();
+    }
     nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0);
 
     snprintf(authority, sizeof(authority), "%s:%ld", host, port);
@@ -1480,7 +1491,11 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         RETURN_THROWS();
     }
 
-    nghttp2_session_callbacks_new(&callbacks);
+    if (nghttp2_session_callbacks_new(&callbacks) != 0) {
+        close(client.fd);
+        zend_throw_exception(NULL, "failed to configure callbacks", 0);
+        RETURN_THROWS();
+    }
     nghttp2_session_callbacks_set_send_callback(callbacks, bench_send_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, bench_on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_header_callback(callbacks, bench_on_header_callback);
@@ -1490,7 +1505,12 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     nghttp2_session_callbacks_set_on_frame_not_send_callback(callbacks, bench_on_frame_not_send_callback);
     nghttp2_session_callbacks_set_data_source_read_length_callback(callbacks, data_source_read_length_callback);
     nghttp2_session_callbacks_set_send_data_callback(callbacks, send_data_callback);
-    nghttp2_session_client_new(&session, callbacks, &client);
+    if (nghttp2_session_client_new(&session, callbacks, &client) != 0) {
+        close(client.fd);
+        nghttp2_session_callbacks_del(callbacks);
+        zend_throw_exception(NULL, "failed to create nghttp2 session", 0);
+        RETURN_THROWS();
+    }
     if (client.bench.recv_stream_window_size > 0) {
         nghttp2_settings_entry iv[1] = {
             {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, client.bench.recv_stream_window_size},
@@ -1511,7 +1531,14 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
-    append_custom_request_headers(&request_headers, headers_zv);
+    if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
+        close(client.fd);
+        nghttp2_session_del(session);
+        nghttp2_session_callbacks_del(callbacks);
+        free_request_headers(&request_headers);
+        cleanup_grpc_call(&client);
+        RETURN_THROWS();
+    }
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = bench_data_source_read_callback;
