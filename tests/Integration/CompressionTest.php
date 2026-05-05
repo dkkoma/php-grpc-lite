@@ -62,4 +62,36 @@ final class CompressionTest extends TestCase
         self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $call->getStatus()->code);
         self::assertSame('compressed gRPC messages are not supported', $call->getStatus()->details);
     }
+
+    public function testCompressedMessageIsRejectedEvenWhenGrpcStatusIsOk(): void
+    {
+        $request = new BenchRequest();
+        [$response, $status] = $this->client->BenchUnary($request, [
+            'x-bench-grpc-response' => ['compressed-flag'],
+            'x-bench-grpc-status' => ['0'],
+        ])->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $status->code);
+        self::assertSame('compressed gRPC messages are not supported', $status->details);
+    }
+
+    public function testServerStreamingCompressedMessageIsRejectedEvenWhenGrpcStatusIsOk(): void
+    {
+        $request = new BenchRequest();
+        $request->setMessageCount(10);
+
+        $call = $this->client->BenchServerStream($request, [
+            'x-bench-grpc-response' => ['compressed-flag'],
+            'x-bench-grpc-status' => ['0'],
+        ]);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(0, $count);
+        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $call->getStatus()->code);
+        self::assertSame('compressed gRPC messages are not supported', $call->getStatus()->details);
+    }
 }

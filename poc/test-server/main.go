@@ -406,6 +406,10 @@ func serveNonGrpcH2C() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("x-bench-grpc-response") == "compressed-flag" {
 			w.Header().Set("content-type", "application/grpc")
+			if grpcStatus := r.Header.Get("x-bench-grpc-status"); grpcStatus != "" {
+				w.Header().Set("trailer", "grpc-status")
+				defer w.Header().Set("grpc-status", grpcStatus)
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(grpcFrame(1, nil))
 			return
@@ -415,6 +419,18 @@ func serveNonGrpcH2C() {
 			w.Header().Set("grpc-encoding", encoding)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(grpcFrame(0, nil))
+			return
+		}
+		if grpcStatus := r.Header.Get("x-bench-grpc-status"); grpcStatus != "" {
+			contentType := r.Header.Get("x-bench-content-type")
+			if contentType == "" {
+				contentType = "application/grpc"
+			}
+			w.Header().Set("content-type", contentType)
+			w.Header().Set("trailer", "grpc-status")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			w.Header().Set("grpc-status", grpcStatus)
 			return
 		}
 		status := http.StatusOK

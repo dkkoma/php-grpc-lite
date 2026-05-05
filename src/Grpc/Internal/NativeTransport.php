@@ -175,12 +175,6 @@ final class NativeTransport
         }
 
         $metadata = self::extractInitialMetadata($result);
-        $grpcStatus = (int) ($result['grpc_status'] ?? -1);
-        if ($grpcStatus >= 0 && ($result['response_message_too_large'] ?? false) !== true) {
-            $message = $result['grpc_message'] ?? '';
-            return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
-        }
-
         if (($result['channel_dead'] ?? false) === true) {
             $detail = $result['channel_last_error_detail'] ?? '';
             return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'native transport I/O error'];
@@ -211,6 +205,16 @@ final class NativeTransport
         }
         if (($result['compressed_response_seen'] ?? false) === true) {
             return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
+        }
+
+        if (($result['invalid_grpc_status'] ?? false) === true) {
+            return [\Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'];
+        }
+
+        $grpcStatus = (int) ($result['grpc_status'] ?? -1);
+        if ($grpcStatus >= 0) {
+            $message = $result['grpc_message'] ?? '';
+            return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
         }
 
         return [\Grpc\STATUS_UNKNOWN, 'missing grpc-status trailer'];

@@ -59,6 +59,7 @@ typedef struct {
     int http_status;
     bool compressed_response_seen;
     bool response_message_too_large;
+    bool invalid_grpc_status;
     size_t max_receive_message_bytes;
     size_t bytes_sent;
     size_t bytes_received;
@@ -246,6 +247,7 @@ typedef struct {
 
 static uint64_t monotonic_us(void);
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
+static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
 static void record_data_sent(grpc_call *client);
 static int process_response_messages(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us);
 static int process_response_messages_from_offset(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us);
@@ -1276,11 +1278,10 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
     }
     trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
-        char status_buf[16];
-        size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
-        memcpy(status_buf, value, copy_len);
-        status_buf[copy_len] = '\0';
-        client->grpc_status = atoi(status_buf);
+        client->grpc_status = parse_grpc_status_value(value, valuelen);
+        if (client->grpc_status < 0) {
+            client->invalid_grpc_status = true;
+        }
         trailing = true;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
         if (client->grpc_message != NULL) {
@@ -1449,6 +1450,24 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
     memcpy(buf, value, copy_len);
     buf[copy_len] = '\0';
     return (zend_long) atoll(buf);
+}
+
+static int parse_grpc_status_value(const uint8_t *value, size_t valuelen)
+{
+    int status = 0;
+
+    if (valuelen == 0 || valuelen > 2) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < valuelen; i++) {
+        if (value[i] < '0' || value[i] > '9') {
+            return -1;
+        }
+        status = (status * 10) + (value[i] - '0');
+    }
+
+    return status <= 16 ? status : -1;
 }
 
 static size_t count_custom_header_values(zval *headers_zv)
@@ -2199,6 +2218,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     add_assoc_str(return_value, "grpc_message", client.grpc_message != NULL ? zend_string_copy(client.grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client.http_status);
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
+    add_assoc_bool(return_value, "invalid_grpc_status", client.invalid_grpc_status);
     add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client.response_message_too_large);
     add_assoc_long(return_value, "max_receive_message_length", client.max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client.max_receive_message_bytes);
@@ -2485,6 +2505,7 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_str(return_value, "grpc_message", client->grpc_message != NULL ? zend_string_copy(client->grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client->http_status);
     add_assoc_long(return_value, "stream_error_code", client->stream_error_code);
+    add_assoc_bool(return_value, "invalid_grpc_status", client->invalid_grpc_status);
     add_assoc_bool(return_value, "compressed_response_seen", client->compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client->response_message_too_large);
     add_assoc_long(return_value, "max_receive_message_length", client->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client->max_receive_message_bytes);
