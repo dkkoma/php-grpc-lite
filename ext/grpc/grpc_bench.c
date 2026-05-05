@@ -7,6 +7,710 @@
  * wider extension ABI.
  */
 
+static ssize_t data_source_read_length_callback(nghttp2_session *session, uint8_t frame_type, int32_t stream_id, int32_t session_remote_window_size, int32_t stream_remote_window_size, uint32_t remote_max_frame_size, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    size_t allowed = (size_t) session_remote_window_size;
+    (void) session;
+    (void) frame_type;
+    (void) stream_id;
+
+    if (stream_remote_window_size < session_remote_window_size) {
+        allowed = (size_t) stream_remote_window_size;
+    }
+    if (remote_max_frame_size < allowed) {
+        allowed = remote_max_frame_size;
+    }
+    if (client->data_frame_size_cap > 0 && client->data_frame_size_cap < allowed) {
+        allowed = client->data_frame_size_cap;
+    }
+    if (allowed == 0) {
+        uint64_t elapsed = client->call_started_us == 0 ? 0 : monotonic_us() - client->call_started_us;
+        client->flow_control_pauses++;
+        client->call_flow_control_pauses++;
+        if (elapsed > 0 && client->first_flow_control_pause_us == 0) {
+            client->first_flow_control_pause_us = elapsed;
+        }
+        return NGHTTP2_ERR_PAUSE;
+    }
+
+    client->data_read_length_calls++;
+    client->call_data_read_length_calls++;
+    client->remote_max_frame_size = remote_max_frame_size;
+    if (client->min_session_remote_window == 0 || session_remote_window_size < client->min_session_remote_window) {
+        client->min_session_remote_window = session_remote_window_size;
+    }
+    if (client->min_stream_remote_window == 0 || stream_remote_window_size < client->min_stream_remote_window) {
+        client->min_stream_remote_window = stream_remote_window_size;
+    }
+    if (client->call_min_session_remote_window == 0 || session_remote_window_size < client->call_min_session_remote_window) {
+        client->call_min_session_remote_window = session_remote_window_size;
+    }
+    if (client->call_min_stream_remote_window == 0 || stream_remote_window_size < client->call_min_stream_remote_window) {
+        client->call_min_stream_remote_window = stream_remote_window_size;
+    }
+    if (allowed > client->max_read_len) {
+        client->max_read_len = allowed;
+    }
+    if (client->min_read_len == 0 || allowed < client->min_read_len) {
+        client->min_read_len = allowed;
+    }
+
+    return (ssize_t) allowed;
+}
+
+static size_t fill_request_iov(grpc_call *client, struct iovec *iov, size_t iov_offset, size_t length, size_t *filled_len)
+{
+    size_t filled = 0;
+    size_t total_len = client->grpc_header_len + client->request_len;
+    size_t request_offset = client->request_offset;
+
+    while (filled < length && request_offset < total_len && iov_offset < 4) {
+        if (request_offset < client->grpc_header_len) {
+            size_t header_offset = request_offset;
+            size_t remaining = client->grpc_header_len - header_offset;
+            size_t to_write = remaining < (length - filled) ? remaining : (length - filled);
+            iov[iov_offset].iov_base = client->grpc_header + header_offset;
+            iov[iov_offset].iov_len = to_write;
+            iov_offset++;
+            filled += to_write;
+            request_offset += to_write;
+            continue;
+        }
+
+        size_t payload_offset = request_offset - client->grpc_header_len;
+        size_t remaining = client->request_len - payload_offset;
+        size_t to_write = remaining < (length - filled) ? remaining : (length - filled);
+        iov[iov_offset].iov_base = (void *) (client->request + payload_offset);
+        iov[iov_offset].iov_len = to_write;
+        iov_offset++;
+        filled += to_write;
+        request_offset += to_write;
+    }
+
+    *filled_len = filled;
+    return iov_offset;
+}
+
+static int write_data_frame(grpc_call *client, const uint8_t *framehd, size_t length)
+{
+    struct iovec iov[4];
+    size_t iovcnt = 1;
+    size_t filled_len = 0;
+    size_t total_len = 9 + length;
+    size_t total_written = 0;
+
+    iov[0].iov_base = (void *) framehd;
+    iov[0].iov_len = 9;
+    iovcnt = fill_request_iov(client, iov, iovcnt, length, &filled_len);
+    if (filled_len != length) {
+        return -1;
+    }
+
+    while (total_written < total_len) {
+        uint64_t syscall_started = monotonic_us();
+        ssize_t written = writev(client->fd, iov, (int) iovcnt);
+        uint64_t syscall_elapsed = monotonic_us() - syscall_started;
+        if (syscall_elapsed > client->max_write_syscall_us) {
+            client->max_write_syscall_us = syscall_elapsed;
+        }
+        if (syscall_elapsed > client->call_max_write_syscall_us) {
+            client->call_max_write_syscall_us = syscall_elapsed;
+        }
+        if (written <= 0) {
+            return -1;
+        }
+        client->write_syscalls++;
+        total_written += (size_t) written;
+
+        size_t consumed = (size_t) written;
+        for (size_t i = 0; i < iovcnt && consumed > 0; i++) {
+            if (consumed >= iov[i].iov_len) {
+                consumed -= iov[i].iov_len;
+                iov[i].iov_base = (uint8_t *) iov[i].iov_base + iov[i].iov_len;
+                iov[i].iov_len = 0;
+                continue;
+            }
+            iov[i].iov_base = (uint8_t *) iov[i].iov_base + consumed;
+            iov[i].iov_len -= consumed;
+            consumed = 0;
+        }
+        while (iovcnt > 0 && iov[0].iov_len == 0) {
+            memmove(&iov[0], &iov[1], sizeof(struct iovec) * (iovcnt - 1));
+            iovcnt--;
+        }
+    }
+
+    client->request_offset += length;
+    client->bytes_sent += total_len;
+    return 0;
+}
+
+static void clear_pending_write(grpc_call *client)
+{
+    client->pending_write_iovcnt = 0;
+    client->pending_write_remaining = 0;
+    client->pending_write_payload_len = 0;
+}
+
+static void consume_pending_write(grpc_call *client, size_t consumed)
+{
+    while (client->pending_write_iovcnt > 0 && consumed > 0) {
+        struct iovec *iov = &client->pending_write_iov[0];
+        if (consumed >= iov->iov_len) {
+            consumed -= iov->iov_len;
+            client->pending_write_remaining -= iov->iov_len;
+            memmove(&client->pending_write_iov[0], &client->pending_write_iov[1], sizeof(struct iovec) * (client->pending_write_iovcnt - 1));
+            client->pending_write_iovcnt--;
+            continue;
+        }
+
+        iov->iov_base = (uint8_t *) iov->iov_base + consumed;
+        iov->iov_len -= consumed;
+        client->pending_write_remaining -= consumed;
+        consumed = 0;
+    }
+}
+
+static int prepare_pending_data_frame_write(grpc_call *client, const uint8_t *framehd, size_t length)
+{
+    size_t iovcnt = 1;
+    size_t filled_len = 0;
+
+    client->pending_write_iov[0].iov_base = (void *) framehd;
+    client->pending_write_iov[0].iov_len = 9;
+    iovcnt = fill_request_iov(client, client->pending_write_iov, iovcnt, length, &filled_len);
+    if (filled_len != length) {
+        clear_pending_write(client);
+        return -1;
+    }
+
+    client->pending_write_iovcnt = iovcnt;
+    client->pending_write_remaining = 9 + length;
+    client->pending_write_payload_len = length;
+    return 0;
+}
+
+static int flush_pending_data_frame_write(grpc_call *client)
+{
+    while (client->pending_write_remaining > 0) {
+        uint64_t syscall_started = monotonic_us();
+        ssize_t written = writev(client->fd, client->pending_write_iov, (int) client->pending_write_iovcnt);
+        uint64_t syscall_elapsed = monotonic_us() - syscall_started;
+        if (syscall_elapsed > client->max_write_syscall_us) {
+            client->max_write_syscall_us = syscall_elapsed;
+        }
+        if (syscall_elapsed > client->call_max_write_syscall_us) {
+            client->call_max_write_syscall_us = syscall_elapsed;
+        }
+        if (written < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                client->last_send_wouldblock = true;
+                client->send_wouldblock_calls++;
+                return NGHTTP2_ERR_WOULDBLOCK;
+            }
+            clear_pending_write(client);
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if (written == 0) {
+            client->last_send_wouldblock = true;
+            client->send_wouldblock_calls++;
+            return NGHTTP2_ERR_WOULDBLOCK;
+        }
+
+        client->write_syscalls++;
+        client->bytes_sent += (size_t) written;
+        consume_pending_write(client, (size_t) written);
+    }
+
+    client->request_offset += client->pending_write_payload_len;
+    clear_pending_write(client);
+    return 0;
+}
+
+static int write_data_frame_nonblocking(grpc_call *client, const uint8_t *framehd, size_t length)
+{
+    if (client->pending_write_remaining == 0 && prepare_pending_data_frame_write(client, framehd, length) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return flush_pending_data_frame_write(client);
+}
+
+static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    bool new_data_frame = client->pending_write_remaining == 0;
+    (void) session;
+    (void) frame;
+    (void) source;
+
+    client->send_data_callback_calls++;
+    if (new_data_frame) {
+        client->data_frames_sent++;
+        client->data_bytes_sent += length;
+        if (length > client->max_data_frame_len) {
+            client->max_data_frame_len = length;
+        }
+        if (client->min_data_frame_len == 0 || length < client->min_data_frame_len) {
+            client->min_data_frame_len = length;
+        }
+    }
+
+    if (client->poll_loop) {
+        int write_rv = write_data_frame_nonblocking(client, framehd, length);
+        if (write_rv == NGHTTP2_ERR_WOULDBLOCK) {
+            return NGHTTP2_ERR_WOULDBLOCK;
+        }
+        if (write_rv != 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+    } else if (write_data_frame(client, framehd, length) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    record_data_sent(client);
+    client->pending_data_len = 0;
+
+    return 0;
+}
+
+static ssize_t bench_data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    size_t total_len = client->grpc_header_len + client->request_len;
+    size_t remaining = remaining_request_bytes(client);
+    size_t to_send = remaining < length ? remaining : length;
+    (void) session;
+    (void) stream_id;
+    (void) source;
+
+    *data_flags = 0;
+    client->data_read_calls++;
+
+    if (client->no_copy && to_send > 0) {
+        client->pending_data_len = to_send;
+        *data_flags = NGHTTP2_DATA_FLAG_NO_COPY;
+        if (client->request_offset + to_send >= total_len) {
+            *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        }
+        return (ssize_t) to_send;
+    }
+
+    size_t copied = copy_request_bytes(client, buf, to_send);
+    if (client->request_offset >= total_len) {
+        *data_flags = NGHTTP2_DATA_FLAG_EOF;
+    }
+    return (ssize_t) copied;
+}
+
+static int receive_available(nghttp2_session *session, grpc_call *client, char *recv_buf, size_t recv_buf_len)
+{
+    size_t reads = 0;
+    size_t bytes = 0;
+    client->call_receive_drains++;
+    for (;;) {
+        uint64_t recv_started = monotonic_us();
+        ssize_t nread = recv(client->fd, recv_buf, recv_buf_len, 0);
+        uint64_t recv_elapsed = monotonic_us() - recv_started;
+        if (nread > 0) {
+            int rv;
+            uint64_t mem_recv_started;
+            uint64_t mem_recv_elapsed;
+            client->call_recv_syscalls++;
+            client->call_recv_syscall_us += recv_elapsed;
+            if (recv_elapsed > client->call_max_recv_syscall_us) {
+                client->call_max_recv_syscall_us = recv_elapsed;
+            }
+            reads++;
+            bytes += (size_t) nread;
+            client->bytes_received += (size_t) nread;
+            mem_recv_started = monotonic_us();
+            rv = nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread);
+            mem_recv_elapsed = monotonic_us() - mem_recv_started;
+            client->call_mem_recv_us += mem_recv_elapsed;
+            if (mem_recv_elapsed > client->call_max_mem_recv_us) {
+                client->call_max_mem_recv_us = mem_recv_elapsed;
+            }
+            if (rv < 0) {
+                return rv;
+            }
+            if (client->flush_after_mem_recv && nghttp2_session_want_write(session)) {
+                uint64_t send_started = monotonic_us();
+                uint64_t send_elapsed;
+                rv = nghttp2_session_send(session);
+                send_elapsed = monotonic_us() - send_started;
+                client->call_session_send_after_recv_us += send_elapsed;
+                if (send_elapsed > client->call_max_session_send_after_recv_us) {
+                    client->call_max_session_send_after_recv_us = send_elapsed;
+                }
+                if (rv < 0) {
+                    return rv;
+                }
+            }
+            continue;
+        }
+        if (nread == 0) {
+            return NGHTTP2_ERR_EOF;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            client->call_recv_syscalls++;
+            client->call_recv_syscall_us += recv_elapsed;
+            if (recv_elapsed > client->call_max_recv_syscall_us) {
+                client->call_max_recv_syscall_us = recv_elapsed;
+            }
+            client->recv_wouldblock_calls++;
+            if (reads > 0) {
+                client->call_receive_drains_with_data++;
+                client->call_receive_drains_eagain_after_data++;
+                if (reads > client->call_max_reads_per_drain) {
+                    client->call_max_reads_per_drain = reads;
+                }
+                if (bytes > client->call_max_bytes_per_drain) {
+                    client->call_max_bytes_per_drain = bytes;
+                }
+            }
+            return 0;
+        }
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+}
+
+static int drive_stream_poll(nghttp2_session *session, grpc_call *client, char *recv_buf, size_t recv_buf_len)
+{
+    while (!client->stream_closed && (nghttp2_session_want_read(session) || nghttp2_session_want_write(session))) {
+        int rv;
+
+        if (client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
+            client->timed_out = true;
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+
+        if (client->read_first_poll_loop && nghttp2_session_want_read(session)) {
+            rv = receive_available(session, client, recv_buf, recv_buf_len);
+            if (rv < 0) {
+                return rv;
+            }
+            if (client->read_ahead_delivery && deliver_queued_response_payloads(client) != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            if (client->stream_closed) {
+                return 0;
+            }
+        }
+
+        do {
+            uint64_t send_started;
+            uint64_t send_elapsed;
+            client->last_send_wouldblock = false;
+            send_started = monotonic_us();
+            rv = nghttp2_session_send(session);
+            send_elapsed = monotonic_us() - send_started;
+            client->call_session_send_after_recv_us += send_elapsed;
+            if (send_elapsed > client->call_max_session_send_after_recv_us) {
+                client->call_max_session_send_after_recv_us = send_elapsed;
+            }
+            if (rv < 0) {
+                return rv;
+            }
+        } while (!client->last_send_wouldblock && nghttp2_session_want_write(session));
+
+        rv = receive_available(session, client, recv_buf, recv_buf_len);
+        if (rv < 0) {
+            return rv;
+        }
+        if (client->read_ahead_delivery && deliver_queued_response_payloads(client) != 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if (client->stream_closed) {
+            return 0;
+        }
+
+        short events = 0;
+        if (nghttp2_session_want_read(session)) {
+            events |= POLLIN;
+        }
+        if (nghttp2_session_want_write(session)) {
+            events |= POLLOUT;
+        }
+        if (events == 0) {
+            break;
+        }
+
+        struct pollfd pfd;
+        pfd.fd = client->fd;
+        pfd.events = events;
+        pfd.revents = 0;
+        client->poll_calls++;
+        uint64_t poll_started = monotonic_us();
+        int poll_timeout_ms = 5000;
+        if (client->deadline_abs_us > 0) {
+            uint64_t remaining_us;
+            if (poll_started >= client->deadline_abs_us) {
+                client->timed_out = true;
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            remaining_us = client->deadline_abs_us - poll_started;
+            poll_timeout_ms = (int) ((remaining_us + 999) / 1000);
+            if (poll_timeout_ms < 1) {
+                poll_timeout_ms = 1;
+            } else if (poll_timeout_ms > 5000) {
+                poll_timeout_ms = 5000;
+            }
+        }
+        rv = poll(&pfd, 1, poll_timeout_ms);
+        uint64_t poll_elapsed = monotonic_us() - poll_started;
+        client->call_poll_wait_us += poll_elapsed;
+        if (poll_elapsed > client->call_max_poll_wait_us) {
+            client->call_max_poll_wait_us = poll_elapsed;
+        }
+        if (rv == 0) {
+            client->poll_timeouts++;
+            if (client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
+                client->timed_out = true;
+            }
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if (rv < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            client->poll_errors++;
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if ((pfd.revents & POLLIN) != 0) {
+            client->call_pollin_ready++;
+            client->last_poll_return_abs_us = monotonic_us();
+            client->awaiting_data_after_poll = true;
+        }
+        if ((pfd.revents & POLLOUT) != 0) {
+            client->call_pollout_ready++;
+        }
+    }
+
+    return client->stream_closed ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
+}
+
+typedef struct {
+    int32_t stream_id;
+    bool stream_closed;
+    int grpc_status;
+    uint32_t stream_error_code;
+    const uint8_t *request;
+    size_t request_len;
+    size_t request_offset;
+    smart_str body;
+} mux_stream;
+
+typedef struct {
+    int fd;
+    mux_stream *streams;
+    size_t stream_count;
+    size_t closed_count;
+    size_t bytes_sent;
+    size_t bytes_received;
+} mux_context;
+
+static ssize_t mux_send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
+{
+    mux_context *ctx = (mux_context *) user_data;
+    size_t total_written = 0;
+    (void) session;
+    (void) flags;
+    while (total_written < length) {
+        ssize_t written = send(ctx->fd, data + total_written, length - total_written, 0);
+        if (written <= 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        total_written += (size_t) written;
+    }
+    ctx->bytes_sent += total_written;
+    return (ssize_t) total_written;
+}
+
+static ssize_t mux_data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+{
+    mux_stream *stream = (mux_stream *) source->ptr;
+    size_t remaining;
+    size_t to_copy;
+    (void) session;
+    (void) stream_id;
+    (void) user_data;
+
+    *data_flags = 0;
+    if (stream->request_offset >= stream->request_len) {
+        *data_flags = NGHTTP2_DATA_FLAG_EOF;
+        return 0;
+    }
+    remaining = stream->request_len - stream->request_offset;
+    to_copy = remaining < length ? remaining : length;
+    memcpy(buf, stream->request + stream->request_offset, to_copy);
+    stream->request_offset += to_copy;
+    if (stream->request_offset >= stream->request_len) {
+        *data_flags = NGHTTP2_DATA_FLAG_EOF;
+    }
+    return (ssize_t) to_copy;
+}
+
+static int mux_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
+{
+    mux_stream *stream = (mux_stream *) nghttp2_session_get_stream_user_data(session, stream_id);
+    (void) flags;
+    (void) user_data;
+    if (stream != NULL && len > 0) {
+        smart_str_appendl(&stream->body, (const char *) data, len);
+    }
+    return 0;
+}
+
+static int mux_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+{
+    mux_stream *stream;
+    (void) flags;
+    (void) user_data;
+    if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_HEADERS) {
+        return 0;
+    }
+    stream = (mux_stream *) nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+    if (stream == NULL) {
+        return 0;
+    }
+    if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
+        stream->grpc_status = (int) header_value_to_long(value, valuelen);
+    }
+    return 0;
+}
+
+static int mux_on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
+{
+    mux_context *ctx = (mux_context *) user_data;
+    mux_stream *stream = (mux_stream *) nghttp2_session_get_stream_user_data(session, stream_id);
+    (void) session;
+    if (stream != NULL && !stream->stream_closed) {
+        stream->stream_closed = true;
+        stream->stream_error_code = error_code;
+        ctx->closed_count++;
+    }
+    return 0;
+}
+
+PHP_FUNCTION(grpc_native_multiplex_unary)
+{
+    char *host = NULL;
+    size_t host_len = 0;
+    zend_long port = 0;
+    char *path = NULL;
+    size_t path_len = 0;
+    char *request = NULL;
+    size_t request_len = 0;
+    zend_long stream_count = 0;
+    mux_context ctx;
+    nghttp2_session_callbacks *callbacks = NULL;
+    nghttp2_session *session = NULL;
+    nghttp2_nv nva[7];
+    size_t nvlen = 0;
+    char authority[512];
+    char recv_buf[16384];
+    uint64_t started;
+    int rv = 0;
+
+    ZEND_PARSE_PARAMETERS_START(5, 5)
+        Z_PARAM_STRING(host, host_len)
+        Z_PARAM_LONG(port)
+        Z_PARAM_STRING(path, path_len)
+        Z_PARAM_STRING(request, request_len)
+        Z_PARAM_LONG(stream_count)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (stream_count <= 0 || stream_count > 256) {
+        zend_throw_exception(NULL, "stream_count must be between 1 and 256", 0);
+        RETURN_THROWS();
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.fd = connect_tcp(host, port, 0);
+    if (ctx.fd < 0) {
+        zend_throw_exception(NULL, "failed to connect", 0);
+        RETURN_THROWS();
+    }
+    ctx.stream_count = (size_t) stream_count;
+    ctx.streams = ecalloc(ctx.stream_count, sizeof(mux_stream));
+
+    nghttp2_session_callbacks_new(&callbacks);
+    nghttp2_session_callbacks_set_send_callback(callbacks, mux_send_callback);
+    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, mux_on_data_chunk_recv_callback);
+    nghttp2_session_callbacks_set_on_header_callback(callbacks, mux_on_header_callback);
+    nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, mux_on_stream_close_callback);
+    nghttp2_session_client_new(&session, callbacks, &ctx);
+    nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0);
+
+    snprintf(authority, sizeof(authority), "%s:%ld", host, port);
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV(":scheme", "http");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", authority, strlen(authority));
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "php-grpc-lite/0.1.0-dev");
+
+    for (size_t i = 0; i < ctx.stream_count; i++) {
+        nghttp2_data_provider data_provider;
+        memset(&data_provider, 0, sizeof(data_provider));
+        ctx.streams[i].grpc_status = -1;
+        ctx.streams[i].request = (const uint8_t *) request;
+        ctx.streams[i].request_len = request_len;
+        data_provider.source.ptr = &ctx.streams[i];
+        data_provider.read_callback = mux_data_source_read_callback;
+        ctx.streams[i].stream_id = nghttp2_submit_request(session, NULL, nva, nvlen, &data_provider, &ctx.streams[i]);
+        if (ctx.streams[i].stream_id < 0) {
+            rv = -1;
+            break;
+        }
+    }
+
+    started = monotonic_us();
+    if (rv == 0 && nghttp2_session_send(session) != 0) {
+        rv = -1;
+    }
+    while (rv == 0 && ctx.closed_count < ctx.stream_count) {
+        ssize_t nread = recv(ctx.fd, recv_buf, sizeof(recv_buf), 0);
+        if (nread <= 0) {
+            rv = -1;
+            break;
+        }
+        ctx.bytes_received += (size_t) nread;
+        if (nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread) < 0) {
+            rv = -1;
+            break;
+        }
+        if (nghttp2_session_send(session) != 0) {
+            rv = -1;
+            break;
+        }
+    }
+
+    array_init(return_value);
+    add_assoc_long(return_value, "streams", (zend_long) ctx.stream_count);
+    add_assoc_long(return_value, "closed", (zend_long) ctx.closed_count);
+    add_assoc_long(return_value, "elapsed_us", (zend_long) (monotonic_us() - started));
+    add_assoc_long(return_value, "bytes_sent", (zend_long) ctx.bytes_sent);
+    add_assoc_long(return_value, "bytes_received", (zend_long) ctx.bytes_received);
+    add_assoc_bool(return_value, "ok", rv == 0 && ctx.closed_count == ctx.stream_count);
+    zval statuses;
+    array_init(&statuses);
+    for (size_t i = 0; i < ctx.stream_count; i++) {
+        add_next_index_long(&statuses, ctx.streams[i].grpc_status);
+        smart_str_free(&ctx.streams[i].body);
+    }
+    add_assoc_zval(return_value, "grpc_statuses", &statuses);
+
+    close(ctx.fd);
+    nghttp2_session_del(session);
+    nghttp2_session_callbacks_del(callbacks);
+    efree(ctx.streams);
+}
+
 PHP_FUNCTION(grpc_native_bench_unary_batch)
 {
     char *host = NULL;
@@ -269,7 +973,7 @@ PHP_FUNCTION(grpc_native_bench_unary_batch)
     append_custom_request_headers(&request_headers, headers_zv);
 
     memset(&data_provider, 0, sizeof(data_provider));
-    data_provider.read_callback = data_source_read_callback;
+    data_provider.read_callback = bench_data_source_read_callback;
     array_init(&latencies);
     array_init(&client_first_data_sent_us);
     array_init(&client_upload_complete_us);
@@ -784,6 +1488,14 @@ PHP_FUNCTION(grpc_native_bench_unary_batch)
     add_assoc_zval(return_value, "server_stats_out_payload_compressed_bytes", &server_stats_out_payload_compressed_bytes);
     cleanup_grpc_call(&client);
 }
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_multiplex_unary, 0, 5, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
+    ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, stream_count, IS_LONG, 0)
+ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_native_bench_unary_batch, 0, 5, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)

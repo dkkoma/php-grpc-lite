@@ -713,7 +713,7 @@ PHP;
         self::assertSame(\Grpc\STATUS_OK, $next['grpc_status']);
     }
 
-    public function testNativePocCanRunConcurrentStreamsOnOneHttp2Session(): void
+    public function testNativeBenchCanRunConcurrentStreamsOnOneHttp2Session(): void
     {
         if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
@@ -731,5 +731,17 @@ PHP;
         self::assertSame(8, $result['streams']);
         self::assertSame(8, $result['closed']);
         self::assertSame(array_fill(0, 8, \Grpc\STATUS_OK), $result['grpc_statuses']);
+    }
+
+    public function testNativeExtensionDoesNotExposeLegacyOneShotUnaryDiagnostic(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc native extension is not loaded in this process');
+        }
+
+        self::assertFalse(function_exists('grpc_native_unary'));
+        self::assertTrue(function_exists('grpc_native_persistent_channel_unary'));
+        self::assertTrue(function_exists('grpc_native_stream_open'));
+        self::assertTrue(function_exists('grpc_native_bench_unary_batch'));
     }
 }

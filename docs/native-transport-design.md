@@ -179,7 +179,7 @@ native resourceの所有権はC extension側に閉じる。`grpc_call` per-call 
 
 ## Multiplex PoC
 
-HTTP/2 session自体は複数streamを同時にin-flightにできる。native extensionでは `grpc_native_multiplex_unary()` で同一session上に複数unary streamをsubmitし、全streamが独立に完了することを検証した。
+HTTP/2 session自体は複数streamを同時にin-flightにできる。native extensionのbench/diagnostic entrypointである `grpc_native_multiplex_unary()` で同一session上に複数unary streamをsubmitし、全streamが独立に完了することを検証した。
 
 現行のpublic PHP `Grpc\` surfaceは `wait()` / `responses()` が同期blockingなので、FPM / thread-local FrankenPHP の主用途では共有event loop / multiplex schedulerをrelease default gateにしない。async runtimeや同一実行コンテキスト内の並列RPCを扱う段階で、channel resource上のstream tableと共有event loop / poll loopを追加する。
 
