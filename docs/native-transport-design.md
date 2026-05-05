@@ -164,7 +164,9 @@ response message sizeは `grpc.max_receive_message_length` で制御する。cha
 
 HTTP/2 session自体は複数streamを同時にin-flightにできる。native extensionのbench/diagnostic entrypointである `grpc_native_multiplex_unary()` で同一session上に複数unary streamをsubmitし、全streamが独立に完了することを検証した。
 
-現行のpublic PHP `Grpc\` surfaceは `wait()` / `responses()` が同期blockingなので、FPM / thread-local FrankenPHP の主用途では共有event loop / multiplex schedulerをrelease default gateにしない。async runtimeや同一実行コンテキスト内の並列RPCを扱う段階で、channel resource上のstream tableと共有event loop / poll loopを追加する。
+2026-05-05のnative mux spikeでは、production pathを `h2_channel` owner + stream table dispatch に寄せれば、server streamingを開いたまま同一channel上に別server streaming / unaryをsubmitできることを確認した。ただしmain比でsmall unary / small streamingに退行が出たため、現時点ではmainへ採用しない。
+
+現行のpublic PHP `Grpc\` surfaceは `wait()` / `responses()` が同期blockingなので、FPM / thread-local FrankenPHP の主用途では共有event loop / multiplex schedulerをrelease default gateにしない。async runtime、同一実行コンテキスト内の並列RPC、またはtransport専用threadを扱う段階で、単一active stream fast pathを維持できることを条件に再検討する。
 
 ## Compatibility Work
 

@@ -75,7 +75,9 @@ Native transportに残すがMVP必須ではないもの:
 - **shared event loop / multiplex scheduler**
   - concurrent workloadのthroughputには効く。
   - 単一call latency改善の本筋ではない。
-  - channel transportの次段階として扱う。
+  - 2026-05-05のnative mux spikeでは同一HTTP/2 session上の複数active streamは実装可能と確認したが、main比でwarm unary `+13.3%`、server streaming count=1000 `+6.3%` の退行が出た。
+  - 現行public APIは同期blockingで、通常のFPM / FrankenPHP worker利用では同一実行コンテキスト内の複数in-flight RPCが自然には発生しないため、mainには採用しない。
+  - async / concurrent RPC API、transport専用thread、または単一active stream fast pathを維持できる段階で再検討する。
 
 ## Transport Selection Guide
 
@@ -127,3 +129,4 @@ transportはnativeのみ。ただし、server streamingのlarge response bulk tr
 - Spanner DML unary shape comparison: `docs/research/spanner-dml-unary-shape-comparison-2026-05-03.md`
 - Bounded read-ahead: `docs/research/nghttp2-poc-server-stream-bounded-read-ahead-2026-05-03.md`
 - Shared event loop / multiplex: `docs/research/curl-multiplex-shared-event-loop-2026-05-03.md`
+- Native mux / event loop spike: `docs/research/native-mux-event-loop-spike-2026-05-05.md`
