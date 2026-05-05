@@ -243,13 +243,13 @@ final class Http2Transport
         }
 
         $httpStatus = (int) ($result['http_status'] ?? 0);
-        if ($httpStatus !== 200) {
+        if ($httpStatus !== 0 && $httpStatus !== 200) {
             return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
         $contentType = strtolower($metadata['content-type'][0] ?? '');
-        if (!str_starts_with($contentType, 'application/grpc')) {
-            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
+        if ($contentType !== '' && !str_starts_with($contentType, 'application/grpc')) {
+            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: $contentType"];
         }
 
         if (($result['response_message_too_large'] ?? false) === true) {
@@ -273,6 +273,14 @@ final class Http2Transport
         $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
         if ($streamErrorCode !== 0) {
             return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
+        }
+
+        if (!str_starts_with($contentType, 'application/grpc')) {
+            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
+        }
+
+        if ($httpStatus !== 200) {
+            return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
         if (($result['invalid_grpc_status'] ?? false) === true) {

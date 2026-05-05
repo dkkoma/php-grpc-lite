@@ -99,6 +99,12 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
         mark_channel_dead(channel, rv);
+        if (client.timed_out) {
+            clear_channel_call_owner(channel, &client);
+            free_request_headers(&request_headers);
+            recv_loop_us = 0;
+            goto build_unary_result;
+        }
         clear_channel_call_owner(channel, &client);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&client);
@@ -137,6 +143,9 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
         rv = nghttp2_session_send(channel->session);
         if (rv != 0) {
             mark_channel_dead(channel, rv);
+            if (client.timed_out) {
+                break;
+            }
             clear_channel_call_owner(channel, &client);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&client);
@@ -146,6 +155,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
         client.last_session_error = rv;
     }
     recv_loop_us = monotonic_us() - recv_loop_started;
+build_unary_result:
     clear_channel_call_owner(channel, &client);
 
     array_init(return_value);
@@ -419,10 +429,15 @@ PHP_FUNCTION(grpc_lite_stream_open)
 
     rv = nghttp2_session_send(channel->session);
     if (rv != 0) {
+        bool stream_timed_out = stream->client.timed_out;
         mark_channel_dead(channel, rv);
         free_request_headers(&request_headers);
         destroy_h2_stream(stream);
         discard_persistent_channel(key, key_len, channel);
+        if (stream_timed_out) {
+            zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
+            RETURN_THROWS();
+        }
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
         RETURN_THROWS();
     }
@@ -450,8 +465,8 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_long(return_value, "body_bytes", 0);
     add_assoc_long(return_value, "bytes_sent", client->bytes_sent);
     add_assoc_long(return_value, "bytes_received", client->bytes_received);
-    add_assoc_bool(return_value, "channel_dead", stream->channel != NULL ? stream->channel->dead : true);
-    add_assoc_bool(return_value, "channel_draining", stream->channel != NULL ? stream->channel->draining : true);
+    add_assoc_bool(return_value, "channel_dead", stream->channel != NULL ? stream->channel->dead : false);
+    add_assoc_bool(return_value, "channel_draining", stream->channel != NULL ? stream->channel->draining : false);
     add_assoc_long(return_value, "channel_last_error", stream->channel != NULL ? stream->channel->last_error : 0);
     add_assoc_long(return_value, "channel_last_io_errno", stream->channel != NULL ? stream->channel->last_io_errno : client->last_io_errno);
     add_assoc_long(return_value, "channel_last_ssl_error", stream->channel != NULL ? stream->channel->last_ssl_error : client->last_ssl_error);
@@ -492,6 +507,10 @@ PHP_FUNCTION(grpc_lite_stream_next)
         rv = nghttp2_session_send(stream->channel->session);
         if (rv != 0) {
             mark_channel_dead(stream->channel, rv);
+            if (client->timed_out) {
+                stream->completed = true;
+                break;
+            }
             stream->completed = true;
             break;
         }
@@ -549,8 +568,8 @@ PHP_FUNCTION(grpc_lite_stream_next)
         client->malformed_response_frame = true;
     }
     stream->completed = true;
-    clear_channel_stream_owner(stream);
     add_stream_status(return_value, stream);
+    clear_channel_stream_owner(stream);
 }
 
 PHP_FUNCTION(grpc_lite_stream_cancel)
@@ -567,11 +586,19 @@ PHP_FUNCTION(grpc_lite_stream_cancel)
         RETURN_THROWS();
     }
     if (stream != NULL && !stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
+        int rv;
         stream->cancelled = true;
         stream->completed = true;
         stream->client.grpc_status = 1;
-        nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, NGHTTP2_CANCEL);
-        nghttp2_session_send(stream->channel->session);
+        rv = nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, NGHTTP2_CANCEL);
+        if (rv != 0) {
+            mark_channel_dead(stream->channel, rv);
+        } else {
+            rv = nghttp2_session_send(stream->channel->session);
+            if (rv != 0) {
+                mark_channel_dead(stream->channel, rv);
+            }
+        }
         clear_channel_stream_owner(stream);
     }
 

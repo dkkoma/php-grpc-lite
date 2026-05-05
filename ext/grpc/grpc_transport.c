@@ -132,8 +132,8 @@ static void clear_channel_stream_owner(h2_stream *stream)
     }
     channel->busy = false;
     channel->active_stream_owner = NULL;
+    stream->channel = NULL;
     if (channel->detached_from_cache) {
-        stream->channel = NULL;
         destroy_h2_channel(channel);
     }
 }
@@ -718,12 +718,23 @@ static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t lengt
         return -1;
     }
     if (client->channel != NULL && client->channel->ssl != NULL) {
+        if (length > INT_MAX) {
+            errno = EMSGSIZE;
+            client->last_io_errno = errno;
+            client->channel->last_io_errno = errno;
+            set_channel_error_detail(client->channel, "SSL_write length exceeds INT_MAX");
+            return -1;
+        }
         int written = SSL_write(client->channel->ssl, data, (int) length);
         if (written <= 0) {
             int ssl_error = SSL_get_error(client->channel->ssl, written);
             client->last_ssl_error = ssl_error;
             client->channel->last_ssl_error = ssl_error;
             errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0) {
+                client->timed_out = true;
+                errno = ETIMEDOUT;
+            }
             client->last_io_errno = errno;
             client->channel->last_io_errno = errno;
             snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
@@ -734,6 +745,10 @@ static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t lengt
     }
     ssize_t written = send(client->fd, data, length, 0);
     if (written < 0) {
+        if ((errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0) {
+            client->timed_out = true;
+            errno = ETIMEDOUT;
+        }
         client->last_io_errno = errno;
         snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "send failed: %s", strerror(errno));
         if (client->channel != NULL) {

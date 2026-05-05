@@ -1020,6 +1020,53 @@ PHP;
         }
     }
 
+    public function testHttp2CompletedStreamSurvivesChannelClose(): void
+    {
+        if (!function_exists('grpc_lite_stream_open') || !function_exists('grpc_lite_channel_close')) {
+            self::markTestSkipped('grpc_lite stream API is not loaded in this process');
+        }
+
+        $key = 'phpunit-completed-stream-close-' . bin2hex(random_bytes(8));
+        $request = new BenchRequest();
+        $request->setMessageCount(1);
+        $request->setPayloadBytes(10);
+        $serialized = $request->serializeToString();
+
+        $stream = \grpc_lite_stream_open(
+            $key,
+            'test-server',
+            50051,
+            '/helloworld.Greeter/BenchServerStream',
+            $serialized,
+            [],
+        );
+        self::assertFalse(\grpc_lite_stream_next($stream)['done']);
+        self::assertTrue(\grpc_lite_stream_next($stream)['done']);
+
+        self::assertTrue(\grpc_lite_channel_close($key));
+        $afterClose = \grpc_lite_stream_next($stream);
+
+        self::assertTrue($afterClose['done']);
+        self::assertSame(\Grpc\STATUS_OK, $afterClose['grpc_status']);
+    }
+
+    public function testHttp2StreamResetStatusWinsOverMissingHttpStatus(): void
+    {
+        $method = new \ReflectionMethod(Http2Transport::class, 'normalizeStatus');
+        $method->setAccessible(true);
+
+        [$code, $details] = $method->invoke(null, [
+            'timed_out' => false,
+            'channel_dead' => false,
+            'http_status' => 0,
+            'stream_error_code' => 0x7,
+            'initial_metadata' => [],
+        ]);
+
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $code);
+        self::assertSame('HTTP/2 stream reset: 7', $details);
+    }
+
     public function testHttp2StreamDeadlineReleasesPersistentChannel(): void
     {
         if (!function_exists('grpc_lite_stream_open')) {
