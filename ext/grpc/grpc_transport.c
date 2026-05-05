@@ -332,7 +332,36 @@ static bool preflight_persistent_channel(h2_channel *channel)
         return channel_usable(channel);
     }
     if (channel->ssl != NULL) {
-        return true;
+        int ssl_error;
+        int previous_mode = fcntl(channel->fd, F_GETFL, 0);
+        if (set_fd_nonblocking_mode(channel->fd, true) != 0) {
+            mark_channel_dead(channel, errno);
+            return false;
+        }
+        rv = SSL_peek(channel->ssl, &byte, sizeof(byte));
+        ssl_error = SSL_get_error(channel->ssl, (int) rv);
+        if (previous_mode >= 0) {
+            fcntl(channel->fd, F_SETFL, previous_mode);
+        } else {
+            set_fd_nonblocking_mode(channel->fd, false);
+        }
+        if (rv > 0) {
+            mark_channel_draining(channel, 0, NGHTTP2_NO_ERROR);
+            set_channel_error_detail(channel, "persistent TLS channel has pending control data before reuse");
+            return false;
+        }
+        if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+            return true;
+        }
+        channel->last_ssl_error = ssl_error;
+        if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+            set_channel_error_detail(channel, "persistent TLS channel closed by peer before reuse");
+            mark_channel_dead(channel, 0);
+        } else {
+            snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "persistent TLS channel preflight failed: SSL_get_error=%d", ssl_error);
+            mark_channel_dead(channel, ECONNRESET);
+        }
+        return false;
     }
 
     rv = recv(channel->fd, &byte, sizeof(byte), MSG_PEEK | MSG_DONTWAIT);
