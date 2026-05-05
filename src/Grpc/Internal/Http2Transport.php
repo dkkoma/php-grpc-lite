@@ -24,6 +24,7 @@ final class Http2Transport
         ?\Grpc\ChannelCredentials $credentials = null,
         int $maxReceiveMessageLength = 0,
         ?string $authority = null,
+        ?string $tlsVerifyName = null,
     ): array {
         if (!function_exists('grpc_lite_unary')) {
             throw new \RuntimeException('grpc lite extension bridge is not loaded');
@@ -34,7 +35,7 @@ final class Http2Transport
 
         [$host, $port] = self::splitTarget($target);
         $framedRequest = "\0" . pack('N', strlen($serializedRequest)) . $serializedRequest;
-        $key = self::channelKey($host, $port, $credentials, $authority);
+        $key = self::channelKey($host, $port, $credentials, $authority, $tlsVerifyName);
         try {
             $useTls = $credentials !== null && !$credentials->isInsecure();
             $result = \grpc_lite_unary(
@@ -51,6 +52,7 @@ final class Http2Transport
                 $credentials?->privateKey,
                 $maxReceiveMessageLength,
                 $authority,
+                $tlsVerifyName,
             );
         } catch (\Throwable $e) {
             throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
@@ -115,6 +117,7 @@ final class Http2Transport
         ?\Grpc\ChannelCredentials $credentials = null,
         int $maxReceiveMessageLength = 0,
         ?string $authority = null,
+        ?string $tlsVerifyName = null,
     ): mixed {
         if (!function_exists('grpc_lite_stream_open')) {
             throw new \RuntimeException('grpc lite extension bridge is not loaded');
@@ -124,7 +127,7 @@ final class Http2Transport
         $useTls = $credentials !== null && !$credentials->isInsecure();
 
         return \grpc_lite_stream_open(
-            self::channelKey($host, $port, $credentials, $authority),
+            self::channelKey($host, $port, $credentials, $authority, $tlsVerifyName),
             $host,
             $port,
             $path,
@@ -137,6 +140,7 @@ final class Http2Transport
             $credentials?->privateKey,
             $maxReceiveMessageLength,
             $authority,
+            $tlsVerifyName,
         );
     }
 
@@ -178,6 +182,7 @@ final class Http2Transport
         string $target,
         ?\Grpc\ChannelCredentials $credentials = null,
         ?string $authority = null,
+        ?string $tlsVerifyName = null,
     ): void
     {
         if (!function_exists('grpc_lite_channel_close')) {
@@ -185,7 +190,7 @@ final class Http2Transport
         }
 
         [$host, $port] = self::splitTarget($target);
-        \grpc_lite_channel_close(self::channelKey($host, $port, $credentials, $authority));
+        \grpc_lite_channel_close(self::channelKey($host, $port, $credentials, $authority, $tlsVerifyName));
     }
 
     /** @param array<string, mixed> $opts */
@@ -205,6 +210,23 @@ final class Http2Transport
         }
 
         return $authority;
+    }
+
+    /** @param array<string, mixed> $opts */
+    public static function tlsVerifyNameOverride(array $opts): ?string
+    {
+        $name = $opts['grpc.ssl_target_name_override'] ?? null;
+        if ($name === null) {
+            return null;
+        }
+        if (!is_string($name)) {
+            throw new \InvalidArgumentException('grpc.ssl_target_name_override must be a string');
+        }
+        if ($name === '' || str_contains($name, "\r") || str_contains($name, "\n")) {
+            throw new \InvalidArgumentException('invalid grpc.ssl_target_name_override');
+        }
+
+        return $name;
     }
 
     /** @param array<string, mixed> $result */
@@ -354,11 +376,12 @@ final class Http2Transport
         return $trailers;
     }
 
-    private static function channelKey(string $host, int $port, ?\Grpc\ChannelCredentials $credentials, ?string $authority): string
+    private static function channelKey(string $host, int $port, ?\Grpc\ChannelCredentials $credentials, ?string $authority, ?string $tlsVerifyName): string
     {
         return implode('|', [
             $host . ':' . $port,
             $authority ?? '',
+            $tlsVerifyName ?? '',
             $credentials?->type ?? \Grpc\ChannelCredentials::TYPE_INSECURE,
             sha1($credentials?->rootCerts ?? ''),
             sha1($credentials?->certChain ?? ''),

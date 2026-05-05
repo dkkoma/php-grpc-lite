@@ -99,6 +99,11 @@ abstract class AbstractCall
         return Internal\Http2Transport::authorityOverride($this->channel->opts);
     }
 
+    protected function tlsVerifyNameOverride(): ?string
+    {
+        return Internal\Http2Transport::tlsVerifyNameOverride($this->channel->opts);
+    }
+
     /** @return array<string, list<string>> */
     protected function buildRequestMetadata(): array
     {

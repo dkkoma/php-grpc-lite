@@ -98,6 +98,7 @@ class ServerStreamingCall extends AbstractCall
                 $this->channel->credentials,
                 $this->maxReceiveMessageLength(),
                 $this->authorityOverride(),
+                $this->tlsVerifyNameOverride(),
             );
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'HTTP/2 transport deadline exceeded') {

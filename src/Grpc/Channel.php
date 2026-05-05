@@ -46,6 +46,7 @@ class Channel
             $this->hostname,
             $this->credentials,
             Http2Transport::authorityOverride($this->opts),
+            Http2Transport::tlsVerifyNameOverride($this->opts),
         );
     }
 }

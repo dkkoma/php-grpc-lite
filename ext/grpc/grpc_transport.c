@@ -29,8 +29,8 @@ static void mark_channel_draining(h2_channel *channel, int32_t last_stream_id, u
 static bool channel_usable(h2_channel *channel);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
-static void set_channel_identity(h2_channel *channel, const char *host, zend_long port, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
-static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static void set_channel_identity(h2_channel *channel, const char *host, zend_long port, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
 static bool preflight_persistent_channel(h2_channel *channel);
 static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_channel *channel);
 static int set_socket_timeout_us(int fd, zend_long timeout_us);
@@ -41,11 +41,11 @@ static size_t effective_max_receive_message_bytes(zend_long max_receive_message_
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
-static int configure_tls_channel(h2_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
+static int configure_tls_channel(h2_channel *channel, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
 static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length);
 static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, uint64_t deadline_abs_us);
-static h2_channel *create_h2_channel(const char *host, zend_long port, const char *authority, size_t authority_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
-static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
+static h2_channel *create_h2_channel(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
+static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
 static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel);
 static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
 static int set_nonblocking(int fd);
@@ -271,13 +271,15 @@ static void build_authority(char *buffer, size_t buffer_len, const char *host, z
     snprintf(buffer, buffer_len, "%s:%ld", host, port);
 }
 
-static void set_channel_identity(h2_channel *channel, const char *host, zend_long port, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+static void set_channel_identity(h2_channel *channel, const char *host, zend_long port, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
 {
     channel->host_len = strlen(host);
     channel->host_hash = hash_bytes(host, channel->host_len);
     channel->port = port;
     channel->authority_len = strlen(channel->authority);
     channel->authority_hash = hash_bytes(channel->authority, channel->authority_len);
+    channel->tls_verify_name_len = tls_verify_name_len;
+    channel->tls_verify_name_hash = hash_bytes(tls_verify_name, tls_verify_name_len);
     channel->root_certs_len = root_certs_len;
     channel->root_certs_hash = hash_bytes(root_certs, root_certs_len);
     channel->cert_chain_len = cert_chain_len;
@@ -286,7 +288,7 @@ static void set_channel_identity(h2_channel *channel, const char *host, zend_lon
     channel->private_key_hash = hash_bytes(private_key, private_key_len);
 }
 
-static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
 {
     char expected_authority[512];
     size_t host_len;
@@ -303,6 +305,8 @@ static bool channel_matches_identity(h2_channel *channel, const char *host, zend
         && channel->host_hash == hash_bytes(host, host_len)
         && channel->authority_len == strlen(expected_authority)
         && channel->authority_hash == hash_bytes(expected_authority, strlen(expected_authority))
+        && channel->tls_verify_name_len == tls_verify_name_len
+        && channel->tls_verify_name_hash == hash_bytes(tls_verify_name, tls_verify_name_len)
         && channel->root_certs_len == root_certs_len
         && channel->root_certs_hash == hash_bytes(root_certs, root_certs_len)
         && channel->cert_chain_len == cert_chain_len
@@ -536,8 +540,10 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
     return 0;
 }
 
-static int configure_tls_channel(h2_channel *channel, const char *host, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
+static int configure_tls_channel(h2_channel *channel, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
 {
+    const char *verify_name = tls_verify_name != NULL && tls_verify_name_len > 0 ? tls_verify_name : host;
+
     channel->ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (channel->ssl_ctx == NULL) {
         set_channel_error_detail(channel, "failed to create SSL_CTX");
@@ -572,11 +578,11 @@ static int configure_tls_channel(h2_channel *channel, const char *host, const ch
         set_channel_error_detail(channel, "failed to configure TLS ALPN h2");
         return -1;
     }
-    if (SSL_set_tlsext_host_name(channel->ssl, host) != 1) {
+    if (SSL_set_tlsext_host_name(channel->ssl, verify_name) != 1) {
         set_channel_error_detail(channel, "failed to configure TLS SNI host");
         return -1;
     }
-    if (SSL_set1_host(channel->ssl, host) != 1) {
+    if (SSL_set1_host(channel->ssl, verify_name) != 1) {
         set_channel_error_detail(channel, "failed to configure TLS verification host");
         return -1;
     }
@@ -726,7 +732,7 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, u
     return nread;
 }
 
-static h2_channel *create_h2_channel(const char *host, zend_long port, const char *authority, size_t authority_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
+static h2_channel *create_h2_channel(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
 {
     h2_channel *channel;
     grpc_call open_client;
@@ -746,7 +752,7 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, const cha
         pefree(channel, persistent);
         return NULL;
     }
-    if (use_tls && configure_tls_channel(channel, host, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us) != 0) {
+    if (use_tls && configure_tls_channel(channel, host, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us) != 0) {
         if (channel->last_error_detail[0] != '\0') {
             snprintf(error_detail, error_detail_len, "%s", channel->last_error_detail);
             *error_message = error_detail;
@@ -784,11 +790,11 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, const cha
     nghttp2_session_set_user_data(channel->session, NULL);
 
     build_authority(channel->authority, sizeof(channel->authority), host, port, authority, authority_len);
-    set_channel_identity(channel, host, port, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
+    set_channel_identity(channel, host, port, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
     return channel;
 }
 
-static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
+static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
 {
     h2_channel *channel;
 
@@ -807,13 +813,13 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
         remove_unusable_persistent_channel(key, key_len, channel);
         channel = NULL;
     }
-    if (channel != NULL && !channel_matches_identity(channel, host, port, use_tls, authority, authority_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len)) {
+    if (channel != NULL && !channel_matches_identity(channel, host, port, use_tls, authority, authority_len, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len)) {
         discard_persistent_channel(key, key_len, channel);
         channel = NULL;
     }
 
     if (channel == NULL) {
-        channel = create_h2_channel(host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, error_detail_len, error_message);
+        channel = create_h2_channel(host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, error_detail_len, error_message);
         if (channel == NULL) {
             return NULL;
         }

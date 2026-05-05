@@ -231,6 +231,8 @@ PHP_FUNCTION(grpc_lite_unary)
     zend_long max_receive_message_length = 0;
     char *authority = NULL;
     size_t authority_len = 0;
+    char *tls_verify_name = NULL;
+    size_t tls_verify_name_len = 0;
     h2_channel *channel;
     bool persistent_reused = false;
     const char *error_message = NULL;
@@ -238,7 +240,7 @@ PHP_FUNCTION(grpc_lite_unary)
     uint64_t deadline_abs_us = 0;
     zend_long remaining_timeout_us = 0;
 
-    ZEND_PARSE_PARAMETERS_START(5, 13)
+    ZEND_PARSE_PARAMETERS_START(5, 14)
         Z_PARAM_STRING(key, key_len)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
@@ -253,6 +255,7 @@ PHP_FUNCTION(grpc_lite_unary)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
         Z_PARAM_LONG(max_receive_message_length)
         Z_PARAM_STRING_OR_NULL(authority, authority_len)
+        Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
     if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
@@ -261,7 +264,7 @@ PHP_FUNCTION(grpc_lite_unary)
     }
 
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
+    channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (channel == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
         RETURN_THROWS();
@@ -308,6 +311,8 @@ PHP_FUNCTION(grpc_lite_stream_open)
     zend_long max_receive_message_length = 0;
     char *authority = NULL;
     size_t authority_len = 0;
+    char *tls_verify_name = NULL;
+    size_t tls_verify_name_len = 0;
     h2_channel *channel;
     h2_stream *stream;
     nghttp2_data_provider data_provider;
@@ -319,7 +324,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
     zend_long remaining_timeout_us = 0;
     int rv;
 
-    ZEND_PARSE_PARAMETERS_START(5, 13)
+    ZEND_PARSE_PARAMETERS_START(5, 14)
         Z_PARAM_STRING(key, key_len)
         Z_PARAM_STRING(host, host_len)
         Z_PARAM_LONG(port)
@@ -334,6 +339,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
         Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
         Z_PARAM_LONG(max_receive_message_length)
         Z_PARAM_STRING_OR_NULL(authority, authority_len)
+        Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
     if (request_len > UINT32_MAX) {
@@ -341,7 +347,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
         RETURN_THROWS();
     }
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
+    channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (channel == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
         RETURN_THROWS();
@@ -648,6 +654,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_unary, 0, 5, IS_ARRAY,
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, authority, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tls_verify_name, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
@@ -664,6 +671,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, authority, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tls_verify_name, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_next, 0, 1, IS_ARRAY, 0)

@@ -293,6 +293,8 @@ struct _h2_channel {
     zend_long port;
     size_t authority_len;
     zend_ulong authority_hash;
+    size_t tls_verify_name_len;
+    zend_ulong tls_verify_name_hash;
     size_t root_certs_len;
     zend_ulong root_certs_hash;
     size_t cert_chain_len;

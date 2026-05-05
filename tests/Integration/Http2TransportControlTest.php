@@ -163,6 +163,29 @@ final class Http2TransportControlTest extends TestCase
         self::assertStringContainsString('TLS certificate verification failed', $status->details);
     }
 
+    public function testHttp2TlsTargetNameOverrideControlsCertificateVerification(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc extension is not loaded in this process');
+        }
+
+        $rootCerts = file_get_contents(self::CA_PATH);
+        self::assertNotFalse($rootCerts);
+
+        $client = new GreeterClient(self::TLS_TARGET, [
+            'credentials' => ChannelCredentials::createSsl($rootCerts),
+            'grpc.ssl_target_name_override' => 'wrong.example',
+        ]);
+
+        $request = new HelloRequest();
+        $request->setName('TLS override');
+        [$response, $status] = $client->SayHello($request)->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
+        self::assertStringContainsString('TLS certificate verification failed', $status->details);
+    }
+
     public function testHttp2TlsAlpnMismatchIncludesDetail(): void
     {
         if (!(extension_loaded('grpc'))) {

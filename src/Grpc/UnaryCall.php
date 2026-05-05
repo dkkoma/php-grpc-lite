@@ -69,6 +69,7 @@ class UnaryCall extends AbstractCall
                 $this->channel->credentials,
                 $this->maxReceiveMessageLength(),
                 $this->authorityOverride(),
+                $this->tlsVerifyNameOverride(),
             );
             $this->recordDiagnostic('http2_transport_call_ns', hrtime(true) - $transportStartedNs);
         } catch (\RuntimeException $e) {
