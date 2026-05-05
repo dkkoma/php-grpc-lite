@@ -320,30 +320,6 @@ struct _h2_stream {
     bool cancelled;
 };
 
-/*
- * Cross-file helpers used by grpc_bench.c. Helpers used only within the HTTP/2
- * transport implementation are declared in grpc_transport.c.
- */
-static uint64_t monotonic_us(void);
-#ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
-#endif
-static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length);
-static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
-static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
-static int process_response_data_direct(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
-static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
-static int deliver_queued_response_payloads(grpc_call *client);
-static void free_queued_response_payloads(grpc_call *client);
-static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void cleanup_grpc_call(grpc_call *client);
-static size_t count_custom_header_values(zval *headers_zv);
-static void init_request_headers(h2_request_headers *headers, size_t custom_values);
-static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
-static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
-static void free_request_headers(h2_request_headers *headers);
-static void set_grpc_header(grpc_call *client, size_t payload_len);
-
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_channels;
     bool persistent_channels_initialized;
