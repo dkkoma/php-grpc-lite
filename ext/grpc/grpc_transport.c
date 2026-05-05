@@ -9,6 +9,10 @@
  * module registration stay in grpc.c.
  */
 
+#define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
+#define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
+#define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
+
 static void destroy_h2_channel(h2_channel *channel);
 static bool channel_owned_by_stream(h2_channel *channel, h2_stream *stream);
 static bool channel_owned_by_call(h2_channel *channel, grpc_call *client);

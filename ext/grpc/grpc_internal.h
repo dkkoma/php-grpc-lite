@@ -32,12 +32,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MAKE_NV(NAME, VALUE) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, sizeof(VALUE) - 1, NGHTTP2_NV_FLAG_NONE}
-#define MAKE_NV_L(NAME, VALUE, VALUE_LEN) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, (VALUE_LEN), NGHTTP2_NV_FLAG_NONE}
-#define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
-#define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
-#define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
-
 typedef struct _h2_channel h2_channel;
 typedef struct _h2_stream h2_stream;
 
