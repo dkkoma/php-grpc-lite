@@ -256,26 +256,11 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
-    channel = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
-    if (channel != NULL && !channel_usable(channel)) {
-        remove_unusable_persistent_channel(key, key_len, channel);
-        channel = NULL;
-    }
-    if (channel != NULL && !preflight_persistent_channel(channel)) {
-        remove_unusable_persistent_channel(key, key_len, channel);
-        channel = NULL;
-    }
-
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
+    channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (channel == NULL) {
-        channel = create_h2_channel(host, port, authority, authority_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, sizeof(error_detail), &error_message);
-        if (channel == NULL) {
-            zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
-            RETURN_THROWS();
-        }
-        zend_hash_str_update_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len, channel);
-    } else {
-        persistent_reused = true;
+        zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
+        RETURN_THROWS();
     }
 
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);

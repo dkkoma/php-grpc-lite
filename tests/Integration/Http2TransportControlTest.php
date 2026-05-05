@@ -721,6 +721,55 @@ PHP;
         self::assertSame(0, $second['connect_us']);
     }
 
+    public function testHttp2PersistentChannelDoesNotReuseDifferentAuthorityForSameKey(): void
+    {
+        if (!function_exists('grpc_lite_unary')) {
+            self::markTestSkipped('grpc_lite persistent channel API is not loaded in this process');
+        }
+
+        $key = 'phpunit-persistent-identity-' . bin2hex(random_bytes(8));
+        $request = "\0\0\0\0\0";
+
+        $first = \grpc_lite_unary(
+            $key,
+            'test-server',
+            50054,
+            '/helloworld.Greeter/BenchUnary',
+            $request,
+            ['x-bench-observe-authority' => ['1']],
+            0,
+            false,
+            null,
+            null,
+            null,
+            0,
+            'first.authority:443',
+        );
+
+        $second = \grpc_lite_unary(
+            $key,
+            'test-server',
+            50054,
+            '/helloworld.Greeter/BenchUnary',
+            $request,
+            ['x-bench-observe-authority' => ['1']],
+            0,
+            false,
+            null,
+            null,
+            null,
+            0,
+            'second.authority:443',
+        );
+
+        self::assertSame(\Grpc\STATUS_OK, $first['grpc_status']);
+        self::assertSame(['first.authority:443'], $first['initial_metadata']['x-bench-authority'] ?? null);
+        self::assertFalse($first['persistent_reused']);
+        self::assertSame(\Grpc\STATUS_OK, $second['grpc_status']);
+        self::assertSame(['second.authority:443'], $second['initial_metadata']['x-bench-authority'] ?? null);
+        self::assertFalse($second['persistent_reused']);
+    }
+
     public function testHttp2PersistentChannelCloseEvictsCachedChannel(): void
     {
         if (!function_exists('grpc_lite_channel_close')) {

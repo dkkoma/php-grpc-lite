@@ -26,6 +26,10 @@ static void mark_channel_dead(h2_channel *channel, int error_code);
 static void set_channel_error_detail(h2_channel *channel, const char *detail);
 static void mark_channel_draining(h2_channel *channel, int32_t last_stream_id, uint32_t error_code);
 static bool channel_usable(h2_channel *channel);
+static zend_ulong hash_bytes(const char *data, size_t data_len);
+static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
+static void set_channel_identity(h2_channel *channel, const char *host, zend_long port, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
 static bool preflight_persistent_channel(h2_channel *channel);
 static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_channel *channel);
 static int set_socket_timeout_us(int fd, zend_long timeout_us);
@@ -168,7 +172,10 @@ static void destroy_h2_stream(h2_stream *stream)
     if (stream == NULL) {
         return;
     }
-    cancel_active_stream(stream, NGHTTP2_CANCEL);
+    if (!stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel) && stream->client.stream_id > 0) {
+        set_channel_error_detail(stream->channel, "active stream resource destroyed before completion");
+        mark_channel_dead(stream->channel, NGHTTP2_CANCEL);
+    }
     clear_channel_stream_owner(stream);
     if (stream->request != NULL) {
         zend_string_release(stream->request);
@@ -234,6 +241,73 @@ static void mark_channel_draining(h2_channel *channel, int32_t last_stream_id, u
 static bool channel_usable(h2_channel *channel)
 {
     return channel != NULL && channel->fd >= 0 && channel->session != NULL && !channel->dead && !channel->draining;
+}
+
+static zend_ulong hash_bytes(const char *data, size_t data_len)
+{
+    zend_ulong hash = (zend_ulong) 1469598103934665603ULL;
+    size_t i;
+
+    if (data == NULL || data_len == 0) {
+        return 0;
+    }
+    for (i = 0; i < data_len; i++) {
+        hash ^= (unsigned char) data[i];
+        hash *= (zend_ulong) 1099511628211ULL;
+    }
+    return hash;
+}
+
+static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len)
+{
+    if (authority != NULL && authority_len > 0) {
+        size_t copy_len = authority_len < buffer_len - 1 ? authority_len : buffer_len - 1;
+        memcpy(buffer, authority, copy_len);
+        buffer[copy_len] = '\0';
+        return;
+    }
+
+    snprintf(buffer, buffer_len, "%s:%ld", host, port);
+}
+
+static void set_channel_identity(h2_channel *channel, const char *host, zend_long port, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+{
+    channel->host_len = strlen(host);
+    channel->host_hash = hash_bytes(host, channel->host_len);
+    channel->port = port;
+    channel->authority_len = strlen(channel->authority);
+    channel->authority_hash = hash_bytes(channel->authority, channel->authority_len);
+    channel->root_certs_len = root_certs_len;
+    channel->root_certs_hash = hash_bytes(root_certs, root_certs_len);
+    channel->cert_chain_len = cert_chain_len;
+    channel->cert_chain_hash = hash_bytes(cert_chain, cert_chain_len);
+    channel->private_key_len = private_key_len;
+    channel->private_key_hash = hash_bytes(private_key, private_key_len);
+}
+
+static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+{
+    char expected_authority[512];
+    size_t host_len;
+
+    if (channel == NULL) {
+        return false;
+    }
+    build_authority(expected_authority, sizeof(expected_authority), host, port, authority, authority_len);
+    host_len = strlen(host);
+
+    return channel->tls == use_tls
+        && channel->port == port
+        && channel->host_len == host_len
+        && channel->host_hash == hash_bytes(host, host_len)
+        && channel->authority_len == strlen(expected_authority)
+        && channel->authority_hash == hash_bytes(expected_authority, strlen(expected_authority))
+        && channel->root_certs_len == root_certs_len
+        && channel->root_certs_hash == hash_bytes(root_certs, root_certs_len)
+        && channel->cert_chain_len == cert_chain_len
+        && channel->cert_chain_hash == hash_bytes(cert_chain, cert_chain_len)
+        && channel->private_key_len == private_key_len
+        && channel->private_key_hash == hash_bytes(private_key, private_key_len);
 }
 
 static bool preflight_persistent_channel(h2_channel *channel)
@@ -708,13 +782,8 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, const cha
     }
     nghttp2_session_set_user_data(channel->session, NULL);
 
-    if (authority != NULL && authority_len > 0) {
-        size_t copy_len = authority_len < sizeof(channel->authority) - 1 ? authority_len : sizeof(channel->authority) - 1;
-        memcpy(channel->authority, authority, copy_len);
-        channel->authority[copy_len] = '\0';
-    } else {
-        snprintf(channel->authority, sizeof(channel->authority), "%s:%ld", host, port);
-    }
+    build_authority(channel->authority, sizeof(channel->authority), host, port, authority, authority_len);
+    set_channel_identity(channel, host, port, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
     return channel;
 }
 
@@ -735,6 +804,10 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
     }
     if (channel != NULL && !preflight_persistent_channel(channel)) {
         remove_unusable_persistent_channel(key, key_len, channel);
+        channel = NULL;
+    }
+    if (channel != NULL && !channel_matches_identity(channel, host, port, use_tls, authority, authority_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len)) {
+        discard_persistent_channel(key, key_len, channel);
         channel = NULL;
     }
 

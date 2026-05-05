@@ -288,6 +288,17 @@ struct _h2_channel {
     nghttp2_session_callbacks *callbacks;
     nghttp2_session *session;
     char authority[512];
+    size_t host_len;
+    zend_ulong host_hash;
+    zend_long port;
+    size_t authority_len;
+    zend_ulong authority_hash;
+    size_t root_certs_len;
+    zend_ulong root_certs_hash;
+    size_t cert_chain_len;
+    zend_ulong cert_chain_hash;
+    size_t private_key_len;
+    zend_ulong private_key_hash;
     bool dead;
     bool draining;
     bool busy;
