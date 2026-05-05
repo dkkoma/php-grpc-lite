@@ -171,14 +171,6 @@ final class NativeTransport
         }
 
         $metadata = self::extractInitialMetadata($result);
-        $unsupportedEncoding = self::unsupportedGrpcEncoding($metadata);
-        if ($unsupportedEncoding !== null) {
-            return [\Grpc\STATUS_UNIMPLEMENTED, "unsupported grpc-encoding: $unsupportedEncoding"];
-        }
-        if (($result['compressed_response_seen'] ?? false) === true) {
-            return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
-        }
-
         $grpcStatus = (int) ($result['grpc_status'] ?? -1);
         if ($grpcStatus >= 0) {
             $message = $result['grpc_message'] ?? '';
@@ -203,6 +195,14 @@ final class NativeTransport
         $contentType = strtolower($metadata['content-type'][0] ?? '');
         if (!str_starts_with($contentType, 'application/grpc')) {
             return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
+        }
+
+        $unsupportedEncoding = self::unsupportedGrpcEncoding($metadata);
+        if ($unsupportedEncoding !== null) {
+            return [\Grpc\STATUS_UNIMPLEMENTED, "unsupported grpc-encoding: $unsupportedEncoding"];
+        }
+        if (($result['compressed_response_seen'] ?? false) === true) {
+            return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
         }
 
         return [\Grpc\STATUS_UNKNOWN, 'missing grpc-status trailer'];

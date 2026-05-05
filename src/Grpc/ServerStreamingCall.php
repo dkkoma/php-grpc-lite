@@ -124,7 +124,10 @@ class ServerStreamingCall extends AbstractCall
                 }
             }
 
-            if ($this->compressionStatus !== null) {
+            $validationStatus = $this->validateGrpcResponse($this->ch);
+            if ($validationStatus !== null) {
+                $this->finalStatus = $validationStatus;
+            } elseif ($this->compressionStatus !== null) {
                 $this->finalStatus = $this->compressionStatus;
             } elseif ($this->buffer !== '') {
                 $this->finalStatus = $this->makeStatus(
@@ -140,8 +143,7 @@ class ServerStreamingCall extends AbstractCall
                     "curl error ($errCode): " . curl_strerror($errCode),
                 );
             } else {
-                $this->finalStatus = $this->validateGrpcResponse($this->ch)
-                    ?? $this->buildStatusFromTrailers();
+                $this->finalStatus = $this->buildStatusFromTrailers();
             }
             $completed = true;
         } finally {
