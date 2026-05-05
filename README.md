@@ -43,6 +43,12 @@ Run tests in Docker:
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
+Run static analysis for the C extension:
+
+```bash
+./bench/phase2/check-native-static-analysis.sh
+```
+
 Build/load the source-built grpc extension in Docker:
 
 ```bash

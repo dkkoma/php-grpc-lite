@@ -9,6 +9,9 @@ cd "$(dirname "$0")/../.."
 
 tag="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 
+echo "== native static analysis =="
+./bench/phase2/check-native-static-analysis.sh
+
 echo "== native lifecycle stress smoke =="
 BENCH_TAG="$tag-lifecycle-smoke" \
     ITERATIONS="${SMOKE_ITERATIONS:-100}" \

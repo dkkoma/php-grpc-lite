@@ -122,6 +122,7 @@ BENCH_TAG=release-hardening ./bench/phase2/check-native-release-hardening.sh
 
 このrunnerは以下を実行する。
 
+- C extension static analysis (`cppcheck`)
 - lifecycle stress smoke
 - Valgrind lifecycle smoke
 - long lifecycle stress

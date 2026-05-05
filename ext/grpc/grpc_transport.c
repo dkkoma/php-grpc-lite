@@ -366,7 +366,7 @@ static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us
         pfd.revents = 0;
         int rv = poll(&pfd, 1, timeout_ms);
         if (rv > 0) {
-            return pfd.revents & (events | POLLERR | POLLHUP | POLLNVAL) ? 0 : -1;
+            return (pfd.revents & (events | POLLERR | POLLHUP | POLLNVAL)) ? 0 : -1;
         }
         if (rv == 0) {
             errno = ETIMEDOUT;
@@ -627,7 +627,7 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, u
     if (set_socket_timeout_us(channel->fd, remaining_timeout_us) != 0) {
         return -1;
     }
-    if (channel != NULL && channel->ssl != NULL) {
+    if (channel->ssl != NULL) {
         int nread = SSL_read(channel->ssl, data, (int) length);
         if (nread <= 0) {
             int ssl_error = SSL_get_error(channel->ssl, nread);
@@ -640,7 +640,7 @@ static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, u
         return nread;
     }
     ssize_t nread = recv(channel->fd, data, length, 0);
-    if (nread < 0 && channel != NULL) {
+    if (nread < 0) {
         channel->last_io_errno = errno;
         snprintf(channel->last_error_detail, sizeof(channel->last_error_detail), "recv failed: %s", strerror(errno));
     }
