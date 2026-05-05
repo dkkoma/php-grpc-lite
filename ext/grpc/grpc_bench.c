@@ -9,6 +9,538 @@
 
 #define GRPC_BENCH_MAX_RECV_BUF_SIZE 262144
 
+static int bench_process_response_messages_from_offset(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us);
+
+static void bench_observe_payload_copy(grpc_call *client, uint64_t elapsed_us)
+{
+    client->bench.call_response_payload_string_us += elapsed_us;
+    if (elapsed_us > client->bench.call_max_response_payload_string_us) {
+        client->bench.call_max_response_payload_string_us = elapsed_us;
+    }
+}
+
+static void bench_observe_message_ready(grpc_call *client, uint64_t ready_abs_us)
+{
+    if (client->bench.call_started_us == 0 || ready_abs_us < client->bench.call_started_us) {
+        return;
+    }
+    uint64_t ready_us = ready_abs_us - client->bench.call_started_us;
+    if (client->bench.first_response_message_ready_us == 0) {
+        client->bench.first_response_message_ready_us = ready_us;
+    }
+    client->bench.last_response_message_ready_us = ready_us;
+}
+
+static void bench_observe_payload_queued(grpc_call *client)
+{
+    if (client->response_queue_count > client->bench.call_max_response_queue_count) {
+        client->bench.call_max_response_queue_count = client->response_queue_count;
+    }
+    if (client->response_queue_bytes > client->bench.call_max_response_queue_bytes) {
+        client->bench.call_max_response_queue_bytes = client->response_queue_bytes;
+    }
+}
+
+static void bench_observe_payload_delivered(grpc_call *client, uint64_t ready_abs_us, uint64_t callback_started_abs_us, uint64_t elapsed_us)
+{
+    uint64_t queue_wait = ready_abs_us > 0 && callback_started_abs_us >= ready_abs_us ? callback_started_abs_us - ready_abs_us : 0;
+
+    client->bench.call_response_queue_wait_us += queue_wait;
+    if (queue_wait > client->bench.call_max_response_queue_wait_us) {
+        client->bench.call_max_response_queue_wait_us = queue_wait;
+    }
+    if (client->bench.call_started_us != 0) {
+        uint64_t done_us = monotonic_us() - client->bench.call_started_us;
+        if (client->bench.first_response_callback_done_us == 0) {
+            client->bench.first_response_callback_done_us = done_us;
+        }
+        client->bench.last_response_callback_done_us = done_us;
+    }
+    client->bench.call_response_decode_us += elapsed_us;
+    if (elapsed_us > client->bench.call_max_response_decode_us) {
+        client->bench.call_max_response_decode_us = elapsed_us;
+    }
+    client->bench.call_decoded_messages++;
+}
+
+static void bench_observe_response_callback_done(grpc_call *client)
+{
+    if (client->bench.call_started_us == 0) {
+        return;
+    }
+    uint64_t done_us = monotonic_us() - client->bench.call_started_us;
+    if (client->bench.first_response_callback_done_us == 0) {
+        client->bench.first_response_callback_done_us = done_us;
+    }
+    client->bench.last_response_callback_done_us = done_us;
+}
+
+static int bench_flush_queue_if_limited(grpc_call *client)
+{
+    bool over_message_limit = client->bench.read_ahead_max_messages > 0 && client->response_queue_count >= client->bench.read_ahead_max_messages;
+    bool over_byte_limit = client->bench.read_ahead_max_bytes > 0 && client->response_queue_bytes >= client->bench.read_ahead_max_bytes;
+
+    if (!over_message_limit && !over_byte_limit) {
+        return 0;
+    }
+
+    return deliver_queued_response_payloads(client);
+}
+
+static void bench_record_data_sent(grpc_call *client)
+{
+    uint64_t elapsed = monotonic_us() - client->bench.call_started_us;
+    if (client->bench.first_data_sent_us == 0) {
+        client->bench.first_data_sent_us = elapsed;
+    }
+    client->bench.last_data_sent_us = elapsed;
+}
+
+static void bench_compact_response_body_if_needed(grpc_call *client)
+{
+    zend_string *body;
+    size_t len;
+    size_t consumed;
+    size_t remaining;
+    uint64_t started;
+    uint64_t elapsed;
+
+    if (!client->bench.compact_response_buffer || client->body.s == NULL || client->response_parse_offset == 0) {
+        return;
+    }
+    if (client->response_parse_offset < client->bench.response_compact_threshold) {
+        return;
+    }
+
+    body = client->body.s;
+    len = ZSTR_LEN(body);
+    consumed = client->response_parse_offset;
+    if (consumed > len) {
+        consumed = len;
+    }
+    remaining = len - consumed;
+
+    started = monotonic_us();
+    if (remaining > 0) {
+        memmove(ZSTR_VAL(body), ZSTR_VAL(body) + consumed, remaining);
+    }
+    ZSTR_LEN(body) = remaining;
+    ZSTR_VAL(body)[remaining] = '\0';
+    elapsed = monotonic_us() - started;
+
+    client->response_parse_offset = 0;
+    client->bench.call_body_compact_count++;
+    client->bench.call_body_compact_bytes += consumed;
+    client->bench.call_body_compact_us += elapsed;
+    if (elapsed > client->bench.call_max_body_compact_us) {
+        client->bench.call_max_body_compact_us = elapsed;
+    }
+}
+
+static int bench_process_response_messages(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, zend_long *decoded_messages, uint64_t *decode_us, uint64_t *max_decode_us)
+{
+    size_t offset = 0;
+    uint64_t payload_string_us = 0;
+    uint64_t max_payload_string_us = 0;
+    return bench_process_response_messages_from_offset(client, fci, fcc, &offset, true, decoded_messages, &payload_string_us, &max_payload_string_us, decode_us, max_decode_us);
+}
+
+static int bench_process_response_messages_from_offset(grpc_call *client, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us)
+{
+    zend_string *body;
+    const char *data;
+    size_t len;
+
+    *decoded_messages = 0;
+    *payload_string_us = 0;
+    *max_payload_string_us = 0;
+    *decode_us = 0;
+    *max_decode_us = 0;
+
+    if (client->body.s == NULL) {
+        return 0;
+    }
+
+    smart_str_0(&client->body);
+    body = client->body.s;
+    data = ZSTR_VAL(body);
+    len = ZSTR_LEN(body);
+
+    while (*offset < len) {
+        uint32_t payload_len;
+        zval params[1];
+        zval retval;
+        uint64_t payload_string_started;
+        uint64_t payload_string_elapsed;
+        uint64_t started;
+        uint64_t elapsed;
+
+        if (len - *offset < 5) {
+            return require_complete ? -1 : 0;
+        }
+        payload_len = ((uint32_t) (unsigned char) data[*offset + 1] << 24)
+            | ((uint32_t) (unsigned char) data[*offset + 2] << 16)
+            | ((uint32_t) (unsigned char) data[*offset + 3] << 8)
+            | (uint32_t) (unsigned char) data[*offset + 4];
+        if (payload_len > len - *offset - 5) {
+            return require_complete ? -1 : 0;
+        }
+        *offset += 5;
+
+        bench_observe_message_ready(client, monotonic_us());
+        payload_string_started = monotonic_us();
+        ZVAL_STRINGL(&params[0], data + *offset, payload_len);
+        payload_string_elapsed = monotonic_us() - payload_string_started;
+        *payload_string_us += payload_string_elapsed;
+        if (payload_string_elapsed > *max_payload_string_us) {
+            *max_payload_string_us = payload_string_elapsed;
+        }
+        ZVAL_UNDEF(&retval);
+        fci->params = params;
+        fci->param_count = 1;
+        fci->retval = &retval;
+
+        started = monotonic_us();
+        if (zend_call_function(fci, fcc) != SUCCESS) {
+            zval_ptr_dtor(&params[0]);
+            if (!Z_ISUNDEF(retval)) {
+                zval_ptr_dtor(&retval);
+            }
+            return -1;
+        }
+        elapsed = monotonic_us() - started;
+        bench_observe_response_callback_done(client);
+        *decode_us += elapsed;
+        if (elapsed > *max_decode_us) {
+            *max_decode_us = elapsed;
+        }
+        (*decoded_messages)++;
+
+        zval_ptr_dtor(&params[0]);
+        if (!Z_ISUNDEF(retval)) {
+            zval_ptr_dtor(&retval);
+        }
+        *offset += payload_len;
+    }
+
+    return 0;
+}
+
+static ssize_t bench_send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    size_t total_written = 0;
+    (void) session;
+    (void) flags;
+
+    if (client == NULL) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    client->bench.send_callback_calls++;
+    if (length > client->bench.max_send_callback_len) {
+        client->bench.max_send_callback_len = length;
+    }
+
+    if (client->bench.poll_loop) {
+        uint64_t syscall_started = monotonic_us();
+        ssize_t written = channel_send(client, data, length);
+        uint64_t syscall_elapsed = monotonic_us() - syscall_started;
+        if (syscall_elapsed > client->bench.max_write_syscall_us) {
+            client->bench.max_write_syscall_us = syscall_elapsed;
+        }
+        if (syscall_elapsed > client->bench.call_max_write_syscall_us) {
+            client->bench.call_max_write_syscall_us = syscall_elapsed;
+        }
+        if (written < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                client->bench.last_send_wouldblock = true;
+                client->bench.send_wouldblock_calls++;
+                return NGHTTP2_ERR_WOULDBLOCK;
+            }
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        if (written == 0) {
+            client->bench.last_send_wouldblock = true;
+            client->bench.send_wouldblock_calls++;
+            return NGHTTP2_ERR_WOULDBLOCK;
+        }
+        client->bench.write_syscalls++;
+        client->bytes_sent += (size_t) written;
+        return written;
+    }
+
+    while (total_written < length) {
+        uint64_t syscall_started = monotonic_us();
+        ssize_t written = channel_send(client, data + total_written, length - total_written);
+        uint64_t syscall_elapsed = monotonic_us() - syscall_started;
+        if (syscall_elapsed > client->bench.max_write_syscall_us) {
+            client->bench.max_write_syscall_us = syscall_elapsed;
+        }
+        if (syscall_elapsed > client->bench.call_max_write_syscall_us) {
+            client->bench.call_max_write_syscall_us = syscall_elapsed;
+        }
+        if (written <= 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        client->bench.write_syscalls++;
+        total_written += (size_t) written;
+    }
+    client->bytes_sent += total_written;
+    return (ssize_t) total_written;
+}
+
+static int bench_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    (void) session;
+    (void) flags;
+    if (stream_id == client->stream_id && len > 0) {
+        uint64_t elapsed = client->bench.call_started_us == 0 ? 0 : monotonic_us() - client->bench.call_started_us;
+        client->data_recv_calls++;
+        client->bench.call_data_recv_calls++;
+        client->bench.response_data_bytes += len;
+        client->bench.call_response_data_bytes += len;
+        if (elapsed > 0) {
+            if (client->bench.first_response_data_us == 0) {
+                client->bench.first_response_data_us = elapsed;
+            }
+            client->bench.last_response_data_us = elapsed;
+        }
+        if (client->bench.awaiting_data_after_poll && client->bench.last_poll_return_abs_us > 0) {
+            uint64_t delta = monotonic_us() - client->bench.last_poll_return_abs_us;
+            client->bench.call_poll_to_data_us += delta;
+            if (delta > client->bench.call_max_poll_to_data_us) {
+                client->bench.call_max_poll_to_data_us = delta;
+            }
+            client->bench.awaiting_data_after_poll = false;
+        }
+        if (client->bench.awaiting_data_after_window_update_sent && client->bench.last_window_update_sent_abs_us > 0) {
+            uint64_t delta = monotonic_us() - client->bench.last_window_update_sent_abs_us;
+            client->bench.call_window_update_to_data_us += delta;
+            if (delta > client->bench.call_max_window_update_to_data_us) {
+                client->bench.call_max_window_update_to_data_us = delta;
+            }
+            client->bench.awaiting_data_after_window_update_sent = false;
+        }
+        if (client->direct_response_payload && client->decode_response_incrementally && ((client->payload_callback_fci != NULL && client->payload_callback_fcc != NULL) || client->queue_response_payloads)) {
+            if (process_response_data_direct(client, data, len) != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+        } else if (!client->discard_response_body) {
+            if (validate_response_message_lengths(session, client, data, len) != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            if (client->discard_response_body) {
+                return 0;
+            }
+            uint64_t append_started = monotonic_us();
+            uint64_t append_elapsed;
+            smart_str_appendl(&client->body, (const char *) data, len);
+            append_elapsed = monotonic_us() - append_started;
+            if (client->body.s != NULL && ZSTR_LEN(client->body.s) > client->bench.call_max_body_buffer_bytes) {
+                client->bench.call_max_body_buffer_bytes = ZSTR_LEN(client->body.s);
+            }
+            client->bench.call_body_append_us += append_elapsed;
+            if (append_elapsed > client->bench.call_max_body_append_us) {
+                client->bench.call_max_body_append_us = append_elapsed;
+            }
+            if (client->decode_response_incrementally && client->payload_callback_fci != NULL && client->payload_callback_fcc != NULL) {
+                zend_long decoded_messages = 0;
+                uint64_t payload_string_us = 0;
+                uint64_t max_payload_string_us = 0;
+                uint64_t decode_us = 0;
+                uint64_t max_decode_us = 0;
+                if (bench_process_response_messages_from_offset(client, client->payload_callback_fci, client->payload_callback_fcc, &client->response_parse_offset, false, &decoded_messages, &payload_string_us, &max_payload_string_us, &decode_us, &max_decode_us) != 0) {
+                    return NGHTTP2_ERR_CALLBACK_FAILURE;
+                }
+                client->bench.call_decoded_messages += decoded_messages;
+                client->bench.call_response_payload_string_us += payload_string_us;
+                if (max_payload_string_us > client->bench.call_max_response_payload_string_us) {
+                    client->bench.call_max_response_payload_string_us = max_payload_string_us;
+                }
+                client->bench.call_response_decode_us += decode_us;
+                if (max_decode_us > client->bench.call_max_response_decode_us) {
+                    client->bench.call_max_response_decode_us = max_decode_us;
+                }
+                bench_compact_response_body_if_needed(client);
+            }
+        }
+    }
+    return 0;
+}
+
+static int bench_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    bool trailing;
+    (void) session;
+    (void) flags;
+    if (frame->hd.stream_id != client->stream_id) {
+        return 0;
+    }
+    trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
+    if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
+        client->grpc_status = parse_grpc_status_value(value, valuelen);
+        if (client->grpc_status < 0) {
+            client->invalid_grpc_status = true;
+        }
+        trailing = true;
+    } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
+        if (client->grpc_message != NULL) {
+            zend_string_release(client->grpc_message);
+        }
+        client->grpc_message = zend_string_init((const char *) value, valuelen, 0);
+        trailing = true;
+    } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
+        if (client->bench.first_response_header_us == 0) {
+            client->bench.first_response_header_us = monotonic_us() - client->bench.call_started_us;
+        }
+        char status_buf[16];
+        size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
+        memcpy(status_buf, value, copy_len);
+        status_buf[copy_len] = '\0';
+        client->http_status = atoi(status_buf);
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+    } else if (namelen == sizeof("x-bench-server-handler-ns") - 1 && memcmp(name, "x-bench-server-handler-ns", namelen) == 0) {
+        client->bench.server_handler_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-payload-alloc-ns") - 1 && memcmp(name, "x-bench-server-payload-alloc-ns", namelen) == 0) {
+        client->bench.server_payload_alloc_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-payload-bytes") - 1 && memcmp(name, "x-bench-server-payload-bytes", namelen) == 0) {
+        client->bench.server_payload_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-request-payload-bytes") - 1 && memcmp(name, "x-bench-server-request-payload-bytes", namelen) == 0) {
+        client->bench.server_request_payload_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-handler-start-ns") - 1 && memcmp(name, "x-bench-server-stats-handler-start-ns", namelen) == 0) {
+        client->bench.server_stats_handler_start_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-handler-end-ns") - 1 && memcmp(name, "x-bench-server-stats-handler-end-ns", namelen) == 0) {
+        client->bench.server_stats_handler_end_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-in-payload-ns") - 1 && memcmp(name, "x-bench-server-stats-in-payload-ns", namelen) == 0) {
+        client->bench.server_stats_in_payload_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-header-ns") - 1 && memcmp(name, "x-bench-server-stats-out-header-ns", namelen) == 0) {
+        client->bench.server_stats_out_header_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-ns") - 1 && memcmp(name, "x-bench-server-stats-out-payload-ns", namelen) == 0) {
+        client->bench.server_stats_out_payload_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-first-out-payload-ns") - 1 && memcmp(name, "x-bench-server-stats-first-out-payload-ns", namelen) == 0) {
+        client->bench.server_stats_first_out_payload_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-last-out-payload-ns") - 1 && memcmp(name, "x-bench-server-stats-last-out-payload-ns", namelen) == 0) {
+        client->bench.server_stats_last_out_payload_ns = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-count") - 1 && memcmp(name, "x-bench-server-stats-out-payload-count", namelen) == 0) {
+        client->bench.server_stats_out_payload_count = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-bytes", namelen) == 0) {
+        client->bench.server_stats_out_payload_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-wire-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-wire-bytes", namelen) == 0) {
+        client->bench.server_stats_out_payload_wire_bytes = header_value_to_long(value, valuelen);
+    } else if (namelen == sizeof("x-bench-server-stats-out-payload-compressed-bytes") - 1 && memcmp(name, "x-bench-server-stats-out-payload-compressed-bytes", namelen) == 0) {
+        client->bench.server_stats_out_payload_compressed_bytes = header_value_to_long(value, valuelen);
+#endif
+    }
+    if (add_metadata_entry(client, name, namelen, value, valuelen, trailing) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return 0;
+}
+
+static int bench_on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    (void) session;
+    (void) error_code;
+    if (stream_id == client->stream_id) {
+        client->stream_closed = true;
+        client->stream_error_code = error_code;
+        client->bench.stream_closed_us = monotonic_us() - client->bench.call_started_us;
+    }
+    return 0;
+}
+
+static int bench_on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    (void) session;
+    client->sent_frames++;
+    client->last_sent_frame_type = frame->hd.type;
+    client->last_sent_frame_flags = frame->hd.flags;
+    if (frame->hd.type == NGHTTP2_DATA && !client->bench.no_copy) {
+        client->bench.data_frames_sent++;
+        client->bench.data_bytes_sent += frame->hd.length;
+        bench_record_data_sent(client);
+        if (frame->hd.length > client->bench.max_data_frame_len) {
+            client->bench.max_data_frame_len = frame->hd.length;
+        }
+        if (client->bench.min_data_frame_len == 0 || frame->hd.length < client->bench.min_data_frame_len) {
+            client->bench.min_data_frame_len = frame->hd.length;
+        }
+    } else if (frame->hd.type == NGHTTP2_WINDOW_UPDATE) {
+        uint64_t elapsed = client->bench.call_started_us == 0 ? 0 : monotonic_us() - client->bench.call_started_us;
+        client->bench.window_update_frames_sent++;
+        client->bench.call_window_update_frames_sent++;
+        if (frame->hd.stream_id == 0) {
+            client->bench.connection_window_update_frames_sent++;
+            client->bench.call_connection_window_update_frames_sent++;
+            client->bench.connection_window_update_increment_sent += frame->window_update.window_size_increment;
+            client->bench.call_connection_window_update_increment_sent += frame->window_update.window_size_increment;
+        } else {
+            client->bench.stream_window_update_frames_sent++;
+            client->bench.call_stream_window_update_frames_sent++;
+            client->bench.stream_window_update_increment_sent += frame->window_update.window_size_increment;
+            client->bench.call_stream_window_update_increment_sent += frame->window_update.window_size_increment;
+        }
+        if (elapsed > 0) {
+            if (client->bench.first_window_update_sent_us == 0) {
+                client->bench.first_window_update_sent_us = elapsed;
+            }
+            client->bench.last_window_update_sent_us = elapsed;
+            client->bench.last_window_update_sent_abs_us = monotonic_us();
+            client->bench.awaiting_data_after_window_update_sent = true;
+        }
+    }
+    return 0;
+}
+
+static int bench_on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    (void) session;
+    client->recv_frames++;
+    client->last_recv_frame_type = frame->hd.type;
+    client->last_recv_frame_flags = frame->hd.flags;
+    if (frame->hd.type == NGHTTP2_GOAWAY) {
+        mark_channel_draining(client->channel, frame->goaway.last_stream_id, frame->goaway.error_code);
+    } else if (frame->hd.type == NGHTTP2_WINDOW_UPDATE) {
+        uint64_t elapsed = client->bench.call_started_us == 0 ? 0 : monotonic_us() - client->bench.call_started_us;
+        client->bench.window_update_frames_recv++;
+        client->bench.call_window_update_frames_recv++;
+        if (frame->hd.stream_id == 0) {
+            client->bench.connection_window_update_frames_recv++;
+            client->bench.call_connection_window_update_frames_recv++;
+            client->bench.connection_window_update_increment_recv += frame->window_update.window_size_increment;
+            client->bench.call_connection_window_update_increment_recv += frame->window_update.window_size_increment;
+        } else {
+            client->bench.stream_window_update_frames_recv++;
+            client->bench.call_stream_window_update_frames_recv++;
+            client->bench.stream_window_update_increment_recv += frame->window_update.window_size_increment;
+            client->bench.call_stream_window_update_increment_recv += frame->window_update.window_size_increment;
+        }
+        if (elapsed > 0) {
+            if (client->bench.first_window_update_us == 0) {
+                client->bench.first_window_update_us = elapsed;
+            }
+            client->bench.last_window_update_us = elapsed;
+        }
+    }
+    return 0;
+}
+
+static int bench_on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
+{
+    grpc_call *client = (grpc_call *) user_data;
+    (void) session;
+    client->not_sent_frames++;
+    client->last_not_sent_frame_type = frame->hd.type;
+    client->last_not_sent_error = lib_error_code;
+    return 0;
+}
+
+
 static ssize_t data_source_read_length_callback(nghttp2_session *session, uint8_t frame_type, int32_t stream_id, int32_t session_remote_window_size, int32_t stream_remote_window_size, uint32_t remote_max_frame_size, void *user_data)
 {
     grpc_call *client = (grpc_call *) user_data;
@@ -269,7 +801,7 @@ static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, co
     } else if (write_data_frame(client, framehd, length) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    record_data_sent(client);
+    bench_record_data_sent(client);
     client->pending_data_len = 0;
 
     return 0;
@@ -896,19 +1428,26 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     client.request_len = request_len;
     client.bench.no_copy = no_copy;
     client.bench.poll_loop = poll_loop;
+    client.discard_response_body = discard_response_body;
     client.bench.discard_response_body = discard_response_body;
     client.bench.flush_after_mem_recv = flush_after_mem_recv;
     client.bench.read_first_poll_loop = read_first_poll_loop;
     client.decode_response_incrementally = decode_response_incrementally;
     client.direct_response_payload = direct_response_payload && decode_response_incrementally && response_callback_enabled;
     client.bench.read_ahead_delivery = read_ahead_delivery && client.direct_response_payload;
+    client.queue_response_payloads = client.bench.read_ahead_delivery;
     client.bench.read_ahead_max_messages = read_ahead_max_messages > 0 ? (size_t) read_ahead_max_messages : 0;
     client.bench.read_ahead_max_bytes = read_ahead_max_bytes > 0 ? (size_t) read_ahead_max_bytes : 0;
     client.bench.compact_response_buffer = compact_response_buffer && decode_response_incrementally && !client.direct_response_payload;
     client.bench.response_compact_threshold = response_compact_threshold > 0 ? (size_t) response_compact_threshold : 1;
+    client.observe_payload_copy = bench_observe_payload_copy;
+    client.observe_message_ready = bench_observe_message_ready;
+    client.observe_payload_queued = bench_observe_payload_queued;
+    client.observe_payload_delivered = bench_observe_payload_delivered;
+    client.flush_queue_if_limited = bench_flush_queue_if_limited;
     if (response_callback_enabled) {
-        client.bench.response_fci = &response_fci;
-        client.bench.response_fcc = &response_fcc;
+        client.payload_callback_fci = &response_fci;
+        client.payload_callback_fcc = &response_fcc;
     }
     if (data_frame_size > 0) {
         client.bench.data_frame_size_cap = (uint32_t) data_frame_size;
@@ -942,13 +1481,13 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     }
 
     nghttp2_session_callbacks_new(&callbacks);
-    nghttp2_session_callbacks_set_send_callback(callbacks, send_callback);
-    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, on_data_chunk_recv_callback);
-    nghttp2_session_callbacks_set_on_header_callback(callbacks, on_header_callback);
-    nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, on_stream_close_callback);
-    nghttp2_session_callbacks_set_on_frame_send_callback(callbacks, on_frame_send_callback);
-    nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, on_frame_recv_callback);
-    nghttp2_session_callbacks_set_on_frame_not_send_callback(callbacks, on_frame_not_send_callback);
+    nghttp2_session_callbacks_set_send_callback(callbacks, bench_send_callback);
+    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, bench_on_data_chunk_recv_callback);
+    nghttp2_session_callbacks_set_on_header_callback(callbacks, bench_on_header_callback);
+    nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, bench_on_stream_close_callback);
+    nghttp2_session_callbacks_set_on_frame_send_callback(callbacks, bench_on_frame_send_callback);
+    nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, bench_on_frame_recv_callback);
+    nghttp2_session_callbacks_set_on_frame_not_send_callback(callbacks, bench_on_frame_not_send_callback);
     nghttp2_session_callbacks_set_data_source_read_length_callback(callbacks, data_source_read_length_callback);
     nghttp2_session_callbacks_set_send_data_callback(callbacks, send_data_callback);
     nghttp2_session_client_new(&session, callbacks, &client);
@@ -1225,7 +1764,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         uint64_t response_decode_us = client.bench.call_response_decode_us;
         uint64_t max_response_decode_us = client.bench.call_max_response_decode_us;
         if (response_callback_enabled && !decode_response_incrementally) {
-            if (process_response_messages(&client, &response_fci, &response_fcc, &decoded_messages, &response_decode_us, &max_response_decode_us) != 0) {
+            if (bench_process_response_messages(&client, &response_fci, &response_fcc, &decoded_messages, &response_decode_us, &max_response_decode_us) != 0) {
                 failed++;
                 break;
             }
