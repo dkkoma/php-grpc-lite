@@ -1530,7 +1530,13 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     }
 
     snprintf(authority, sizeof(authority), "%s:%ld", host, port);
-    init_request_headers(&request_headers, count_custom_header_values(headers_zv));
+    if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
+        close(client.fd);
+        nghttp2_session_del(session);
+        nghttp2_session_callbacks_del(callbacks);
+        cleanup_grpc_call(&client);
+        RETURN_THROWS();
+    }
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
     append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, "http", sizeof("http") - 1);
     append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, authority, strlen(authority));

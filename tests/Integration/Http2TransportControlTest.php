@@ -809,6 +809,37 @@ PHP;
         self::assertFalse($third['raw']['persistent_reused'] ?? true);
     }
 
+    public function testHttp2DirectApiRejectsInvalidRequestMetadata(): void
+    {
+        if (!function_exists('grpc_lite_unary')) {
+            self::markTestSkipped('grpc_lite_unary is not loaded in this process');
+        }
+
+        $request = "\0\0\0\0\0";
+        $invalidHeaders = [
+            [['X-Uppercase' => ['1']], 'forbidden gRPC request metadata key'],
+            [['te' => ['trailers']], 'forbidden gRPC request metadata key'],
+            [['x-bench-crlf' => ["bad\r\nvalue"]], 'invalid gRPC request metadata value'],
+            [['x-bench-nonascii' => ["\xC3\xA9"]], 'invalid gRPC request metadata value'],
+        ];
+
+        foreach ($invalidHeaders as [$headers, $message]) {
+            try {
+                \grpc_lite_unary(
+                    'phpunit-invalid-metadata-' . bin2hex(random_bytes(8)),
+                    'test-server',
+                    50051,
+                    '/helloworld.Greeter/BenchUnary',
+                    $request,
+                    $headers,
+                );
+                self::fail('invalid metadata unexpectedly accepted');
+            } catch (\Throwable $e) {
+                self::assertStringContainsString($message, $e->getMessage());
+            }
+        }
+    }
+
     public function testHttp2AuthorityOverrideControlsHttp2Authority(): void
     {
         if (!function_exists('grpc_lite_unary')) {

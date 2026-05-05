@@ -10,6 +10,7 @@
  */
 
 #define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
+#define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
 
@@ -65,7 +66,7 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
 static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
 static size_t count_custom_header_values(zval *headers_zv);
-static void init_request_headers(h2_request_headers *headers, size_t custom_values);
+static int init_request_headers(h2_request_headers *headers, size_t custom_values);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
@@ -1171,13 +1172,18 @@ static size_t count_custom_header_values(zval *headers_zv)
     return count;
 }
 
-static void init_request_headers(h2_request_headers *headers, size_t custom_values)
+static int init_request_headers(h2_request_headers *headers, size_t custom_values)
 {
+    if (custom_values > GRPC_LITE_MAX_REQUEST_METADATA_VALUES || custom_values > SIZE_MAX - 7) {
+        zend_throw_exception(NULL, "gRPC request metadata exceeds maximum count", 0);
+        return -1;
+    }
     headers->capacity = 7 + custom_values;
     headers->len = 0;
     headers->value_count = 0;
     headers->nva = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(nghttp2_nv));
     headers->value_strings = custom_values > 0 ? ecalloc(custom_values, sizeof(zend_string *)) : NULL;
+    return 0;
 }
 
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
@@ -1194,18 +1200,98 @@ static void append_request_header(h2_request_headers *headers, const char *name,
     };
 }
 
+static bool is_valid_custom_request_header_name_char(unsigned char ch)
+{
+    return (ch >= 'a' && ch <= 'z')
+        || (ch >= '0' && ch <= '9')
+        || ch == '_' || ch == '.' || ch == '-';
+}
+
+static bool is_reserved_custom_request_header(const char *name, size_t name_len)
+{
+    static const char *reserved_headers[] = {
+        "content-type",
+        "te",
+        "grpc-accept-encoding",
+        "grpc-encoding",
+        "grpc-message",
+        "grpc-status",
+        "grpc-status-details-bin",
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "transfer-encoding",
+        "upgrade",
+    };
+    size_t index;
+
+    for (index = 0; index < sizeof(reserved_headers) / sizeof(reserved_headers[0]); index++) {
+        if (strlen(reserved_headers[index]) == name_len && memcmp(name, reserved_headers[index], name_len) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool is_forbidden_custom_request_header(zend_string *key)
 {
     const char *name;
+    size_t name_len;
+    size_t index;
 
     if (key == NULL || ZSTR_LEN(key) == 0) {
         return true;
     }
     name = ZSTR_VAL(key);
+    name_len = ZSTR_LEN(key);
     if (name[0] == ':') {
         return true;
     }
+    for (index = 0; index < name_len; index++) {
+        if (!is_valid_custom_request_header_name_char((unsigned char) name[index])) {
+            return true;
+        }
+    }
+    if (is_reserved_custom_request_header(name, name_len)) {
+        return true;
+    }
     return false;
+}
+
+static bool is_invalid_custom_request_header_value(zend_string *value)
+{
+    const char *bytes;
+    size_t length;
+    size_t index;
+
+    if (value == NULL) {
+        return true;
+    }
+    bytes = ZSTR_VAL(value);
+    length = ZSTR_LEN(value);
+    for (index = 0; index < length; index++) {
+        unsigned char ch = (unsigned char) bytes[index];
+        if (ch == '\r' || ch == '\n' || ch >= 0x80) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int append_custom_request_header_value(h2_request_headers *headers, zend_string *key, zval *value)
+{
+    zend_string *value_str = zval_get_string(value);
+
+    if (is_invalid_custom_request_header_value(value_str)) {
+        zend_string_release(value_str);
+        zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
+        return -1;
+    }
+    if (headers->value_strings != NULL) {
+        headers->value_strings[headers->value_count++] = value_str;
+    }
+    append_request_header(headers, ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    return 0;
 }
 
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv)
@@ -1225,20 +1311,16 @@ static int append_custom_request_headers(h2_request_headers *headers, zval *head
         if (Z_TYPE_P(value) == IS_ARRAY) {
             zval *nested;
             ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), nested) {
-                zend_string *value_str = zval_get_string(nested);
-                if (headers->value_strings != NULL) {
-                    headers->value_strings[headers->value_count++] = value_str;
+                if (append_custom_request_header_value(headers, key, nested) != 0) {
+                    return -1;
                 }
-                append_request_header(headers, ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
             } ZEND_HASH_FOREACH_END();
             continue;
         }
 
-        zend_string *value_str = zval_get_string(value);
-        if (headers->value_strings != NULL) {
-            headers->value_strings[headers->value_count++] = value_str;
+        if (append_custom_request_header_value(headers, key, value) != 0) {
+            return -1;
         }
-        append_request_header(headers, ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
     } ZEND_HASH_FOREACH_END();
 
     return 0;

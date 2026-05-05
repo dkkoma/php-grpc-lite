@@ -61,7 +61,11 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     channel->busy = true;
     // cppcheck-suppress autoVariables
     channel->active_call_owner = &client;
-    init_request_headers(&request_headers, count_custom_header_values(headers_zv));
+    if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
+        clear_channel_call_owner(channel, &client);
+        cleanup_grpc_call(&client);
+        return FAILURE;
+    }
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
     append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
     append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, channel->authority, strlen(channel->authority));
@@ -381,7 +385,10 @@ PHP_FUNCTION(grpc_lite_stream_open)
     nghttp2_session_set_user_data(channel->session, &stream->client);
     channel->busy = true;
     channel->active_stream_owner = stream;
-    init_request_headers(&request_headers, count_custom_header_values(headers_zv));
+    if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
+        destroy_h2_stream(stream);
+        RETURN_THROWS();
+    }
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
     append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
     append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, channel->authority, strlen(channel->authority));
