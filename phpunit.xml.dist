@@ -12,7 +12,4 @@
             <directory>tests/Integration</directory>
         </testsuite>
     </testsuites>
-    <php>
-        <env name="PHP_GRPC_LITE_TRANSPORT" value="curl"/>
-    </php>
 </phpunit>

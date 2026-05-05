@@ -12,9 +12,9 @@ use PHPUnit\Framework\TestCase;
 #[Group('integration')]
 final class MetadataControlTest extends TestCase
 {
-    public function testCurlFiltersUserSuppliedUserAgentMetadata(): void
+    public function testFiltersUserSuppliedUserAgentMetadata(): void
     {
-        $seen = $this->serverSeen('curl', 'user-agent', [
+        $seen = $this->serverSeen('user-agent', [
             'x-bench-observe-metadata-key' => ['user-agent'],
             'user-agent' => ['user-agent-override'],
         ]);
@@ -22,33 +22,9 @@ final class MetadataControlTest extends TestCase
         self::assertNotContains('user-agent-override', $seen);
     }
 
-    public function testNativeFiltersUserSuppliedUserAgentMetadata(): void
+    public function testPreservesEmptyAsciiMetadataValue(): void
     {
-        $this->requireNativeTransport();
-
-        $seen = $this->serverSeen('native', 'user-agent', [
-            'x-bench-observe-metadata-key' => ['user-agent'],
-            'user-agent' => ['user-agent-override'],
-        ]);
-
-        self::assertNotContains('user-agent-override', $seen);
-    }
-
-    public function testCurlPreservesEmptyAsciiMetadataValue(): void
-    {
-        $seen = $this->serverSeen('curl', 'x-bench-empty', [
-            'x-bench-observe-metadata-key' => ['x-bench-empty'],
-            'x-bench-empty' => [''],
-        ]);
-
-        self::assertSame([''], $seen);
-    }
-
-    public function testNativePreservesEmptyAsciiMetadataValue(): void
-    {
-        $this->requireNativeTransport();
-
-        $seen = $this->serverSeen('native', 'x-bench-empty', [
+        $seen = $this->serverSeen('x-bench-empty', [
             'x-bench-observe-metadata-key' => ['x-bench-empty'],
             'x-bench-empty' => [''],
         ]);
@@ -58,7 +34,7 @@ final class MetadataControlTest extends TestCase
 
     public function testUppercaseMetadataKeyIsNormalizedToLowercase(): void
     {
-        $seen = $this->serverSeen('curl', 'x-bench-upper', [
+        $seen = $this->serverSeen('x-bench-upper', [
             'x-bench-observe-metadata-key' => ['x-bench-upper'],
             'X-Bench-Upper' => ['upper'],
         ]);
@@ -68,35 +44,35 @@ final class MetadataControlTest extends TestCase
 
     public function testInvalidPseudoMetadataKeyIsRejected(): void
     {
-        $this->assertInvalidMetadata('curl', [
+        $this->assertInvalidMetadata([
             ':path' => ['/evil.Service/Method'],
         ]);
     }
 
     public function testInvalidMetadataKeyCharacterIsRejected(): void
     {
-        $this->assertInvalidMetadata('curl', [
+        $this->assertInvalidMetadata([
             'x bench space' => ['space-key'],
         ]);
     }
 
     public function testInvalidAsciiMetadataValueIsRejected(): void
     {
-        $this->assertInvalidMetadata('curl', [
+        $this->assertInvalidMetadata([
             'x-bench-crlf' => ["line\r\nbreak"],
         ]);
     }
 
     public function testInvalidNonAsciiMetadataValueIsRejected(): void
     {
-        $this->assertInvalidMetadata('curl', [
+        $this->assertInvalidMetadata([
             'x-bench-utf8' => ['utf8-あ'],
         ]);
     }
 
     public function testBinaryMetadataValueAllowsRawBytes(): void
     {
-        $seen = $this->serverSeen('curl', 'x-bench-raw-bin', [
+        $seen = $this->serverSeen('x-bench-raw-bin', [
             'x-bench-observe-metadata-key' => ['x-bench-raw-bin'],
             'x-bench-raw-bin' => ["\x00\x01\xff"],
         ]);
@@ -108,9 +84,9 @@ final class MetadataControlTest extends TestCase
      * @param array<string, string|list<string>> $metadata
      * @return list<string>
      */
-    private function serverSeen(string $transport, string $observedKey, array $metadata): array
+    private function serverSeen(string $observedKey, array $metadata): array
     {
-        $client = $this->client($transport);
+        $client = $this->client();
         $call = $client->BenchUnary(new BenchRequest(), $metadata);
         [, $status] = $call->wait();
 
@@ -129,10 +105,10 @@ final class MetadataControlTest extends TestCase
     }
 
     /** @param array<string, string|list<string>> $metadata */
-    private function assertInvalidMetadata(string $transport, array $metadata): void
+    private function assertInvalidMetadata(array $metadata): void
     {
         try {
-            $client = $this->client($transport);
+            $client = $this->client();
             $call = $client->BenchUnary(new BenchRequest(), $metadata);
             $call->wait();
             self::fail('expected InvalidArgumentException');
@@ -141,18 +117,10 @@ final class MetadataControlTest extends TestCase
         }
     }
 
-    private function client(string $transport): GreeterClient
+    private function client(): GreeterClient
     {
         return new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => $transport,
         ]);
-    }
-
-    private function requireNativeTransport(): void
-    {
-        if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
-        }
     }
 }

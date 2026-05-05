@@ -4,8 +4,7 @@
     "type": "library",
     "license": "MIT",
     "require": {
-        "php": ">=8.4",
-        "ext-curl": "*"
+        "php": ">=8.4"
     },
     "provide": {
         "ext-grpc": "1.62.0"

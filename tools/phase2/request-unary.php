@@ -25,8 +25,8 @@ $diagnosticRpc = false;
 $curlTraceOutput = null;
 $curlTraceCalls = 0;
 $uploadReadCallback = false;
-$nativeTransport = false;
-$transport = null;
+$nativeTransport = true;
+$transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -73,9 +73,9 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     } elseif ($arg === '--native-transport') {
         $nativeTransport = true;
     } elseif ($arg === '--transport') {
-        $transport = $args[++$argIndex] ?? '';
+        ++$argIndex;
     } elseif (str_starts_with($arg, '--transport=')) {
-        $transport = substr($arg, strlen('--transport='));
+        continue;
     } elseif ($arg === '--curl-trace-output') {
         $curlTraceOutput = $args[++$argIndex] ?? null;
     } elseif (str_starts_with($arg, '--curl-trace-output=')) {
@@ -114,14 +114,7 @@ if ($curlTraceOutput !== null && $curlTraceOutput !== '') {
     fwrite($curlTraceHandle, "# curl debug trace; timing is relative to call option creation; latency is diagnostic only\n");
 }
 
-$clientOptions = [];
-if ($nativeTransport) {
-    $clientOptions['php_grpc_lite.native_transport'] = true;
-}
-if ($transport !== null && $transport !== '') {
-    $clientOptions['php_grpc_lite.transport'] = $transport;
-}
-$client = UnaryBenchHelper::client($target, $clientOptions);
+$client = UnaryBenchHelper::client($target);
 $measurements = [];
 foreach ($requestPayloadSizes as $requestPayloadBytes) {
     $requestPayload = $requestPayloadBytes > 0 ? str_repeat("\0", $requestPayloadBytes) : '';

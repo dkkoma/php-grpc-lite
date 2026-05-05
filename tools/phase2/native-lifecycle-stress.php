@@ -69,7 +69,6 @@ require $autoload;
 
 $client = new GreeterClient($target, [
     'credentials' => ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'native',
 ]);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
 $measurements = [];

@@ -45,11 +45,8 @@ run_hot_path() {
 run_lite() {
     local bench_path="${1:-}"
     local log_path="$output_dir/$suite-$timestamp-php-grpc-lite.log"
-    # Keep generic regression baselines on curl unless explicitly overridden.
-    # Release native gates must pass PHP_GRPC_LITE_TRANSPORT=native explicitly.
-    local transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
     local cmd=(
-        docker compose run --rm -e "PHP_GRPC_LITE_TRANSPORT=$transport" dev bench/phpbench-with-artifacts.sh
+        docker compose run --rm dev bench/phpbench-with-artifacts.sh
         --workdir=.
         --log="$log_path"
         --json="${log_path%.log}.json"
@@ -67,14 +64,13 @@ run_lite() {
     echo
     echo "==========================================="
     echo "  RUN: php-grpc-lite ${bench_path:-full}"
-    echo "  TRANSPORT: $transport"
     echo "  LOG: $log_path"
     echo "==========================================="
 
     if [[ "$bench_path" == "" ]]; then
-        "${cmd[@]}" -- vendor/bin/phpbench run --report=aggregate
+        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run --report=aggregate
     else
-        "${cmd[@]}" -- vendor/bin/phpbench run "$bench_path" --report=aggregate
+        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run "$bench_path" --report=aggregate
     fi
 }
 

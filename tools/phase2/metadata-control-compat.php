@@ -13,10 +13,10 @@ array_shift($args);
 
 $suite = 'metadata-control-compat';
 $implementation = 'php-grpc-lite';
+$transport = 'native';
 $output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
-$transport = getenv('PHP_GRPC_LITE_TRANSPORT') ?: 'curl';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -41,9 +41,9 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     } elseif (str_starts_with($arg, '--autoload=')) {
         $autoload = substr($arg, strlen('--autoload='));
     } elseif ($arg === '--transport') {
-        $transport = $args[++$argIndex] ?? '';
+        ++$argIndex;
     } elseif (str_starts_with($arg, '--transport=')) {
-        $transport = substr($arg, strlen('--transport='));
+        continue;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -55,12 +55,9 @@ if ($suite === '' || $implementation === '' || $target === '' || $autoload === '
 
 requireAutoload($autoload);
 
-$transportOptions = $implementation === 'php-grpc-lite'
-    ? ['php_grpc_lite.transport' => $transport]
-    : [];
 $client = new GreeterClient($target, [
     'credentials' => ChannelCredentials::createInsecure(),
-] + $transportOptions);
+]);
 
 $cases = [
     'reserved_grpc_status' => metadataCase('grpc-status', '7'),

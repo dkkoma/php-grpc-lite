@@ -17,7 +17,6 @@ final class CallCredentialsTest extends TestCase
     {
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'curl',
         ]);
         $credentials = CallCredentials::createFromPlugin(
             static function (string $serviceUrl, string $methodName): array {

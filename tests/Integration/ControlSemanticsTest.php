@@ -12,7 +12,7 @@ use PHPUnit\Framework\TestCase;
 #[Group('integration')]
 final class ControlSemanticsTest extends TestCase
 {
-    public function testCurlUnaryCancelBeforeWaitReturnsCancelledStatus(): void
+    public function testUnaryCancelBeforeWaitReturnsCancelledStatus(): void
     {
         $client = $this->client();
         $call = $client->BenchUnary(new BenchRequest());
@@ -24,7 +24,7 @@ final class ControlSemanticsTest extends TestCase
         self::assertSame(\Grpc\STATUS_CANCELLED, $status->code);
     }
 
-    public function testCurlServerStreamingCancelBeforeIterationReturnsCancelledStatus(): void
+    public function testServerStreamingCancelBeforeIterationReturnsCancelledStatus(): void
     {
         $client = $this->client();
         $call = $client->BenchServerStream(new BenchRequest());
@@ -39,7 +39,7 @@ final class ControlSemanticsTest extends TestCase
         self::assertSame(\Grpc\STATUS_CANCELLED, $call->getStatus()->code);
     }
 
-    public function testCurlUnaryMalformedResponseFrameReturnsInternal(): void
+    public function testUnaryMalformedResponseFrameReturnsFailure(): void
     {
         $client = $this->client('test-server:50057');
 
@@ -52,7 +52,6 @@ final class ControlSemanticsTest extends TestCase
     {
         return new GreeterClient($target, [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'curl',
         ]);
     }
 }

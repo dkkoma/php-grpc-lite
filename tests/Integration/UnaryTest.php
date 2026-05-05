@@ -56,7 +56,7 @@ final class UnaryTest extends TestCase
         self::assertSame('0', $trailers['grpc-status'][0]);
     }
 
-    public function testSequentialUnaryCallsKeepOneReusableChannelHandle(): void
+    public function testSequentialUnaryCallsReuseChannelSemantics(): void
     {
         $opts = ['credentials' => ChannelCredentials::createInsecure()];
         $channel = new Channel(self::TARGET, $opts);
@@ -71,8 +71,5 @@ final class UnaryTest extends TestCase
             self::assertSame(\Grpc\STATUS_OK, $status->code);
             self::assertSame("Hello, $name", $response->getMessage());
         }
-
-        $idleHandles = new \ReflectionProperty($channel, 'idleCurlHandles');
-        self::assertCount(1, $idleHandles->getValue($channel));
     }
 }

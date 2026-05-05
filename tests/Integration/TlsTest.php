@@ -64,7 +64,7 @@ final class TlsTest extends TestCase
         // An unrelated CA — the server cert won't validate against it.
         $bogusCa = "-----BEGIN CERTIFICATE-----\n" .
             // A throwaway PEM (real-looking but for an unrelated CN); used
-            // only to give libcurl a non-matching trust anchor.
+            // only to give native TLS verification a non-matching trust anchor.
             "MIIBkzCCATigAwIBAgIUYWlsAAAAAAAAAAAAAAAAAAAAAFcwCgYIKoZIzj0EAwIw\n" .
             "FjEUMBIGA1UEAwwLbm90LW91ci1jYTAeFw0yNTAxMDEwMDAwMDBaFw0zNTAxMDEw\n" .
             "MDAwMDBaMBYxFDASBgNVBAMMC25vdC1vdXItY2EwWTATBgcqhkjOPQIBBggqhkjO\n" .
@@ -86,6 +86,6 @@ final class TlsTest extends TestCase
 
         self::assertNull($response);
         self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
-        self::assertStringContainsString('curl error', $status->details);
+        self::assertNotSame('', $status->details);
     }
 }

@@ -55,7 +55,7 @@ run_phase2_php() {
 
     local output_path="$output_dir/$output_name"
     local php_args=()
-    if [[ "$implementation" == "php-grpc-lite" && "${PHP_GRPC_LITE_TRANSPORT:-}" == "native" ]]; then
+    if [[ "$implementation" == "php-grpc-lite" ]]; then
         php_args=(-d extension=/workspace/ext/grpc/modules/grpc.so)
     fi
 
@@ -191,15 +191,13 @@ case "$suite" in
         run_phase2_php \
             "Phase 2 metadata compatibility observation" \
             "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/metadata-compat.php \
-            --transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
+            tools/phase2/metadata-compat.php
         ;;
     metadata-control-compat)
         run_phase2_php \
             "Phase 2 metadata control compatibility observation" \
             "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/metadata-control-compat.php \
-            --transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
+            tools/phase2/metadata-control-compat.php
         ;;
     *)
         cat >&2 <<EOF

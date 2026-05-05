@@ -8,11 +8,9 @@
 
 - PHP classes: Composer package `php-grpc-lite/php-grpc-lite` が `Grpc\*` API surfaceをautoloadする。
 - Native extension: このrepositoryの `ext/grpc/` を `phpize` でbuildする。
-- Target runtime default: `native` transport。release readiness is still gated by native memory/lifecycle QA.
-- Stable route: `php_grpc_lite.transport=curl` を明示した場合だけlibcurl経路を使う。
+- Runtime transport: native nghttp2 transportのみ。release readiness is still gated by native memory/lifecycle QA.
 - Composer metadata: package は `ext-grpc` を `provide` するが、Composerはnative extensionをbuild/loadしない。source buildと `extension=grpc.so` の有効化を完了してから、drop-in replacementとして扱う。
 - Rollback:
-  - transportだけを戻す場合は、このextensionをloadしたまま `php_grpc_lite.transport=curl` を明示する。
   - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc.so` を無効化し、公式側の `grpc.so` を有効化する。
 
 ## Requirements
@@ -86,21 +84,7 @@ $client = new SomeGrpcClient('example.com:443', [
 ]);
 ```
 
-transportを明示する場合:
-
-```php
-$client = new SomeGrpcClient($target, [
-    'credentials' => Grpc\ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'native',
-]);
-
-$stableClient = new SomeGrpcClient($target, [
-    'credentials' => Grpc\ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'curl',
-]);
-```
-
-`curl` は自動fallbackではなく、workloadや運用安定性に応じてユーザーが明示選択するstable route。
+transport選択optionはない。native extension未ロード、未対応機能、transport errorは別経路へfallbackせず、選択されたRPCの失敗として返す。
 
 ## Compatibility scope
 
@@ -132,4 +116,4 @@ ITERATIONS=10 BENCH_TAG=install-smoke ./bench/phase2/check-native-lifecycle-stre
 
 large server streaming bulk transferは事前ベンチを推奨する。目安は `>=64KiB/message` かつ `>=8MiB/stream`、またはlarge payload `>=50 messages`。
 
-この範囲でp99やthroughputがSLOに入る場合は、`native` と `curl` の両方を実ワークロードに近いshapeで比較する。
+この範囲でp99やthroughputがSLOに入るかは、実ワークロードに近いshapeで事前に測定する。

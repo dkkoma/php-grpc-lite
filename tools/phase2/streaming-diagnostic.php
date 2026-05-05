@@ -23,9 +23,9 @@ $streams = 1000;
 $warmupStreams = 3;
 $messageCount = 10;
 $payloadBytes = 100 * 1024;
-$nativeTransport = false;
+$nativeTransport = true;
 $nativeResponseMode = 'direct';
-$transport = null;
+$transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -68,9 +68,9 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     } elseif ($arg === '--native-transport') {
         $nativeTransport = true;
     } elseif ($arg === '--transport') {
-        $transport = $args[++$argIndex] ?? '';
+        ++$argIndex;
     } elseif (str_starts_with($arg, '--transport=')) {
-        $transport = substr($arg, strlen('--transport='));
+        continue;
     } elseif ($arg === '--native-response-mode') {
         $nativeResponseMode = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--native-response-mode=')) {
@@ -89,16 +89,9 @@ if ($streams <= 0 || $warmupStreams < 0 || $messageCount <= 0 || $payloadBytes <
 
 requireAutoload($autoload);
 
-$clientOptions = [];
-if ($nativeTransport) {
-    $clientOptions['php_grpc_lite.native_transport'] = true;
-}
-if ($transport !== null && $transport !== '') {
-    $clientOptions['php_grpc_lite.transport'] = $transport;
-}
-if ($nativeTransport || $transport === 'native') {
-    $clientOptions['php_grpc_lite.native_response_mode'] = $nativeResponseMode;
-}
+$clientOptions = [
+    'php_grpc_lite.native_response_mode' => $nativeResponseMode,
+];
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
 for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {

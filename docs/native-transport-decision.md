@@ -2,11 +2,11 @@
 
 ## Decision
 
-`php-grpc-lite` の本実装transportは native nghttp2 transport をdefaultにする方針で進める。
+`php-grpc-lite` の本実装transportは native nghttp2 transport の1系統にする。
 
-ただしこれはPhase 2の設計判断であり、drop-in release defaultにはまだしない。release defaultにするには、native extension packaging、長時間stress、large response tuning、production C extensionとしてのmemory checkを満たす必要がある。
+ただしこれはPhase 2の設計判断であり、drop-in releaseにはまだしない。releaseには、native extension packaging、長時間stress、large response tuning、production C extensionとしてのmemory checkを満たす必要がある。
 
-ただし、libcurl経路はfallbackではなく明示的な安定経路として残す。ユーザーはworkloadや運用安定性に応じて `native` / `curl` を選択できる。
+libcurl runtime経路、transport option、環境変数によるtransport切替は持たない。extension未ロードやnative transport errorは別経路へfallbackせず、そのRPCの失敗として扱う。
 
 理由:
 
@@ -14,40 +14,24 @@
 - nghttp2 direct PoCでは、large request unaryと多くのserver streaming large response形状でext-grpc同等レンジまで到達した。
 - small SELECT相当のserver streamingは実運用上の主経路なので、large payloadだけでなくsmall streamingでもext-grpc同等または優位をrelease判断の主軸にする。
 - `compact/ring buffer + direct payload assembly` により、server streamingのmemory保持と二重copyを抑えられる。
-- libcurl経路はcold固定費やsmall unaryには有効だが、Phase 2で見ているlarge payload transport構造の本筋改善にはならない。
-- 一方で、libcurl経路は既に互換性検証済みの範囲が広く、native移行期の安全な選択肢として価値がある。
-
-Transport option:
-
-```php
-new GreeterClient($target, [
-    'credentials' => ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'native', // Phase 2 target default
-]);
-
-new GreeterClient($target, [
-    'credentials' => ChannelCredentials::createInsecure(),
-    'php_grpc_lite.transport' => 'curl',   // explicit stable route
-]);
-```
-
-自動fallbackはしない。`native` を選んでnative未対応機能やtransport errorに当たった場合、黙ってcurlへ落とさず明示的に失敗させる。
+- libcurl経路は比較・調査には有効だったが、本実装に残すと互換性QAと性能改善の分岐が増える。
+- native extensionを前提にするなら、transportを1系統にした方がdrop-in surfaceの互換性とC extension hardeningへ集中できる。
 
 ## Release Default Gates
 
 nativeをdrop-in release defaultにする前に満たす条件:
 
 - native extension packagingが通常利用できる。
-- TLS / mTLS がlibcurl経路と同等に通る。Phase 2 native compatibility gateでunary / server streamingとも検証済み。
+- TLS / mTLS がunary / server streamingとも通る。Phase 2 native compatibility gateで検証済み。
 - server streamingがbatch drain後yieldではなく、messageごとにtransportからyieldできる。Phase 2 stream resourceでMVP検証済み。
 - slow consumer時にconsumer-speed limitedになり、代表条件でmemoryが増え続けない。Phase 2 stream resourceでpull型backpressureを検証済み。長時間stressはrelease hardeningで扱う。
 - `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。Phase 2 stream resourceでMVP検証済み。
 - Channel lifetimeでHTTP/2 session/socketを再利用できる。unary simple経路はC側persistent channelでrequestまたぎ再利用する。production server streaming resourceも同じlifecycleへ載せる。
-- RST_STREAM / missing trailers / metadata / status / deadlineの主要互換性をext-grpcまたはlibcurl経路と照合済み。Phase 2 native compatibility gateでmetadata/status/compression/error semanticsの代表条件は検証済み。
+- RST_STREAM / missing trailers / metadata / status / deadlineの主要互換性をext-grpc比較とnative compatibility gateで確認済み。metadata/status/compression/error semanticsの代表条件は検証済み。
 - native resource lifecycleが整理され、stream resource destructor、unary failure path、persistent channel busy状態の代表条件と100 iteration stressを検証済み。production packaging後のnative memory checkerはrelease hardeningで扱う。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 
-default nativeを維持する場合、PHP userland codeはComposerで導入し、native extensionはこのrepositoryの `ext/grpc/` をclone後にsource buildする。Composer install時にnative extensionを自動buildしない。extension未導入環境で黙ってcurlへfallbackして動かすのではなく、install/load段階で `extension_loaded('grpc')` を確認する。libcurl経路は `php_grpc_lite.transport=curl` の明示選択肢として残す。
+PHP userland codeはComposerで導入し、native extensionはこのrepositoryの `ext/grpc/` をclone後にsource buildする。Composer install時にnative extensionを自動buildしない。extension未導入環境で黙って別transportへfallbackして動かすのではなく、install/load段階で `extension_loaded('grpc')` を確認する。
 
 release QA の判定表は `docs/release-qa-checklist.md` に集約する。
 
@@ -73,7 +57,7 @@ Native transport MVPに入れるもの:
    - `DATA -> body buffer -> payload string` の二重copyを避ける。
 
 4. **Insecure h2c benchmark path**
-   - まずGo test-serverのcontrolled benchmarkでlibcurl/current、MVP、ext-grpcを比較する。
+   - まずGo test-serverのcontrolled benchmarkでnative MVP、ext-grpcを比較する。
    - TLS/mTLS等はMVP後のcompatibility integrationで入れる。
 
 ## Deferred
@@ -93,30 +77,19 @@ Native transportに残すがMVP必須ではないもの:
   - 単一call latency改善の本筋ではない。
   - channel transportの次段階として扱う。
 
-## Explicit Stable Route
-
-本実装のdefaultはnativeだが、libcurl経路は以下の目的で維持する。
-
-- workloadごとの明示的な選択肢。
-- native移行期の安定経路。
-- 互換性比較のoracle。
-- production rollback path。
-
-これは自動fallbackではない。ユーザーまたはベンチが `php_grpc_lite.transport=curl` を指定した場合だけlibcurl経路を使う。
-
 ## Transport Selection Guide
 
-nativeをdefaultにする。ただし、server streamingのlarge response bulk transferは、release時点ではworkloadごとに `native` / `curl` を比較する。
+transportはnativeのみ。ただし、server streamingのlarge response bulk transferは、release時点でknown limitationとして扱い、実ワークロードに近いshapeでSLO内に入るかを事前確認する。
 
 ここでのlarge判定はgRPC仕様上の制限ではなく、2026-05-04時点のcontrolled benchmarkに基づく運用閾値。
 
 | 区分 | 目安 | 推奨 |
 |---|---|---|
 | small unary / small streaming | unary request/responseが数百B〜数KiB、server streamingが `1x100B` / `1x1KiB` / `1x4KiB` / `1x10KiB` 相当 | `native` を推奨 |
-| many-small streaming | 1 messageが小さい。例: `1000x100B` / `10000x100B` | `native` を推奨。ただしp99 SLOが厳しい場合は `curl` も比較 |
-| single-large response | 1 messageが `>= 1MiB`、ただしmessage数は少ない | `native` は利用可能。p99/throughputが重要なら `curl` も比較 |
+| many-small streaming | 1 messageが小さい。例: `1000x100B` / `10000x100B` | nativeで計測し、p99 SLOを確認 |
+| single-large response | 1 messageが `>= 1MiB`、ただしmessage数は少ない | nativeで計測し、p99/throughputを確認 |
 | medium-large streaming | 1 messageが `>= 64KiB`、またはstream totalが `>= 1MiB` | 事前ベンチ推奨 |
-| large bulk streaming | 1 messageが `>= 64KiB` かつ stream totalが `>= 8MiB`、または `>= 50` messagesのlarge payload stream | known limitation対象。`native` / `curl` を比較し、p99やworker占有がSLOに入るなら `curl` を選択肢に入れる |
+| large bulk streaming | 1 messageが `>= 64KiB` かつ stream totalが `>= 8MiB`、または `>= 50` messagesのlarge payload stream | known limitation対象。p99やworker占有がSLOに入るかを事前確認 |
 
 代表例として `10x100KiB` はnativeがcurlより改善するがext-grpcより遅く、`100x100KiB` はnative stream resource surfaceがcurl/ext-grpcより明確に遅い。したがってlargeの実務閾値は「100KiB級messageが数十件以上、合計8〜10MiB級」と置く。
 
@@ -128,8 +101,8 @@ nativeをdefaultにする。ただし、server streamingのlarge response bulk t
 
 現時点で採用しないもの:
 
-- **PHP 8.5 persistent curl share**
-  - libcurl経路は明示的な安定経路として残すが、target architectureはnativeであり、persistent curl shareを主改善策にはしない。
+- **PHP 8.5 persistent curl share / libcurl runtime route**
+  - target architectureはnativeであり、curl routeを本実装に残さない。
 
 - **unbounded read-ahead**
   - many-small / long streamでqueue waitとdelivery latencyを悪化させる。

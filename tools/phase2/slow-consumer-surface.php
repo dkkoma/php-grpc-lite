@@ -21,9 +21,9 @@ $streams = 10;
 $messageCount = 100;
 $payloadBytes = 100;
 $sleepUs = 1000;
-$transport = 'curl';
 $nativeResponseMode = 'stream';
 $implementation = 'php-grpc-lite';
+$transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -55,10 +55,6 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $sleepUs = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--sleep-us=')) {
         $sleepUs = (int) substr($arg, strlen('--sleep-us='));
-    } elseif ($arg === '--transport') {
-        $transport = $args[++$argIndex] ?? '';
-    } elseif (str_starts_with($arg, '--transport=')) {
-        $transport = substr($arg, strlen('--transport='));
     } elseif ($arg === '--implementation') {
         $implementation = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--implementation=')) {
@@ -67,6 +63,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $nativeResponseMode = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--native-response-mode=')) {
         $nativeResponseMode = substr($arg, strlen('--native-response-mode='));
+    } elseif ($arg === '--transport') {
+        ++$argIndex;
+    } elseif (str_starts_with($arg, '--transport=')) {
+        continue;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -80,12 +80,10 @@ if (!is_file($autoload)) {
 }
 require $autoload;
 
-$sample = ResourceSampler::measure(static function () use ($target, $transport, $nativeResponseMode, $implementation, $messageCount, $payloadBytes, $streams, $sleepUs): array {
+$sample = ResourceSampler::measure(static function () use ($target, $nativeResponseMode, $implementation, $messageCount, $payloadBytes, $streams, $sleepUs): array {
     $options = [];
     if ($implementation === 'php-grpc-lite') {
         $options = [
-            'php_grpc_lite.transport' => $transport,
-            'php_grpc_lite.native_transport' => $transport === 'native',
             'php_grpc_lite.native_response_mode' => $nativeResponseMode,
         ];
     }
@@ -173,7 +171,7 @@ file_put_contents($output, ResultContract::encode($document));
 printf(
     "implementation=%s transport=%s streams=%d messages=%d first-yield-p50=%.1fμs stream-p99=%.1fμs peak-delta=%.1fKiB wall=%.1fms\n",
     $implementation,
-    $transport,
+    'native',
     $streams,
     $messages,
     $metrics['first_yield_offset_p50_ns']['value'] / 1_000,
@@ -185,6 +183,6 @@ printf(
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/slow-consumer-surface.php --output=var/bench-results/result.json [--implementation=php-grpc-lite|ext-grpc] [--transport=curl|native] [--sleep-us=1000]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/slow-consumer-surface.php --output=var/bench-results/result.json [--implementation=php-grpc-lite|ext-grpc] [--sleep-us=1000]\n");
     exit(2);
 }

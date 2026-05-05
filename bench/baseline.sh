@@ -26,9 +26,8 @@ run_suite() {
     local log_path="$output_dir/$suite-$tag-$implementation.log"
     local json_path="${log_path%.log}.json"
     local tsv_path="${log_path%.log}.tsv"
-    local transport="${PHP_GRPC_LITE_TRANSPORT:-curl}"
     local cmd=(
-        docker compose run --rm -e "PHP_GRPC_LITE_TRANSPORT=$transport" dev bench/phpbench-with-artifacts.sh
+        docker compose run --rm dev bench/phpbench-with-artifacts.sh
         --workdir=.
         --log="$log_path"
         --json="$json_path"
@@ -46,11 +45,11 @@ run_suite() {
     echo
     echo "==========================================="
     echo "  RUN: baseline $action $suite"
-    echo "  TRANSPORT: $transport"
+    echo "  IMPLEMENTATION: $implementation"
     echo "  LOG: $log_path"
     echo "==========================================="
 
-    "${cmd[@]}" -- vendor/bin/phpbench run "$bench_path" --report=aggregate
+    "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run "$bench_path" --report=aggregate
 
     if [[ "$action" == "update" ]]; then
         docker compose run --rm dev php tools/update-benchmark-baseline.php \

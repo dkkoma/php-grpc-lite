@@ -20,7 +20,7 @@ $autoload = 'vendor/autoload.php';
 $durationSec = 1.0;
 $warmupCalls = 3;
 $maxCalls = 0;
-$transport = null;
+$transport = 'native';
 $diagnosticRpc = false;
 $cases = [
     ['name' => 'begin_txn', 'request_bytes' => 92, 'response_bytes' => 18],
@@ -65,9 +65,9 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     } elseif (str_starts_with($arg, '--max-calls=')) {
         $maxCalls = (int) substr($arg, strlen('--max-calls='));
     } elseif ($arg === '--transport') {
-        $transport = $args[++$argIndex] ?? '';
+        ++$argIndex;
     } elseif (str_starts_with($arg, '--transport=')) {
-        $transport = substr($arg, strlen('--transport='));
+        continue;
     } elseif ($arg === '--diagnostic-rpc') {
         $diagnosticRpc = true;
     } else {
@@ -86,11 +86,7 @@ if (!is_file($autoload)) {
 }
 require $autoload;
 
-$clientOptions = [];
-if ($transport !== null && $transport !== '') {
-    $clientOptions['php_grpc_lite.transport'] = $transport;
-}
-$client = UnaryBenchHelper::client($target, $clientOptions);
+$client = UnaryBenchHelper::client($target);
 $measurements = [];
 
 foreach ($cases as $case) {

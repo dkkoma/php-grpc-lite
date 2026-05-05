@@ -29,7 +29,6 @@ final class NativeTransportControlTest extends TestCase
 
         $client = new GreeterClient(self::TLS_TARGET, [
             'credentials' => ChannelCredentials::createSsl($rootCerts),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new HelloRequest();
@@ -51,7 +50,6 @@ final class NativeTransportControlTest extends TestCase
 
         $client = new GreeterClient(self::TLS_TARGET, [
             'credentials' => ChannelCredentials::createSsl($rootCerts),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new BenchRequest();
@@ -83,7 +81,6 @@ final class NativeTransportControlTest extends TestCase
 
         $client = new GreeterClient(self::MTLS_TARGET, [
             'credentials' => ChannelCredentials::createSsl($rootCerts, $clientKey, $clientCert),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new HelloRequest();
@@ -109,7 +106,6 @@ final class NativeTransportControlTest extends TestCase
 
         $client = new GreeterClient(self::MTLS_TARGET, [
             'credentials' => ChannelCredentials::createSsl($rootCerts, $clientKey, $clientCert),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new BenchRequest();
@@ -126,7 +122,7 @@ final class NativeTransportControlTest extends TestCase
         self::assertSame(\Grpc\STATUS_OK, $call->getStatus()->code, $call->getStatus()->details);
     }
 
-    public function testNativeTlsWithInvalidRootCertFailsWithoutCurlFallback(): void
+    public function testNativeTlsWithInvalidRootCertFails(): void
     {
         if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
@@ -134,7 +130,6 @@ final class NativeTransportControlTest extends TestCase
 
         $client = new GreeterClient(self::TLS_TARGET, [
             'credentials' => ChannelCredentials::createSsl("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new HelloRequest();
@@ -189,7 +184,6 @@ PHP;
             self::assertNotFalse($rootCerts);
             $client = new GreeterClient($address, [
                 'credentials' => ChannelCredentials::createSsl($rootCerts),
-                'php_grpc_lite.transport' => 'native',
             ]);
 
             $request = new HelloRequest();
@@ -209,7 +203,7 @@ PHP;
         }
     }
 
-    public function testNativeMtlsWithoutClientCertificateFailsWithoutCurlFallback(): void
+    public function testNativeMtlsWithoutClientCertificateFails(): void
     {
         if (!(extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is not loaded in this process');
@@ -220,7 +214,6 @@ PHP;
 
         $client = new GreeterClient(self::MTLS_TARGET, [
             'credentials' => ChannelCredentials::createSsl($rootCerts),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new HelloRequest();
@@ -239,7 +232,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         [$response, $status] = $client->BenchUnary(new BenchRequest(), [
@@ -261,7 +253,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new BenchRequest();
@@ -290,7 +281,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
         $values = ["\x00\x01\xff,a"];
 
@@ -312,7 +302,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50054', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         [$response, $status] = $client->BenchUnary(new BenchRequest(), [
@@ -332,7 +321,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50054', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
@@ -350,7 +338,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50054', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         [$response, $status] = $client->BenchUnary(new BenchRequest(), [
@@ -370,7 +357,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50054', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         [$response, $status] = $client->BenchUnary(new BenchRequest(), [
@@ -382,7 +368,7 @@ PHP;
         self::assertSame('unsupported grpc-encoding: gzip', $status->details);
     }
 
-    public function testNativeExtensionMissingFailsAsStatusWithoutCurlFallback(): void
+    public function testNativeExtensionMissingFailsAsStatus(): void
     {
         if ((extension_loaded('grpc'))) {
             self::markTestSkipped('grpc native extension is loaded in this process');
@@ -390,7 +376,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new HelloRequest();
@@ -406,7 +391,6 @@ PHP;
     {
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new HelloRequest();
@@ -428,7 +412,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new BenchRequest();
@@ -453,7 +436,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new BenchRequest();
@@ -482,7 +464,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new BenchRequest();
@@ -508,7 +489,6 @@ PHP;
 
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => 'native',
         ]);
 
         $request = new BenchRequest();

@@ -59,6 +59,6 @@ final class MtlsTest extends TestCase
 
         self::assertNull($response);
         self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
-        self::assertStringContainsString('curl error', $status->details);
+        self::assertNotSame('', $status->details);
     }
 }

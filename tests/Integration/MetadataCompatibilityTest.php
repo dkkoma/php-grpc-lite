@@ -12,9 +12,9 @@ use PHPUnit\Framework\TestCase;
 #[Group('integration')]
 final class MetadataCompatibilityTest extends TestCase
 {
-    public function testCurlDuplicateAsciiMetadataRoundTripPreservesValues(): void
+    public function testDuplicateAsciiMetadataRoundTripPreservesValues(): void
     {
-        $client = $this->client('curl');
+        $client = $this->client();
         $values = ['first', 'second', 'third'];
 
         $call = $client->BenchUnary(new BenchRequest(), [
@@ -30,29 +30,9 @@ final class MetadataCompatibilityTest extends TestCase
         self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-duplicate'] ?? null);
     }
 
-    public function testNativeDuplicateAsciiMetadataRoundTripPreservesValues(): void
+    public function testDuplicateBinaryMetadataRoundTripPreservesValues(): void
     {
-        $this->requireNativeTransport();
-        $client = $this->client('native');
-        $values = ['first', 'second', 'third'];
-
-        $call = $client->BenchUnary(new BenchRequest(), [
-            'x-bench-echo-ascii' => $values,
-            'x-bench-response-duplicate' => $values,
-        ]);
-        [, $status] = $call->wait();
-
-        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
-        self::assertSame($values, $call->getMetadata()['x-bench-initial-ascii'] ?? null);
-        self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-ascii'] ?? null);
-        self::assertSame($values, $call->getMetadata()['x-bench-initial-duplicate'] ?? null);
-        self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-duplicate'] ?? null);
-    }
-
-    public function testNativeDuplicateBinaryMetadataRoundTripPreservesValues(): void
-    {
-        $this->requireNativeTransport();
-        $client = $this->client('native');
+        $client = $this->client();
         $values = ["\x00first", "\x01second,comma", random_bytes(16)];
 
         $call = $client->BenchUnary(new BenchRequest(), [
@@ -68,10 +48,9 @@ final class MetadataCompatibilityTest extends TestCase
         self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-duplicate-bin'] ?? null);
     }
 
-    public function testNativeRequestMetadataAllowsManyHeadersAndLargeValues(): void
+    public function testRequestMetadataAllowsManyHeadersAndLargeValues(): void
     {
-        $this->requireNativeTransport();
-        $client = $this->client('native');
+        $client = $this->client();
         $metadata = [];
         for ($i = 0; $i < 12; $i++) {
             $metadata[sprintf('x-bench-extra-%02d', $i)] = ['extra'];
@@ -86,10 +65,9 @@ final class MetadataCompatibilityTest extends TestCase
         self::assertSame($metadata['x-bench-echo-ascii'], $call->getTrailingMetadata()['x-bench-trailing-ascii'] ?? null);
     }
 
-    public function testNativeServerStreamingDuplicateMetadataRoundTripPreservesValues(): void
+    public function testServerStreamingDuplicateMetadataRoundTripPreservesValues(): void
     {
-        $this->requireNativeTransport();
-        $client = $this->client('native');
+        $client = $this->client();
         $request = new BenchRequest();
         $request->setMessageCount(2);
         $request->setPayloadBytes(10);
@@ -112,18 +90,10 @@ final class MetadataCompatibilityTest extends TestCase
         self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-duplicate'] ?? null);
     }
 
-    private function client(string $transport): GreeterClient
+    private function client(): GreeterClient
     {
         return new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
-            'php_grpc_lite.transport' => $transport,
         ]);
-    }
-
-    private function requireNativeTransport(): void
-    {
-        if (!(extension_loaded('grpc'))) {
-            self::markTestSkipped('grpc native extension is not loaded in this process');
-        }
     }
 }
