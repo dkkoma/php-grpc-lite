@@ -4,8 +4,9 @@
 
 ## プロジェクトの現在地
 
-- `php-grpc-lite` は公式 `ext-grpc` のドロップイン代替を目指す、純 PHP / libcurl ベースの gRPC クライアント実装。
-- Phase 0 は unary、server streaming、TLS、mTLS、Spanner emulator 経路まで実機検証済み。
+- `php-grpc-lite` は公式 `ext-grpc` のドロップイン代替を目指す、PHP userland API + native nghttp2 transport 拡張による gRPC クライアント実装。
+- Runtime transport は native nghttp2 の 1 系統。libcurl fallback / transport selection option / 環境変数による transport 切替は持たない。
+- unary、server streaming、TLS、mTLS、Spanner emulator 経路まで実機検証済み。
 - 設計判断と進捗は `docs/SPEC.md`、実装の読み方は `docs/code-reading-guide.md`、ベンチ結果は `docs/benchmarks/` を参照する。
 
 ## 作業方針
@@ -27,7 +28,7 @@
 ## 検証
 
 - ホストの PHP ではなく Docker compose 内で実行する。
-- 統合テスト: `docker compose run --rm dev vendor/bin/phpunit`
+- 統合テスト: `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
 - 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`
 - ext-grpc 比較: `./bench/run.sh compare` または互換入口の `./bench/compare.sh`
 - grpc-php-rs 任意比較: `./bench/compare-rs.sh`。通常比較はあくまで php-grpc-lite vs 公式 ext-grpc とし、grpc-php-rs は明示依頼がある場合だけ使う。
