@@ -68,9 +68,9 @@ run_lite() {
     echo "==========================================="
 
     if [[ "$bench_path" == "" ]]; then
-        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run --report=aggregate
+        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run --php-config='{"extension":"/workspace/ext/grpc/modules/grpc.so"}' --report=aggregate
     else
-        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run "$bench_path" --report=aggregate
+        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run "$bench_path" --php-config='{"extension":"/workspace/ext/grpc/modules/grpc.so"}' --report=aggregate
     fi
 }
 
