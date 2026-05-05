@@ -1,439 +1,343 @@
 # コードリーディングガイド
 
-> **目的**: ユーザコードから 1 本の RPC が出ていって戻ってくるまで、`src/Grpc/` 配下の何処を通るかを行番号付きで追える状態にする。新規参加者が「とりあえずこの順で読めば腹に落ちる」教材。
->
-> **対象 commit**: `88f515d`(Phase 1 ベンチ基盤整理 + Channel-scoped curl handle reuse 後)
+このガイドは、現行の `php-grpc-lite` を読むための入口です。現在の実装でユーザーコードから1本のRPCが送信され、レスポンスとstatusが返るまでの流れだけを扱います。
 
----
+## 全体像
 
-## 0. 全体観: 3 層構造
-
-```
-        ┌─────────────────────────────────────────────────┐
-ユーザ  │  GreeterClient::SayHello($req)                  │   ← protoc-gen-php-grpc 相当
-        │      ↓                                          │     (本リポでは tests/Integration/Fixtures/)
-        ├─────────────────────────────────────────────────┤
-SDK     │  Grpc\BaseStub::_simpleRequest()                │   ← ディスパッチ + interceptor chain
-        │      ↓ (生成)                                   │
-        │  Grpc\UnaryCall (or ServerStreamingCall)        │   ← libcurl 駆動の I/O
-        │      ↑ extends                                  │
-        │  Grpc\AbstractCall                              │   ← URL / headers / TLS の組立
-        ├─────────────────────────────────────────────────┤
-網      │  ext-curl → libcurl → OpenSSL → HTTP/2 →        │
-        │  test-server (Go grpc) :50051(h2c) / :50052(h2) │
-        └─────────────────────────────────────────────────┘
+```text
+generated-like client
+  -> Grpc\BaseStub
+  -> Grpc\UnaryCall / Grpc\ServerStreamingCall
+  -> Grpc\AbstractCall
+  -> Grpc\Internal\NativeTransport
+  -> ext/grpc/grpc.c
+  -> nghttp2 + socket / OpenSSL
 ```
 
-**読む順序**: 上から下に、**unary → server streaming** の順で追うのが負荷が低い。streaming の `curl_multi` ループは unary を理解した後に読む。
+現在のruntime transportは native nghttp2 の1系統です。
 
----
+読む順序は次の通りです。
 
-## 1. 起点: ユーザコードからの呼び出し
+1. `tests/Integration/Fixtures/GreeterClient.php`
+2. `src/Grpc/BaseStub.php`
+3. `src/Grpc/UnaryCall.php`
+4. `src/Grpc/ServerStreamingCall.php`
+5. `src/Grpc/AbstractCall.php`
+6. `src/Grpc/Internal/NativeTransport.php`
+7. `ext/grpc/grpc.c`
 
-[tests/Integration/Fixtures/GreeterClient.php:19](tests/Integration/Fixtures/GreeterClient.php:19)
+## 1. 生成クライアント相当
+
+`tests/Integration/Fixtures/GreeterClient.php` は、`protoc-gen-php-grpc` が生成する `*GrpcClient` 相当のfixtureです。
+
+重要なのは、public methodが `BaseStub` のprotected helperへ委譲する形です。
 
 ```php
-public function SayHello(HelloRequest $argument, array $metadata = [], array $options = []): UnaryCall
-{
-    return $this->_simpleRequest(
-        '/helloworld.Greeter/SayHello',
-        $argument,
-        [HelloReply::class, 'decode'],   // ← ext-grpc 互換のレガシー記法
-        $metadata,
-        $options,
-    );
-}
+return $this->_simpleRequest(
+    '/helloworld.Greeter/BenchUnary',
+    $argument,
+    [BenchReply::class, 'decode'],
+    $metadata,
+    $options,
+);
 ```
 
-このクラスは本来 `protoc-gen-php-grpc` が生成するもの。本リポでは PoC 段階なので手書きで対応している。
+引数の意味:
 
-**渡されている引数の意味**:
+| 引数 | 役割 |
+|---|---|
+| method path | HTTP/2 `:path` になるgRPC method名 |
+| request object | `serializeToString()` でprotobuf wire bytesへ変換される |
+| deserialize spec | ext-grpc互換の `[ClassName::class, 'decode']` 形式 |
+| metadata | user request metadata |
+| options | timeout、call credentials、diagnosticsなどのper-call option |
 
-| 引数 | 役割 | 後段でどこに渡るか |
+## 2. Stub dispatch
+
+`src/Grpc/BaseStub.php` は、generated client surfaceとcall objectをつなぎます。
+
+### Unary
+
+`_simpleRequest()` は `UnaryCall` を作り、すぐ `start()` します。実I/Oはこの時点では走らず、ユーザーが `UnaryCall::wait()` を呼んだ時に実行されます。
+
+```text
+BaseStub::_simpleRequest()
+  -> new UnaryCall(...)
+  -> UnaryCall::start($argument)
+  -> return UnaryCall
+```
+
+### Server streaming
+
+`_serverStreamRequest()` は `ServerStreamingCall` を作り、すぐ `start()` します。実I/Oは `responses()` のGeneratorをiterateした時に始まります。
+
+```text
+BaseStub::_serverStreamRequest()
+  -> new ServerStreamingCall(...)
+  -> ServerStreamingCall::start($argument)
+  -> return ServerStreamingCall
+```
+
+### Interceptor
+
+`InterceptorChannel` が渡された場合だけ、`buildUnaryChain()` / `buildServerStreamChain()` でinterceptor chainを組みます。I/O層はinterceptorを意識せず、最終的には素の `Channel` に対してcall objectを作ります。
+
+## 3. Channel と credentials
+
+`src/Grpc/Channel.php` はtarget、channel options、credentialsを保持します。
+
+現行実装ではPHP userlandにsocketやHTTP/2 sessionを保持しません。HTTP/2 session/socketのpersistent cacheはC extension側にあります。そのため `Channel::close()` はuserland resource cleanupを持ちません。
+
+`src/Grpc/ChannelCredentials.php` は3種類のcredentialsを表します。
+
+| factory | 用途 |
+|---|---|
+| `createInsecure()` | h2c |
+| `createSsl()` | TLS / mTLS |
+| `createDefault()` | default TLS credentials |
+
+TLS/mTLS用のroot cert、client cert、private keyは `NativeTransport` 経由でC extensionへ渡され、OpenSSLの `SSL_CTX` に設定されます。
+
+## 4. 共通call処理
+
+`src/Grpc/AbstractCall.php` は、unary/server streaming共通のrequest metadata構築を担当します。
+
+主な責務:
+
+- `getPeer()` の提供
+- request metadataの正規化
+- library-owned metadataのfiltering
+- call credentialsのmetadata統合
+- `grpc-timeout` の8桁制限に収まる単位変換
+- `user-agent` の構築
+- binary metadataのbase64 wire encoding
+
+### Request metadata
+
+metadataはtransportへ渡す前に正規化されます。
+
+```text
+user metadata
+  -> channel update_metadata callback
+  -> call_credentials_callback / CallCredentials
+  -> key/value validation
+  -> library-owned metadata filtering
+  -> native request headers
+```
+
+library-owned metadataはユーザー指定からは送信されません。代表例は `content-type`、`te`、`user-agent`、`grpc-status`、`grpc-timeout`、`grpc-encoding` です。
+
+### Timeout
+
+per-call optionの `timeout` はmicrosecondsです。`AbstractCall::encodeGrpcTimeout()` が `u` / `m` / `S` / `M` / `H` のいずれかに変換し、`grpc-timeout` headerとして送ります。
+
+C extension側でも同じdeadlineをconnect、TLS handshake、read/write poll loopの上限として使います。
+
+## 5. Unary call
+
+`src/Grpc/UnaryCall.php` は1 request / 1 responseの同期RPCです。
+
+### start()
+
+`start()` はrequest objectをprotobuf bytesへserializeし、diagnostics用の値を記録します。
+
+```text
+UnaryCall::start()
+  -> merge metadata/options
+  -> request->serializeToString()
+  -> serializedRequestを保持
+```
+
+ここではgRPC 5B headerをまだ付けません。framingは `NativeTransport::unarySimple()` がC extensionへ渡す直前に行います。
+
+### wait()
+
+`wait()` が実I/Oの入口です。
+
+```text
+UnaryCall::wait()
+  -> buildNativeRequestHeaders()
+  -> NativeTransport::unarySimple()
+  -> payloadをDeserialize::apply()
+  -> stdClass statusを返す
+```
+
+戻り値はext-grpc互換の `[$response, $status]` です。`$status` は `stdClass` で、少なくとも `code`、`details`、`metadata` を持ちます。
+
+transport例外は次のように扱います。
+
+| 条件 | status |
+|---|---|
+| deadline exceeded | `STATUS_DEADLINE_EXCEEDED` |
+| その他native transport error | `STATUS_UNAVAILABLE` |
+| `cancel()` 済み | `STATUS_CANCELLED` |
+
+## 6. Server streaming call
+
+`src/Grpc/ServerStreamingCall.php` は1 request / N responseの同期Generator APIです。
+
+### start()
+
+`start()` はmetadata/optionsをmergeし、requestをserializeして保持します。実I/Oはまだ行いません。
+
+### responses()
+
+`responses()` をiterateするとnative stream resourceを開きます。
+
+```text
+ServerStreamingCall::responses()
+  -> NativeTransport::streamOpen()
+  -> loop:
+       NativeTransport::streamNext()
+       done=false: payloadをdeserializeしてyield
+       done=true : final status / metadataを保存してreturn
+```
+
+messageごとに `yield` するため、server streamingはbatch drainではありません。consumerが次のmessageを要求するまで次の `streamNext()` は呼ばれません。
+
+### cancel()
+
+`cancel()` はC stream resourceに `grpc_native_stream_cancel()` を呼びます。C側ではactive streamに `RST_STREAM(CANCEL)` を送信し、channel busy状態を解除します。
+
+## 7. NativeTransport wrapper
+
+`src/Grpc/Internal/NativeTransport.php` はPHP userlandとC extensionの境界です。
+
+public wrapper:
+
+| method | C function | 用途 |
 |---|---|---|
-| `'/helloworld.Greeter/SayHello'` | gRPC method path = HTTP/2 の `:path` | URL の path 部 |
-| `$argument` | リクエスト message 本体 | `serializeToString()` でバイト化 |
-| `[HelloReply::class, 'decode']` | レスポンスデコード仕様 | [`Internal\Deserialize::apply()`](src/Grpc/Internal/Deserialize.php:26) で実体化 |
-| `$metadata` | カスタム HTTP/2 ヘッダ | request headers にマージ |
-| `$options` | per-call オプション(timeout, call_credentials_callback) | 同上 |
+| `unarySimple()` | `grpc_native_persistent_channel_unary()` | unary RPC |
+| `streamOpen()` | `grpc_native_stream_open()` | server streaming開始 |
+| `streamNext()` | `grpc_native_stream_next()` | 次messageまたはfinal status取得 |
+| `streamCancel()` | `grpc_native_stream_cancel()` | active stream cancel |
 
----
+`NativeTransport` の重要な仕事:
 
-## 2. ディスパッチ層: BaseStub
+- `target` をhost/portへ分解する
+- credentialsをchannel keyへ反映する
+- unary requestにgRPC 5B headerを付ける
+- C extensionのraw resultをPHP API用のpayload/status/metadataへ正規化する
+- HTTP status、content-type、HTTP/2 reset、compressed response、missing trailersをgRPC statusへ変換する
+- `*-bin` metadataをbase64 wire valueからraw binary valueへ戻す
 
-[src/Grpc/BaseStub.php:42](src/Grpc/BaseStub.php:42)
+## 8. C extension
 
-```php
-protected function _simpleRequest(...): UnaryCall {
-    $continuation = function (...) {
-        $call = new UnaryCall($this->getInnerChannel(), ...);
-        $call->start($a);
-        return $call;
-    };
-    if ($this->channel instanceof InterceptorChannel) {
-        $chained = $this->buildUnaryChain($this->channel->getInterceptors(), $continuation);
-        return $chained($method, $argument, $deserialize, $metadata, $options);
-    }
-    return $continuation($method, $argument, $deserialize, $metadata, $options);
-}
+`ext/grpc/grpc.c` がproduction native transportです。`ext/grpc/grpc_bench.c` はbench/diagnostic entrypointで、通常の `Grpc\` APIからは通りません。
+
+### 主要構造体
+
+| 構造体 | 役割 |
+|---|---|
+| `h2_channel` | socket/TLS/nghttp2 session/persistent state |
+| `grpc_call` | 1 RPCのrequest/response parser state |
+| `grpc_stream_resource` | PHP stream resourceとactive call/channelの紐付け |
+
+### Channel lifecycle
+
+```text
+NativeTransport::channelKey()
+  -> grpc_native_persistent_channel_unary()/stream_open()
+  -> get_persistent_channel()
+  -> HashTable persistent_channels
+  -> h2_channel reuse or create_h2_channel()
 ```
 
-### 2.1 Interceptor chain を読む(skipしてもよい)
+`persistent_channels` はmodule globals上のC-side cacheです。FPMではworker process内、ZTS/worker runtimeではthread-localに閉じます。PHP userlandの `Channel` objectがsocketを持つわけではありません。
 
-[src/Grpc/BaseStub.php:135 `buildUnaryChain`](src/Grpc/BaseStub.php:135)
+channelがdead/drainingになった場合、同じRPCをtransport層で自動retryしません。そのRPCはerrorとして返し、次RPC開始時に新しいchannelを作ります。
 
-```php
-$next = $innermost;
-foreach (array_reverse($interceptors) as $interceptor) {
-    $captured = $next;
-    $next = static function (...) use ($interceptor, $captured): UnaryCall {
-        return $interceptor->interceptUnaryUnary($m, $a, $d, $captured, $md, $o);
-    };
-}
-return $next;
+### Connection setup
+
+`create_h2_channel()` がTCP接続、TLS設定、nghttp2 session初期化を行います。
+
+```text
+connect_tcp()
+  -> configure_tls_channel() when TLS
+  -> nghttp2_session_client_new()
+  -> nghttp2_submit_settings()
 ```
 
-**読みどころ**: `array_reverse` してから巻き取ることで、ユーザが `[outer, inner]` と書いた順を「外側が先に呼ばれて、内側を `$continuation` として渡す」順に変換している。この順序の正しさは [tests/Integration/InterceptorTest.php](tests/Integration/InterceptorTest.php) が `outer:before → inner:before → 実行 → inner:after → outer:after` で検証している。
+TLSではOpenSSLを直接使い、ALPNで `h2` がnegotiatedされたことを確認します。certificate verification errorやALPN mismatchはchannel error detailに残します。
 
-Interceptor を使わない 99% のケースでは ↑ は **読み飛ばして OK**。
+### Unary path
 
-### 2.2 InterceptorChannel の unwrap
+`perform_h2_channel_unary()` がunary RPCの中心です。
 
-[src/Grpc/BaseStub.php:123 `getInnerChannel`](src/Grpc/BaseStub.php:123)
-
-`InterceptorChannel` は `Channel` を継承していて、`getInnerChannel()` で素の Channel を取り出せる。Call 実体は素の Channel に対して作る(intercept は dispatch 層の責務で、I/O 層は素のチャネルに対して動く)。
-
----
-
-## 3. I/O 設定: AbstractCall
-
-`UnaryCall` も `ServerStreamingCall` も、curl の **下準備** はほぼ全部 [src/Grpc/AbstractCall.php](src/Grpc/AbstractCall.php) に集約されている。
-
-### 3.1 URL 組立
-
-[src/Grpc/AbstractCall.php:52 `buildUrl`](src/Grpc/AbstractCall.php:52)
-
-```php
-$scheme = $this->channel->credentials->isInsecure() ? 'http' : 'https';
-return $scheme . '://' . $this->channel->hostname . $this->method;
+```text
+append pseudo headers / request headers
+  -> nghttp2_submit_request()
+  -> nghttp2_session_send()
+  -> recv loop
+  -> nghttp2_session_mem_recv()
+  -> response body / metadata / statusをreturn arrayへ詰める
 ```
 
-→ `http://test-server:50051/helloworld.Greeter/SayHello` または `https://...`。
+同一 `h2_channel` 上では同時active streamを1本に制限しています。busyなchannelへ新しいstreamを載せる場合はエラーになります。
 
-### 3.2 HTTP version
+### Server streaming path
 
-[src/Grpc/AbstractCall.php:58 `getHttpVersion`](src/Grpc/AbstractCall.php:58)
+server streamingはPHP resourceとしてstream stateを保持します。
 
-| 経路 | curl 定数 | 意味 |
-|---|---|---|
-| h2c (insecure) | `CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE` | TLS なしで HTTP/2 直行(HTTP/1.1 Upgrade を経由しない) |
-| h2 (TLS) | `CURL_HTTP_VERSION_2TLS` | TLS + ALPN で `h2` をネゴシエーション |
+```text
+grpc_native_stream_open()
+  -> h2_channel取得
+  -> request submit
+  -> grpc_stream_resourceを返す
 
-### 3.3 リクエストヘッダ
-
-[src/Grpc/AbstractCall.php:71 `buildRequestHeaders`](src/Grpc/AbstractCall.php:71)
-
-4 段階で構築:
-
-1. **Channel の `update_metadata` callback** があれば、ユーザ metadata を変換させる
-2. **per-call の `call_credentials_callback`** があれば、URL と method を渡して追加ヘッダ(典型的には `authorization`)を取得し、metadata にマージ
-3. request metadata key/value を validation し、uppercase key を lowercase へ正規化し、`content-type` / `te` / `user-agent` / 既知の `grpc-*` 制御 header を user metadata から除外
-4. **必須ヘッダ + オプショナル `grpc-timeout` + 正規化済み metadata** を curl 形式の `'Key: value'` 文字列リストに展開
-
-ここがいわゆる **gax から `'call_credentials_callback'` で渡された ADC コールバック** が呼ばれる場所。
-
-### 3.4 TLS オプション
-
-[src/Grpc/AbstractCall.php:131 `applyTlsOptions`](src/Grpc/AbstractCall.php:131)
-
-```php
-if ($creds->rootCerts !== null) {
-    if (defined('CURLOPT_CAINFO_BLOB')) {
-        curl_setopt($ch, \CURLOPT_CAINFO_BLOB, $creds->rootCerts);
-    } else {
-        curl_setopt($ch, CURLOPT_CAINFO, self::writeTempPem(...));
-    }
-}
+grpc_native_stream_next()
+  -> poll/read/writeを進める
+  -> complete payloadがあれば done=false で返す
+  -> stream完了なら done=true とstatus/metadataを返す
 ```
 
-PEM はメモリ上の文字列で渡される(file path ではない)。**`*_BLOB` 系で in-memory のまま libcurl に渡すのが第一選択**で、古い環境向けに content-hash で keying した temp file fallback を持つ。
-
----
-
-## 4. Unary の実行を追う
-
-[src/Grpc/UnaryCall.php:31 `start`](src/Grpc/UnaryCall.php:31)
-
-```php
-$serialized = $argument->serializeToString();              // protobuf wire bytes
-$frame = "\x00" . pack('N', strlen($serialized)) . $serialized;  // gRPC framing
-```
-
-> **gRPC framing**: `1 byte 圧縮フラグ + 4 byte big-endian length + payload`。圧縮は本実装では未対応(常に 0)。
-
-```php
-$this->ch = $this->initCurl();
-curl_setopt_array($this->ch, [
-    CURLOPT_POSTFIELDS     => $frame,
-    CURLOPT_HEADERFUNCTION => $this->onHeader(...),
-    CURLOPT_WRITEFUNCTION  => $this->onBodyChunk(...),
-    ...
-]);
-$this->applyTlsOptions($this->ch);
-```
-
-> ここまでが「I/O は始まっていない」状態。 **実際の通信は次の `wait()` で `curl_exec` を呼んだ時に走る**。
-
-[src/Grpc/UnaryCall.php:57 `wait`](src/Grpc/UnaryCall.php:57)
-
-```php
-curl_exec($this->ch);  // ← ここで完全にブロックして I/O が走る
-$errno = curl_errno($this->ch);
-
-if ($errno !== 0) {
-    $this->discardCurl($this->ch);
-    return [null, $this->makeStatus(STATUS_UNAVAILABLE, "curl error ($errno): $errMsg")];
-}
-$this->releaseCurl($this->ch);
-return [$this->parseResponseFrame(), $this->buildStatusFromTrailers()];
-```
-
-正常完了した easy handle は `curl_reset()` して `Channel` に返す。これにより libcurl の connection cache を Channel lifetime に寄せ、連続 unary の固定費を観測可能な形で下げる。curl error や `cancel()` は接続状態が不明なので破棄する。
-
-`curl_exec` の中で起きること:
-
-1. libcurl が HTTP/2 接続を確立(prior knowledge / ALPN)
-2. リクエストヘッダを送出
-3. ボディ(framed request)を送出
-4. **レスポンスヘッダ受信** → [`onHeader`](src/Grpc/UnaryCall.php:127) が行ごとに呼ばれる
-5. **レスポンスボディ受信** → [`onBodyChunk`](src/Grpc/UnaryCall.php:143) が呼ばれて `$bodyStarted = true`、body 蓄積
-6. **HTTP/2 trailers 受信** → 同じ `onHeader` が呼ばれる(が今度は `$bodyStarted === true`)
-
-### 4.1 ヘッダか trailer かの分離
-
-[src/Grpc/UnaryCall.php:127 `onHeader`](src/Grpc/UnaryCall.php:127)
-
-```php
-if (!$this->bodyStarted) {
-    $this->responseHeaders[$key][] = $val;
-} else {
-    $this->responseTrailers[$key][] = $val;
-}
-```
-
-**これが本実装の鍵**。HTTP/2 の trailers は body の後に来るので、最初の WRITEFUNCTION 呼び出し時刻を境に振り分けるだけで分離できる。複雑な状態機械は不要。
-
-### 4.2 レスポンスのデコード
-
-[src/Grpc/UnaryCall.php:96 `parseResponseFrame`](src/Grpc/UnaryCall.php:96)
-
-```php
-$len = unpack('N', substr($this->body, 1, 4))[1];
-$payload = substr($this->body, 5, $len);
-return Internal\Deserialize::apply($this->deserialize, $payload);
-```
-
-[src/Grpc/Internal/Deserialize.php:26 `apply`](src/Grpc/Internal/Deserialize.php:26) の中で、`[ClassName::class, 'decode']` 形式のときは「`new ClassName()` してから `mergeFromString($bytes)`」に変換する。これが **ext-grpc 互換の核心の 1 つ** で、google/protobuf のメッセージクラスに静的 `decode` がないことの吸収。
-
-### 4.3 Status オブジェクトの組立
-
-[src/Grpc/UnaryCall.php:109 `buildStatusFromTrailers`](src/Grpc/UnaryCall.php:109)
-
-```php
-$code = (int)($this->responseTrailers['grpc-status'][0] ?? STATUS_UNKNOWN);
-$message = $this->responseTrailers['grpc-message'][0] ?? '';
-return $this->makeStatus($code, $message);
-```
-
-`stdClass` で `code` / `details` / `metadata` の 3 プロパティを持つオブジェクトを返す。これは `gax-php/src/ApiException.php:158` あたりで `property_exists($status, 'metadata')` と読まれる形と一致する。
-
----
-
-## 5. Server streaming の実行を追う
-
-unary との差分だけを読めばよい。
-
-### 5.1 start
-
-[src/Grpc/ServerStreamingCall.php:38](src/Grpc/ServerStreamingCall.php:38) は **UnaryCall::start とほぼ同じ**。違うのは `WRITEFUNCTION` がフレーム境界を再構成して `$pending` キューに積むこと。
-
-### 5.2 onBodyChunk: バッファとフレーム再構成
-
-[src/Grpc/ServerStreamingCall.php:192 `onBodyChunk`](src/Grpc/ServerStreamingCall.php:192)
-
-```php
-$this->buffer .= $chunk;
-while ($bufferLength - $this->bufferOffset >= 5) {
-    $len = unpack('N', substr($this->buffer, $this->bufferOffset + 1, 4))[1];
-    if ($bufferLength - $this->bufferOffset < 5 + $len) {
-        break;  // 待機: フレームの続きが次の chunk に入っている
-    }
-    $this->pending[] = substr($this->buffer, $this->bufferOffset + 5, $len);
-    $this->bufferOffset += 5 + $len;
-}
-if ($this->bufferOffset > 0) {
-    $this->buffer = substr($this->buffer, $this->bufferOffset);
-    $this->bufferOffset = 0;
-}
-```
-
-**フレームは callback 境界をまたぎうる** ので、内部バッファに溜めて、完成したフレームだけ `$pending` に出す。以前は完成フレームごとに `$buffer = substr($buffer, consumed)` していたが、長い stream でコピー量が増えるため offset 方式に変更した。消費済み prefix は callback 終端で一度だけ捨てる。
-
-### 5.3 responses(): curl_multi の Generator
-
-[src/Grpc/ServerStreamingCall.php:62 `responses`](src/Grpc/ServerStreamingCall.php:62)
-
-ここが **Phase 0 で最も精神的負荷が高い** 部分。読みどころ:
-
-```php
-$mh = curl_multi_init();
-curl_multi_add_handle($mh, $this->ch);
-
-try {
-    do {
-        curl_multi_exec($mh, $running);                  // I/O を 1 ラウンド進める
-
-        while ($info = curl_multi_info_read($mh)) {      // 完了情報を吸い出す
-            if ($info['result'] !== CURLE_OK) {
-                $errCode = $info['result'];
-            }
-        }
-
-        while (($payload = $this->nextPendingPayload()) !== null) {
-            yield Internal\Deserialize::apply($this->deserialize, $payload);
-        }
-
-        if ($running > 0) {
-            curl_multi_select($mh, 1.0);                 // I/O 待ち(1秒上限)
-        }
-    } while ($running > 0);
-
-    // ↓ 最終ラウンドで来たフレームを drain
-    while (($payload = $this->nextPendingPayload()) !== null) {
-        yield Internal\Deserialize::apply(...);
-    }
-
-    $this->finalStatus = ... // trailers から組み立て
-} finally {
-    // curl ハンドル解放
-}
-```
-
-**読み方のコツ**:
-
-- `curl_multi_exec` 自体は **ノンブロッキング**。WRITEFUNCTION/HEADERFUNCTION を発火させて、進められるだけ進めて return する
-- yield は `curl_multi_exec` と `curl_multi_select` の間でしか起きない(WRITEFUNCTION の中からは yield できない)
-- `curl_multi_select` で **次の I/O イベントまでブロックする** が、`yield` で suspend してる間は当然走らない
-- caller が foreach から早期 break すると Generator が destruct → finally で curl ハンドル解放
-- `$pending` は `array_shift()` ではなく `pendingOffset` で読み進める。これも長い stream で配列詰め替えを避けるため。
-
-これにより **真の incremental streaming** が実現される。検証は [tests/Integration/ServerStreamingTest.php:43 `testYieldsAreIncrementalNotBatched`](tests/Integration/ServerStreamingTest.php:43) が「yield 間のギャップが server の 100ms cadence と一致」をアサート。
-
-### 5.4 getStatus
-
-`responses()` の生成器を完走させた後でないと `finalStatus` は埋まらない。途中で break した場合は `finally` ブロックで trailers ベースの status を入れて辻褄を合わせるが、HTTP/2 trailers を受け取る前に中断した場合は `STATUS_UNKNOWN` になりうる。正常完走時だけ curl handle を Channel に返し、途中終了・curl error は接続状態が不明なため破棄する。
-
----
-
-## 6. 横断的トピック
-
-### 6.1 gRPC 実装としての妥当性レビュー
-
-現時点の実装は、**unary / server streaming の gRPC over HTTP/2 クライアントとしては妥当な最小実装**。理由は以下。
-
-| 観点 | 現状 | 判断 |
-|---|---|---|
-| HTTP/2 transport | h2c は `CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE`、TLS は `CURL_HTTP_VERSION_2TLS` | gRPC の前提に合う |
-| gRPC request framing | `0x00 + 4 byte big-endian length + protobuf payload` | 非圧縮メッセージとして妥当 |
-| gRPC response framing | unary は単一 frame を decode、server streaming は chunk 境界をまたぐ frame を再構成 | 基本形として妥当 |
-| trailers status | `grpc-status` / `grpc-message` を trailing metadata から status object にする | 正常系では妥当 |
-| initial / trailing metadata | body 到着前後で headers と trailers を分離 | 通常レスポンスでは妥当 |
-| protobuf decode | `[ClassName::class, 'decode']` を `new + mergeFromString` に変換 | ext-grpc 互換上重要 |
-| TLS / mTLS | root cert, client cert/key を libcurl TLS option に設定 | 実機検証済み |
-| incremental streaming | `curl_multi_*` + Generator で server cadence に追従 | 実機検証済み |
-| Channel-scoped reuse | 正常完了時だけ easy handle を `curl_reset()` して再利用 | libcurl connection reuse として妥当 |
-
-ただし、これは「gRPC ライブラリとして完成」の意味ではない。Phase 0/1 の対象である **非圧縮 unary + server streaming** に限定した妥当性であり、下の未達項目は意識して残している。
-
-| 未達 / リスク | 影響 | 次に見るべきこと |
-|---|---|---|
-| trailers 欠落時の扱い | 現状は `STATUS_UNKNOWN` になるだけで詳細が薄い | HTTP status や curl info から details を補う |
-| binary metadata 複数 value | 単一 raw binary value の round-trip は ext-grpc と照合済みだが、同一 key の複数 value は ext-grpc 側で最後だけ見える挙動が観測された | 複数 value を API 互換対象に含めるか追加確認 |
-| client streaming / bidi streaming 未実装 | Pub/Sub StreamingPull 等は対象外 | SPEC 更新後に別フェーズで設計 |
-| request 跨ぎ persistent pool なし | PHP-FPM で ext-grpc と cold 性能差が残る | pure PHP で可能な範囲と拡張化が必要な範囲を分ける |
-
-このレビューから見ると、次にやるべき妥当性タスクは性能ではなく **エラー応答の gRPC semantics**。client-side deadline enforcement、trailers-only response、`grpc-message` decode、HTTP status/content-type validation、圧縮未対応の明示エラーは 2026-04-27 から 2026-04-28 にかけて実装済み。実装時に漏らさないための制御系チェックリストは `docs/compatibility-control-checklist.md` に分離する。
-
-### 6.2 「素の curl」 と 「extension の中の curl」
-
-本実装は ext-curl を呼んでいるだけ。後段(Phase 2)で C 拡張化するときも、libcurl の API は同じなので **PHP 側で書いた振る舞いがそのまま C への翻訳手順書になる**。これは Phase 0 を純 PHP でやる最大のリターン。
-
-### 6.3 PoC コードとの対応関係
-
-`src/Grpc/` の本実装と `poc/client/` のスパイクは **同じことを別の抽象度で書いている** 関係:
-
-| トピック | スパイク | 本実装 |
-|---|---|---|
-| unary | [poc/client/unary.php](poc/client/unary.php) | [src/Grpc/UnaryCall.php](src/Grpc/UnaryCall.php) |
-| server streaming(blocking) | [poc/client/server_streaming.php](poc/client/server_streaming.php) | (採用せず) |
-| server streaming(curl_multi) | [poc/client/server_streaming_multi.php](poc/client/server_streaming_multi.php) | [src/Grpc/ServerStreamingCall.php](src/Grpc/ServerStreamingCall.php) |
-
-**スパイク → 本実装の差分** を読むと「BaseStub 階層化のためにどこを切り出したか」が見える。
-
-### 6.4 wire を覗く
-
-実装の振る舞いに疑問が出たら、生 curl で叩いたログがある:
+resource destructorは未完了streamに `RST_STREAM(CANCEL)` を送り、channel busy状態を解除します。
+
+## 9. Deserialize
+
+`src/Grpc/Internal/Deserialize.php` はprotobuf payloadをPHP objectへ変換します。
+
+ext-grpc互換上重要なのは、`[ClassName::class, 'decode']` を実メソッド呼び出しとして扱わないことです。google/protobufの生成クラスはstatic `decode()` を持たないため、`new ClassName()` して `mergeFromString($payload)` します。
+
+## 10. 互換性を見るテスト
+
+| 観点 | テスト |
+|---|---|
+| unary basic / metadata / channel semantics | `tests/Integration/UnaryTest.php` |
+| server streaming | `tests/Integration/ServerStreamingTest.php` |
+| deadline | `tests/Integration/DeadlineTest.php` |
+| cancel / early termination | `tests/Integration/ControlSemanticsTest.php` |
+| HTTP/gRPC error semantics | `tests/Integration/ErrorSemanticsTest.php` / `tests/Integration/HttpValidationTest.php` |
+| compression unsupported error | `tests/Integration/CompressionTest.php` |
+| binary metadata | `tests/Integration/BinaryMetadataTest.php` |
+| duplicate metadata / metadata size | `tests/Integration/MetadataCompatibilityTest.php` |
+| metadata validation / filtering | `tests/Integration/MetadataControlTest.php` / `tests/Integration/NativeRequestHeadersTest.php` |
+| TLS / mTLS | `tests/Integration/TlsTest.php` / `tests/Integration/MtlsTest.php` |
+| Spanner emulator | `tests/Integration/Spanner/` |
+| native lifecycle | `tests/Integration/NativeTransportControlTest.php` |
+
+通常の統合テストはnative extensionをloadして実行します。
 
 ```bash
-docker compose run --rm dev bash -c '
-printf "\x00\x00\x00\x00\x07\x0a\x05World" > /tmp/req.bin
-curl --http2-prior-knowledge -H "content-type: application/grpc" -H "te: trailers" \
-     --data-binary @/tmp/req.bin -i http://test-server:50051/helloworld.Greeter/SayHello | od -An -tx1
-'
+docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
-応答のバイト列・trailer の到着順序などを目視で確認できる。本実装と挙動がズレてないかの ground truth として常に頼りになる。
+## 11. 読むときの確認ポイント
 
-### 6.5 テストとの対応
-
-| 検証したい挙動 | テスト |
-|---|---|
-| unary 基本フロー | [tests/Integration/UnaryTest.php:18](tests/Integration/UnaryTest.php:18) |
-| 受信 metadata と trailer の取り出し | [tests/Integration/UnaryTest.php:36](tests/Integration/UnaryTest.php:36) |
-| server streaming の順序と件数 | [tests/Integration/ServerStreamingTest.php:18](tests/Integration/ServerStreamingTest.php:18) |
-| **真の incremental yield** であること | [tests/Integration/ServerStreamingTest.php:43](tests/Integration/ServerStreamingTest.php:43) |
-| Interceptor chain の入れ子順序 | [tests/Integration/InterceptorTest.php:21](tests/Integration/InterceptorTest.php:21) |
-| TLS の正常系 / 拒否 | [tests/Integration/TlsTest.php](tests/Integration/TlsTest.php) |
-| mTLS の正常系 / 拒否 | [tests/Integration/MtlsTest.php](tests/Integration/MtlsTest.php) |
-| Spanner emulator unary / server streaming | [tests/Integration/Spanner/](tests/Integration/Spanner/) |
-
-「この挙動はどこで担保されてる?」が浮かんだら、まず該当テストを読みに行くのが速い。
-
----
-
-## 7. 推奨の読書順
-
-迷ったらこの順:
-
-1. [tests/Integration/UnaryTest.php](tests/Integration/UnaryTest.php) — ユーザ視点のゴール
-2. [tests/Integration/Fixtures/GreeterClient.php](tests/Integration/Fixtures/GreeterClient.php) — generated stub の形
-3. [src/Grpc/BaseStub.php](src/Grpc/BaseStub.php) `_simpleRequest` のみ(interceptor 周りは飛ばす)
-4. [src/Grpc/UnaryCall.php](src/Grpc/UnaryCall.php) `start` → `wait` → `onHeader` → `onBodyChunk` → `parseResponseFrame`
-5. [src/Grpc/AbstractCall.php](src/Grpc/AbstractCall.php) `buildUrl` `buildRequestHeaders` を辞書的に
-6. [src/Grpc/Internal/Deserialize.php](src/Grpc/Internal/Deserialize.php) — ext-grpc 互換の小細工
-7. ここで `docker compose run --rm dev vendor/bin/phpunit tests/Integration/UnaryTest.php` を 1 度実行
-8. [src/Grpc/ServerStreamingCall.php](src/Grpc/ServerStreamingCall.php) `responses` の `curl_multi` ループ
-9. [src/Grpc/Channel.php](src/Grpc/Channel.php) `acquireCurlHandle` / `releaseCurlHandle` で Channel-scoped reuse
-10. (任意)[src/Grpc/Interceptor.php](src/Grpc/Interceptor.php) と [src/Grpc/BaseStub.php:135](src/Grpc/BaseStub.php:135) の chain 構築
-11. (任意)[src/Grpc/AbstractCall.php:131 `applyTlsOptions`](src/Grpc/AbstractCall.php:131) で TLS / mTLS 経路
-
-ステップ 7 の段階で「unary は完全に頭の中で trace できる」状態になっていれば、残りはバリエーション。
-
----
+- PHP userlandのpublic surfaceは `Grpc\` API互換を維持しているか。
+- request metadataはtransportへ渡す前に正規化・filterされているか。
+- library-owned metadataをユーザー入力で上書きできないか。
+- deadlineがheaderだけでなくnative I/O上限にも効いているか。
+- status objectが `code` / `details` / `metadata` を持つか。
+- binary metadataがPHP API上raw binary、wire上base64として扱われているか。
+- C extensionのpersistent channel lifecycleがrequestをまたいで安全か。
+- stream resourceのcancel/destructor pathでchannel busy状態が残らないか。
 
 ## 関連ドキュメント
 
-- [SPEC.md](SPEC.md) — 設計判断と未決事項
-- [api-surface.md](api-surface.md) — gax/google-cloud-php との互換要件
-- [benchmarks/README.md](benchmarks/README.md) — ベンチ実行入口と regression baseline
-- [benchmarks/connection-reuse-2026-04-27.md](benchmarks/connection-reuse-2026-04-27.md) — Channel-scoped curl handle reuse の観測
+- `docs/SPEC.md`
+- `docs/api-surface.md`
+- `docs/native-transport-design.md`
+- `docs/native-transport-decision.md`
+- `docs/release-qa-checklist.md`
+- `docs/compatibility-control-checklist.md`
