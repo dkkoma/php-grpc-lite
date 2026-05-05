@@ -374,6 +374,30 @@ PHP;
         self::assertSame('received message exceeds maximum size', $call->getStatus()->details);
     }
 
+    public function testHttp2ServerStreamingAcceptsZeroByteMessages(): void
+    {
+        if (!(extension_loaded('grpc'))) {
+            self::markTestSkipped('grpc extension is not loaded in this process');
+        }
+
+        $client = new GreeterClient('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+        ]);
+
+        $request = new BenchRequest();
+        $request->setMessageCount(3);
+        $request->setPayloadBytes(0);
+
+        $call = $client->BenchServerStream($request);
+        $payloads = [];
+        foreach ($call->responses() as $reply) {
+            $payloads[] = $reply->getPayload();
+        }
+
+        self::assertSame(['', '', ''], $payloads);
+        self::assertSame(\Grpc\STATUS_OK, $call->getStatus()->code, $call->getStatus()->details);
+    }
+
     public function testHttp2UnaryTrailersOnlyErrorReturnsGrpcStatusAndMessage(): void
     {
         if (!(extension_loaded('grpc'))) {
