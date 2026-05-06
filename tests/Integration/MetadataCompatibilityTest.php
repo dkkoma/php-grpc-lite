@@ -78,6 +78,13 @@ final class MetadataCompatibilityTest extends TestCase
         [, $limitedStatus] = $limitedCall->wait();
         self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $limitedStatus->code);
 
+        $followUpCall = $this->client([
+            'grpc.absolute_max_metadata_size' => 1024,
+        ])->BenchUnary(new BenchRequest());
+        [$followUpResponse, $followUpStatus] = $followUpCall->wait();
+        self::assertNotNull($followUpResponse);
+        self::assertSame(\Grpc\STATUS_OK, $followUpStatus->code, $followUpStatus->details);
+
         $raisedCall = $this->client([
             'grpc.absolute_max_metadata_size' => 16 * 1024,
         ])->BenchUnary(new BenchRequest(), $metadata);

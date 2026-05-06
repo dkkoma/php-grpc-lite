@@ -248,7 +248,9 @@ static int server_streaming_call_next_resource(zval *stream_zv, zval *return_val
 
     if (client->response_message_too_large || client->compressed_response_seen || client->malformed_response_frame || client->invalid_content_type || client->unsupported_response_encoding || client->metadata_too_large) {
         server_streaming_call_terminate_with_cancel(stream);
-        detach_persistent_connection_by_ptr(stream->connection);
+        if (!connection_usable(stream->connection)) {
+            detach_persistent_connection_by_ptr(stream->connection);
+        }
     }
 
     if (client->response_queue_head != NULL) {

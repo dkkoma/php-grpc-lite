@@ -248,27 +248,6 @@ static int grpc_lite_status_from_result(zval *result)
     return GRPC_STATUS_UNKNOWN;
 }
 
-static bool grpc_lite_result_has_protocol_failure(zval *result)
-{
-    static const char *keys[] = {
-        "response_message_too_large",
-        "metadata_too_large",
-        "invalid_content_type",
-        "invalid_grpc_status",
-        "malformed_response_frame",
-        "compressed_response_seen",
-        "unsupported_response_encoding",
-    };
-    size_t i;
-    for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
-        zval *value = zend_hash_str_find(Z_ARRVAL_P(result), keys[i], strlen(keys[i]));
-        if (value != NULL && zend_is_true(value)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static zend_string *grpc_lite_details_from_result(zval *result, int code)
 {
     zval *message = zend_hash_str_find(Z_ARRVAL_P(result), "grpc_message", sizeof("grpc_message") - 1);
@@ -370,7 +349,6 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     zval result;
     zend_string *payload = NULL;
     int status_code;
-    bool protocol_failure;
     zend_string *details;
     zval *initial_metadata;
     zval *trailing_metadata;
@@ -439,11 +417,8 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zval_ptr_dtor(&result);
         return FAILURE;
     }
-    protocol_failure = grpc_lite_result_has_protocol_failure(&result);
     status_code = grpc_lite_status_from_result(&result);
-    if (protocol_failure) {
-        discard_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), h2);
-    } else if (!connection_usable(h2)) {
+    if (!connection_usable(h2)) {
         remove_unusable_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), h2);
     }
     details = grpc_lite_details_from_result(&result, status_code);

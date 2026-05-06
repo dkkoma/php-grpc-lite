@@ -124,16 +124,6 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
-        if (client.metadata_too_large) {
-            rv = nghttp2_session_send(connection->session);
-            if (rv != 0) {
-                mark_connection_dead(connection, rv);
-            }
-            if (!client.stream_closed) {
-                mark_connection_dead(connection, NGHTTP2_CANCEL);
-            }
-            break;
-        }
         rv = nghttp2_session_send(connection->session);
         if (rv != 0) {
             mark_connection_dead(connection, rv);

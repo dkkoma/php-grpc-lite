@@ -164,7 +164,7 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_channe
 - response size / metadata size上限
 - GOAWAY / EOF / RST_STREAM / protocol failure時のHTTP/2 connection lifecycle管理
 
-protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstatusへ変換し、該当HTTP/2 connectionは再利用しないようpersistent cacheから外します。
+protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。connection自体がdead/drainingでなければpersistent cacheには残します。
 
 ## 7. persistent connection
 
