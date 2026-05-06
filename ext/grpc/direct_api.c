@@ -231,6 +231,7 @@ build_unary_result:
 }
 
 
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 PHP_FUNCTION(grpc_lite_unary)
 {
     char *key = NULL;
@@ -325,32 +326,10 @@ PHP_FUNCTION(grpc_lite_unary)
         remove_unusable_persistent_channel(key, key_len, channel);
     }
 }
+#endif
 
-PHP_FUNCTION(grpc_lite_stream_open)
+static int grpc_lite_open_stream_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value)
 {
-    char *key = NULL;
-    size_t key_len = 0;
-    char *host = NULL;
-    size_t host_len = 0;
-    zend_long port = 0;
-    char *path = NULL;
-    size_t path_len = 0;
-    char *request = NULL;
-    size_t request_len = 0;
-    zval *headers_zv = NULL;
-    zend_long timeout_us = 0;
-    bool use_tls = false;
-    char *root_certs = NULL;
-    size_t root_certs_len = 0;
-    char *cert_chain = NULL;
-    size_t cert_chain_len = 0;
-    char *private_key = NULL;
-    size_t private_key_len = 0;
-    zend_long max_receive_message_length = 0;
-    char *authority = NULL;
-    size_t authority_len = 0;
-    char *tls_verify_name = NULL;
-    size_t tls_verify_name_len = 0;
     h2_channel *channel;
     h2_stream *stream;
     nghttp2_data_provider data_provider;
@@ -362,63 +341,45 @@ PHP_FUNCTION(grpc_lite_stream_open)
     zend_long remaining_timeout_us = 0;
     int rv;
 
-    ZEND_PARSE_PARAMETERS_START(5, 14)
-        Z_PARAM_STRING(key, key_len)
-        Z_PARAM_STRING(host, host_len)
-        Z_PARAM_LONG(port)
-        Z_PARAM_STRING(path, path_len)
-        Z_PARAM_STRING(request, request_len)
-        Z_PARAM_OPTIONAL
-        Z_PARAM_ARRAY(headers_zv)
-        Z_PARAM_LONG(timeout_us)
-        Z_PARAM_BOOL(use_tls)
-        Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
-        Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
-        Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
-        Z_PARAM_LONG(max_receive_message_length)
-        Z_PARAM_STRING_OR_NULL(authority, authority_len)
-        Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
-    ZEND_PARSE_PARAMETERS_END();
-
     error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
     if (error_message != NULL) {
         zend_throw_exception(NULL, error_message, 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
     if (timeout_us < 0) {
         zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
     error_message = validate_grpc_path(path, path_len);
     if (error_message != NULL) {
         zend_throw_exception(NULL, error_message, 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     if (request_len > UINT32_MAX) {
         zend_throw_exception(NULL, "gRPC request message exceeds 32-bit frame length", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
     channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (channel == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
     if (channel->busy) {
         zend_throw_exception(NULL, "HTTP/2 channel already has an active stream", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
         zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
     if (set_socket_timeout_us(channel->fd, remaining_timeout_us) != 0) {
         mark_channel_dead(channel, errno);
         discard_persistent_channel(key, key_len, channel);
         zend_throw_exception(NULL, "failed to set socket timeout", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     stream = ecalloc(1, sizeof(h2_stream));
@@ -446,7 +407,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
     channel->active_stream_owner = stream;
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
         destroy_h2_stream(stream);
-        RETURN_THROWS();
+        return FAILURE;
     }
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
     append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
@@ -457,7 +418,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
     if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
         free_request_headers(&request_headers);
         destroy_h2_stream(stream);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     memset(&data_provider, 0, sizeof(data_provider));
@@ -467,7 +428,7 @@ PHP_FUNCTION(grpc_lite_stream_open)
         free_request_headers(&request_headers);
         destroy_h2_stream(stream);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     rv = nghttp2_session_send(channel->session);
@@ -478,14 +439,15 @@ PHP_FUNCTION(grpc_lite_stream_open)
         destroy_h2_stream(stream);
         if (stream_timed_out) {
             zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
-            RETURN_THROWS();
+            return FAILURE;
         }
         zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
-        RETURN_THROWS();
+        return FAILURE;
     }
 
     free_request_headers(&request_headers);
-    RETURN_RES(zend_register_resource(stream, le_h2_stream));
+    ZVAL_RES(return_value, zend_register_resource(stream, le_h2_stream));
+    return SUCCESS;
 }
 
 static void add_stream_status(zval *return_value, h2_stream *stream)
@@ -524,19 +486,14 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_metadata_map_to_return(return_value, "trailing_metadata", client, true);
 }
 
-PHP_FUNCTION(grpc_lite_stream_next)
+static int grpc_lite_stream_next_resource(zval *stream_zv, zval *return_value)
 {
-    zval *stream_zv = NULL;
     h2_stream *stream;
     grpc_call *client;
 
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_RESOURCE(stream_zv)
-    ZEND_PARSE_PARAMETERS_END();
-
     stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_lite_stream", le_h2_stream);
     if (stream == NULL) {
-        RETURN_THROWS();
+        return FAILURE;
     }
     client = &stream->client;
 
@@ -604,7 +561,7 @@ PHP_FUNCTION(grpc_lite_stream_next)
         add_assoc_str(return_value, "payload", entry->payload);
         add_metadata_map_to_return(return_value, "initial_metadata", client, false);
         efree(entry);
-        return;
+        return SUCCESS;
     }
 
     if (!client->response_message_too_large && !client->compressed_response_seen && (client->response_header_len != 0 || client->response_payload != NULL || client->response_payload_offset != 0)) {
@@ -613,20 +570,16 @@ PHP_FUNCTION(grpc_lite_stream_next)
     stream->completed = true;
     add_stream_status(return_value, stream);
     clear_channel_stream_owner(stream);
+    return SUCCESS;
 }
 
-PHP_FUNCTION(grpc_lite_stream_cancel)
+static int grpc_lite_cancel_stream_resource(zval *stream_zv)
 {
-    zval *stream_zv = NULL;
     h2_stream *stream;
-
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_RESOURCE(stream_zv)
-    ZEND_PARSE_PARAMETERS_END();
 
     stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_lite_stream", le_h2_stream);
     if (stream == NULL) {
-        RETURN_THROWS();
+        return FAILURE;
     }
     if (stream != NULL && !stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
         stream->cancelled = true;
@@ -635,6 +588,80 @@ PHP_FUNCTION(grpc_lite_stream_cancel)
         clear_channel_stream_owner(stream);
     }
 
+    return SUCCESS;
+}
+
+
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+PHP_FUNCTION(grpc_lite_stream_open)
+{
+    char *key = NULL;
+    size_t key_len = 0;
+    char *host = NULL;
+    size_t host_len = 0;
+    zend_long port = 0;
+    char *path = NULL;
+    size_t path_len = 0;
+    char *request = NULL;
+    size_t request_len = 0;
+    zval *headers_zv = NULL;
+    zend_long timeout_us = 0;
+    bool use_tls = false;
+    char *root_certs = NULL;
+    size_t root_certs_len = 0;
+    char *cert_chain = NULL;
+    size_t cert_chain_len = 0;
+    char *private_key = NULL;
+    size_t private_key_len = 0;
+    zend_long max_receive_message_length = 0;
+    char *authority = NULL;
+    size_t authority_len = 0;
+    char *tls_verify_name = NULL;
+    size_t tls_verify_name_len = 0;
+
+    ZEND_PARSE_PARAMETERS_START(5, 14)
+        Z_PARAM_STRING(key, key_len)
+        Z_PARAM_STRING(host, host_len)
+        Z_PARAM_LONG(port)
+        Z_PARAM_STRING(path, path_len)
+        Z_PARAM_STRING(request, request_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_LONG(timeout_us)
+        Z_PARAM_BOOL(use_tls)
+        Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
+        Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
+        Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
+        Z_PARAM_LONG(max_receive_message_length)
+        Z_PARAM_STRING_OR_NULL(authority, authority_len)
+        Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (grpc_lite_open_stream_resource(key, key_len, host, host_len, port, path, path_len, request, request_len, headers_zv, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, authority, authority_len, tls_verify_name, tls_verify_name_len, return_value) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+PHP_FUNCTION(grpc_lite_stream_next)
+{
+    zval *stream_zv = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_RESOURCE(stream_zv)
+    ZEND_PARSE_PARAMETERS_END();
+    if (grpc_lite_stream_next_resource(stream_zv, return_value) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+PHP_FUNCTION(grpc_lite_stream_cancel)
+{
+    zval *stream_zv = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_RESOURCE(stream_zv)
+    ZEND_PARSE_PARAMETERS_END();
+    if (grpc_lite_cancel_stream_resource(stream_zv) != SUCCESS) {
+        RETURN_THROWS();
+    }
     RETURN_TRUE;
 }
 
@@ -661,9 +688,7 @@ PHP_FUNCTION(grpc_lite_channel_close)
     RETURN_TRUE;
 }
 
-#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 #include "bench.c"
-#endif
 
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_unary, 0, 5, IS_ARRAY, 0)
@@ -718,9 +743,12 @@ static const zend_function_entry grpc_lite_functions[] = {
     PHP_FE(grpc_lite_stream_next, arginfo_grpc_lite_stream_next)
     PHP_FE(grpc_lite_stream_cancel, arginfo_grpc_lite_stream_cancel)
     PHP_FE(grpc_lite_channel_close, arginfo_grpc_lite_channel_close)
-#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     PHP_FE(grpc_lite_multiplex_unary, arginfo_grpc_lite_multiplex_unary)
     PHP_FE(grpc_lite_bench_unary_batch, arginfo_grpc_lite_bench_unary_batch)
-#endif
     PHP_FE_END
 };
+#else
+static const zend_function_entry grpc_lite_functions[] = {
+    PHP_FE_END
+};
+#endif

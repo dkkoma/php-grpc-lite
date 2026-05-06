@@ -104,7 +104,7 @@ messageごとに `responses()` がpullするため、現在の実装はbatch dra
 | `Grpc\STATUS_*` | gRPC status constants |
 | `Grpc\OP_*` / `CALL_*` / `CHANNEL_*` | official wrapper互換constants |
 
-`grpc_lite_unary()`、`grpc_lite_stream_open()`、`grpc_lite_stream_next()`、`grpc_lite_stream_cancel()`、`grpc_lite_channel_close()` は内部/診断用の低レベルentrypointです。通常のアプリケーションコードは直接呼びません。
+production buildでは低レベル診断entrypointをPHP関数として公開しません。`--enable-grpc-bench` でbuildした開発用extensionだけが `grpc_lite_unary()` などのbench/diagnostic関数を登録します。
 
 ## 4. `Grpc\Channel`
 
@@ -133,9 +133,9 @@ official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
 | `OP_RECV_MESSAGE` | unary payloadまたはserver streamingの次messageを返す |
 | `OP_RECV_STATUS_ON_CLIENT` | final status objectを返す |
 
-unaryは `RECV_STATUS` を含むbatchで `perform_h2_channel_unary()` が走ります。server streamingは最初の `RECV_MESSAGE` で `grpc_lite_stream_open()` 相当のC stream resourceを開き、以後 `grpc_lite_stream_next()` 相当で1 messageずつ返します。
+unaryは `RECV_STATUS` を含むbatchで `perform_h2_channel_unary()` が走ります。server streamingは最初の `RECV_MESSAGE` でC stream resourceを開き、以後C helperで1 messageずつ返します。
 
-低レベルの `grpc_lite_unary()` / `grpc_lite_stream_open()` / `grpc_lite_stream_next()` / `grpc_lite_channel_close()` は `ext/grpc/direct_api.c` に分離しています。通常のwrapper経路は `Grpc\Call::startBatch()` 経由で、これらの低レベル関数をPHPから直接呼ぶ必要はありません。
+`ext/grpc/direct_api.c` は wrapper bridge が使うC helperと、bench build限定のdiagnostic PHP関数を分離して持ちます。通常のwrapper経路は `Grpc\Call::startBatch()` 経由で、diagnostic関数をPHPから直接呼ぶ設計ではありません。
 
 ## 6. HTTP/2 transport
 

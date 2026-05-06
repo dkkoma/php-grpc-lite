@@ -56,7 +56,7 @@ printf "case\timplementation\tvariant\trequest_bytes\tresponse_bytes\tcalls\tcal
 
 native_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-native.json"
 docker compose run --rm dev sh -lc \
-    "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/unary-shape.php --suite=spanner-dml-unary-shape --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_json' --duration='$duration' --warmup-calls='$warmup_calls' --max-calls='$max_calls' --transport=native"
+    "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/unary-shape.php --suite=spanner-dml-unary-shape --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_json' --duration='$duration' --warmup-calls='$warmup_calls' --max-calls='$max_calls'"
 append_results php-grpc-lite native "$native_json"
 
 ext_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-ext-grpc.json"

@@ -555,6 +555,10 @@ static void add_metadata_map_to_return(zval *return_value, const char *name, grp
 static void cleanup_grpc_call(grpc_call *client);
 
 static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value);
+static int grpc_lite_open_stream_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value);
+static int grpc_lite_stream_next_resource(zval *stream_zv, zval *return_value);
+static int grpc_lite_cancel_stream_resource(zval *stream_zv);
+static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key);
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_channels;

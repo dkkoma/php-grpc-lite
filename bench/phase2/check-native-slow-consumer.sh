@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-# Compare slow-consumer server-streaming behavior across:
-#   1. php-grpc-lite libcurl transport
-#   2. php-grpc-lite native stream resource
-#   3. official ext-grpc
+# Compare slow-consumer server-streaming behavior between php-grpc-lite's
+# nghttp2 extension surface and official ext-grpc.
 #
 # This runner is not a throughput race. It records the user-visible tradeoff:
 # bounded memory/backpressure means total stream time follows consumer speed.
@@ -76,14 +74,11 @@ append_result() {
 }
 
 run_lite() {
-    local variant="$1"
-    local transport="$2"
-    local extra_php="$3"
-    local file="$output_dir/phase2-slow-consumer-surface-$timestamp-$variant.json"
+    local file="$output_dir/phase2-slow-consumer-surface-$timestamp-grpc-lite.json"
 
     docker compose run --rm dev sh -lc \
-        "php $extra_php tools/phase2/slow-consumer-surface.php --output='$file' --implementation=php-grpc-lite --autoload=vendor/autoload.php --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --sleep-us=$sleep_us --transport=$transport --native-response-mode=stream"
-    append_result php-grpc-lite "$variant" "$file"
+        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/slow-consumer-surface.php --output='$file' --implementation=php-grpc-lite --autoload=vendor/autoload.php --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --sleep-us=$sleep_us --native-response-mode=stream"
+    append_result php-grpc-lite nghttp2-extension "$file"
 }
 
 run_ext() {
@@ -96,15 +91,13 @@ run_ext() {
         --streams="$streams" \
         --message-count="$message_count" \
         --payload-bytes="$payload_bytes" \
-        --sleep-us="$sleep_us" \
-        --transport=curl
+        --sleep-us="$sleep_us"
     append_result ext-grpc c-core "$file"
 }
 
 printf "implementation\tvariant\tstreams\tmessages_per_stream\tpayload_bytes\tsleep_us\tmessages\twall_ms\tfirst_yield_p50_us\tstream_p50_us\tstream_p99_us\tmessages_per_second\tmemory_usage_max_bytes\tmemory_usage_real_max_bytes\tdiagnostic_rss_max_kib\tdiagnostic_rss_max_delta_kib\tmemory_peak_delta_bytes\tmemory_usage_delta_bytes\tjson\n" > "$summary_tsv"
 
-run_lite curl curl ""
-run_lite native-stream native "-d extension=/workspace/ext/grpc/modules/grpc.so"
+run_lite
 run_ext
 
 echo

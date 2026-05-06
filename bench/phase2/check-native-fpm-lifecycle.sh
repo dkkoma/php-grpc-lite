@@ -47,13 +47,9 @@ docker compose run --rm dev sh -lc "
         \$lines = array_values(array_filter(explode(\"\\n\", getenv(\"RESPONSES\") ?: \"\"), static fn(\$line) => trim(\$line) !== \"\"));
         \$items = array_map(static fn(\$line) => json_decode(\$line, true, flags: JSON_THROW_ON_ERROR), \$lines);
         \$pids = array_values(array_unique(array_map(static fn(\$item) => \$item[\"pid\"], \$items)));
-        \$reused = array_map(static fn(\$item) => (bool) \$item[\"persistent_reused\"], \$items);
-        \$connectUs = array_map(static fn(\$item) => (int) \$item[\"connect_us\"], \$items);
         \$ok = count(\$items) === $requests
             && count(\$pids) === 1
-            && \$reused[0] === false
-            && !in_array(false, array_slice(\$reused, 1), true)
-            && !in_array(true, array_map(static fn(\$item) => (bool) \$item[\"channel_dead\"], \$items), true);
+            && !in_array(false, array_map(static fn(\$item) => (bool) (\$item[\"ok\"] ?? false), \$items), true);
         \$document = [
             \"suite\" => \"native-fpm-lifecycle\",
             \"implementation\" => \"php-grpc-lite\",
@@ -61,9 +57,6 @@ docker compose run --rm dev sh -lc "
             \"ok\" => \$ok,
             \"requests\" => count(\$items),
             \"worker_pids\" => \$pids,
-            \"first_persistent_reused\" => \$reused[0] ?? null,
-            \"subsequent_reused_count\" => count(array_filter(array_slice(\$reused, 1))),
-            \"connect_us\" => \$connectUs,
             \"responses\" => \$items,
         ];
         file_put_contents(\"$json\", json_encode(\$document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . \"\\n\");
@@ -71,7 +64,7 @@ docker compose run --rm dev sh -lc "
             fwrite(STDERR, json_encode(\$document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
             exit(1);
         }
-        printf(\"FPM lifecycle OK: requests=%d pid=%s reused_after_first=%d\\n\", count(\$items), implode(\",\", \$pids), \$document[\"subsequent_reused_count\"]);
+        printf(\"FPM lifecycle OK: requests=%d pid=%s\\n\", count(\$items), implode(\",\", \$pids));
     '
 "
 

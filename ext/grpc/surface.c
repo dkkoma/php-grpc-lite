@@ -84,7 +84,7 @@ PHP_METHOD(ChannelCredentials, setDefaultRootsPem)
     if (grpc_default_roots_pem != NULL) {
         zend_string_release(grpc_default_roots_pem);
     }
-    grpc_default_roots_pem = zend_string_copy(roots);
+    grpc_default_roots_pem = zend_string_init(ZSTR_VAL(roots), ZSTR_LEN(roots), 1);
 }
 
 PHP_METHOD(ChannelCredentials, isDefaultRootsPemSet)
@@ -350,16 +350,30 @@ PHP_METHOD(Channel, getTarget)
     RETURN_STR_COPY(Z_GRPC_LITE_CHANNEL_P(ZEND_THIS)->target);
 }
 
+static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key)
+{
+    grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
+    *key = strpprintf(0, "%s|%ld|%s|%s|%d|%zu:%lu|%zu:%lu|%zu:%lu",
+        ZSTR_VAL(channel->host),
+        channel->port,
+        channel->authority != NULL ? ZSTR_VAL(channel->authority) : "",
+        channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : "",
+        credentials->type,
+        credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
+        credentials->root_certs != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->root_certs), ZSTR_LEN(credentials->root_certs)) : 0,
+        credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
+        credentials->cert_chain != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->cert_chain), ZSTR_LEN(credentials->cert_chain)) : 0,
+        credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
+        credentials->private_key != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->private_key), ZSTR_LEN(credentials->private_key)) : 0);
+    return SUCCESS;
+}
+
 PHP_METHOD(Channel, close)
 {
     grpc_lite_channel_obj *obj = Z_GRPC_LITE_CHANNEL_P(ZEND_THIS);
-    zend_string *key;
-    key = strpprintf(0, "%s|%ld|%s|%s|%d",
-        ZSTR_VAL(obj->host),
-        obj->port,
-        obj->authority != NULL ? ZSTR_VAL(obj->authority) : "",
-        obj->tls_verify_name != NULL ? ZSTR_VAL(obj->tls_verify_name) : "",
-        Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&obj->credentials)->type);
+    zend_string *key = NULL;
+    ZEND_PARSE_PARAMETERS_NONE();
+    grpc_lite_channel_key(obj, &key);
     if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
         h2_channel *channel = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key);
         if (channel != NULL) {

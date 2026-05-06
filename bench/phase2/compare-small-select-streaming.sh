@@ -176,7 +176,7 @@ for case_spec in "${cases[@]}"; do
 
     native_file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-native-$native_response_mode.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=small-select-streaming --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_file' --streams=$streams --warmup-streams=$warmup_streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-response-mode=$native_response_mode"
+        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=small-select-streaming --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_file' --streams=$streams --warmup-streams=$warmup_streams --message-count=$message_count --payload-bytes=$payload_bytes --native-response-mode=$native_response_mode"
     append_result "$case_name" php-grpc-lite "native-$native_response_mode" "$streams" "$message_count" "$payload_bytes" "$native_file"
 
     run_streaming_diagnostic "$case_name" dev-ext-grpc ext-grpc c-core \

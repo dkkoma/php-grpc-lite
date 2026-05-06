@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Repeat the exceptional 100x100KiB server-streaming shape under the same
-# server conditions. This is a focused decision-run input for separating
-# transport differences from run-to-run tail variance.
+# server conditions. Current php-grpc-lite uses the nghttp2 grpc extension
+# surface only; no runtime transport selection is available.
 #
 set -euo pipefail
 
@@ -44,27 +44,10 @@ for repeat in $(seq 1 "$repeats"); do
     echo
     echo "== repeat $repeat/$repeats: 100x100KiB streams=$streams =="
 
-    libcurl_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-libcurl.json"
-    docker compose run --rm dev php tools/phase2/streaming-diagnostic.php \
-        --suite=streaming-diagnostic \
-        --implementation=php-grpc-lite \
-        --autoload=vendor/autoload.php \
-        --output="$libcurl_json" \
-        --streams="$streams" \
-        --message-count="$message_count" \
-        --payload-bytes="$payload_bytes" \
-        --transport=curl
-    append_result "$repeat" "php-grpc-lite" "curl" "$libcurl_json"
-
-    native_direct_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-native-direct.json"
+    lite_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-grpc-lite.json"
     docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_direct_json' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=direct"
-    append_result "$repeat" "php-grpc-lite" "native-direct" "$native_direct_json"
-
-    native_compact_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-native-compact64.json"
-    docker compose run --rm dev sh -lc \
-        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_compact_json' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --transport=native --native-transport --native-response-mode=compact64"
-    append_result "$repeat" "php-grpc-lite" "native-compact64" "$native_compact_json"
+        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$lite_json' --streams=$streams --message-count=$message_count --payload-bytes=$payload_bytes --native-response-mode=stream"
+    append_result "$repeat" "php-grpc-lite" "nghttp2-extension" "$lite_json"
 
     ext_json="$output_dir/phase2-server-stream-100x100k-repeat-$timestamp-$repeat-ext-grpc.json"
     docker compose run --rm dev-ext-grpc php tools/phase2/streaming-diagnostic.php \

@@ -264,21 +264,6 @@ static void grpc_lite_make_status_object(zval *status, int code, zend_string *de
     }
 }
 
-static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key)
-{
-    grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
-    *key = strpprintf(0, "%s|%ld|%s|%s|%d|%zu|%zu|%zu",
-        ZSTR_VAL(channel->host),
-        channel->port,
-        channel->authority != NULL ? ZSTR_VAL(channel->authority) : "",
-        channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : "",
-        credentials->type,
-        credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
-        credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
-        credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0);
-    return SUCCESS;
-}
-
 static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
 {
     grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
@@ -410,11 +395,6 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
     zend_string *key = NULL;
     zend_long timeout_us = grpc_lite_call_timeout_us(call);
-    zval function_name;
-    zval params[14];
-    zval stream_result;
-    int param_count = 0;
-    int i;
 
     if (call->stream_opened) {
         return SUCCESS;
@@ -431,35 +411,34 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     grpc_lite_channel_key(channel, &key);
 
     zval_ptr_dtor(&call->stream);
-    ZVAL_STRING(&function_name, "grpc_lite_stream_open");
-    ZVAL_STR_COPY(&params[param_count++], key);
-    ZVAL_STR_COPY(&params[param_count++], channel->host);
-    ZVAL_LONG(&params[param_count++], channel->port);
-    ZVAL_STR_COPY(&params[param_count++], call->method);
-    ZVAL_STR_COPY(&params[param_count++], call->request);
-    ZVAL_COPY(&params[param_count++], &call->metadata);
-    ZVAL_LONG(&params[param_count++], timeout_us);
-    ZVAL_BOOL(&params[param_count++], credentials->type != GRPC_LITE_CREDENTIALS_INSECURE);
-    if (credentials->root_certs != NULL) ZVAL_STR_COPY(&params[param_count++], credentials->root_certs); else ZVAL_NULL(&params[param_count++]);
-    if (credentials->cert_chain != NULL) ZVAL_STR_COPY(&params[param_count++], credentials->cert_chain); else ZVAL_NULL(&params[param_count++]);
-    if (credentials->private_key != NULL) ZVAL_STR_COPY(&params[param_count++], credentials->private_key); else ZVAL_NULL(&params[param_count++]);
-    ZVAL_LONG(&params[param_count++], channel->max_receive_message_length);
-    if (channel->authority != NULL) ZVAL_STR_COPY(&params[param_count++], channel->authority); else ZVAL_NULL(&params[param_count++]);
-    if (channel->tls_verify_name != NULL) ZVAL_STR_COPY(&params[param_count++], channel->tls_verify_name); else ZVAL_NULL(&params[param_count++]);
-    ZVAL_UNDEF(&stream_result);
-    if (call_user_function(EG(function_table), NULL, &function_name, &stream_result, param_count, params) != SUCCESS || EG(exception)) {
-        for (i = 0; i < param_count; i++) {
-            zval_ptr_dtor(&params[i]);
-        }
-        zval_ptr_dtor(&function_name);
+    if (grpc_lite_open_stream_resource(
+            ZSTR_VAL(key),
+            ZSTR_LEN(key),
+            ZSTR_VAL(channel->host),
+            ZSTR_LEN(channel->host),
+            channel->port,
+            ZSTR_VAL(call->method),
+            ZSTR_LEN(call->method),
+            ZSTR_VAL(call->request),
+            ZSTR_LEN(call->request),
+            &call->metadata,
+            timeout_us,
+            credentials->type != GRPC_LITE_CREDENTIALS_INSECURE,
+            credentials->root_certs != NULL ? ZSTR_VAL(credentials->root_certs) : NULL,
+            credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
+            credentials->cert_chain != NULL ? ZSTR_VAL(credentials->cert_chain) : NULL,
+            credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
+            credentials->private_key != NULL ? ZSTR_VAL(credentials->private_key) : NULL,
+            credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
+            channel->max_receive_message_length,
+            channel->authority != NULL ? ZSTR_VAL(channel->authority) : NULL,
+            channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
+            channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,
+            channel->tls_verify_name != NULL ? ZSTR_LEN(channel->tls_verify_name) : 0,
+            &call->stream) != SUCCESS) {
         zend_string_release(key);
         return FAILURE;
     }
-    for (i = 0; i < param_count; i++) {
-        zval_ptr_dtor(&params[i]);
-    }
-    zval_ptr_dtor(&function_name);
-    ZVAL_COPY_VALUE(&call->stream, &stream_result);
     call->stream_opened = true;
     zend_string_release(key);
     return SUCCESS;
@@ -467,21 +446,10 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
 
 static int grpc_lite_stream_next_for_call(grpc_lite_call_obj *call, zval *result)
 {
-    zval function_name;
-    zval params[1];
     if (!call->stream_opened && grpc_lite_open_call_stream(call) != SUCCESS) {
         return FAILURE;
     }
-    ZVAL_STRING(&function_name, "grpc_lite_stream_next");
-    ZVAL_COPY(&params[0], &call->stream);
-    if (call_user_function(EG(function_table), NULL, &function_name, result, 1, params) != SUCCESS || EG(exception)) {
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&function_name);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&params[0]);
-    zval_ptr_dtor(&function_name);
-    return SUCCESS;
+    return grpc_lite_stream_next_resource(&call->stream, result);
 }
 
 static void grpc_lite_add_event_metadata(zval *event, zval *metadata)
@@ -691,16 +659,7 @@ PHP_METHOD(Call, cancel)
     grpc_lite_call_obj *call = Z_GRPC_LITE_CALL_P(ZEND_THIS);
     call->cancelled = true;
     if (call->stream_opened && Z_TYPE(call->stream) == IS_RESOURCE) {
-        zval function_name;
-        zval params[1];
-        zval result;
-        ZVAL_STRING(&function_name, "grpc_lite_stream_cancel");
-        ZVAL_COPY(&params[0], &call->stream);
-        ZVAL_UNDEF(&result);
-        call_user_function(EG(function_table), NULL, &function_name, &result, 1, params);
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&function_name);
-        zval_ptr_dtor(&result);
+        grpc_lite_cancel_stream_resource(&call->stream);
     }
 }
 

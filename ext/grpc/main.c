@@ -47,6 +47,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
     memcpy(&grpc_channel_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     grpc_channel_credentials_handlers.offset = XtOffsetOf(grpc_lite_channel_credentials_obj, std);
     grpc_channel_credentials_handlers.free_obj = grpc_lite_channel_credentials_free_object;
+    grpc_channel_credentials_handlers.clone_obj = NULL;
     INIT_CLASS_ENTRY(ce, "Grpc\\ChannelCredentials", channel_credentials_methods);
     grpc_ce_channel_credentials = zend_register_internal_class(&ce);
     grpc_ce_channel_credentials->create_object = grpc_lite_channel_credentials_create_object;
@@ -54,12 +55,14 @@ PHP_MINIT_FUNCTION(grpc_lite)
     memcpy(&grpc_call_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     grpc_call_credentials_handlers.offset = XtOffsetOf(grpc_lite_call_credentials_obj, std);
     grpc_call_credentials_handlers.free_obj = grpc_lite_call_credentials_free_object;
+    grpc_call_credentials_handlers.clone_obj = NULL;
     INIT_CLASS_ENTRY(ce, "Grpc\\CallCredentials", call_credentials_methods);
     grpc_ce_call_credentials = zend_register_internal_class(&ce);
     grpc_ce_call_credentials->create_object = grpc_lite_call_credentials_create_object;
 
     memcpy(&grpc_timeval_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     grpc_timeval_handlers.offset = XtOffsetOf(grpc_lite_timeval_obj, std);
+    grpc_timeval_handlers.clone_obj = NULL;
     INIT_CLASS_ENTRY(ce, "Grpc\\Timeval", timeval_methods);
     grpc_ce_timeval = zend_register_internal_class(&ce);
     grpc_ce_timeval->create_object = grpc_lite_timeval_create_object;
@@ -67,6 +70,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
     memcpy(&grpc_channel_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     grpc_channel_handlers.offset = XtOffsetOf(grpc_lite_channel_obj, std);
     grpc_channel_handlers.free_obj = grpc_lite_channel_free_object;
+    grpc_channel_handlers.clone_obj = NULL;
     INIT_CLASS_ENTRY(ce, "Grpc\\Channel", channel_methods);
     grpc_ce_channel = zend_register_internal_class(&ce);
     grpc_ce_channel->create_object = grpc_lite_channel_create_object;
@@ -74,6 +78,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
     memcpy(&grpc_call_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     grpc_call_handlers.offset = XtOffsetOf(grpc_lite_call_obj, std);
     grpc_call_handlers.free_obj = grpc_lite_call_free_object;
+    grpc_call_handlers.clone_obj = NULL;
     INIT_CLASS_ENTRY(ce, "Grpc\\Call", call_methods);
     grpc_ce_call = zend_register_internal_class(&ce);
     grpc_ce_call->create_object = grpc_lite_call_create_object;
@@ -123,6 +128,15 @@ PHP_MINIT_FUNCTION(grpc_lite)
     return SUCCESS;
 }
 
+PHP_MSHUTDOWN_FUNCTION(grpc_lite)
+{
+    if (grpc_default_roots_pem != NULL) {
+        zend_string_release(grpc_default_roots_pem);
+        grpc_default_roots_pem = NULL;
+    }
+    return SUCCESS;
+}
+
 PHP_MINFO_FUNCTION(grpc_lite)
 {
     php_info_print_table_start();
@@ -135,7 +149,7 @@ zend_module_entry grpc_module_entry = {
     "grpc",
     grpc_lite_functions,
     PHP_MINIT(grpc_lite),
-    NULL,
+    PHP_MSHUTDOWN(grpc_lite),
     NULL,
     NULL,
     PHP_MINFO(grpc_lite),

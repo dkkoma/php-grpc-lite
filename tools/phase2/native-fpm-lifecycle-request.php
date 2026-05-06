@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../vendor/autoload.php';
 
+use Grpc\ChannelCredentials;
+use Helloworld\BenchRequest;
+use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
+
 header('content-type: application/json');
 
 if (!extension_loaded('grpc')) {
@@ -11,30 +15,18 @@ if (!extension_loaded('grpc')) {
     return;
 }
 
-$request = "\0\0\0\0\0";
-$result = grpc_lite_unary(
-    'test-server:50051|50051',
-    'test-server',
-    50051,
-    '/helloworld.Greeter/BenchUnary',
-    $request,
-    [],
-    0,
-    false,
-    null,
-    null,
-    null,
-    0,
-    null,
-    null,
-);
+$client = new GreeterClient('test-server:50051', [
+    'credentials' => ChannelCredentials::createInsecure(),
+]);
+
+$request = new BenchRequest();
+[$response, $status] = $client->BenchUnary($request)->wait();
+
+$ok = $status->code === Grpc\STATUS_OK && $response !== null;
 
 echo json_encode([
-    'ok' => $result['grpc_status'] === Grpc\STATUS_OK,
+    'ok' => $ok,
     'pid' => getmypid(),
-    'grpc_status' => $result['grpc_status'],
-    'persistent_reused' => (bool) ($result['persistent_reused'] ?? false),
-    'connect_us' => (int) ($result['connect_us'] ?? -1),
-    'channel_dead' => (bool) ($result['channel_dead'] ?? false),
-    'details' => (string) ($result['grpc_message'] ?? ''),
+    'grpc_status' => $status->code,
+    'details' => (string) $status->details,
 ], JSON_THROW_ON_ERROR);

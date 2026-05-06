@@ -130,37 +130,15 @@ $measurements[] = runScenario('timeout_repeat', $iterations, static function () 
     probeUnary($client);
 });
 
-$rawResourceKey = 'lifecycle-stress-' . getmypid() . '-' . bin2hex(random_bytes(4));
-$measurements[] = runScenario('raw_resource_unset_repeat', $iterations, static function () use ($request, $rawResourceKey): void {
-    $serialized = $request->serializeToString();
-    $stream = \grpc_lite_stream_open(
-        $rawResourceKey,
-        'test-server',
-        50051,
-        '/helloworld.Greeter/BenchServerStream',
-        $serialized,
-        [],
-    );
-    $next = \grpc_lite_stream_next($stream);
-    if (($next['done'] ?? false) === true || !is_string($next['payload'] ?? null)) {
-        throw new \RuntimeException('raw stream did not yield a payload');
+$measurements[] = runScenario('stream_unset_repeat', $iterations, static function () use ($client, $request): void {
+    $call = $client->BenchServerStream($request);
+    $responses = $call->responses();
+    foreach ($responses as $_reply) {
+        break;
     }
-    unset($stream);
+    unset($responses, $call);
     gc_collect_cycles();
-
-    $probe = \grpc_lite_stream_open(
-        $rawResourceKey,
-        'test-server',
-        50051,
-        '/helloworld.Greeter/BenchServerStream',
-        $serialized,
-        [],
-    );
-    $probeNext = \grpc_lite_stream_next($probe);
-    if (($probeNext['done'] ?? false) === true || !is_string($probeNext['payload'] ?? null)) {
-        throw new \RuntimeException('raw stream probe did not yield a payload');
-    }
-    \grpc_lite_stream_cancel($probe);
+    probeUnary($client);
 });
 
 $document = ResultContract::document('native-lifecycle-stress', 'php-grpc-lite', $measurements);
