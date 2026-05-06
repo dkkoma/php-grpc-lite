@@ -44,6 +44,7 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     client.channel = channel;
     client.grpc_status = -1;
     client.http_status = -1;
+    client.max_response_messages = 1;
     client.request = (const uint8_t *) request;
     client.request_len = request_len;
     client.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
@@ -172,6 +173,8 @@ build_unary_result:
     add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client.response_message_too_large);
     add_assoc_bool(return_value, "metadata_too_large", client.metadata_too_large);
+    add_assoc_bool(return_value, "invalid_content_type", client.invalid_content_type);
+    add_assoc_bool(return_value, "unsupported_response_encoding", client.unsupported_response_encoding);
     add_assoc_long(return_value, "max_receive_message_length", client.max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client.max_receive_message_bytes);
     add_assoc_long(return_value, "body_bytes", client.body.s ? ZSTR_LEN(client.body.s) : 0);
     add_assoc_long(return_value, "request_offset", client.request_offset);
@@ -462,6 +465,8 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_bool(return_value, "response_message_too_large", client->response_message_too_large);
     add_assoc_bool(return_value, "malformed_response_frame", client->malformed_response_frame);
     add_assoc_bool(return_value, "metadata_too_large", client->metadata_too_large);
+    add_assoc_bool(return_value, "invalid_content_type", client->invalid_content_type);
+    add_assoc_bool(return_value, "unsupported_response_encoding", client->unsupported_response_encoding);
     add_assoc_long(return_value, "max_receive_message_length", client->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client->max_receive_message_bytes);
     add_assoc_bool(return_value, "timed_out", client->timed_out);
     add_assoc_bool(return_value, "cancelled", stream->cancelled);
@@ -498,7 +503,7 @@ PHP_FUNCTION(grpc_lite_stream_next)
 
     array_init(return_value);
 
-    while (client->response_queue_head == NULL && !client->stream_closed && !stream->completed && !client->response_message_too_large && !client->compressed_response_seen && !client->malformed_response_frame) {
+    while (client->response_queue_head == NULL && !client->stream_closed && !stream->completed && !client->response_message_too_large && !client->compressed_response_seen && !client->malformed_response_frame && !client->invalid_content_type && !client->unsupported_response_encoding && !client->metadata_too_large) {
         int rv;
         ssize_t nread;
         if (client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
@@ -543,7 +548,7 @@ PHP_FUNCTION(grpc_lite_stream_next)
         }
     }
 
-    if (client->response_message_too_large || client->compressed_response_seen || client->malformed_response_frame) {
+    if (client->response_message_too_large || client->compressed_response_seen || client->malformed_response_frame || client->invalid_content_type || client->unsupported_response_encoding || client->metadata_too_large) {
         if (channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
             int rv = nghttp2_session_send(stream->channel->session);
             if (rv != 0) {
@@ -666,6 +671,9 @@ PHP_GSHUTDOWN_FUNCTION(grpc_lite)
 
 PHP_MINIT_FUNCTION(grpc_lite)
 {
+#ifdef SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
+#endif
     le_h2_stream = zend_register_list_destructors_ex(h2_stream_dtor, NULL, "grpc_lite_stream", module_number);
     return SUCCESS;
 }

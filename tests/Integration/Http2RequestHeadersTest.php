@@ -21,6 +21,21 @@ final class Http2RequestHeadersTest extends TestCase
         self::assertSame(['120000m'], $headers['grpc-timeout'] ?? null);
     }
 
+    public function testHttp2HeadersOmitZeroTimeout(): void
+    {
+        $headers = $this->call([], ['timeout' => 0])->http2RequestHeaders();
+
+        self::assertArrayNotHasKey('grpc-timeout', $headers);
+    }
+
+    public function testHttp2HeadersRejectNegativeTimeout(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('timeout');
+
+        $this->call([], ['timeout' => -1])->http2RequestHeaders();
+    }
+
     public function testHttp2HeadersFilterLibraryOwnedMetadata(): void
     {
         $headers = $this->call([], [], [

@@ -1142,6 +1142,24 @@ PHP;
         self::assertSame('invalid gRPC content-type: <missing>', $details);
     }
 
+    public function testHttp2NegativeHttpStatusUsesChannelError(): void
+    {
+        $method = new \ReflectionMethod(Http2Transport::class, 'normalizeStatus');
+        $method->setAccessible(true);
+
+        [$code, $details] = $method->invoke(null, [
+            'timed_out' => false,
+            'channel_dead' => true,
+            'channel_last_error_detail' => 'TLS handshake failed',
+            'http_status' => -1,
+            'grpc_status' => -1,
+            'initial_metadata' => [],
+        ]);
+
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $code);
+        self::assertSame('TLS handshake failed', $details);
+    }
+
     public function testHttp2StreamDeadlineReleasesPersistentChannel(): void
     {
         if (!function_exists('grpc_lite_stream_open')) {

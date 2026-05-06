@@ -94,7 +94,7 @@ class ServerStreamingCall extends AbstractCall
                 $this->method,
                 $this->serializedRequest ?? '',
                 $this->buildHttp2RequestHeaders(),
-                isset($this->options['timeout']) ? (int) $this->options['timeout'] : 0,
+                $this->timeoutMicros(),
                 $this->channel->credentials,
                 $this->maxReceiveMessageLength(),
                 $this->authorityOverride(),

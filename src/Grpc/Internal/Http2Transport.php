@@ -240,13 +240,16 @@ final class Http2Transport
         $trailingMetadata = self::normalizeMetadataMap($result['trailing_metadata'] ?? []);
         $httpStatus = (int) ($result['http_status'] ?? 0);
         $grpcStatus = (int) ($result['grpc_status'] ?? -1);
-        if ($httpStatus !== 0 && $httpStatus !== 200 && $grpcStatus < 0) {
+        if ($httpStatus > 0 && $httpStatus !== 200 && $grpcStatus < 0) {
             return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
         $contentType = strtolower($metadata['content-type'][0] ?? $trailingMetadata['content-type'][0] ?? '');
-        if ($contentType !== '' && !str_starts_with($contentType, 'application/grpc')) {
+        if ($contentType !== '' && !self::isGrpcContentType($contentType)) {
             return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: $contentType"];
+        }
+        if (($result['invalid_content_type'] ?? false) === true) {
+            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
         }
 
         if (($result['response_message_too_large'] ?? false) === true) {
@@ -260,7 +263,8 @@ final class Http2Transport
         }
 
         $unsupportedEncoding = self::unsupportedGrpcEncoding($metadata);
-        if ($unsupportedEncoding !== null) {
+        if ($unsupportedEncoding !== null || ($result['unsupported_response_encoding'] ?? false) === true) {
+            $unsupportedEncoding ??= 'unknown';
             return [\Grpc\STATUS_UNIMPLEMENTED, "unsupported grpc-encoding: $unsupportedEncoding"];
         }
         if (($result['compressed_response_seen'] ?? false) === true) {
@@ -276,7 +280,7 @@ final class Http2Transport
             return [\Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'];
         }
 
-        if ($contentType === '') {
+        if ($contentType === '' && $grpcStatus >= 0) {
             return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
         }
 
@@ -290,7 +294,7 @@ final class Http2Transport
             return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'HTTP/2 transport I/O error'];
         }
 
-        if ($httpStatus !== 200) {
+        if ($httpStatus > 0 && $httpStatus !== 200) {
             return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
@@ -319,6 +323,13 @@ final class Http2Transport
             0x7 => \Grpc\STATUS_UNAVAILABLE,
             default => \Grpc\STATUS_UNAVAILABLE,
         };
+    }
+
+    private static function isGrpcContentType(string $contentType): bool
+    {
+        return $contentType === 'application/grpc'
+            || str_starts_with($contentType, 'application/grpc+')
+            || str_starts_with($contentType, 'application/grpc;');
     }
 
     /**

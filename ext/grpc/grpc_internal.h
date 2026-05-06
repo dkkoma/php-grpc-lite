@@ -21,6 +21,7 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -208,8 +209,13 @@ struct _grpc_call {
     bool response_message_too_large;
     bool malformed_response_frame;
     bool metadata_too_large;
+    bool content_type_seen;
+    bool invalid_content_type;
+    bool unsupported_response_encoding;
     bool discard_response_body;
     bool invalid_grpc_status;
+    size_t response_message_count;
+    size_t max_response_messages;
     size_t max_receive_message_bytes;
     size_t bytes_sent;
     size_t bytes_received;

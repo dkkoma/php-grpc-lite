@@ -72,8 +72,9 @@ abstract class AbstractCall
         $headers = [
             'user-agent' => [$this->buildUserAgent()],
         ];
-        if (isset($this->options['timeout'])) {
-            $headers['grpc-timeout'] = [$this->encodeGrpcTimeout((int) $this->options['timeout'])];
+        $timeoutMicros = $this->timeoutMicros();
+        if ($timeoutMicros > 0) {
+            $headers['grpc-timeout'] = [$this->encodeGrpcTimeout($timeoutMicros)];
         }
 
         foreach ($this->buildRequestMetadata() as $key => $values) {
@@ -152,6 +153,18 @@ abstract class AbstractCall
         }
 
         return '99999999H';
+    }
+
+    protected function timeoutMicros(): int
+    {
+        if (!isset($this->options['timeout'])) {
+            return 0;
+        }
+        $timeoutMicros = (int) $this->options['timeout'];
+        if ($timeoutMicros < 0) {
+            throw new \InvalidArgumentException('timeout must be non-negative microseconds');
+        }
+        return $timeoutMicros;
     }
 
     /**

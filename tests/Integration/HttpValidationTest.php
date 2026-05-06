@@ -56,6 +56,19 @@ final class HttpValidationTest extends TestCase
         self::assertSame('invalid gRPC content-type: text/plain', $status->details);
     }
 
+    public function testUnaryRejectsGrpcContentTypePrefixLookalike(): void
+    {
+        $request = new BenchRequest();
+        [$response, $status] = $this->client->BenchUnary($request, [
+            'x-bench-content-type' => ['application/grpcfoo'],
+            'x-bench-grpc-status' => ['0'],
+        ])->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNKNOWN, $status->code);
+        self::assertSame('invalid gRPC content-type: application/grpcfoo', $status->details);
+    }
+
     public function testUnaryRejectsInvalidGrpcStatus(): void
     {
         $request = new BenchRequest();
@@ -94,6 +107,24 @@ final class HttpValidationTest extends TestCase
         self::assertSame(0, $count);
         self::assertSame(\Grpc\STATUS_UNKNOWN, $call->getStatus()->code);
         self::assertSame('invalid gRPC content-type: text/plain', $call->getStatus()->details);
+    }
+
+    public function testServerStreamingRejectsGrpcContentTypePrefixLookalikeBeforeYield(): void
+    {
+        $request = new BenchRequest();
+        $request->setMessageCount(10);
+
+        $call = $this->client->BenchServerStream($request, [
+            'x-bench-content-type' => ['application/grpcfoo'],
+        ]);
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(0, $count);
+        self::assertSame(\Grpc\STATUS_UNKNOWN, $call->getStatus()->code);
+        self::assertSame('invalid gRPC content-type: application/grpcfoo', $call->getStatus()->details);
     }
 
     public function testServerStreamingRejectsPartialGrpcFrame(): void
