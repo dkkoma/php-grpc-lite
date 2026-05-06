@@ -34,10 +34,10 @@ sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl
 アプリケーションにはComposerでPHP codeを入れる。
 
 ```bash
-composer require php-grpc-lite/php-grpc-lite
+composer require grpc/grpc
 ```
 
-`Grpc\BaseStub`、`Grpc\UnaryCall`、`Grpc\ServerStreamingCall` などの高レベル wrapper はComposer autoloadが提供する。`Grpc\Channel`、credentials、`Grpc\Timeval`、`Grpc\STATUS_*` などの低レベルsurfaceは、公式 `ext-grpc` と同じくsource-built grpc extension側で提供する方針へ移行する。
+`Grpc\BaseStub`、`Grpc\UnaryCall`、`Grpc\ServerStreamingCall` などの高レベル wrapper は公式 `grpc/grpc` Composer package が提供する。`Grpc\Channel`、`Grpc\Call`、credentials、`Grpc\Timeval`、`Grpc\STATUS_*` などの低レベルsurfaceは、このrepositoryのsource-built grpc extensionが提供する。
 
 ## Build source-built grpc extension
 

@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace PhpGrpcLite\Tests\Integration;
 
-use Grpc\CallCredentials;
 use Grpc\ChannelCredentials;
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
@@ -18,16 +17,14 @@ final class CallCredentialsTest extends TestCase
         $client = new GreeterClient('test-server:50051', [
             'credentials' => ChannelCredentials::createInsecure(),
         ]);
-        $credentials = CallCredentials::createFromPlugin(
-            static function (string $serviceUrl, string $methodName): array {
-                self::assertStringStartsWith('http://test-server:50051/', $serviceUrl);
-                self::assertSame('/helloworld.Greeter/BenchUnary', $methodName);
-                return ['x-bench-echo-ascii' => 'from-plugin'];
-            },
-        );
+        $callCredentialsCallback = static function (string $serviceUrl, string $methodName): array {
+            self::assertStringStartsWith('http://test-server:50051/', $serviceUrl);
+            self::assertSame('/helloworld.Greeter/BenchUnary', $methodName);
+            return ['x-bench-echo-ascii' => 'from-plugin'];
+        };
 
         $call = $client->BenchUnary(new BenchRequest(), [], [
-            'call_credentials' => $credentials,
+            'call_credentials_callback' => $callCredentialsCallback,
         ]);
         [, $status] = $call->wait();
 

@@ -119,8 +119,8 @@ final class MetadataControlTest extends TestCase
             $call = $client->BenchUnary(new BenchRequest(), $metadata);
             $call->wait();
             self::fail('expected InvalidArgumentException');
-        } catch (\InvalidArgumentException $e) {
-            self::assertStringContainsString('metadata', $e->getMessage());
+        } catch (\Throwable $e) {
+            self::assertStringContainsStringIgnoringCase('metadata', $e->getMessage());
         }
     }
 

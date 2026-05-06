@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../vendor/autoload.php';
 
-use Grpc\Internal\Http2Transport;
-
 header('content-type: application/json');
 
 if (!extension_loaded('grpc')) {
@@ -13,20 +11,30 @@ if (!extension_loaded('grpc')) {
     return;
 }
 
-$result = Http2Transport::unarySimple(
-    'test-server:50051',
+$request = "\0\0\0\0\0";
+$result = grpc_lite_unary(
+    'test-server:50051|50051',
+    'test-server',
+    50051,
     '/helloworld.Greeter/BenchUnary',
-    '',
+    $request,
     [],
+    0,
+    false,
+    null,
+    null,
+    null,
+    0,
+    null,
+    null,
 );
 
-$raw = $result['raw'];
 echo json_encode([
-    'ok' => $result['grpc_status'] === \Grpc\STATUS_OK,
+    'ok' => $result['grpc_status'] === Grpc\STATUS_OK,
     'pid' => getmypid(),
     'grpc_status' => $result['grpc_status'],
-    'persistent_reused' => (bool) ($raw['persistent_reused'] ?? false),
-    'connect_us' => (int) ($raw['connect_us'] ?? -1),
-    'channel_dead' => (bool) ($raw['channel_dead'] ?? false),
-    'details' => $result['details'],
+    'persistent_reused' => (bool) ($result['persistent_reused'] ?? false),
+    'connect_us' => (int) ($result['connect_us'] ?? -1),
+    'channel_dead' => (bool) ($result['channel_dead'] ?? false),
+    'details' => (string) ($result['grpc_message'] ?? ''),
 ], JSON_THROW_ON_ERROR);

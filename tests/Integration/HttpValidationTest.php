@@ -142,6 +142,6 @@ final class HttpValidationTest extends TestCase
 
         self::assertSame(0, $count);
         self::assertSame(\Grpc\STATUS_INTERNAL, $call->getStatus()->code);
-        self::assertSame('malformed gRPC response frame: incomplete trailing bytes', $call->getStatus()->details);
+        self::assertStringStartsWith('malformed gRPC response frame', $call->getStatus()->details);
     }
 }

@@ -6,7 +6,6 @@ namespace PhpGrpcLite\Tests\Integration;
 use Grpc\ChannelCredentials;
 use Grpc\Channel;
 use Grpc\Interceptor;
-use Grpc\UnaryCall;
 use Helloworld\HelloRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
 use PHPUnit\Framework\Attributes\Group;
@@ -25,13 +24,13 @@ final class InterceptorTest extends TestCase
             public function __construct(private array &$observed) {}
 
             public function interceptUnaryUnary(
-                string $method,
-                object $argument,
+                $method,
+                $argument,
                 $deserialize,
-                callable $continuation,
+                $continuation,
                 array $metadata = [],
                 array $options = [],
-            ): UnaryCall {
+            ) {
                 $this->observed[] = 'outer:before';
                 $metadata['x-outer'] = ['outer-value'];
                 $call = $continuation($method, $argument, $deserialize, $metadata, $options);
@@ -44,13 +43,13 @@ final class InterceptorTest extends TestCase
             public function __construct(private array &$observed) {}
 
             public function interceptUnaryUnary(
-                string $method,
-                object $argument,
+                $method,
+                $argument,
                 $deserialize,
-                callable $continuation,
+                $continuation,
                 array $metadata = [],
                 array $options = [],
-            ): UnaryCall {
+            ) {
                 $this->observed[] = 'inner:before';
                 $metadata['x-inner'] = ['inner-value'];
                 $call = $continuation($method, $argument, $deserialize, $metadata, $options);

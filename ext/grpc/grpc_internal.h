@@ -8,6 +8,7 @@
 
 #include <php.h>
 #include <ext/standard/info.h>
+#include <ext/standard/base64.h>
 #include <Zend/zend_exceptions.h>
 #include <Zend/zend_smart_str.h>
 #include <nghttp2/nghttp2.h>
@@ -213,6 +214,8 @@ struct _grpc_call {
     bool content_type_seen;
     bool invalid_content_type;
     bool unsupported_response_encoding;
+    zend_string *content_type;
+    zend_string *grpc_encoding;
     bool discard_response_body;
     bool invalid_grpc_status;
     bool grpc_status_seen;

@@ -1261,11 +1261,19 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         client->http_status = atoi(status_buf);
     } else if (namelen == sizeof("content-type") - 1 && memcmp(name, "content-type", namelen) == 0) {
         client->content_type_seen = true;
+        if (client->content_type != NULL) {
+            zend_string_release(client->content_type);
+        }
+        client->content_type = zend_string_init((const char *) value, valuelen, 0);
         if (!is_valid_grpc_content_type(value, valuelen)) {
             client->invalid_content_type = true;
             client->discard_response_body = true;
         }
     } else if (namelen == sizeof("grpc-encoding") - 1 && memcmp(name, "grpc-encoding", namelen) == 0) {
+        if (client->grpc_encoding != NULL) {
+            zend_string_release(client->grpc_encoding);
+        }
+        client->grpc_encoding = zend_string_init((const char *) value, valuelen, 0);
         if (!is_identity_grpc_encoding(value, valuelen)) {
             client->unsupported_response_encoding = true;
             client->discard_response_body = true;
@@ -1667,7 +1675,11 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
         return -1;
     }
     name_str = zend_string_copy(key);
-    value_str = zend_string_copy(Z_STR_P(value));
+    if (is_binary_metadata_header(name_str)) {
+        value_str = php_base64_encode((const unsigned char *) Z_STRVAL_P(value), Z_STRLEN_P(value));
+    } else {
+        value_str = zend_string_copy(Z_STR_P(value));
+    }
     if (is_binary_metadata_header(name_str) ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
         zend_string_release(name_str);
         zend_string_release(value_str);
@@ -2138,18 +2150,29 @@ static void add_metadata_map_to_return(zval *return_value, const char *name, grp
     array_init(&metadata);
     for (entry = client->metadata_head; entry != NULL; entry = entry->next) {
         zval *values;
+        zend_string *value;
 
         if (entry->trailing != trailing) {
             continue;
+        }
+        if (is_binary_metadata_header(entry->key)) {
+            value = php_base64_decode((const unsigned char *) ZSTR_VAL(entry->value), ZSTR_LEN(entry->value));
+            if (value == NULL) {
+                value = zend_string_copy(entry->value);
+            }
+        } else {
+            value = zend_string_copy(entry->value);
         }
         values = zend_hash_find(Z_ARRVAL(metadata), entry->key);
         if (values == NULL) {
             zval new_values;
             array_init(&new_values);
-            add_next_index_str(&new_values, zend_string_copy(entry->value));
+            add_next_index_str(&new_values, value);
             zend_hash_update(Z_ARRVAL(metadata), entry->key, &new_values);
         } else if (Z_TYPE_P(values) == IS_ARRAY) {
-            add_next_index_str(values, zend_string_copy(entry->value));
+            add_next_index_str(values, value);
+        } else {
+            zend_string_release(value);
         }
     }
 
@@ -2170,6 +2193,14 @@ static void cleanup_grpc_call(grpc_call *client)
     if (client->grpc_message != NULL) {
         zend_string_release(client->grpc_message);
         client->grpc_message = NULL;
+    }
+    if (client->content_type != NULL) {
+        zend_string_release(client->content_type);
+        client->content_type = NULL;
+    }
+    if (client->grpc_encoding != NULL) {
+        zend_string_release(client->grpc_encoding);
+        client->grpc_encoding = NULL;
     }
     smart_str_free(&client->body);
 }

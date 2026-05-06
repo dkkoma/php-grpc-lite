@@ -191,14 +191,14 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 | `Grpc\ClientStreamingCall` / `BidiStreamingCall` | Composer library | Composer library側で未実装例外 |
 | `Grpc\Interceptor*` / `CallInvoker` | Composer library | Composer library側 |
 
-短期的にはPHP実装済みの `Grpc\Channel` / credentials / `Timeval` / constants をC拡張へ移し、Composer libraryから同名class/constant定義を外す。これにより `grpc/grpc` や `grpc-php-rs` と同じ配布モデルに近づき、PIE用extension packageを独立させやすくする。
+現行実装では、高レベル wrapper は公式 `grpc/grpc` Composer package に一本化し、このrepositoryの `src/Grpc/` PHP互換層は持たない。`ext/grpc` は低レベルclass、constants、HTTP/2 transport、persistent channel lifecycleを担当する。
 
 ---
 
 ## 6. 未決事項
 
 - [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/api-surface.md` で完了(2026-04-25)
-- [x] ~~`Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)~~ → callback wrapperとして実装し、per-call option `call_credentials` から metadata を生成する(2026-05-04)
+- [x] ~~`Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)~~ → official wrapperの `call_credentials_callback` から `Grpc\Call::setCredentials()` 経由でmetadataを生成する。
 - [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
 - [x] ~~`ServerStreamingCall::responses()` Generator の実装戦略~~ → HTTP/2 stream resourceをGeneratorがpullし、message単位でyieldする。slow consumer時はread/WINDOW_UPDATE進行を抑え、stream resource destructor / `cancel()` で `RST_STREAM(CANCEL)` を送る。
 - [ ] テスト用 gRPC サーバーの選定(Go の helloworld を `compose.yaml` に並べる案が有力)

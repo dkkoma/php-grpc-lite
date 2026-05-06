@@ -4,7 +4,7 @@
 
 ## プロジェクトの現在地
 
-- `php-grpc-lite` は公式 `ext-grpc` のドロップイン代替を目指す、PHP userland API + HTTP/2 transport 拡張による gRPC クライアント実装。
+- `php-grpc-lite` は公式 `ext-grpc` のドロップイン代替を目指す、公式 `grpc/grpc` PHP wrapper + source-built `ext/grpc` HTTP/2 transport 拡張による gRPC クライアント実装。
 - Runtime transport は nghttp2 の 1 系統。libcurl fallback / transport selection option / 環境変数による transport 切替は持たない。
 - unary、server streaming、TLS、mTLS、Spanner emulator 経路まで実機検証済み。
 - 設計判断と進捗は `docs/SPEC.md`、実装の読み方は `docs/code-reading-guide.md`、ベンチ結果は `docs/benchmarks/` を参照する。

@@ -4,10 +4,8 @@
     "type": "library",
     "license": "MIT",
     "require": {
-        "php": ">=8.4"
-    },
-    "provide": {
-        "ext-grpc": "1.62.0"
+        "php": ">=8.4",
+        "grpc/grpc": "^1.80"
     },
     "require-dev": {
         "google/cloud-spanner": "^2.6",
@@ -18,14 +16,6 @@
     "suggest": {
         "ext-protobuf": "Use the protobuf C extension for faster serialization",
         "ext-grpc": "Build and load this repository's ext/grpc source as grpc.so before relying on the ext-grpc provide entry"
-    },
-    "autoload": {
-        "psr-4": {
-            "Grpc\\": "src/Grpc/"
-        },
-        "files": [
-            "src/Grpc/constants.php"
-        ]
     },
     "autoload-dev": {
         "psr-4": {

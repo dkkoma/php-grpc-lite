@@ -127,14 +127,15 @@ foreach ($payloadSizes as $payloadBytes) {
     );
 
     $measurements[] = measureCase(
-        "payload_breakdown_deserialize_apply_{$payloadBytes}b",
-        'deserialize-apply',
+        "payload_breakdown_official_wrapper_decode_{$payloadBytes}b",
+        'official-wrapper-decode',
         $payloadBytes,
         $payloadLength,
         $frameLength,
         $revs,
         static function () use ($payload): int {
-            $message = \Grpc\Internal\Deserialize::apply([BenchReply::class, 'decode'], $payload);
+            $message = new BenchReply();
+            $message->mergeFromString($payload);
             return strlen($message->getPayload());
         },
     );

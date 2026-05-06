@@ -4,7 +4,7 @@
 
 Current review status:
 
-- PHP userland `Grpc\*` API surface is provided by Composer autoload.
+- High-level PHP `Grpc\*` wrapper classes are provided by the official `grpc/grpc` Composer package.
 - HTTP/2 transport is provided by this repository's source-build extension in `ext/grpc/`.
 - The source-built grpc extension builds a PHP module named `grpc` and produces `grpc.so`.
 - Official `ext-grpc` and this source-built grpc extension must not be loaded at the same time.
@@ -14,10 +14,10 @@ Current review status:
 
 ## Install
 
-Install PHP userland code with Composer:
+Install the official PHP wrapper dependency with Composer:
 
 ```bash
-composer require php-grpc-lite/php-grpc-lite
+composer require grpc/grpc
 ```
 
 Build the source-built grpc extension from this repository:
