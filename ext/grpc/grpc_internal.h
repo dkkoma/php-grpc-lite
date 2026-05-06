@@ -214,6 +214,7 @@ struct _grpc_call {
     bool unsupported_response_encoding;
     bool discard_response_body;
     bool invalid_grpc_status;
+    bool grpc_status_seen;
     size_t response_message_count;
     size_t max_response_messages;
     size_t max_receive_message_bytes;

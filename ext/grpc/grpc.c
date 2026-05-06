@@ -274,6 +274,12 @@ PHP_FUNCTION(grpc_lite_unary)
         Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
+    error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
+    if (error_message != NULL) {
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
+
     if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
         zend_throw_exception(NULL, "persistent channel cache is not initialized", 0);
         RETURN_THROWS();
@@ -357,6 +363,12 @@ PHP_FUNCTION(grpc_lite_stream_open)
         Z_PARAM_STRING_OR_NULL(authority, authority_len)
         Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
+
+    error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
+    if (error_message != NULL) {
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
 
     if (request_len > UINT32_MAX) {
         zend_throw_exception(NULL, "gRPC request message exceeds 32-bit frame length", 0);

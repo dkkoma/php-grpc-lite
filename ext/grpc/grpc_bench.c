@@ -1805,6 +1805,9 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         if (response_callback_enabled && !decode_response_incrementally) {
             if (bench_process_response_messages(&client, &response_fci, &response_fcc, &decoded_messages, &response_decode_us, &max_response_decode_us) != 0) {
                 failed++;
+                if (EG(exception)) {
+                    break;
+                }
                 break;
             }
         } else if (response_callback_enabled && decode_response_incrementally && client.direct_response_payload && (client.response_header_len != 0 || client.response_payload != NULL || client.response_queue_head != NULL)) {

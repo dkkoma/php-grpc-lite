@@ -13,6 +13,7 @@
 #define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
+#define GRPC_LITE_MAX_PERSISTENT_CHANNELS 128
 
 static void destroy_h2_channel(h2_channel *channel);
 static void detach_persistent_channel_by_ptr(h2_channel *channel);
@@ -68,6 +69,7 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
 static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen);
 static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen);
+static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
 static size_t count_custom_header_values(zval *headers_zv);
 static int init_request_headers(h2_request_headers *headers, size_t custom_values);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
@@ -929,6 +931,10 @@ static h2_channel *get_persistent_channel(const char *key, size_t key_len, const
     }
 
     if (channel == NULL) {
+        if (zend_hash_num_elements(&PHP_GRPC_LITE_G(persistent_channels)) >= GRPC_LITE_MAX_PERSISTENT_CHANNELS) {
+            *error_message = "persistent channel cache limit exceeded";
+            return NULL;
+        }
         channel = create_h2_channel(host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, true, deadline_abs_us, error_detail, error_detail_len, error_message);
         if (channel == NULL) {
             return NULL;
@@ -1159,6 +1165,10 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         trailing = true;
     }
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
+        if (client->grpc_status_seen) {
+            client->invalid_grpc_status = true;
+        }
+        client->grpc_status_seen = true;
         client->grpc_status = parse_grpc_status_value(value, valuelen);
         if (client->grpc_status < 0) {
             client->invalid_grpc_status = true;
@@ -1308,6 +1318,53 @@ static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen)
 {
     return valuelen == 0
         || (valuelen == sizeof("identity") - 1 && strncasecmp((const char *) value, "identity", sizeof("identity") - 1) == 0);
+}
+
+static bool contains_nul_or_control(const char *value, size_t value_len)
+{
+    size_t index;
+
+    if (value == NULL) {
+        return false;
+    }
+    for (index = 0; index < value_len; index++) {
+        unsigned char ch = (unsigned char) value[index];
+        if (ch == '\0' || ch < 0x20 || ch == 0x7f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len)
+{
+    char port_buf[32];
+    int port_len;
+
+    if (key_len == 0 || key_len > 512 || contains_nul_or_control(key, key_len)) {
+        return "invalid grpc_lite channel key";
+    }
+    if (host_len == 0 || contains_nul_or_control(host, host_len)) {
+        return "invalid gRPC target host";
+    }
+    if (port <= 0 || port > 65535) {
+        return "invalid gRPC target port";
+    }
+    if (authority_len > 0) {
+        if (authority_len >= sizeof(((h2_channel *) 0)->authority) || contains_nul_or_control(authority, authority_len)) {
+            return "invalid gRPC authority";
+        }
+    } else {
+        port_len = snprintf(port_buf, sizeof(port_buf), "%ld", port);
+        if (port_len < 0 || host_len + 1 + (size_t) port_len >= sizeof(((h2_channel *) 0)->authority)) {
+            return "gRPC authority is too long";
+        }
+    }
+    if (tls_verify_name_len > 0 && contains_nul_or_control(tls_verify_name, tls_verify_name_len)) {
+        return "invalid TLS verify name";
+    }
+
+    return NULL;
 }
 
 static size_t count_custom_header_values(zval *headers_zv)
