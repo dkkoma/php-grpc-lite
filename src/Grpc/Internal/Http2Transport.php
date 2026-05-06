@@ -237,13 +237,14 @@ final class Http2Transport
         }
 
         $metadata = self::extractInitialMetadata($result);
+        $trailingMetadata = self::normalizeMetadataMap($result['trailing_metadata'] ?? []);
         $httpStatus = (int) ($result['http_status'] ?? 0);
         $grpcStatus = (int) ($result['grpc_status'] ?? -1);
         if ($httpStatus !== 0 && $httpStatus !== 200 && $grpcStatus < 0) {
             return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
-        $contentType = strtolower($metadata['content-type'][0] ?? '');
+        $contentType = strtolower($metadata['content-type'][0] ?? $trailingMetadata['content-type'][0] ?? '');
         if ($contentType !== '' && !str_starts_with($contentType, 'application/grpc')) {
             return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: $contentType"];
         }
@@ -313,6 +314,8 @@ final class Http2Transport
         return match ($streamErrorCode) {
             0x8 => \Grpc\STATUS_CANCELLED,
             0x2 => \Grpc\STATUS_INTERNAL,
+            0xb => \Grpc\STATUS_RESOURCE_EXHAUSTED,
+            0xc => \Grpc\STATUS_PERMISSION_DENIED,
             0x7 => \Grpc\STATUS_UNAVAILABLE,
             default => \Grpc\STATUS_UNAVAILABLE,
         };

@@ -892,6 +892,7 @@ PHP;
             [['te' => ['trailers']], 'forbidden gRPC request metadata key'],
             [['x-bench-crlf' => ["bad\r\nvalue"]], 'invalid gRPC request metadata value'],
             [['x-bench-nonascii' => ["\xC3\xA9"]], 'invalid gRPC request metadata value'],
+            [['x-bench-int' => [123]], 'gRPC request metadata value must be a string'],
         ];
 
         foreach ($invalidHeaders as [$headers, $message]) {
@@ -1065,6 +1066,43 @@ PHP;
 
         self::assertSame(\Grpc\STATUS_UNAVAILABLE, $code);
         self::assertSame('HTTP/2 stream reset: 7', $details);
+    }
+
+    public function testHttp2TrailersOnlyContentTypeIsStillValidated(): void
+    {
+        $method = new \ReflectionMethod(Http2Transport::class, 'normalizeStatus');
+        $method->setAccessible(true);
+
+        [$code, $details] = $method->invoke(null, [
+            'timed_out' => false,
+            'channel_dead' => false,
+            'http_status' => 200,
+            'grpc_status' => 0,
+            'initial_metadata' => [],
+            'trailing_metadata' => [
+                'content-type' => ['text/plain'],
+            ],
+        ]);
+
+        self::assertSame(\Grpc\STATUS_UNKNOWN, $code);
+        self::assertSame('invalid gRPC content-type: text/plain', $details);
+    }
+
+    public function testHttp2EnhanceYourCalmMapsToResourceExhausted(): void
+    {
+        $method = new \ReflectionMethod(Http2Transport::class, 'normalizeStatus');
+        $method->setAccessible(true);
+
+        [$code, $details] = $method->invoke(null, [
+            'timed_out' => false,
+            'channel_dead' => false,
+            'http_status' => 0,
+            'stream_error_code' => 0xb,
+            'initial_metadata' => [],
+        ]);
+
+        self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $code);
+        self::assertSame('HTTP/2 stream reset: 11', $details);
     }
 
     public function testHttp2StreamDeadlineReleasesPersistentChannel(): void

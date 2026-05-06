@@ -149,6 +149,9 @@ static void clear_channel_call_owner(h2_channel *channel, grpc_call *client)
     }
     channel->busy = false;
     channel->active_call_owner = NULL;
+    if (channel->detached_from_cache) {
+        destroy_h2_channel(channel);
+    }
 }
 
 static void cancel_active_stream(h2_stream *stream, uint32_t error_code)
@@ -1372,12 +1375,14 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
 {
     zend_string *name_str = NULL;
     zend_string *value_str;
+    size_t custom_capacity;
 
     if (Z_TYPE_P(value) != IS_STRING) {
         zend_throw_exception(NULL, "gRPC request metadata value must be a string", 0);
         return -1;
     }
-    if (headers->name_count >= headers->capacity || headers->value_count >= headers->capacity) {
+    custom_capacity = headers->capacity >= 7 ? headers->capacity - 7 : 0;
+    if (headers->name_strings == NULL || headers->value_strings == NULL || headers->name_count >= custom_capacity || headers->value_count >= custom_capacity) {
         zend_throw_exception(NULL, "gRPC request metadata exceeds maximum count", 0);
         return -1;
     }
