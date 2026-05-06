@@ -3,6 +3,17 @@
     "description": "Source-built grpc extension for PHP: php-grpc-lite HTTP/2 transport drop-in candidate for ext-grpc",
     "type": "php-ext",
     "license": "MIT",
+    "homepage": "https://github.com/dkkoma/php-grpc-lite",
+    "keywords": [
+        "grpc",
+        "http2",
+        "php-extension",
+        "pie"
+    ],
+    "support": {
+        "issues": "https://github.com/dkkoma/php-grpc-lite/issues",
+        "source": "https://github.com/dkkoma/php-grpc-lite"
+    },
     "require": {
         "php": ">=8.4"
     },
