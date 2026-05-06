@@ -12,5 +12,5 @@ if test "$PHP_GRPC" != "no"; then
   if test "$PHP_GRPC_BENCH" != "no"; then
     AC_DEFINE(PHP_GRPC_LITE_ENABLE_BENCH, 1, [Enable php-grpc-lite benchmark-only entrypoints])
   fi
-  PHP_NEW_EXTENSION(grpc, grpc.c, $ext_shared)
+  PHP_NEW_EXTENSION(grpc, main.c, $ext_shared)
 fi

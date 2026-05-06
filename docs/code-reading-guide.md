@@ -9,9 +9,12 @@ generated client / gax
   -> grpc/grpc Composer wrapper
      -> Grpc\BaseStub
      -> Grpc\UnaryCall / Grpc\ServerStreamingCall
-     -> Grpc\Call
-  -> ext/grpc/grpc.c
-     -> grpc_transport.c
+  -> Grpc\Call
+  -> ext/grpc/main.c
+     -> surface.c
+     -> call.c
+     -> direct_api.c
+     -> transport.c
      -> nghttp2 + socket / OpenSSL
 ```
 
@@ -23,9 +26,12 @@ generated client / gax
 2. `vendor/grpc/grpc/src/lib/BaseStub.php`
 3. `vendor/grpc/grpc/src/lib/UnaryCall.php`
 4. `vendor/grpc/grpc/src/lib/ServerStreamingCall.php`
-5. `ext/grpc/grpc.c`
-6. `ext/grpc/grpc_transport.c`
-7. `ext/grpc/grpc_internal.h`
+5. `ext/grpc/main.c`
+6. `ext/grpc/surface.c`
+7. `ext/grpc/call.c`
+8. `ext/grpc/direct_api.c`
+9. `ext/grpc/transport.c`
+10. `ext/grpc/internal.h`
 
 ## 1. 生成クライアント相当
 
@@ -86,7 +92,7 @@ messageごとに `responses()` がpullするため、現在の実装はbatch dra
 
 ## 3. 拡張が登録するPHP surface
 
-`ext/grpc/grpc.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。
+`ext/grpc/main.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。class/object実装は `ext/grpc/surface.c`、official wrapperから呼ばれる `Grpc\Call` bridgeは `ext/grpc/call.c` にあります。
 
 | surface | 用途 |
 |---|---|
@@ -129,9 +135,11 @@ official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
 
 unaryは `RECV_STATUS` を含むbatchで `perform_h2_channel_unary()` が走ります。server streamingは最初の `RECV_MESSAGE` で `grpc_lite_stream_open()` 相当のC stream resourceを開き、以後 `grpc_lite_stream_next()` 相当で1 messageずつ返します。
 
+低レベルの `grpc_lite_unary()` / `grpc_lite_stream_open()` / `grpc_lite_stream_next()` / `grpc_lite_channel_close()` は `ext/grpc/direct_api.c` に分離しています。通常のwrapper経路は `Grpc\Call::startBatch()` 経由で、これらの低レベル関数をPHPから直接呼ぶ必要はありません。
+
 ## 6. HTTP/2 transport
 
-`ext/grpc/grpc_transport.c` はC拡張内にincludeされるprivate implementationです。主な責務は次です。
+`ext/grpc/transport.c` はC拡張内にincludeされるprivate implementationです。主な責務は次です。
 
 - TCP connect、TLS/mTLS handshake、ALPN h2確認
 - nghttp2 session/callback設定

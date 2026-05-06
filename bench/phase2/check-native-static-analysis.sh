@@ -25,7 +25,7 @@ docker compose run --rm dev sh -lc '
         --std=c99 \
         $php_includes \
         $pkg_includes \
-        ext/grpc/grpc.c
+        ext/grpc/main.c
 
     cppcheck \
         --enable=warning,performance,portability \
@@ -40,5 +40,5 @@ docker compose run --rm dev sh -lc '
         -DPHP_GRPC_LITE_ENABLE_BENCH=1 \
         $php_includes \
         $pkg_includes \
-        ext/grpc/grpc.c
+        ext/grpc/main.c
 '

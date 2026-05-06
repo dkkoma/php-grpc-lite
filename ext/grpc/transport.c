@@ -1,12 +1,12 @@
-#include "grpc_internal.h"
+#include "internal.h"
 
 /*
- * HTTP/2 transport helpers included by grpc.c.
+ * HTTP/2 transport helpers included by main.c.
  *
- * This file intentionally shares grpc.c's static scope: it owns channel
+ * This file intentionally shares main.c's static scope: it owns channel
  * lifecycle, socket/TLS I/O, nghttp2 callbacks, request header assembly,
  * response frame parsing, and metadata storage helpers. PHP entrypoints and
- * module registration stay in grpc.c.
+ * module registration stay in main.c.
  */
 
 #define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
