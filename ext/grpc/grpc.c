@@ -198,6 +198,7 @@ build_unary_result:
     add_assoc_str(return_value, "grpc_message", client.grpc_message != NULL ? zend_string_copy(client.grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client.http_status);
     add_assoc_long(return_value, "stream_error_code", client.stream_error_code);
+    add_assoc_bool(return_value, "stream_reset_seen", client.stream_reset_seen);
     add_assoc_bool(return_value, "invalid_grpc_status", client.invalid_grpc_status);
     add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client.response_message_too_large);
@@ -519,6 +520,7 @@ static void add_stream_status(zval *return_value, h2_stream *stream)
     add_assoc_str(return_value, "grpc_message", client->grpc_message != NULL ? zend_string_copy(client->grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client->http_status);
     add_assoc_long(return_value, "stream_error_code", client->stream_error_code);
+    add_assoc_bool(return_value, "stream_reset_seen", client->stream_reset_seen);
     add_assoc_bool(return_value, "invalid_grpc_status", client->invalid_grpc_status);
     add_assoc_bool(return_value, "compressed_response_seen", client->compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client->response_message_too_large);

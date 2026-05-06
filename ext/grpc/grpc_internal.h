@@ -204,6 +204,7 @@ struct _grpc_call {
     int grpc_status;
     zend_string *grpc_message;
     uint32_t stream_error_code;
+    bool stream_reset_seen;
     int http_status;
     bool compressed_response_seen;
     bool response_message_too_large;

@@ -273,13 +273,16 @@ final class Http2Transport
             return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
         }
 
-        $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
-        if ($streamErrorCode !== 0) {
-            return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
-        }
-
         if (($result['invalid_grpc_status'] ?? false) === true) {
             return [\Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'];
+        }
+
+        $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
+        if (($result['stream_reset_seen'] ?? false) === true && $streamErrorCode === 0 && $grpcStatus < 0) {
+            return [\Grpc\STATUS_INTERNAL, 'HTTP/2 stream reset: 0'];
+        }
+        if ($streamErrorCode !== 0) {
+            return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
         }
 
         if ($contentType === '' && $grpcStatus >= 0) {
@@ -374,7 +377,9 @@ final class Http2Transport
                 if (str_ends_with(strtolower($key), '-bin')) {
                     foreach (explode(',', $value) as $part) {
                         $decoded = base64_decode($part, true);
-                        $normalized[$key][] = $decoded === false ? '' : $decoded;
+                        if ($decoded !== false) {
+                            $normalized[$key][] = $decoded;
+                        }
                     }
                     continue;
                 }

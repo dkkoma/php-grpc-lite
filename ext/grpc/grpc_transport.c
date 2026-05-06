@@ -1240,12 +1240,18 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         }
         trailing = true;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
+        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+            client->initial_grpc_status_seen = true;
+        }
         if (client->grpc_message != NULL) {
             zend_string_release(client->grpc_message);
         }
         client->grpc_message = zend_string_init((const char *) value, valuelen, 0);
         trailing = true;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
+        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+            client->initial_grpc_status_seen = true;
+        }
         trailing = true;
     } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
         char status_buf[16];
@@ -1318,6 +1324,9 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
             client->invalid_grpc_status = true;
             client->discard_response_body = true;
         }
+    } else if (frame->hd.type == NGHTTP2_RST_STREAM && frame->hd.stream_id == client->stream_id) {
+        client->stream_reset_seen = true;
+        client->stream_error_code = frame->rst_stream.error_code;
     } else if (frame->hd.type == NGHTTP2_PUSH_PROMISE && frame->hd.stream_id == client->stream_id) {
         client->malformed_response_frame = true;
         client->discard_response_body = true;
@@ -1742,7 +1751,7 @@ static int validate_response_message_lengths(nghttp2_session *session, grpc_call
 {
     size_t offset = 0;
 
-    if (client->initial_grpc_status_seen) {
+    if (client->grpc_status_seen) {
         client->invalid_grpc_status = true;
         client->discard_response_body = true;
         if (session != NULL && client->stream_id > 0) {
@@ -1784,6 +1793,11 @@ static int validate_response_message_lengths(nghttp2_session *session, grpc_call
             }
             if (client->response_header_buf[0] == 1) {
                 client->compressed_response_seen = true;
+                client->discard_response_body = true;
+                if (session != NULL && client->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+                }
+                return 0;
             }
             client->response_payload_offset = 0;
             if ((size_t) client->response_payload_len > client->max_receive_message_bytes) {
@@ -1822,7 +1836,7 @@ static int process_response_data_direct(nghttp2_session *session, grpc_call *cli
 {
     size_t offset = 0;
 
-    if (client->initial_grpc_status_seen) {
+    if (client->grpc_status_seen) {
         client->invalid_grpc_status = true;
         client->discard_response_body = true;
         if (session != NULL && client->stream_id > 0) {
