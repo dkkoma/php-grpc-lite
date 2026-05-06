@@ -2200,7 +2200,7 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
-    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, true, persistent_reused, return_value) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_on_channel(channel, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, true, persistent_reused, return_value) != SUCCESS) {
         if (channel != NULL && !channel_usable(channel)) {
             remove_unusable_persistent_channel(key, key_len, channel);
         }
@@ -2212,7 +2212,7 @@ PHP_FUNCTION(grpc_lite_unary)
     }
 }
 
-PHP_FUNCTION(grpc_lite_stream_open)
+PHP_FUNCTION(grpc_lite_server_streaming_open)
 {
     char *key = NULL;
     size_t key_len = 0;
@@ -2256,29 +2256,29 @@ PHP_FUNCTION(grpc_lite_stream_open)
         Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (grpc_lite_open_stream_resource(key, key_len, host, host_len, port, path, path_len, request, request_len, headers_zv, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, authority, authority_len, tls_verify_name, tls_verify_name_len, return_value) != SUCCESS) {
+    if (server_streaming_call_open_resource(key, key_len, host, host_len, port, path, path_len, request, request_len, headers_zv, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, authority, authority_len, tls_verify_name, tls_verify_name_len, return_value) != SUCCESS) {
         RETURN_THROWS();
     }
 }
 
-PHP_FUNCTION(grpc_lite_stream_next)
+PHP_FUNCTION(grpc_lite_server_streaming_next)
 {
     zval *stream_zv = NULL;
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
-    if (grpc_lite_stream_next_resource(stream_zv, return_value) != SUCCESS) {
+    if (server_streaming_call_next_resource(stream_zv, return_value) != SUCCESS) {
         RETURN_THROWS();
     }
 }
 
-PHP_FUNCTION(grpc_lite_stream_cancel)
+PHP_FUNCTION(grpc_lite_server_streaming_cancel)
 {
     zval *stream_zv = NULL;
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
-    if (grpc_lite_cancel_stream_resource(stream_zv) != SUCCESS) {
+    if (server_streaming_call_cancel_resource(stream_zv) != SUCCESS) {
         RETURN_THROWS();
     }
     RETURN_TRUE;
@@ -2324,7 +2324,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_unary, 0, 5, IS_ARRAY,
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tls_verify_name, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_server_streaming_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
@@ -2341,11 +2341,11 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tls_verify_name, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_next, 0, 1, IS_ARRAY, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_server_streaming_next, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_cancel, 0, 1, _IS_BOOL, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_server_streaming_cancel, 0, 1, _IS_BOOL, 0)
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
@@ -2355,9 +2355,9 @@ ZEND_END_ARG_INFO()
 
 static const zend_function_entry grpc_lite_functions[] = {
     PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
-    PHP_FE(grpc_lite_stream_open, arginfo_grpc_lite_stream_open)
-    PHP_FE(grpc_lite_stream_next, arginfo_grpc_lite_stream_next)
-    PHP_FE(grpc_lite_stream_cancel, arginfo_grpc_lite_stream_cancel)
+    PHP_FE(grpc_lite_server_streaming_open, arginfo_grpc_lite_server_streaming_open)
+    PHP_FE(grpc_lite_server_streaming_next, arginfo_grpc_lite_server_streaming_next)
+    PHP_FE(grpc_lite_server_streaming_cancel, arginfo_grpc_lite_server_streaming_cancel)
     PHP_FE(grpc_lite_channel_close, arginfo_grpc_lite_channel_close)
     PHP_FE(grpc_lite_multiplex_unary, arginfo_grpc_lite_multiplex_unary)
     PHP_FE(grpc_lite_bench_unary_batch, arginfo_grpc_lite_bench_unary_batch)

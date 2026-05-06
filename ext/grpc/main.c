@@ -6,10 +6,13 @@
 
 ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 
+static int le_server_streaming_call_state;
+
 #include "surface.c"
 #include "transport.c"
-#include "rpc_transport.c"
-#include "call.c"
+#include "unary_call.c"
+#include "server_streaming_call.c"
+#include "bridge.c"
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 #include "bench.c"
 #else
@@ -54,7 +57,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
 #ifdef SIGPIPE
     signal(SIGPIPE, SIG_IGN);
 #endif
-    le_h2_stream = zend_register_list_destructors_ex(h2_stream_dtor, NULL, "grpc_lite_stream", module_number);
+    le_server_streaming_call_state = zend_register_list_destructors_ex(server_streaming_call_state_dtor, NULL, "grpc_lite_server_streaming_call_state", module_number);
 
     memcpy(&grpc_channel_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     grpc_channel_credentials_handlers.offset = XtOffsetOf(grpc_lite_channel_credentials_obj, std);

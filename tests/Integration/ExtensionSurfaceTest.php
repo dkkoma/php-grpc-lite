@@ -16,9 +16,9 @@ final class ExtensionSurfaceTest extends TestCase
     public function testProductionBuildDoesNotExposeDiagnosticFunctions(): void
     {
         self::assertFalse(function_exists('grpc_lite_unary'));
-        self::assertFalse(function_exists('grpc_lite_stream_open'));
-        self::assertFalse(function_exists('grpc_lite_stream_next'));
-        self::assertFalse(function_exists('grpc_lite_stream_cancel'));
+        self::assertFalse(function_exists('grpc_lite_server_streaming_open'));
+        self::assertFalse(function_exists('grpc_lite_server_streaming_next'));
+        self::assertFalse(function_exists('grpc_lite_server_streaming_cancel'));
         self::assertFalse(function_exists('grpc_lite_channel_close'));
         self::assertFalse(function_exists('grpc_lite_multiplex_unary'));
         self::assertFalse(function_exists('grpc_lite_bench_unary_batch'));

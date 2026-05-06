@@ -35,7 +35,7 @@
 #include <unistd.h>
 
 typedef struct _h2_channel h2_channel;
-typedef struct _h2_stream h2_stream;
+typedef struct server_streaming_call_state server_streaming_call_state;
 
 static zend_class_entry *grpc_ce_channel;
 static zend_class_entry *grpc_ce_call;
@@ -460,7 +460,7 @@ struct _h2_channel {
     bool busy;
     bool detached_from_cache;
     grpc_call *active_call_owner;
-    h2_stream *active_stream_owner;
+    server_streaming_call_state *active_server_streaming_call_owner;
     int last_error;
     int last_io_errno;
     int last_ssl_error;
@@ -471,7 +471,7 @@ struct _h2_channel {
     int32_t last_goaway_stream_id;
 };
 
-struct _h2_stream {
+struct server_streaming_call_state {
     h2_channel *channel;
     grpc_call client;
     zend_string *request;
@@ -484,13 +484,13 @@ struct _h2_stream {
 
 static void destroy_h2_channel(h2_channel *channel);
 static void detach_persistent_channel_by_ptr(h2_channel *channel);
-static bool channel_owned_by_stream(h2_channel *channel, h2_stream *stream);
+static bool channel_owned_by_server_streaming_call_state(h2_channel *channel, server_streaming_call_state *stream);
 static bool channel_owned_by_call(h2_channel *channel, grpc_call *client);
-static void clear_channel_stream_owner(h2_stream *stream);
+static void clear_channel_server_streaming_call_state_owner(server_streaming_call_state *stream);
 static void clear_channel_call_owner(h2_channel *channel, grpc_call *client);
-static void cancel_active_stream(h2_stream *stream, uint32_t error_code);
-static void destroy_h2_stream(h2_stream *stream);
-static void h2_stream_dtor(zend_resource *rsrc);
+static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code);
+static void destroy_server_streaming_call_state(server_streaming_call_state *stream);
+static void server_streaming_call_state_dtor(zend_resource *rsrc);
 static int configure_callbacks(nghttp2_session_callbacks **callbacks);
 static void mark_channel_dead(h2_channel *channel, int error_code);
 static void set_channel_error_detail(h2_channel *channel, const char *detail);
@@ -556,10 +556,10 @@ static void free_metadata_entries(grpc_call *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
 static void cleanup_grpc_call(grpc_call *client);
 
-static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value);
-static int grpc_lite_open_stream_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value);
-static int grpc_lite_stream_next_resource(zval *stream_zv, zval *return_value);
-static int grpc_lite_cancel_stream_resource(zval *stream_zv);
+static int grpc_lite_unary_call_perform_on_channel(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value);
+static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value);
+static int server_streaming_call_next_resource(zval *stream_zv, zval *return_value);
+static int server_streaming_call_cancel_resource(zval *stream_zv);
 static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key);
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)

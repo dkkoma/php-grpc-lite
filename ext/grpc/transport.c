@@ -17,13 +17,13 @@
 
 static void destroy_h2_channel(h2_channel *channel);
 static void detach_persistent_channel_by_ptr(h2_channel *channel);
-static bool channel_owned_by_stream(h2_channel *channel, h2_stream *stream);
+static bool channel_owned_by_server_streaming_call_state(h2_channel *channel, server_streaming_call_state *stream);
 static bool channel_owned_by_call(h2_channel *channel, grpc_call *client);
-static void clear_channel_stream_owner(h2_stream *stream);
+static void clear_channel_server_streaming_call_state_owner(server_streaming_call_state *stream);
 static void clear_channel_call_owner(h2_channel *channel, grpc_call *client);
-static void cancel_active_stream(h2_stream *stream, uint32_t error_code);
-static void destroy_h2_stream(h2_stream *stream);
-static void h2_stream_dtor(zend_resource *rsrc);
+static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code);
+static void destroy_server_streaming_call_state(server_streaming_call_state *stream);
+static void server_streaming_call_state_dtor(zend_resource *rsrc);
 static int configure_callbacks(nghttp2_session_callbacks **callbacks);
 static void mark_channel_dead(h2_channel *channel, int error_code);
 static void set_channel_error_detail(h2_channel *channel, const char *detail);
@@ -154,9 +154,9 @@ static void detach_persistent_channel_by_ptr(h2_channel *channel)
     }
 }
 
-static bool channel_owned_by_stream(h2_channel *channel, h2_stream *stream)
+static bool channel_owned_by_server_streaming_call_state(h2_channel *channel, server_streaming_call_state *stream)
 {
-    return channel != NULL && stream != NULL && channel->active_stream_owner == stream;
+    return channel != NULL && stream != NULL && channel->active_server_streaming_call_owner == stream;
 }
 
 static bool channel_owned_by_call(h2_channel *channel, grpc_call *client)
@@ -164,7 +164,7 @@ static bool channel_owned_by_call(h2_channel *channel, grpc_call *client)
     return channel != NULL && client != NULL && channel->active_call_owner == client;
 }
 
-static void clear_channel_stream_owner(h2_stream *stream)
+static void clear_channel_server_streaming_call_state_owner(server_streaming_call_state *stream)
 {
     h2_channel *channel;
 
@@ -172,7 +172,7 @@ static void clear_channel_stream_owner(h2_stream *stream)
         return;
     }
     channel = stream->channel;
-    if (!channel_owned_by_stream(channel, stream)) {
+    if (!channel_owned_by_server_streaming_call_state(channel, stream)) {
         return;
     }
 
@@ -183,7 +183,7 @@ static void clear_channel_stream_owner(h2_stream *stream)
         detach_persistent_channel_by_ptr(channel);
     }
     channel->busy = false;
-    channel->active_stream_owner = NULL;
+    channel->active_server_streaming_call_owner = NULL;
     stream->channel = NULL;
     stream->client.channel = NULL;
     if (channel->detached_from_cache) {
@@ -203,11 +203,11 @@ static void clear_channel_call_owner(h2_channel *channel, grpc_call *client)
     channel->active_call_owner = NULL;
 }
 
-static void cancel_active_stream(h2_stream *stream, uint32_t error_code)
+static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code)
 {
     int rv;
 
-    if (stream == NULL || stream->completed || !channel_owned_by_stream(stream->channel, stream) || !channel_usable(stream->channel) || stream->client.stream_id <= 0) {
+    if (stream == NULL || stream->completed || !channel_owned_by_server_streaming_call_state(stream->channel, stream) || !channel_usable(stream->channel) || stream->client.stream_id <= 0) {
         return;
     }
     rv = nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, error_code);
@@ -221,17 +221,17 @@ static void cancel_active_stream(h2_stream *stream, uint32_t error_code)
     }
 }
 
-static void destroy_h2_stream(h2_stream *stream)
+static void destroy_server_streaming_call_state(server_streaming_call_state *stream)
 {
     if (stream == NULL) {
         return;
     }
-    if (!stream->completed && !stream->client.stream_closed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel) && stream->client.stream_id > 0) {
+    if (!stream->completed && !stream->client.stream_closed && channel_owned_by_server_streaming_call_state(stream->channel, stream) && channel_usable(stream->channel) && stream->client.stream_id > 0) {
         set_channel_error_detail(stream->channel, "active stream resource destroyed before completion");
         mark_channel_dead(stream->channel, NGHTTP2_CANCEL);
         detach_persistent_channel_by_ptr(stream->channel);
     }
-    clear_channel_stream_owner(stream);
+    clear_channel_server_streaming_call_state_owner(stream);
     if (stream->request != NULL) {
         zend_string_release(stream->request);
     }
@@ -242,9 +242,9 @@ static void destroy_h2_stream(h2_stream *stream)
     efree(stream);
 }
 
-static void h2_stream_dtor(zend_resource *rsrc)
+static void server_streaming_call_state_dtor(zend_resource *rsrc)
 {
-    destroy_h2_stream((h2_stream *) rsrc->ptr);
+    destroy_server_streaming_call_state((server_streaming_call_state *) rsrc->ptr);
 }
 
 static int configure_callbacks(nghttp2_session_callbacks **callbacks)
