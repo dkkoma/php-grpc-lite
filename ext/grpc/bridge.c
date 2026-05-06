@@ -390,7 +390,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     grpc_lite_append_user_agent(channel, &call->metadata);
     grpc_lite_channel_key(channel, &key);
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    h2 = get_persistent_channel(
+    h2 = get_persistent_connection(
         ZSTR_VAL(key),
         ZSTR_LEN(key),
         ZSTR_VAL(channel->host),
@@ -413,7 +413,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         &error_message);
     if (h2 == NULL) {
         int code = (timeout_us > 0 && timeout_us <= 1) ? GRPC_STATUS_DEADLINE_EXCEEDED : GRPC_STATUS_UNAVAILABLE;
-        zend_string *details = zend_string_init(error_message != NULL ? error_message : "failed to open persistent channel", strlen(error_message != NULL ? error_message : "failed to open persistent channel"), 0);
+        zend_string *details = zend_string_init(error_message != NULL ? error_message : "failed to open persistent connection", strlen(error_message != NULL ? error_message : "failed to open persistent connection"), 0);
         zval_ptr_dtor(&call->initial_metadata);
         array_init(&call->initial_metadata);
         zval_ptr_dtor(&call->trailing_metadata);
@@ -433,7 +433,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         return SUCCESS;
     }
     array_init(&result);
-    if (grpc_lite_unary_call_perform_on_channel(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(framed), ZSTR_LEN(framed), &call->metadata, timeout_us, channel->max_receive_message_length, true, persistent_reused, &result) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(framed), ZSTR_LEN(framed), &call->metadata, timeout_us, channel->max_receive_message_length, true, persistent_reused, &result) != SUCCESS) {
         zend_string_release(framed);
         zend_string_release(key);
         zval_ptr_dtor(&result);
@@ -442,9 +442,9 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     protocol_failure = grpc_lite_result_has_protocol_failure(&result);
     status_code = grpc_lite_status_from_result(&result);
     if (protocol_failure) {
-        discard_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), h2);
-    } else if (!channel_usable(h2)) {
-        remove_unusable_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), h2);
+        discard_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), h2);
+    } else if (!connection_usable(h2)) {
+        remove_unusable_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), h2);
     }
     details = grpc_lite_details_from_result(&result, status_code);
     initial_metadata = zend_hash_str_find(Z_ARRVAL(result), "initial_metadata", sizeof("initial_metadata") - 1);

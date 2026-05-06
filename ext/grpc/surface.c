@@ -456,10 +456,10 @@ PHP_METHOD(Channel, close)
         RETURN_THROWS();
     }
     grpc_lite_channel_key(obj, &key);
-    if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
-        h2_connection *connection = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key);
-        if (connection != NULL) {
-            discard_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), connection);
+    if (PHP_GRPC_LITE_G(persistent_connections_initialized)) {
+        persistent_connection_entry *entry = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key);
+        if (entry != NULL) {
+            discard_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), entry->connection);
         }
     }
     zend_string_release(key);

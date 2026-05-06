@@ -13,28 +13,29 @@
 #define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
-#define GRPC_LITE_MAX_PERSISTENT_CHANNELS 128
+#define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
 
 static void destroy_h2_connection(h2_connection *connection);
-static void detach_persistent_channel_by_ptr(h2_connection *connection);
-static bool channel_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream);
-static bool channel_owned_by_call(h2_connection *connection, grpc_call *client);
-static void clear_channel_server_streaming_call_state_owner(server_streaming_call_state *stream);
-static void clear_channel_call_owner(h2_connection *connection, grpc_call *client);
+static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
+static void detach_persistent_connection_by_ptr(h2_connection *connection);
+static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream);
+static bool connection_owned_by_call(h2_connection *connection, grpc_call *client);
+static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream);
+static void clear_connection_call_owner(h2_connection *connection, grpc_call *client);
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code);
 static void destroy_server_streaming_call_state(server_streaming_call_state *stream);
 static void server_streaming_call_state_dtor(zend_resource *rsrc);
 static int configure_callbacks(nghttp2_session_callbacks **callbacks);
-static void mark_channel_dead(h2_connection *connection, int error_code);
-static void set_channel_error_detail(h2_connection *connection, const char *detail);
-static void mark_channel_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
-static bool channel_usable(h2_connection *connection);
+static void mark_connection_dead(h2_connection *connection, int error_code);
+static void set_connection_error_detail(h2_connection *connection, const char *detail);
+static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
+static bool connection_usable(h2_connection *connection);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
-static void set_channel_identity(h2_connection *connection, const char *host, zend_long port, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
-static bool channel_matches_identity(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
-static bool preflight_persistent_channel(h2_connection *connection);
-static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_connection *connection);
+static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool preflight_persistent_connection(h2_connection *connection);
+static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_socket_timeout_us(int fd, zend_long timeout_us);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
@@ -43,12 +44,12 @@ static size_t effective_max_receive_message_bytes(zend_long max_receive_message_
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
-static int configure_tls_channel(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
-static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length);
-static ssize_t channel_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
+static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
+static ssize_t connection_send(grpc_call *client, const uint8_t *data, size_t length);
+static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
 static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
-static h2_connection *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
-static void discard_persistent_channel(const char *key, size_t key_len, h2_connection *connection);
+static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
+static void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
 static int set_nonblocking(int fd);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
@@ -109,62 +110,76 @@ static void destroy_h2_connection(h2_connection *connection)
     if (connection->callbacks != NULL) {
         nghttp2_session_callbacks_del(connection->callbacks);
     }
-    if (connection->host_identity != NULL) {
-        zend_string_release_ex(connection->host_identity, connection->persistent);
-    }
-    if (connection->authority_identity != NULL) {
-        zend_string_release_ex(connection->authority_identity, connection->persistent);
-    }
-    if (connection->tls_verify_name_identity != NULL) {
-        zend_string_release_ex(connection->tls_verify_name_identity, connection->persistent);
-    }
-    if (connection->root_certs_identity != NULL) {
-        zend_string_release_ex(connection->root_certs_identity, connection->persistent);
-    }
-    if (connection->cert_chain_identity != NULL) {
-        zend_string_release_ex(connection->cert_chain_identity, connection->persistent);
-    }
-    if (connection->private_key_identity != NULL) {
-        zend_string_release_ex(connection->private_key_identity, connection->persistent);
-    }
     pefree(connection, connection->persistent);
 }
 
-static void detach_persistent_channel_by_ptr(h2_connection *connection)
+static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection)
 {
-    h2_connection *cached;
+    if (entry == NULL) {
+        return;
+    }
+    if (destroy_connection && entry->connection != NULL) {
+        destroy_h2_connection(entry->connection);
+    }
+    if (entry->host_identity != NULL) {
+        zend_string_release_ex(entry->host_identity, true);
+    }
+    if (entry->authority_identity != NULL) {
+        zend_string_release_ex(entry->authority_identity, true);
+    }
+    if (entry->tls_verify_name_identity != NULL) {
+        zend_string_release_ex(entry->tls_verify_name_identity, true);
+    }
+    if (entry->root_certs_identity != NULL) {
+        zend_string_release_ex(entry->root_certs_identity, true);
+    }
+    if (entry->cert_chain_identity != NULL) {
+        zend_string_release_ex(entry->cert_chain_identity, true);
+    }
+    if (entry->private_key_identity != NULL) {
+        zend_string_release_ex(entry->private_key_identity, true);
+    }
+    pefree(entry, true);
+}
+
+static void detach_persistent_connection_by_ptr(h2_connection *connection)
+{
+    persistent_connection_entry *entry;
+    persistent_connection_entry *matched_entry = NULL;
     zend_string *key;
     zend_string *matched_key = NULL;
 
-    if (connection == NULL || !PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+    if (connection == NULL || !PHP_GRPC_LITE_G(persistent_connections_initialized)) {
         return;
     }
 
-    ZEND_HASH_FOREACH_STR_KEY_PTR(&PHP_GRPC_LITE_G(persistent_channels), key, cached) {
-        if (key != NULL && cached == connection) {
+    ZEND_HASH_FOREACH_STR_KEY_PTR(&PHP_GRPC_LITE_G(persistent_connections), key, entry) {
+        if (key != NULL && entry != NULL && entry->connection == connection) {
+            matched_entry = entry;
             matched_key = zend_string_copy(key);
             break;
         }
     } ZEND_HASH_FOREACH_END();
 
     if (matched_key != NULL) {
-        zend_hash_del(&PHP_GRPC_LITE_G(persistent_channels), matched_key);
+        zend_hash_del(&PHP_GRPC_LITE_G(persistent_connections), matched_key);
         zend_string_release(matched_key);
+        destroy_persistent_connection_entry(matched_entry, false);
         connection->detached_from_cache = true;
     }
 }
 
-static bool channel_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream)
+static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream)
 {
     return connection != NULL && stream != NULL && connection->active_server_streaming_call_owner == stream;
 }
 
-static bool channel_owned_by_call(h2_connection *connection, grpc_call *client)
+static bool connection_owned_by_call(h2_connection *connection, grpc_call *client)
 {
     return connection != NULL && client != NULL && connection->active_call_owner == client;
 }
 
-static void clear_channel_server_streaming_call_state_owner(server_streaming_call_state *stream)
+static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream)
 {
     h2_connection *connection;
 
@@ -172,15 +187,15 @@ static void clear_channel_server_streaming_call_state_owner(server_streaming_cal
         return;
     }
     connection = stream->connection;
-    if (!channel_owned_by_server_streaming_call_state(connection, stream)) {
+    if (!connection_owned_by_server_streaming_call_state(connection, stream)) {
         return;
     }
 
     if (connection->session != NULL) {
         nghttp2_session_set_user_data(connection->session, NULL);
     }
-    if (!channel_usable(connection)) {
-        detach_persistent_channel_by_ptr(connection);
+    if (!connection_usable(connection)) {
+        detach_persistent_connection_by_ptr(connection);
     }
     connection->busy = false;
     connection->active_server_streaming_call_owner = NULL;
@@ -191,9 +206,9 @@ static void clear_channel_server_streaming_call_state_owner(server_streaming_cal
     }
 }
 
-static void clear_channel_call_owner(h2_connection *connection, grpc_call *client)
+static void clear_connection_call_owner(h2_connection *connection, grpc_call *client)
 {
-    if (!channel_owned_by_call(connection, client)) {
+    if (!connection_owned_by_call(connection, client)) {
         return;
     }
     if (connection->session != NULL) {
@@ -207,17 +222,17 @@ static void cancel_active_server_streaming_call_state(server_streaming_call_stat
 {
     int rv;
 
-    if (stream == NULL || stream->completed || !channel_owned_by_server_streaming_call_state(stream->connection, stream) || !channel_usable(stream->connection) || stream->client.stream_id <= 0) {
+    if (stream == NULL || stream->completed || !connection_owned_by_server_streaming_call_state(stream->connection, stream) || !connection_usable(stream->connection) || stream->client.stream_id <= 0) {
         return;
     }
     rv = nghttp2_submit_rst_stream(stream->connection->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, error_code);
     if (rv != 0) {
-        mark_channel_dead(stream->connection, rv);
+        mark_connection_dead(stream->connection, rv);
         return;
     }
     rv = nghttp2_session_send(stream->connection->session);
     if (rv != 0) {
-        mark_channel_dead(stream->connection, rv);
+        mark_connection_dead(stream->connection, rv);
     }
 }
 
@@ -226,12 +241,12 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *str
     if (stream == NULL) {
         return;
     }
-    if (!stream->completed && !stream->client.stream_closed && channel_owned_by_server_streaming_call_state(stream->connection, stream) && channel_usable(stream->connection) && stream->client.stream_id > 0) {
-        set_channel_error_detail(stream->connection, "active stream resource destroyed before completion");
-        mark_channel_dead(stream->connection, NGHTTP2_CANCEL);
-        detach_persistent_channel_by_ptr(stream->connection);
+    if (!stream->completed && !stream->client.stream_closed && connection_owned_by_server_streaming_call_state(stream->connection, stream) && connection_usable(stream->connection) && stream->client.stream_id > 0) {
+        set_connection_error_detail(stream->connection, "active stream resource destroyed before completion");
+        mark_connection_dead(stream->connection, NGHTTP2_CANCEL);
+        detach_persistent_connection_by_ptr(stream->connection);
     }
-    clear_channel_server_streaming_call_state_owner(stream);
+    clear_connection_server_streaming_call_state_owner(stream);
     if (stream->request != NULL) {
         zend_string_release(stream->request);
     }
@@ -262,7 +277,7 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks)
     return 0;
 }
 
-static void mark_channel_dead(h2_connection *connection, int error_code)
+static void mark_connection_dead(h2_connection *connection, int error_code)
 {
     if (connection == NULL) {
         return;
@@ -283,7 +298,7 @@ static void mark_channel_dead(h2_connection *connection, int error_code)
     }
 }
 
-static void set_channel_error_detail(h2_connection *connection, const char *detail)
+static void set_connection_error_detail(h2_connection *connection, const char *detail)
 {
     if (connection == NULL || detail == NULL) {
         return;
@@ -291,7 +306,7 @@ static void set_channel_error_detail(h2_connection *connection, const char *deta
     snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "%s", detail);
 }
 
-static void mark_channel_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code)
+static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code)
 {
     if (connection == NULL) {
         return;
@@ -301,7 +316,7 @@ static void mark_channel_draining(h2_connection *connection, int32_t last_stream
     connection->last_goaway_error_code = error_code;
 }
 
-static bool channel_usable(h2_connection *connection)
+static bool connection_usable(h2_connection *connection)
 {
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
 }
@@ -333,29 +348,6 @@ static void build_authority(char *buffer, size_t buffer_len, const char *host, z
     snprintf(buffer, buffer_len, "%s:%ld", host, port);
 }
 
-static void set_channel_identity(h2_connection *connection, const char *host, zend_long port, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
-{
-    connection->host_len = strlen(host);
-    connection->host_hash = hash_bytes(host, connection->host_len);
-    connection->host_identity = zend_string_init(host, connection->host_len, connection->persistent);
-    connection->port = port;
-    connection->authority_len = strlen(connection->authority);
-    connection->authority_hash = hash_bytes(connection->authority, connection->authority_len);
-    connection->authority_identity = zend_string_init(connection->authority, connection->authority_len, connection->persistent);
-    connection->tls_verify_name_len = tls_verify_name_len;
-    connection->tls_verify_name_hash = hash_bytes(tls_verify_name, tls_verify_name_len);
-    connection->tls_verify_name_identity = zend_string_init(tls_verify_name != NULL ? tls_verify_name : "", tls_verify_name_len, connection->persistent);
-    connection->root_certs_len = root_certs_len;
-    connection->root_certs_hash = hash_bytes(root_certs, root_certs_len);
-    connection->root_certs_identity = zend_string_init(root_certs != NULL ? root_certs : "", root_certs_len, connection->persistent);
-    connection->cert_chain_len = cert_chain_len;
-    connection->cert_chain_hash = hash_bytes(cert_chain, cert_chain_len);
-    connection->cert_chain_identity = zend_string_init(cert_chain != NULL ? cert_chain : "", cert_chain_len, connection->persistent);
-    connection->private_key_len = private_key_len;
-    connection->private_key_hash = hash_bytes(private_key, private_key_len);
-    connection->private_key_identity = zend_string_init(private_key != NULL ? private_key : "", private_key_len, connection->persistent);
-}
-
 static bool identity_matches(zend_string *stored, const char *expected, size_t expected_len)
 {
     if (stored == NULL) {
@@ -367,52 +359,102 @@ static bool identity_matches(zend_string *stored, const char *expected, size_t e
     return ZSTR_LEN(stored) == expected_len && memcmp(ZSTR_VAL(stored), expected, expected_len) == 0;
 }
 
-static bool channel_matches_identity(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+{
+    persistent_connection_entry *entry;
+    char built_authority[512];
+
+    if (connection == NULL) {
+        return NULL;
+    }
+
+    entry = pecalloc(1, sizeof(persistent_connection_entry), true);
+    if (entry == NULL) {
+        return NULL;
+    }
+
+    build_authority(built_authority, sizeof(built_authority), host, port, authority, authority_len);
+    entry->connection = connection;
+    entry->host_len = strlen(host);
+    entry->host_hash = hash_bytes(host, entry->host_len);
+    entry->host_identity = zend_string_init(host, entry->host_len, true);
+    entry->port = port;
+    entry->authority_len = strlen(built_authority);
+    entry->authority_hash = hash_bytes(built_authority, entry->authority_len);
+    entry->authority_identity = zend_string_init(built_authority, entry->authority_len, true);
+    entry->use_tls = use_tls;
+    entry->tls_verify_name_len = tls_verify_name_len;
+    entry->tls_verify_name_hash = hash_bytes(tls_verify_name, tls_verify_name_len);
+    entry->tls_verify_name_identity = zend_string_init(tls_verify_name != NULL ? tls_verify_name : "", tls_verify_name_len, true);
+    entry->root_certs_len = root_certs_len;
+    entry->root_certs_hash = hash_bytes(root_certs, root_certs_len);
+    entry->root_certs_identity = zend_string_init(root_certs != NULL ? root_certs : "", root_certs_len, true);
+    entry->cert_chain_len = cert_chain_len;
+    entry->cert_chain_hash = hash_bytes(cert_chain, cert_chain_len);
+    entry->cert_chain_identity = zend_string_init(cert_chain != NULL ? cert_chain : "", cert_chain_len, true);
+    entry->private_key_len = private_key_len;
+    entry->private_key_hash = hash_bytes(private_key, private_key_len);
+    entry->private_key_identity = zend_string_init(private_key != NULL ? private_key : "", private_key_len, true);
+
+    if (entry->host_identity == NULL
+        || entry->authority_identity == NULL
+        || entry->tls_verify_name_identity == NULL
+        || entry->root_certs_identity == NULL
+        || entry->cert_chain_identity == NULL
+        || entry->private_key_identity == NULL) {
+        destroy_persistent_connection_entry(entry, false);
+        return NULL;
+    }
+
+    return entry;
+}
+
+static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
 {
     char expected_authority[512];
     size_t host_len;
 
-    if (connection == NULL) {
+    if (entry == NULL || entry->connection == NULL) {
         return false;
     }
     build_authority(expected_authority, sizeof(expected_authority), host, port, authority, authority_len);
     host_len = strlen(host);
 
-    return connection->tls == use_tls
-        && connection->port == port
-        && connection->host_len == host_len
-        && connection->host_hash == hash_bytes(host, host_len)
-        && identity_matches(connection->host_identity, host, host_len)
-        && connection->authority_len == strlen(expected_authority)
-        && connection->authority_hash == hash_bytes(expected_authority, strlen(expected_authority))
-        && identity_matches(connection->authority_identity, expected_authority, strlen(expected_authority))
-        && connection->tls_verify_name_len == tls_verify_name_len
-        && connection->tls_verify_name_hash == hash_bytes(tls_verify_name, tls_verify_name_len)
-        && identity_matches(connection->tls_verify_name_identity, tls_verify_name, tls_verify_name_len)
-        && connection->root_certs_len == root_certs_len
-        && connection->root_certs_hash == hash_bytes(root_certs, root_certs_len)
-        && identity_matches(connection->root_certs_identity, root_certs, root_certs_len)
-        && connection->cert_chain_len == cert_chain_len
-        && connection->cert_chain_hash == hash_bytes(cert_chain, cert_chain_len)
-        && identity_matches(connection->cert_chain_identity, cert_chain, cert_chain_len)
-        && connection->private_key_len == private_key_len
-        && connection->private_key_hash == hash_bytes(private_key, private_key_len)
-        && identity_matches(connection->private_key_identity, private_key, private_key_len);
+    return entry->use_tls == use_tls
+        && entry->port == port
+        && entry->host_len == host_len
+        && entry->host_hash == hash_bytes(host, host_len)
+        && identity_matches(entry->host_identity, host, host_len)
+        && entry->authority_len == strlen(expected_authority)
+        && entry->authority_hash == hash_bytes(expected_authority, strlen(expected_authority))
+        && identity_matches(entry->authority_identity, expected_authority, strlen(expected_authority))
+        && entry->tls_verify_name_len == tls_verify_name_len
+        && entry->tls_verify_name_hash == hash_bytes(tls_verify_name, tls_verify_name_len)
+        && identity_matches(entry->tls_verify_name_identity, tls_verify_name, tls_verify_name_len)
+        && entry->root_certs_len == root_certs_len
+        && entry->root_certs_hash == hash_bytes(root_certs, root_certs_len)
+        && identity_matches(entry->root_certs_identity, root_certs, root_certs_len)
+        && entry->cert_chain_len == cert_chain_len
+        && entry->cert_chain_hash == hash_bytes(cert_chain, cert_chain_len)
+        && identity_matches(entry->cert_chain_identity, cert_chain, cert_chain_len)
+        && entry->private_key_len == private_key_len
+        && entry->private_key_hash == hash_bytes(private_key, private_key_len)
+        && identity_matches(entry->private_key_identity, private_key, private_key_len);
 }
 
-static bool preflight_persistent_channel(h2_connection *connection)
+static bool preflight_persistent_connection(h2_connection *connection)
 {
     char byte;
     ssize_t rv;
 
-    if (!channel_usable(connection) || connection->busy) {
-        return channel_usable(connection);
+    if (!connection_usable(connection) || connection->busy) {
+        return connection_usable(connection);
     }
     if (connection->ssl != NULL) {
         int ssl_error;
         int previous_mode = fcntl(connection->fd, F_GETFL, 0);
         if (set_fd_nonblocking_mode(connection->fd, true) != 0) {
-            mark_channel_dead(connection, errno);
+            mark_connection_dead(connection, errno);
             return false;
         }
         rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
@@ -423,8 +465,8 @@ static bool preflight_persistent_channel(h2_connection *connection)
             set_fd_nonblocking_mode(connection->fd, false);
         }
         if (rv > 0) {
-            mark_channel_draining(connection, 0, NGHTTP2_NO_ERROR);
-            set_channel_error_detail(connection, "persistent TLS connection has pending control data before reuse");
+            mark_connection_draining(connection, 0, NGHTTP2_NO_ERROR);
+            set_connection_error_detail(connection, "persistent TLS connection has pending control data before reuse");
             return false;
         }
         if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
@@ -432,44 +474,52 @@ static bool preflight_persistent_channel(h2_connection *connection)
         }
         connection->last_ssl_error = ssl_error;
         if (ssl_error == SSL_ERROR_ZERO_RETURN) {
-            set_channel_error_detail(connection, "persistent TLS connection closed by peer before reuse");
-            mark_channel_dead(connection, 0);
+            set_connection_error_detail(connection, "persistent TLS connection closed by peer before reuse");
+            mark_connection_dead(connection, 0);
         } else {
             snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "persistent TLS connection preflight failed: SSL_get_error=%d", ssl_error);
-            mark_channel_dead(connection, ECONNRESET);
+            mark_connection_dead(connection, ECONNRESET);
         }
         return false;
     }
 
     rv = recv(connection->fd, &byte, sizeof(byte), MSG_PEEK | MSG_DONTWAIT);
     if (rv == 0) {
-        set_channel_error_detail(connection, "persistent connection closed by peer before reuse");
-        mark_channel_dead(connection, 0);
+        set_connection_error_detail(connection, "persistent connection closed by peer before reuse");
+        mark_connection_dead(connection, 0);
         return false;
     }
     if (rv < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-        mark_channel_dead(connection, errno);
+        mark_connection_dead(connection, errno);
         return false;
     }
     if (rv > 0) {
-        mark_channel_draining(connection, 0, NGHTTP2_NO_ERROR);
-        set_channel_error_detail(connection, "persistent connection has pending control data before reuse");
+        mark_connection_draining(connection, 0, NGHTTP2_NO_ERROR);
+        set_connection_error_detail(connection, "persistent connection has pending control data before reuse");
         return false;
     }
 
     return true;
 }
 
-static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_connection *connection)
+static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
 {
-    if (connection == NULL || channel_usable(connection)) {
+    persistent_connection_entry *entry = NULL;
+
+    if (connection == NULL || connection_usable(connection)) {
         return;
     }
-    if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
+    if (PHP_GRPC_LITE_G(persistent_connections_initialized)) {
+        entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
+        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     }
     if (connection->busy) {
         connection->detached_from_cache = true;
+        destroy_persistent_connection_entry(entry, false);
+        return;
+    }
+    if (entry != NULL && entry->connection == connection) {
+        destroy_persistent_connection_entry(entry, true);
         return;
     }
     destroy_h2_connection(connection);
@@ -660,17 +710,17 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
     return 0;
 }
 
-static int configure_tls_channel(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
+static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
 {
     const char *verify_name = tls_verify_name != NULL && tls_verify_name_len > 0 ? tls_verify_name : host;
 
     connection->ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (connection->ssl_ctx == NULL) {
-        set_channel_error_detail(connection, "failed to create SSL_CTX");
+        set_connection_error_detail(connection, "failed to create SSL_CTX");
         return -1;
     }
     if (SSL_CTX_set_min_proto_version(connection->ssl_ctx, TLS1_2_VERSION) != 1) {
-        set_channel_error_detail(connection, "failed to set TLS minimum protocol version");
+        set_connection_error_detail(connection, "failed to set TLS minimum protocol version");
         return -1;
     }
     SSL_CTX_set_options(connection->ssl_ctx, SSL_OP_NO_COMPRESSION);
@@ -681,49 +731,49 @@ static int configure_tls_channel(h2_connection *connection, const char *host, co
 
     if (root_certs != NULL && root_certs_len > 0) {
         if (add_pem_certs_to_store(SSL_CTX_get_cert_store(connection->ssl_ctx), root_certs, root_certs_len) != 0) {
-            set_channel_error_detail(connection, "failed to load root certificates");
+            set_connection_error_detail(connection, "failed to load root certificates");
             return -1;
         }
     } else if (SSL_CTX_set_default_verify_paths(connection->ssl_ctx) != 1) {
-        set_channel_error_detail(connection, "failed to load default root certificates");
+        set_connection_error_detail(connection, "failed to load default root certificates");
         return -1;
     }
 
     if ((cert_chain != NULL && cert_chain_len > 0) != (private_key != NULL && private_key_len > 0)) {
-        set_channel_error_detail(connection, "client certificate and private key must be configured together");
+        set_connection_error_detail(connection, "client certificate and private key must be configured together");
         return -1;
     }
     if (cert_chain != NULL && private_key != NULL && cert_chain_len > 0 && private_key_len > 0) {
         if (configure_client_certificate(connection->ssl_ctx, cert_chain, cert_chain_len, private_key, private_key_len) != 0) {
-            set_channel_error_detail(connection, "failed to configure client certificate");
+            set_connection_error_detail(connection, "failed to configure client certificate");
             return -1;
         }
     }
 
     connection->ssl = SSL_new(connection->ssl_ctx);
     if (connection->ssl == NULL) {
-        set_channel_error_detail(connection, "failed to create SSL object");
+        set_connection_error_detail(connection, "failed to create SSL object");
         return -1;
     }
     static const unsigned char alpn[] = {2, 'h', '2'};
     if (SSL_set_alpn_protos(connection->ssl, alpn, sizeof(alpn)) != 0) {
-        set_channel_error_detail(connection, "failed to configure TLS ALPN h2");
+        set_connection_error_detail(connection, "failed to configure TLS ALPN h2");
         return -1;
     }
     if (SSL_set_tlsext_host_name(connection->ssl, verify_name) != 1) {
-        set_channel_error_detail(connection, "failed to configure TLS SNI host");
+        set_connection_error_detail(connection, "failed to configure TLS SNI host");
         return -1;
     }
     if (SSL_set1_host(connection->ssl, verify_name) != 1) {
-        set_channel_error_detail(connection, "failed to configure TLS verification host");
+        set_connection_error_detail(connection, "failed to configure TLS verification host");
         return -1;
     }
     if (SSL_set_fd(connection->ssl, connection->fd) != 1) {
-        set_channel_error_detail(connection, "failed to attach TLS socket");
+        set_connection_error_detail(connection, "failed to attach TLS socket");
         return -1;
     }
     if (set_fd_nonblocking_mode(connection->fd, true) != 0) {
-        set_channel_error_detail(connection, "failed to set TLS socket nonblocking");
+        set_connection_error_detail(connection, "failed to set TLS socket nonblocking");
         return -1;
     }
     while (true) {
@@ -740,7 +790,7 @@ static int configure_tls_channel(h2_connection *connection, const char *host, co
             }
             connection->last_io_errno = errno;
             if (errno == ETIMEDOUT) {
-                set_channel_error_detail(connection, "HTTP/2 transport deadline exceeded");
+                set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
             } else {
                 snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "TLS handshake poll failed: %s", strerror(errno));
             }
@@ -777,7 +827,7 @@ static int configure_tls_channel(h2_connection *connection, const char *host, co
             connection->negotiated_protocol[copy_len] = '\0';
             snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "TLS ALPN did not negotiate h2: %s", connection->negotiated_protocol);
         } else {
-            set_channel_error_detail(connection, "TLS ALPN did not negotiate h2");
+            set_connection_error_detail(connection, "TLS ALPN did not negotiate h2");
         }
         return -1;
     }
@@ -786,7 +836,7 @@ static int configure_tls_channel(h2_connection *connection, const char *host, co
     return 0;
 }
 
-static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length)
+static ssize_t connection_send(grpc_call *client, const uint8_t *data, size_t length)
 {
     zend_long remaining_timeout_us;
     if (client == NULL) {
@@ -807,7 +857,7 @@ static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t lengt
             errno = EMSGSIZE;
             client->last_io_errno = errno;
             client->connection->last_io_errno = errno;
-            set_channel_error_detail(client->connection, "SSL_write length exceeds INT_MAX");
+            set_connection_error_detail(client->connection, "SSL_write length exceeds INT_MAX");
             return -1;
         }
         int written = SSL_write(client->connection->ssl, data, (int) length);
@@ -823,7 +873,7 @@ static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t lengt
             client->last_io_errno = errno;
             client->connection->last_io_errno = errno;
             snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
-            set_channel_error_detail(client->connection, client->last_io_error_detail);
+            set_connection_error_detail(client->connection, client->last_io_error_detail);
             return -1;
         }
         return written;
@@ -844,13 +894,13 @@ static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t lengt
         snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "send failed: %s", strerror(errno));
         if (client->connection != NULL) {
             client->connection->last_io_errno = errno;
-            set_channel_error_detail(client->connection, client->last_io_error_detail);
+            set_connection_error_detail(client->connection, client->last_io_error_detail);
         }
     }
     return written;
 }
 
-static ssize_t channel_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us)
+static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us)
 {
     zend_long remaining_timeout_us;
     if (connection == NULL) {
@@ -861,7 +911,7 @@ static ssize_t channel_recv(h2_connection *connection, uint8_t *data, size_t len
     if (remaining_timeout_us < 0) {
         errno = ETIMEDOUT;
         connection->last_io_errno = errno;
-        set_channel_error_detail(connection, "HTTP/2 transport deadline exceeded");
+        set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
         return -1;
     }
     if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
@@ -913,7 +963,7 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         pefree(connection, persistent);
         return NULL;
     }
-    if (use_tls && configure_tls_channel(connection, host, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us) != 0) {
+    if (use_tls && configure_tls_connection(connection, host, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us) != 0) {
         if (connection->last_error_detail[0] != '\0') {
             snprintf(error_detail, error_detail_len, "%s", connection->last_error_detail);
             *error_message = error_detail;
@@ -961,36 +1011,40 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
     nghttp2_session_set_user_data(connection->session, NULL);
 
     build_authority(connection->authority, sizeof(connection->authority), host, port, authority, authority_len);
-    set_channel_identity(connection, host, port, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
     return connection;
 }
 
-static h2_connection *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
+static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
 {
+    persistent_connection_entry *entry;
     h2_connection *connection;
 
     *persistent_reused = false;
-    if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+    if (!PHP_GRPC_LITE_G(persistent_connections_initialized)) {
         *error_message = "persistent connection cache is not initialized";
         return NULL;
     }
 
-    connection = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
-    if (connection != NULL && !channel_usable(connection)) {
-        remove_unusable_persistent_channel(key, key_len, connection);
+    entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
+    connection = entry != NULL ? entry->connection : NULL;
+    if (connection != NULL && !connection_usable(connection)) {
+        remove_unusable_persistent_connection(key, key_len, connection);
+        entry = NULL;
         connection = NULL;
     }
-    if (connection != NULL && !preflight_persistent_channel(connection)) {
-        remove_unusable_persistent_channel(key, key_len, connection);
+    if (connection != NULL && !preflight_persistent_connection(connection)) {
+        remove_unusable_persistent_connection(key, key_len, connection);
+        entry = NULL;
         connection = NULL;
     }
-    if (connection != NULL && !channel_matches_identity(connection, host, port, use_tls, authority, authority_len, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len)) {
-        discard_persistent_channel(key, key_len, connection);
+    if (connection != NULL && !connection_entry_matches_identity(entry, host, port, use_tls, authority, authority_len, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len)) {
+        discard_persistent_connection(key, key_len, connection);
+        entry = NULL;
         connection = NULL;
     }
 
     if (connection == NULL) {
-        if (zend_hash_num_elements(&PHP_GRPC_LITE_G(persistent_channels)) >= GRPC_LITE_MAX_PERSISTENT_CHANNELS) {
+        if (zend_hash_num_elements(&PHP_GRPC_LITE_G(persistent_connections)) >= GRPC_LITE_MAX_PERSISTENT_CONNECTIONS) {
             *error_message = "persistent connection cache limit exceeded";
             return NULL;
         }
@@ -998,7 +1052,13 @@ static h2_connection *get_persistent_channel(const char *key, size_t key_len, co
         if (connection == NULL) {
             return NULL;
         }
-        zend_hash_str_update_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len, connection);
+        entry = create_persistent_connection_entry(connection, host, port, use_tls, authority, authority_len, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
+        if (entry == NULL) {
+            destroy_h2_connection(connection);
+            *error_message = "failed to allocate persistent connection entry";
+            return NULL;
+        }
+        zend_hash_str_update_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len, entry);
         return connection;
     }
 
@@ -1006,16 +1066,25 @@ static h2_connection *get_persistent_channel(const char *key, size_t key_len, co
     return connection;
 }
 
-static void discard_persistent_channel(const char *key, size_t key_len, h2_connection *connection)
+static void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
 {
-    if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
-        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
+    persistent_connection_entry *entry = NULL;
+
+    if (PHP_GRPC_LITE_G(persistent_connections_initialized)) {
+        entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
+        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     }
     if (connection == NULL) {
+        destroy_persistent_connection_entry(entry, false);
         return;
     }
     if (connection->busy) {
         connection->detached_from_cache = true;
+        destroy_persistent_connection_entry(entry, false);
+        return;
+    }
+    if (entry != NULL && entry->connection == connection) {
+        destroy_persistent_connection_entry(entry, true);
         return;
     }
     destroy_h2_connection(connection);
@@ -1110,7 +1179,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     }
 
     while (total_written < length) {
-        ssize_t written = channel_send(client, data + total_written, length - total_written);
+        ssize_t written = connection_send(client, data + total_written, length - total_written);
         if (written <= 0) {
             return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
@@ -1315,7 +1384,7 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     client->last_recv_frame_type = frame->hd.type;
     client->last_recv_frame_flags = frame->hd.flags;
     if (frame->hd.type == NGHTTP2_GOAWAY) {
-        mark_channel_draining(client->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
+        mark_connection_draining(client->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
         if (client->stream_id > 0 && frame->goaway.last_stream_id < client->stream_id) {
             client->stream_error_code = NGHTTP2_REFUSED_STREAM;
             client->stream_closed = true;

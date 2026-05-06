@@ -249,7 +249,7 @@ static ssize_t bench_send_callback(nghttp2_session *session, const uint8_t *data
 
     if (client->bench.poll_loop) {
         uint64_t syscall_started = monotonic_us();
-        ssize_t written = channel_send(client, data, length);
+        ssize_t written = connection_send(client, data, length);
         uint64_t syscall_elapsed = monotonic_us() - syscall_started;
         if (syscall_elapsed > client->bench.max_write_syscall_us) {
             client->bench.max_write_syscall_us = syscall_elapsed;
@@ -277,7 +277,7 @@ static ssize_t bench_send_callback(nghttp2_session *session, const uint8_t *data
 
     while (total_written < length) {
         uint64_t syscall_started = monotonic_us();
-        ssize_t written = channel_send(client, data + total_written, length - total_written);
+        ssize_t written = connection_send(client, data + total_written, length - total_written);
         uint64_t syscall_elapsed = monotonic_us() - syscall_started;
         if (syscall_elapsed > client->bench.max_write_syscall_us) {
             client->bench.max_write_syscall_us = syscall_elapsed;
@@ -510,7 +510,7 @@ static int bench_on_frame_recv_callback(nghttp2_session *session, const nghttp2_
     client->last_recv_frame_type = frame->hd.type;
     client->last_recv_frame_flags = frame->hd.flags;
     if (frame->hd.type == NGHTTP2_GOAWAY) {
-        mark_channel_draining(client->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
+        mark_connection_draining(client->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
     } else if (frame->hd.type == NGHTTP2_WINDOW_UPDATE) {
         uint64_t elapsed = client->bench.call_started_us == 0 ? 0 : monotonic_us() - client->bench.call_started_us;
         client->bench.window_update_frames_recv++;
@@ -2182,13 +2182,13 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
-    if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+    if (!PHP_GRPC_LITE_G(persistent_connections_initialized)) {
         zend_throw_exception(NULL, "persistent connection cache is not initialized", 0);
         RETURN_THROWS();
     }
 
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    connection = get_persistent_channel(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
+    connection = get_persistent_connection(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (connection == NULL) {
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent connection", 0);
         RETURN_THROWS();
@@ -2200,15 +2200,15 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
-    if (grpc_lite_unary_call_perform_on_channel(connection, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, true, persistent_reused, return_value) != SUCCESS) {
-        if (connection != NULL && !channel_usable(connection)) {
-            remove_unusable_persistent_channel(key, key_len, connection);
+    if (grpc_lite_unary_call_perform_on_connection(connection, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, true, persistent_reused, return_value) != SUCCESS) {
+        if (connection != NULL && !connection_usable(connection)) {
+            remove_unusable_persistent_connection(key, key_len, connection);
         }
         RETURN_THROWS();
     }
 
-    if (!channel_usable(connection)) {
-        remove_unusable_persistent_channel(key, key_len, connection);
+    if (!connection_usable(connection)) {
+        remove_unusable_persistent_connection(key, key_len, connection);
     }
 }
 
@@ -2288,22 +2288,22 @@ PHP_FUNCTION(grpc_lite_channel_close)
 {
     char *key = NULL;
     size_t key_len = 0;
-    h2_connection *connection;
+    persistent_connection_entry *entry;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_STRING(key, key_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+    if (!PHP_GRPC_LITE_G(persistent_connections_initialized)) {
         RETURN_FALSE;
     }
 
-    connection = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
-    if (connection == NULL) {
+    entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
+    if (entry == NULL) {
         RETURN_FALSE;
     }
 
-    discard_persistent_channel(key, key_len, connection);
+    discard_persistent_connection(key, key_len, entry->connection);
     RETURN_TRUE;
 }
 

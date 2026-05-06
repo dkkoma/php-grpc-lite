@@ -150,15 +150,17 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_channe
 - gRPC 5B frame parse/build
 - deadlineをconnect、TLS handshake、read/write poll loopへ適用
 - response size / metadata size上限
-- GOAWAY / EOF / RST_STREAM / protocol failure時のchannel lifecycle管理
+- GOAWAY / EOF / RST_STREAM / protocol failure時のHTTP/2 connection lifecycle管理
 
-protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstatusへ変換し、該当channelは再利用しないようpersistent cacheから外します。
+protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstatusへ変換し、該当HTTP/2 connectionは再利用しないようpersistent cacheから外します。
 
-## 7. persistent channel
+## 7. persistent connection
 
-channel cacheはprocess-localです。FPMでは同一worker process内のrequestをまたいで再利用されます。processをまたぐ共有はしません。
+connection cacheはprocess-localです。FPMでは同一worker process内のrequestをまたいで再利用されます。processをまたぐ共有はしません。
 
-再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。channelがdead/draining/busy/identity mismatchの場合は破棄し、次RPCで新規接続します。
+`Grpc\Channel` はtarget、credentials、channel optionsから再利用keyを作るidentity元です。cache entryはこのidentityと `h2_connection` を束ね、`h2_connection` はsocket/TLS/nghttp2 sessionなどwire transport状態だけを持ちます。
+
+再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。connectionがdead/draining/busy、またはcache entryのidentity mismatchの場合はcacheから外し、次RPCで新規接続します。
 
 ## 8. 主要テスト
 

@@ -1,7 +1,7 @@
 /* Unary gRPC client call execution over an HTTP/2 connection. Included by main.c. */
 
 #include "internal.h"
-static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value)
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool connection_reused, bool persistent_reused, zval *return_value)
 {
     grpc_call client;
     nghttp2_data_provider data_provider;
@@ -17,7 +17,7 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
     uint64_t initial_send_us = 0;
     uint64_t recv_loop_started = 0;
     uint64_t recv_loop_us = 0;
-    if (!channel_usable(connection)) {
+    if (!connection_usable(connection)) {
         zend_throw_exception(NULL, "invalid grpc_lite connection", 0);
         return FAILURE;
     }
@@ -42,7 +42,7 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
     total_started = monotonic_us();
     client.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
     if (set_socket_timeout_us(connection->fd, timeout_us) != 0) {
-        mark_channel_dead(connection, errno);
+        mark_connection_dead(connection, errno);
         zend_throw_exception(NULL, "failed to set socket timeout", 0);
         return FAILURE;
     }
@@ -54,7 +54,7 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
     // cppcheck-suppress autoVariables
     connection->active_call_owner = &client;
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
-        clear_channel_call_owner(connection, &client);
+        clear_connection_call_owner(connection, &client);
         cleanup_grpc_call(&client);
         return FAILURE;
     }
@@ -65,7 +65,7 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
     if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
-        clear_channel_call_owner(connection, &client);
+        clear_connection_call_owner(connection, &client);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&client);
         return FAILURE;
@@ -79,7 +79,7 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
     client.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     submit_us = monotonic_us() - submit_started;
     if (client.stream_id < 0) {
-        clear_channel_call_owner(connection, &client);
+        clear_connection_call_owner(connection, &client);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
@@ -90,14 +90,14 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
     rv = nghttp2_session_send(connection->session);
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
-        mark_channel_dead(connection, rv);
+        mark_connection_dead(connection, rv);
         recv_loop_us = 0;
         goto build_unary_result;
     }
 
     recv_loop_started = monotonic_us();
     while (!client.stream_closed) {
-        ssize_t nread = channel_recv(connection, (uint8_t *) recv_buf, sizeof(recv_buf), client.deadline_abs_us);
+        ssize_t nread = connection_recv(connection, (uint8_t *) recv_buf, sizeof(recv_buf), client.deadline_abs_us);
         if (nread <= 0) {
             bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && client.deadline_abs_us > 0;
             if (nread < 0) {
@@ -109,15 +109,15 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
                 client.timed_out = true;
             }
             if (!client.stream_closed) {
-                mark_channel_dead(connection, nread == 0 ? 0 : errno);
+                mark_connection_dead(connection, nread == 0 ? 0 : errno);
             }
             break;
         }
         client.bytes_received += (size_t) nread;
         rv = nghttp2_session_mem_recv(connection->session, (const uint8_t *) recv_buf, (size_t) nread);
         if (rv < 0) {
-            mark_channel_dead(connection, rv);
-            clear_channel_call_owner(connection, &client);
+            mark_connection_dead(connection, rv);
+            clear_connection_call_owner(connection, &client);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
@@ -126,23 +126,23 @@ static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, co
         if (client.metadata_too_large) {
             rv = nghttp2_session_send(connection->session);
             if (rv != 0) {
-                mark_channel_dead(connection, rv);
+                mark_connection_dead(connection, rv);
             }
             if (!client.stream_closed) {
-                mark_channel_dead(connection, NGHTTP2_CANCEL);
+                mark_connection_dead(connection, NGHTTP2_CANCEL);
             }
             break;
         }
         rv = nghttp2_session_send(connection->session);
         if (rv != 0) {
-            mark_channel_dead(connection, rv);
+            mark_connection_dead(connection, rv);
             break;
         }
         client.last_session_error = rv;
     }
     recv_loop_us = monotonic_us() - recv_loop_started;
 build_unary_result:
-    clear_channel_call_owner(connection, &client);
+    clear_connection_call_owner(connection, &client);
 
     array_init(return_value);
     smart_str_0(&client.body);
@@ -189,7 +189,7 @@ build_unary_result:
     add_assoc_long(return_value, "recv_loop_us", (zend_long) recv_loop_us);
     add_assoc_long(return_value, "cleanup_us", 0);
     add_assoc_bool(return_value, "timed_out", client.timed_out);
-    add_assoc_bool(return_value, "channel_reused", channel_reused);
+    add_assoc_bool(return_value, "channel_reused", connection_reused);
     add_assoc_bool(return_value, "persistent_reused", persistent_reused);
     add_assoc_bool(return_value, "channel_dead", connection->dead);
     add_assoc_bool(return_value, "channel_draining", connection->draining);

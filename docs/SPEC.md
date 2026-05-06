@@ -77,7 +77,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 
 | Call 種別 | 関数 | 理由 |
 |---|---|---|
-| Unary | persistent HTTP/2 channel + 1 HTTP/2 stream | 単発往復。C側でHTTP/2 session/socketをprocess-local / thread-localに再利用する |
+| Unary | persistent HTTP/2 connection + 1 HTTP/2 stream | 単発往復。C側でHTTP/2 session/socketをprocess-local / thread-localに再利用する |
 | Server streaming | HTTP/2 stream resource + Generator pull | message単位でyieldし、slow consumer時はread/WINDOW_UPDATE進行を抑える |
 | Client streaming(後回し) | 未実装 | 後続フェーズで設計 |
 | Bidi streaming(後回し) | 未実装 | 後続フェーズで設計 |
@@ -189,7 +189,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 | `Grpc\ClientStreamingCall` / `BidiStreamingCall` | Composer library | Composer library側で未実装例外 |
 | `Grpc\Interceptor*` / `CallInvoker` | Composer library | Composer library側 |
 
-現行実装では、高レベル wrapper は公式 `grpc/grpc` Composer package に一本化し、このrepositoryの `src/Grpc/` PHP互換層は持たない。`ext/grpc` は低レベルclass、constants、HTTP/2 transport、persistent channel lifecycleを担当する。
+現行実装では、高レベル wrapper は公式 `grpc/grpc` Composer package に一本化し、このrepositoryの `src/Grpc/` PHP互換層は持たない。`ext/grpc` は低レベルclass、constants、HTTP/2 transport、persistent connection lifecycleを担当する。
 
 ---
 

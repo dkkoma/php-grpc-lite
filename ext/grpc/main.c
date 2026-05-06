@@ -26,25 +26,25 @@ PHP_GINIT_FUNCTION(grpc_lite)
 #if defined(COMPILE_DL_GRPC) && defined(ZTS)
     ZEND_TSRMLS_CACHE_UPDATE();
 #endif
-    zend_hash_init(&grpc_lite_globals->persistent_channels, 8, NULL, NULL, 1);
-    grpc_lite_globals->persistent_channels_initialized = true;
+    zend_hash_init(&grpc_lite_globals->persistent_connections, 8, NULL, NULL, 1);
+    grpc_lite_globals->persistent_connections_initialized = true;
     grpc_lite_globals->default_roots_pem = NULL;
 }
 
 PHP_GSHUTDOWN_FUNCTION(grpc_lite)
 {
-    h2_connection *connection;
+    persistent_connection_entry *entry;
 
-    if (!grpc_lite_globals->persistent_channels_initialized) {
+    if (!grpc_lite_globals->persistent_connections_initialized) {
         return;
     }
 
-    ZEND_HASH_FOREACH_PTR(&grpc_lite_globals->persistent_channels, connection) {
-        destroy_h2_connection(connection);
+    ZEND_HASH_FOREACH_PTR(&grpc_lite_globals->persistent_connections, entry) {
+        destroy_persistent_connection_entry(entry, true);
     } ZEND_HASH_FOREACH_END();
 
-    zend_hash_destroy(&grpc_lite_globals->persistent_channels);
-    grpc_lite_globals->persistent_channels_initialized = false;
+    zend_hash_destroy(&grpc_lite_globals->persistent_connections);
+    grpc_lite_globals->persistent_connections_initialized = false;
     if (grpc_lite_globals->default_roots_pem != NULL) {
         zend_string_release_ex(grpc_lite_globals->default_roots_pem, true);
         grpc_lite_globals->default_roots_pem = NULL;

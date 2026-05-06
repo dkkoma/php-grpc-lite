@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 typedef struct _h2_connection h2_connection;
+typedef struct persistent_connection_entry persistent_connection_entry;
 typedef struct server_streaming_call_state server_streaming_call_state;
 
 static zend_class_entry *grpc_ce_channel;
@@ -436,25 +437,6 @@ struct _h2_connection {
     nghttp2_session_callbacks *callbacks;
     nghttp2_session *session;
     char authority[512];
-    zend_string *host_identity;
-    zend_string *authority_identity;
-    zend_string *tls_verify_name_identity;
-    zend_string *root_certs_identity;
-    zend_string *cert_chain_identity;
-    zend_string *private_key_identity;
-    size_t host_len;
-    zend_ulong host_hash;
-    zend_long port;
-    size_t authority_len;
-    zend_ulong authority_hash;
-    size_t tls_verify_name_len;
-    zend_ulong tls_verify_name_hash;
-    size_t root_certs_len;
-    zend_ulong root_certs_hash;
-    size_t cert_chain_len;
-    zend_ulong cert_chain_hash;
-    size_t private_key_len;
-    zend_ulong private_key_hash;
     bool dead;
     bool draining;
     bool busy;
@@ -471,6 +453,30 @@ struct _h2_connection {
     int32_t last_goaway_stream_id;
 };
 
+struct persistent_connection_entry {
+    h2_connection *connection;
+    zend_string *host_identity;
+    zend_string *authority_identity;
+    zend_string *tls_verify_name_identity;
+    zend_string *root_certs_identity;
+    zend_string *cert_chain_identity;
+    zend_string *private_key_identity;
+    size_t host_len;
+    zend_ulong host_hash;
+    zend_long port;
+    size_t authority_len;
+    zend_ulong authority_hash;
+    bool use_tls;
+    size_t tls_verify_name_len;
+    zend_ulong tls_verify_name_hash;
+    size_t root_certs_len;
+    zend_ulong root_certs_hash;
+    size_t cert_chain_len;
+    zend_ulong cert_chain_hash;
+    size_t private_key_len;
+    zend_ulong private_key_hash;
+};
+
 struct server_streaming_call_state {
     h2_connection *connection;
     grpc_call client;
@@ -483,25 +489,26 @@ struct server_streaming_call_state {
 
 
 static void destroy_h2_connection(h2_connection *connection);
-static void detach_persistent_channel_by_ptr(h2_connection *connection);
-static bool channel_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream);
-static bool channel_owned_by_call(h2_connection *connection, grpc_call *client);
-static void clear_channel_server_streaming_call_state_owner(server_streaming_call_state *stream);
-static void clear_channel_call_owner(h2_connection *connection, grpc_call *client);
+static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
+static void detach_persistent_connection_by_ptr(h2_connection *connection);
+static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream);
+static bool connection_owned_by_call(h2_connection *connection, grpc_call *client);
+static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream);
+static void clear_connection_call_owner(h2_connection *connection, grpc_call *client);
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code);
 static void destroy_server_streaming_call_state(server_streaming_call_state *stream);
 static void server_streaming_call_state_dtor(zend_resource *rsrc);
 static int configure_callbacks(nghttp2_session_callbacks **callbacks);
-static void mark_channel_dead(h2_connection *connection, int error_code);
-static void set_channel_error_detail(h2_connection *connection, const char *detail);
-static void mark_channel_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
-static bool channel_usable(h2_connection *connection);
+static void mark_connection_dead(h2_connection *connection, int error_code);
+static void set_connection_error_detail(h2_connection *connection, const char *detail);
+static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
+static bool connection_usable(h2_connection *connection);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
-static void set_channel_identity(h2_connection *connection, const char *host, zend_long port, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
-static bool channel_matches_identity(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
-static bool preflight_persistent_channel(h2_connection *connection);
-static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_connection *connection);
+static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool preflight_persistent_connection(h2_connection *connection);
+static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_socket_timeout_us(int fd, zend_long timeout_us);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
@@ -510,12 +517,12 @@ static size_t effective_max_receive_message_bytes(zend_long max_receive_message_
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
-static int configure_tls_channel(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
-static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length);
-static ssize_t channel_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
+static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
+static ssize_t connection_send(grpc_call *client, const uint8_t *data, size_t length);
+static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
 static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
-static h2_connection *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
-static void discard_persistent_channel(const char *key, size_t key_len, h2_connection *connection);
+static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
+static void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
 static int set_nonblocking(int fd);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
@@ -556,15 +563,15 @@ static void free_metadata_entries(grpc_call *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
 static void cleanup_grpc_call(grpc_call *client);
 
-static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value);
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool connection_reused, bool persistent_reused, zval *return_value);
 static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value);
 static int server_streaming_call_next_resource(zval *stream_zv, zval *return_value);
 static int server_streaming_call_cancel_resource(zval *stream_zv);
 static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key);
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
-    HashTable persistent_channels;
-    bool persistent_channels_initialized;
+    HashTable persistent_connections;
+    bool persistent_connections_initialized;
     zend_string *default_roots_pem;
 ZEND_END_MODULE_GLOBALS(grpc_lite)
 
