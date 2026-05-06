@@ -68,6 +68,18 @@ final class HttpValidationTest extends TestCase
         self::assertSame('invalid grpc-status trailer', $status->details);
     }
 
+    public function testUnaryRejectsGrpcStatusWithLeadingZero(): void
+    {
+        $request = new BenchRequest();
+        [$response, $status] = $this->client->BenchUnary($request, [
+            'x-bench-grpc-status' => ['01'],
+        ])->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNKNOWN, $status->code);
+        self::assertSame('invalid grpc-status trailer', $status->details);
+    }
+
     public function testServerStreamingRejectsNonGrpcContentType(): void
     {
         $request = new BenchRequest();

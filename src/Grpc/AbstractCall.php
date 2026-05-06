@@ -171,6 +171,9 @@ abstract class AbstractCall
             if (isset(self::LIBRARY_OWNED_METADATA[$normalizedKey])) {
                 continue;
             }
+            if (str_starts_with($normalizedKey, 'grpc-')) {
+                throw new \InvalidArgumentException("reserved metadata key: $key");
+            }
 
             foreach ((array) $values as $value) {
                 if (!is_scalar($value) && $value !== null) {

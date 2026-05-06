@@ -890,8 +890,10 @@ PHP;
         $invalidHeaders = [
             [['X-Uppercase' => ['1']], 'forbidden gRPC request metadata key'],
             [['te' => ['trailers']], 'forbidden gRPC request metadata key'],
+            [['grpc-foo' => ['reserved']], 'forbidden gRPC request metadata key'],
             [['x-bench-crlf' => ["bad\r\nvalue"]], 'invalid gRPC request metadata value'],
             [['x-bench-nonascii' => ["\xC3\xA9"]], 'invalid gRPC request metadata value'],
+            [['x-bench-raw-bin' => ["\x00\x01"]], 'invalid gRPC request metadata value'],
             [['x-bench-int' => [123]], 'gRPC request metadata value must be a string'],
         ];
 
@@ -1103,6 +1105,41 @@ PHP;
 
         self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $code);
         self::assertSame('HTTP/2 stream reset: 11', $details);
+    }
+
+    public function testHttp2ProtocolErrorMapsToInternal(): void
+    {
+        $method = new \ReflectionMethod(Http2Transport::class, 'normalizeStatus');
+        $method->setAccessible(true);
+
+        [$code, $details] = $method->invoke(null, [
+            'timed_out' => false,
+            'channel_dead' => false,
+            'http_status' => 0,
+            'stream_error_code' => 0x1,
+            'initial_metadata' => [],
+        ]);
+
+        self::assertSame(\Grpc\STATUS_INTERNAL, $code);
+        self::assertSame('HTTP/2 stream reset: 1', $details);
+    }
+
+    public function testHttp2TrailersOnlyMissingContentTypeIsRejected(): void
+    {
+        $method = new \ReflectionMethod(Http2Transport::class, 'normalizeStatus');
+        $method->setAccessible(true);
+
+        [$code, $details] = $method->invoke(null, [
+            'timed_out' => false,
+            'channel_dead' => false,
+            'http_status' => 200,
+            'grpc_status' => 0,
+            'initial_metadata' => [],
+            'trailing_metadata' => [],
+        ]);
+
+        self::assertSame(\Grpc\STATUS_UNKNOWN, $code);
+        self::assertSame('invalid gRPC content-type: <missing>', $details);
     }
 
     public function testHttp2StreamDeadlineReleasesPersistentChannel(): void

@@ -276,6 +276,10 @@ final class Http2Transport
             return [\Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'];
         }
 
+        if ($contentType === '') {
+            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
+        }
+
         if ($grpcStatus >= 0) {
             $message = $result['grpc_message'] ?? '';
             return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
@@ -284,10 +288,6 @@ final class Http2Transport
         if (($result['channel_dead'] ?? false) === true) {
             $detail = $result['channel_last_error_detail'] ?? '';
             return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'HTTP/2 transport I/O error'];
-        }
-
-        if ($contentType === '') {
-            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
         }
 
         if ($httpStatus !== 200) {
@@ -313,7 +313,7 @@ final class Http2Transport
     {
         return match ($streamErrorCode) {
             0x8 => \Grpc\STATUS_CANCELLED,
-            0x2 => \Grpc\STATUS_INTERNAL,
+            0x1, 0x2, 0x3, 0x4, 0x6, 0x9, 0xa => \Grpc\STATUS_INTERNAL,
             0xb => \Grpc\STATUS_RESOURCE_EXHAUSTED,
             0xc => \Grpc\STATUS_PERMISSION_DENIED,
             0x7 => \Grpc\STATUS_UNAVAILABLE,

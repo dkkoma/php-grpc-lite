@@ -56,6 +56,13 @@ final class MetadataControlTest extends TestCase
         ]);
     }
 
+    public function testReservedGrpcMetadataKeyIsRejected(): void
+    {
+        $this->assertInvalidMetadata([
+            'grpc-foo' => ['reserved'],
+        ]);
+    }
+
     public function testInvalidAsciiMetadataValueIsRejected(): void
     {
         $this->assertInvalidMetadata([
