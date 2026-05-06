@@ -19,6 +19,7 @@ abstract class AbstractCall
         'grpc-status' => true,
         'grpc-status-details-bin' => true,
         'grpc-timeout' => true,
+        'host' => true,
         'te' => true,
         'user-agent' => true,
     ];

@@ -26,6 +26,7 @@ final class Http2Transport
         ?string $authority = null,
         ?string $tlsVerifyName = null,
     ): array {
+        self::assertValidGrpcPath($path);
         if (!function_exists('grpc_lite_unary')) {
             throw new \RuntimeException('grpc lite extension bridge is not loaded');
         }
@@ -119,6 +120,7 @@ final class Http2Transport
         ?string $authority = null,
         ?string $tlsVerifyName = null,
     ): mixed {
+        self::assertValidGrpcPath($path);
         if (!function_exists('grpc_lite_stream_open')) {
             throw new \RuntimeException('grpc lite extension bridge is not loaded');
         }
@@ -205,7 +207,7 @@ final class Http2Transport
         if (!is_string($authority)) {
             throw new \InvalidArgumentException('grpc.default_authority must be a string');
         }
-        if ($authority === '' || str_contains($authority, "\r") || str_contains($authority, "\n")) {
+        if (!self::isValidAuthority($authority)) {
             throw new \InvalidArgumentException('invalid grpc.default_authority');
         }
 
@@ -222,7 +224,7 @@ final class Http2Transport
         if (!is_string($name)) {
             throw new \InvalidArgumentException('grpc.ssl_target_name_override must be a string');
         }
-        if ($name === '' || str_contains($name, "\r") || str_contains($name, "\n")) {
+        if (!self::isValidTlsVerifyName($name)) {
             throw new \InvalidArgumentException('invalid grpc.ssl_target_name_override');
         }
 
@@ -409,6 +411,30 @@ final class Http2Transport
             hash('sha256', $credentials?->certChain ?? ''),
             hash('sha256', $credentials?->privateKey ?? ''),
         ]);
+    }
+
+    private static function assertValidGrpcPath(string $path): void
+    {
+        if ($path === '' || $path[0] !== '/' || substr_count($path, '/') < 2 || preg_match('/[\x00-\x20\x7f]/', $path) === 1) {
+            throw new \InvalidArgumentException('invalid gRPC method path');
+        }
+    }
+
+    private static function isValidAuthority(string $authority): bool
+    {
+        return $authority !== ''
+            && preg_match('/[\x00-\x20\x7f]/', $authority) !== 1
+            && !str_contains($authority, '@')
+            && !str_contains($authority, '/')
+            && !str_contains($authority, '\\');
+    }
+
+    private static function isValidTlsVerifyName(string $name): bool
+    {
+        return $name !== ''
+            && preg_match('/[\x00-\x20\x7f]/', $name) !== 1
+            && !str_contains($name, '/')
+            && !str_contains($name, '\\');
     }
 
     /** @return array{0: string, 1: int} */

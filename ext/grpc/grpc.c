@@ -161,6 +161,13 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
             return FAILURE;
         }
         if (client.metadata_too_large) {
+            rv = nghttp2_session_send(channel->session);
+            if (rv != 0) {
+                mark_channel_dead(channel, rv);
+            }
+            if (!client.stream_closed) {
+                mark_channel_dead(channel, NGHTTP2_CANCEL);
+            }
             break;
         }
         rv = nghttp2_session_send(channel->session);
@@ -194,6 +201,7 @@ build_unary_result:
     add_assoc_bool(return_value, "invalid_grpc_status", client.invalid_grpc_status);
     add_assoc_bool(return_value, "compressed_response_seen", client.compressed_response_seen);
     add_assoc_bool(return_value, "response_message_too_large", client.response_message_too_large);
+    add_assoc_bool(return_value, "malformed_response_frame", client.malformed_response_frame);
     add_assoc_bool(return_value, "metadata_too_large", client.metadata_too_large);
     add_assoc_bool(return_value, "invalid_content_type", client.invalid_content_type);
     add_assoc_bool(return_value, "unsupported_response_encoding", client.unsupported_response_encoding);
@@ -305,6 +313,11 @@ PHP_FUNCTION(grpc_lite_unary)
         zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
         RETURN_THROWS();
     }
+    error_message = validate_grpc_path(path, path_len);
+    if (error_message != NULL) {
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
 
     if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
         zend_throw_exception(NULL, "persistent channel cache is not initialized", 0);
@@ -399,6 +412,11 @@ PHP_FUNCTION(grpc_lite_stream_open)
         zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
         RETURN_THROWS();
     }
+    error_message = validate_grpc_path(path, path_len);
+    if (error_message != NULL) {
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
 
     if (request_len > UINT32_MAX) {
         zend_throw_exception(NULL, "gRPC request message exceeds 32-bit frame length", 0);
@@ -481,7 +499,6 @@ PHP_FUNCTION(grpc_lite_stream_open)
         mark_channel_dead(channel, rv);
         free_request_headers(&request_headers);
         destroy_h2_stream(stream);
-        discard_persistent_channel(key, key_len, channel);
         if (stream_timed_out) {
             zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
             RETURN_THROWS();

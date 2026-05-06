@@ -70,6 +70,7 @@ static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
 static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen);
 static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen);
 static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
+static const char *validate_grpc_path(const char *path, size_t path_len);
 static size_t count_custom_header_values(zval *headers_zv);
 static int init_request_headers(h2_request_headers *headers, size_t custom_values);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
@@ -1389,8 +1390,7 @@ static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen)
 
 static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen)
 {
-    return valuelen == 0
-        || (valuelen == sizeof("identity") - 1 && strncasecmp((const char *) value, "identity", sizeof("identity") - 1) == 0);
+    return valuelen == sizeof("identity") - 1 && strncasecmp((const char *) value, "identity", sizeof("identity") - 1) == 0;
 }
 
 static bool contains_nul_or_control(const char *value, size_t value_len)
@@ -1409,6 +1409,42 @@ static bool contains_nul_or_control(const char *value, size_t value_len)
     return false;
 }
 
+static bool contains_authority_forbidden_char(const char *value, size_t value_len)
+{
+    size_t index;
+
+    if (value == NULL) {
+        return false;
+    }
+    for (index = 0; index < value_len; index++) {
+        unsigned char ch = (unsigned char) value[index];
+        if (ch == '@' || ch == '/' || ch == '\\' || ch <= 0x20 || ch == 0x7f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *validate_grpc_path(const char *path, size_t path_len)
+{
+    bool second_slash_seen = false;
+    size_t index;
+
+    if (path == NULL || path_len < 3 || path[0] != '/') {
+        return "invalid gRPC method path";
+    }
+    for (index = 0; index < path_len; index++) {
+        unsigned char ch = (unsigned char) path[index];
+        if (ch <= 0x20 || ch == 0x7f) {
+            return "invalid gRPC method path";
+        }
+        if (index > 0 && ch == '/') {
+            second_slash_seen = true;
+        }
+    }
+    return second_slash_seen ? NULL : "invalid gRPC method path";
+}
+
 static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len)
 {
     char port_buf[32];
@@ -1424,7 +1460,7 @@ static const char *validate_channel_inputs(const char *key, size_t key_len, cons
         return "invalid gRPC target port";
     }
     if (authority_len > 0) {
-        if (authority_len >= sizeof(((h2_channel *) 0)->authority) || contains_nul_or_control(authority, authority_len)) {
+        if (authority_len >= sizeof(((h2_channel *) 0)->authority) || contains_authority_forbidden_char(authority, authority_len)) {
             return "invalid gRPC authority";
         }
     } else {
@@ -1433,7 +1469,7 @@ static const char *validate_channel_inputs(const char *key, size_t key_len, cons
             return "gRPC authority is too long";
         }
     }
-    if (tls_verify_name_len > 0 && contains_nul_or_control(tls_verify_name, tls_verify_name_len)) {
+    if (tls_verify_name_len > 0 && contains_authority_forbidden_char(tls_verify_name, tls_verify_name_len)) {
         return "invalid TLS verify name";
     }
 
@@ -1514,6 +1550,7 @@ static bool is_reserved_custom_request_header(const char *name, size_t name_len)
         "grpc-message",
         "grpc-status",
         "grpc-status-details-bin",
+        "host",
         "connection",
         "keep-alive",
         "proxy-connection",
