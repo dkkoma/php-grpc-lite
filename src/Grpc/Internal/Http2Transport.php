@@ -266,22 +266,9 @@ final class Http2Transport
             return [\Grpc\STATUS_UNIMPLEMENTED, 'compressed gRPC messages are not supported'];
         }
 
-        if (($result['channel_dead'] ?? false) === true) {
-            $detail = $result['channel_last_error_detail'] ?? '';
-            return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'HTTP/2 transport I/O error'];
-        }
-
         $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
         if ($streamErrorCode !== 0) {
             return [self::mapHttp2ErrorToGrpcStatus($streamErrorCode), "HTTP/2 stream reset: $streamErrorCode"];
-        }
-
-        if (!str_starts_with($contentType, 'application/grpc')) {
-            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
-        }
-
-        if ($httpStatus !== 200) {
-            return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
         if (($result['invalid_grpc_status'] ?? false) === true) {
@@ -291,6 +278,19 @@ final class Http2Transport
         if ($grpcStatus >= 0) {
             $message = $result['grpc_message'] ?? '';
             return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
+        }
+
+        if (($result['channel_dead'] ?? false) === true) {
+            $detail = $result['channel_last_error_detail'] ?? '';
+            return [\Grpc\STATUS_UNAVAILABLE, is_string($detail) && $detail !== '' ? $detail : 'HTTP/2 transport I/O error'];
+        }
+
+        if ($contentType === '') {
+            return [\Grpc\STATUS_UNKNOWN, "invalid gRPC content-type: " . ($contentType === '' ? '<missing>' : $contentType)];
+        }
+
+        if ($httpStatus !== 200) {
+            return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
         return [\Grpc\STATUS_UNKNOWN, 'missing grpc-status trailer'];

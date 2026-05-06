@@ -76,6 +76,7 @@ static int enqueue_response_payload(grpc_call *client, zend_string *payload);
 static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us);
 static int deliver_queued_response_payloads(grpc_call *client);
 static void free_queued_response_payloads(grpc_call *client);
+static void mark_response_metadata_as_trailing(grpc_call *client);
 static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
 static void free_metadata_entries(grpc_call *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
@@ -1114,10 +1115,16 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         return 0;
     }
     trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
+    if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && client->grpc_status >= 0) {
+        trailing = true;
+    }
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
         client->grpc_status = parse_grpc_status_value(value, valuelen);
         if (client->grpc_status < 0) {
             client->invalid_grpc_status = true;
+        }
+        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+            mark_response_metadata_as_trailing(client);
         }
         trailing = true;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
@@ -1363,18 +1370,25 @@ static bool is_invalid_custom_request_header_value(zend_string *value)
 
 static int append_custom_request_header_value(h2_request_headers *headers, zend_string *key, zval *value)
 {
-    zend_string *value_str = zval_get_string(value);
-    zend_string *name_str;
+    zend_string *name_str = NULL;
+    zend_string *value_str;
 
-    if (EG(exception) || value_str == NULL) {
+    if (Z_TYPE_P(value) != IS_STRING) {
+        zend_throw_exception(NULL, "gRPC request metadata value must be a string", 0);
         return -1;
     }
+    if (headers->name_count >= headers->capacity || headers->value_count >= headers->capacity) {
+        zend_throw_exception(NULL, "gRPC request metadata exceeds maximum count", 0);
+        return -1;
+    }
+    name_str = zend_string_copy(key);
+    value_str = zend_string_copy(Z_STR_P(value));
     if (is_invalid_custom_request_header_value(value_str)) {
+        zend_string_release(name_str);
         zend_string_release(value_str);
         zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
         return -1;
     }
-    name_str = zend_string_copy(key);
     if (headers->name_strings != NULL) {
         headers->name_strings[headers->name_count++] = name_str;
     }
@@ -1740,6 +1754,14 @@ static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t nam
     client->metadata_bytes += entry_bytes;
 
     return 0;
+}
+
+static void mark_response_metadata_as_trailing(grpc_call *client)
+{
+    metadata_entry *entry;
+    for (entry = client->metadata_head; entry != NULL; entry = entry->next) {
+        entry->trailing = true;
+    }
 }
 
 static void free_metadata_entries(grpc_call *client)
