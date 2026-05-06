@@ -914,6 +914,42 @@ PHP;
         }
     }
 
+    public function testHttp2DirectApiRejectsNegativeTimeout(): void
+    {
+        if (!function_exists('grpc_lite_unary') || !function_exists('grpc_lite_stream_open')) {
+            self::markTestSkipped('grpc_lite direct API is not loaded in this process');
+        }
+
+        foreach (['unary', 'stream'] as $mode) {
+            try {
+                if ($mode === 'unary') {
+                    \grpc_lite_unary(
+                        'phpunit-negative-timeout-unary-' . bin2hex(random_bytes(8)),
+                        'test-server',
+                        50051,
+                        '/helloworld.Greeter/BenchUnary',
+                        "\0\0\0\0\0",
+                        [],
+                        -1,
+                    );
+                } else {
+                    \grpc_lite_stream_open(
+                        'phpunit-negative-timeout-stream-' . bin2hex(random_bytes(8)),
+                        'test-server',
+                        50051,
+                        '/helloworld.Greeter/BenchServerStream',
+                        "\0\0\0\0\0",
+                        [],
+                        -1,
+                    );
+                }
+                self::fail('negative timeout unexpectedly accepted');
+            } catch (\Throwable $e) {
+                self::assertStringContainsString('timeout', $e->getMessage());
+            }
+        }
+    }
+
     public function testHttp2AuthorityOverrideControlsHttp2Authority(): void
     {
         if (!function_exists('grpc_lite_unary')) {

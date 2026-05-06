@@ -108,6 +108,24 @@ static void destroy_h2_channel(h2_channel *channel)
     if (channel->callbacks != NULL) {
         nghttp2_session_callbacks_del(channel->callbacks);
     }
+    if (channel->host_identity != NULL) {
+        zend_string_release_ex(channel->host_identity, channel->persistent);
+    }
+    if (channel->authority_identity != NULL) {
+        zend_string_release_ex(channel->authority_identity, channel->persistent);
+    }
+    if (channel->tls_verify_name_identity != NULL) {
+        zend_string_release_ex(channel->tls_verify_name_identity, channel->persistent);
+    }
+    if (channel->root_certs_identity != NULL) {
+        zend_string_release_ex(channel->root_certs_identity, channel->persistent);
+    }
+    if (channel->cert_chain_identity != NULL) {
+        zend_string_release_ex(channel->cert_chain_identity, channel->persistent);
+    }
+    if (channel->private_key_identity != NULL) {
+        zend_string_release_ex(channel->private_key_identity, channel->persistent);
+    }
     pefree(channel, channel->persistent);
 }
 
@@ -314,17 +332,34 @@ static void set_channel_identity(h2_channel *channel, const char *host, zend_lon
 {
     channel->host_len = strlen(host);
     channel->host_hash = hash_bytes(host, channel->host_len);
+    channel->host_identity = zend_string_init(host, channel->host_len, channel->persistent);
     channel->port = port;
     channel->authority_len = strlen(channel->authority);
     channel->authority_hash = hash_bytes(channel->authority, channel->authority_len);
+    channel->authority_identity = zend_string_init(channel->authority, channel->authority_len, channel->persistent);
     channel->tls_verify_name_len = tls_verify_name_len;
     channel->tls_verify_name_hash = hash_bytes(tls_verify_name, tls_verify_name_len);
+    channel->tls_verify_name_identity = zend_string_init(tls_verify_name != NULL ? tls_verify_name : "", tls_verify_name_len, channel->persistent);
     channel->root_certs_len = root_certs_len;
     channel->root_certs_hash = hash_bytes(root_certs, root_certs_len);
+    channel->root_certs_identity = zend_string_init(root_certs != NULL ? root_certs : "", root_certs_len, channel->persistent);
     channel->cert_chain_len = cert_chain_len;
     channel->cert_chain_hash = hash_bytes(cert_chain, cert_chain_len);
+    channel->cert_chain_identity = zend_string_init(cert_chain != NULL ? cert_chain : "", cert_chain_len, channel->persistent);
     channel->private_key_len = private_key_len;
     channel->private_key_hash = hash_bytes(private_key, private_key_len);
+    channel->private_key_identity = zend_string_init(private_key != NULL ? private_key : "", private_key_len, channel->persistent);
+}
+
+static bool identity_matches(zend_string *stored, const char *expected, size_t expected_len)
+{
+    if (stored == NULL) {
+        return false;
+    }
+    if (expected == NULL) {
+        expected = "";
+    }
+    return ZSTR_LEN(stored) == expected_len && memcmp(ZSTR_VAL(stored), expected, expected_len) == 0;
 }
 
 static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
@@ -342,16 +377,22 @@ static bool channel_matches_identity(h2_channel *channel, const char *host, zend
         && channel->port == port
         && channel->host_len == host_len
         && channel->host_hash == hash_bytes(host, host_len)
+        && identity_matches(channel->host_identity, host, host_len)
         && channel->authority_len == strlen(expected_authority)
         && channel->authority_hash == hash_bytes(expected_authority, strlen(expected_authority))
+        && identity_matches(channel->authority_identity, expected_authority, strlen(expected_authority))
         && channel->tls_verify_name_len == tls_verify_name_len
         && channel->tls_verify_name_hash == hash_bytes(tls_verify_name, tls_verify_name_len)
+        && identity_matches(channel->tls_verify_name_identity, tls_verify_name, tls_verify_name_len)
         && channel->root_certs_len == root_certs_len
         && channel->root_certs_hash == hash_bytes(root_certs, root_certs_len)
+        && identity_matches(channel->root_certs_identity, root_certs, root_certs_len)
         && channel->cert_chain_len == cert_chain_len
         && channel->cert_chain_hash == hash_bytes(cert_chain, cert_chain_len)
+        && identity_matches(channel->cert_chain_identity, cert_chain, cert_chain_len)
         && channel->private_key_len == private_key_len
-        && channel->private_key_hash == hash_bytes(private_key, private_key_len);
+        && channel->private_key_hash == hash_bytes(private_key, private_key_len)
+        && identity_matches(channel->private_key_identity, private_key, private_key_len);
 }
 
 static bool preflight_persistent_channel(h2_channel *channel)
@@ -1165,6 +1206,9 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         trailing = true;
     }
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
+        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+            client->initial_grpc_status_seen = true;
+        }
         if (client->grpc_status_seen) {
             client->invalid_grpc_status = true;
         }
@@ -1246,10 +1290,16 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
         }
     } else if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == client->stream_id
-        && frame->headers.cat == NGHTTP2_HCAT_RESPONSE
-        && !client->content_type_seen) {
-        client->invalid_content_type = true;
-        client->discard_response_body = true;
+        && frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+        client->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
+        if (!client->content_type_seen) {
+            client->invalid_content_type = true;
+            client->discard_response_body = true;
+        }
+        if (client->initial_grpc_status_seen && !client->initial_headers_end_stream) {
+            client->invalid_grpc_status = true;
+            client->discard_response_body = true;
+        }
     }
     return 0;
 }
@@ -1311,7 +1361,7 @@ static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen)
     if (valuelen == prefix_len) {
         return true;
     }
-    return value[prefix_len] == '+' || value[prefix_len] == ';';
+    return (value[prefix_len] == '+' && valuelen > prefix_len + 1) || value[prefix_len] == ';';
 }
 
 static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen)
@@ -1632,6 +1682,15 @@ static int validate_response_message_lengths(nghttp2_session *session, grpc_call
 {
     size_t offset = 0;
 
+    if (client->initial_grpc_status_seen) {
+        client->invalid_grpc_status = true;
+        client->discard_response_body = true;
+        if (session != NULL && client->stream_id > 0) {
+            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+        }
+        return 0;
+    }
+
     while (offset < len && !client->response_message_too_large) {
         if (client->response_header_len < 5) {
             size_t need = 5 - client->response_header_len;
@@ -1702,6 +1761,15 @@ static int validate_response_message_lengths(nghttp2_session *session, grpc_call
 static int process_response_data_direct(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
+
+    if (client->initial_grpc_status_seen) {
+        client->invalid_grpc_status = true;
+        client->discard_response_body = true;
+        if (session != NULL && client->stream_id > 0) {
+            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+        }
+        return 0;
+    }
 
     while (offset < len && !client->response_message_too_large && !client->compressed_response_seen && !client->malformed_response_frame) {
         if (client->response_header_len < 5) {

@@ -215,6 +215,8 @@ struct _grpc_call {
     bool discard_response_body;
     bool invalid_grpc_status;
     bool grpc_status_seen;
+    bool initial_grpc_status_seen;
+    bool initial_headers_end_stream;
     size_t response_message_count;
     size_t max_response_messages;
     size_t max_receive_message_bytes;
@@ -297,6 +299,12 @@ struct _h2_channel {
     nghttp2_session_callbacks *callbacks;
     nghttp2_session *session;
     char authority[512];
+    zend_string *host_identity;
+    zend_string *authority_identity;
+    zend_string *tls_verify_name_identity;
+    zend_string *root_certs_identity;
+    zend_string *cert_chain_identity;
+    zend_string *private_key_identity;
     size_t host_len;
     zend_ulong host_hash;
     zend_long port;

@@ -10,6 +10,25 @@ static int le_h2_stream;
 
 #include "grpc_transport.c"
 
+static void terminate_stream_with_cancel(h2_stream *stream)
+{
+    if (stream == NULL) {
+        return;
+    }
+    free_queued_response_payloads(&stream->client);
+    if (channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel) && stream->client.stream_id > 0) {
+        int rv = nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, NGHTTP2_CANCEL);
+        if (rv == 0) {
+            rv = nghttp2_session_send(stream->channel->session);
+        }
+        if (rv != 0) {
+            mark_channel_dead(stream->channel, rv);
+            detach_persistent_channel_by_ptr(stream->channel);
+        }
+    }
+    stream->completed = true;
+}
+
 static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value)
 {
     grpc_call client;
@@ -279,6 +298,10 @@ PHP_FUNCTION(grpc_lite_unary)
         zend_throw_exception(NULL, error_message, 0);
         RETURN_THROWS();
     }
+    if (timeout_us < 0) {
+        zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
+        RETURN_THROWS();
+    }
 
     if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
         zend_throw_exception(NULL, "persistent channel cache is not initialized", 0);
@@ -367,6 +390,10 @@ PHP_FUNCTION(grpc_lite_stream_open)
     error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
     if (error_message != NULL) {
         zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
+    if (timeout_us < 0) {
+        zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
         RETURN_THROWS();
     }
 
@@ -561,13 +588,7 @@ PHP_FUNCTION(grpc_lite_stream_next)
     }
 
     if (client->response_message_too_large || client->compressed_response_seen || client->malformed_response_frame || client->invalid_content_type || client->unsupported_response_encoding || client->metadata_too_large) {
-        if (channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
-            int rv = nghttp2_session_send(stream->channel->session);
-            if (rv != 0) {
-                mark_channel_dead(stream->channel, rv);
-            }
-        }
-        free_queued_response_payloads(client);
+        terminate_stream_with_cancel(stream);
     }
 
     if (client->response_queue_head != NULL) {
@@ -606,23 +627,9 @@ PHP_FUNCTION(grpc_lite_stream_cancel)
         RETURN_THROWS();
     }
     if (stream != NULL && !stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {
-        int rv;
         stream->cancelled = true;
-        stream->completed = true;
         stream->client.grpc_status = 1;
-        rv = nghttp2_submit_rst_stream(stream->channel->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, NGHTTP2_CANCEL);
-        if (rv != 0) {
-            mark_channel_dead(stream->channel, rv);
-            clear_channel_stream_owner(stream);
-            RETURN_FALSE;
-        } else {
-            rv = nghttp2_session_send(stream->channel->session);
-            if (rv != 0) {
-                mark_channel_dead(stream->channel, rv);
-                clear_channel_stream_owner(stream);
-                RETURN_FALSE;
-            }
-        }
+        terminate_stream_with_cancel(stream);
         clear_channel_stream_owner(stream);
     }
 

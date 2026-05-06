@@ -328,7 +328,7 @@ final class Http2Transport
     private static function isGrpcContentType(string $contentType): bool
     {
         return $contentType === 'application/grpc'
-            || str_starts_with($contentType, 'application/grpc+')
+            || (str_starts_with($contentType, 'application/grpc+') && strlen($contentType) > strlen('application/grpc+'))
             || str_starts_with($contentType, 'application/grpc;');
     }
 
@@ -405,9 +405,9 @@ final class Http2Transport
             $authority ?? '',
             $tlsVerifyName ?? '',
             $credentials?->type ?? \Grpc\ChannelCredentials::TYPE_INSECURE,
-            sha1($credentials?->rootCerts ?? ''),
-            sha1($credentials?->certChain ?? ''),
-            sha1($credentials?->privateKey ?? ''),
+            hash('sha256', $credentials?->rootCerts ?? ''),
+            hash('sha256', $credentials?->certChain ?? ''),
+            hash('sha256', $credentials?->privateKey ?? ''),
         ]);
     }
 
