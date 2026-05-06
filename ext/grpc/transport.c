@@ -1246,7 +1246,7 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         if (client->grpc_message != NULL) {
             zend_string_release(client->grpc_message);
         }
-        client->grpc_message = zend_string_init((const char *) value, valuelen, 0);
+        client->grpc_message = grpc_lite_decode_grpc_message(value, valuelen);
         trailing = true;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
@@ -1324,7 +1324,7 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
         && frame->hd.stream_id == client->stream_id
         && frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
         client->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-        if (!client->content_type_seen) {
+        if (!client->content_type_seen && !(client->grpc_status_seen && client->initial_headers_end_stream)) {
             client->invalid_content_type = true;
             client->discard_response_body = true;
         }
@@ -1408,6 +1408,42 @@ static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen)
 static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen)
 {
     return valuelen == sizeof("identity") - 1 && strncasecmp((const char *) value, "identity", sizeof("identity") - 1) == 0;
+}
+
+static int grpc_lite_hex_value(unsigned char ch)
+{
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    return -1;
+}
+
+static zend_string *grpc_lite_decode_grpc_message(const uint8_t *value, size_t valuelen)
+{
+    smart_str decoded = {0};
+    size_t index = 0;
+
+    while (index < valuelen) {
+        if (value[index] == '%' && index + 2 < valuelen) {
+            int high = grpc_lite_hex_value(value[index + 1]);
+            int low = grpc_lite_hex_value(value[index + 2]);
+            if (high >= 0 && low >= 0) {
+                smart_str_appendc(&decoded, (char) ((high << 4) | low));
+                index += 3;
+                continue;
+            }
+        }
+        smart_str_appendc(&decoded, (char) value[index]);
+        index++;
+    }
+    smart_str_0(&decoded);
+    return decoded.s != NULL ? decoded.s : zend_string_copy(zend_empty_string);
 }
 
 static bool contains_nul_or_control(const char *value, size_t value_len)
@@ -1587,6 +1623,36 @@ static bool is_reserved_custom_request_header(const char *name, size_t name_len)
     return false;
 }
 
+static bool is_valid_grpc_timeout_header_value(zend_string *value)
+{
+    const char *bytes;
+    size_t len;
+    size_t index;
+    char unit;
+
+    if (value == NULL) {
+        return false;
+    }
+    bytes = ZSTR_VAL(value);
+    len = ZSTR_LEN(value);
+    if (len < 2 || len > 9) {
+        return false;
+    }
+    unit = bytes[len - 1];
+    if (!(unit == 'H' || unit == 'M' || unit == 'S' || unit == 'm' || unit == 'u' || unit == 'n')) {
+        return false;
+    }
+    if (bytes[0] == '0') {
+        return false;
+    }
+    for (index = 0; index < len - 1; index++) {
+        if (bytes[index] < '0' || bytes[index] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool is_forbidden_custom_request_header(zend_string *key)
 {
     const char *name;
@@ -1680,7 +1746,14 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
     } else {
         value_str = zend_string_copy(Z_STR_P(value));
     }
-    if (is_binary_metadata_header(name_str) ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
+    if (ZSTR_LEN(name_str) == sizeof("grpc-timeout") - 1 && memcmp(ZSTR_VAL(name_str), "grpc-timeout", ZSTR_LEN(name_str)) == 0) {
+        if (!is_valid_grpc_timeout_header_value(value_str)) {
+            zend_string_release(name_str);
+            zend_string_release(value_str);
+            zend_throw_exception(NULL, "invalid grpc-timeout metadata value", 0);
+            return -1;
+        }
+    } else if (is_binary_metadata_header(name_str) ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
         zend_string_release(name_str);
         zend_string_release(value_str);
         zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
@@ -2142,6 +2215,46 @@ static void free_metadata_entries(grpc_call *client)
     client->metadata_tail = NULL;
 }
 
+static void add_metadata_value_to_map(zval *metadata, zend_string *key, zend_string *value)
+{
+    zval *values = zend_hash_find(Z_ARRVAL_P(metadata), key);
+    if (values == NULL) {
+        zval new_values;
+        array_init(&new_values);
+        add_next_index_str(&new_values, value);
+        zend_hash_update(Z_ARRVAL_P(metadata), key, &new_values);
+    } else if (Z_TYPE_P(values) == IS_ARRAY) {
+        add_next_index_str(values, value);
+    } else {
+        zend_string_release(value);
+    }
+}
+
+static void add_binary_metadata_values_to_map(zval *metadata, zend_string *key, zend_string *wire_value)
+{
+    const char *bytes = ZSTR_VAL(wire_value);
+    size_t length = ZSTR_LEN(wire_value);
+    size_t start = 0;
+
+    while (start <= length) {
+        size_t end = start;
+        zend_string *value;
+
+        while (end < length && bytes[end] != ',') {
+            end++;
+        }
+        value = php_base64_decode((const unsigned char *) bytes + start, end - start);
+        if (value == NULL) {
+            value = zend_string_init(bytes + start, end - start, 0);
+        }
+        add_metadata_value_to_map(metadata, key, value);
+        if (end == length) {
+            break;
+        }
+        start = end + 1;
+    }
+}
+
 static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing)
 {
     zval metadata;
@@ -2149,30 +2262,13 @@ static void add_metadata_map_to_return(zval *return_value, const char *name, grp
 
     array_init(&metadata);
     for (entry = client->metadata_head; entry != NULL; entry = entry->next) {
-        zval *values;
-        zend_string *value;
-
         if (entry->trailing != trailing) {
             continue;
         }
         if (is_binary_metadata_header(entry->key)) {
-            value = php_base64_decode((const unsigned char *) ZSTR_VAL(entry->value), ZSTR_LEN(entry->value));
-            if (value == NULL) {
-                value = zend_string_copy(entry->value);
-            }
+            add_binary_metadata_values_to_map(&metadata, entry->key, entry->value);
         } else {
-            value = zend_string_copy(entry->value);
-        }
-        values = zend_hash_find(Z_ARRVAL(metadata), entry->key);
-        if (values == NULL) {
-            zval new_values;
-            array_init(&new_values);
-            add_next_index_str(&new_values, value);
-            zend_hash_update(Z_ARRVAL(metadata), entry->key, &new_values);
-        } else if (Z_TYPE_P(values) == IS_ARRAY) {
-            add_next_index_str(values, value);
-        } else {
-            zend_string_release(value);
+            add_metadata_value_to_map(&metadata, entry->key, zend_string_copy(entry->value));
         }
     }
 

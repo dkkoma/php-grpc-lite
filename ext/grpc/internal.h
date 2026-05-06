@@ -47,7 +47,6 @@ static zend_object_handlers grpc_call_handlers;
 static zend_object_handlers grpc_channel_credentials_handlers;
 static zend_object_handlers grpc_call_credentials_handlers;
 static zend_object_handlers grpc_timeval_handlers;
-static zend_string *grpc_default_roots_pem;
 
 #define GRPC_STATUS_OK 0
 #define GRPC_STATUS_CANCELLED 1
@@ -102,6 +101,7 @@ typedef struct {
     zend_string *primary_user_agent;
     zend_long max_receive_message_length;
     zval credentials;
+    bool initialized;
     zend_object std;
 } grpc_lite_channel_obj;
 
@@ -122,6 +122,7 @@ typedef struct {
     bool initial_metadata_ready;
     bool status_ready;
     bool cancelled;
+    bool initialized;
     zend_object std;
 } grpc_lite_call_obj;
 
@@ -535,6 +536,7 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
 static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen);
 static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen);
+static zend_string *grpc_lite_decode_grpc_message(const uint8_t *value, size_t valuelen);
 static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
 static const char *validate_grpc_path(const char *path, size_t path_len);
 static size_t count_custom_header_values(zval *headers_zv);
@@ -563,6 +565,7 @@ static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **k
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_channels;
     bool persistent_channels_initialized;
+    zend_string *default_roots_pem;
 ZEND_END_MODULE_GLOBALS(grpc_lite)
 
 ZEND_EXTERN_MODULE_GLOBALS(grpc_lite)

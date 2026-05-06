@@ -398,6 +398,7 @@ static int grpc_lite_stream_next_resource(zval *stream_zv, zval *return_value)
 
     stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_lite_stream", le_h2_stream);
     if (stream == NULL) {
+        zend_throw_exception(NULL, "invalid grpc_lite_stream resource", 0);
         return FAILURE;
     }
     client = &stream->client;
@@ -484,6 +485,7 @@ static int grpc_lite_cancel_stream_resource(zval *stream_zv)
 
     stream = (h2_stream *) zend_fetch_resource(Z_RES_P(stream_zv), "grpc_lite_stream", le_h2_stream);
     if (stream == NULL) {
+        zend_throw_exception(NULL, "invalid grpc_lite_stream resource", 0);
         return FAILURE;
     }
     if (stream != NULL && !stream->completed && channel_owned_by_stream(stream->channel, stream) && channel_usable(stream->channel)) {

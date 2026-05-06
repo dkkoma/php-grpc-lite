@@ -28,14 +28,40 @@ static void grpc_lite_copy_metadata(zval *dest, zval *src)
     zend_hash_copy(Z_ARRVAL_P(dest), Z_ARRVAL_P(src), zval_add_ref);
 }
 
+static zend_long grpc_lite_ceil_div_timeout(zend_long value, zend_long unit)
+{
+    return value / unit + (value % unit != 0 ? 1 : 0);
+}
+
 static void grpc_lite_append_timeout_metadata(zval *metadata, zend_long timeout_us)
 {
     char timeout_buf[32];
     zval timeout_values;
+    zend_long value;
+    char unit;
     if (timeout_us <= 0) {
         return;
     }
-    snprintf(timeout_buf, sizeof(timeout_buf), "%ldu", timeout_us);
+    if (timeout_us <= 99999999L) {
+        value = timeout_us;
+        unit = 'u';
+    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000L) <= 99999999L) {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 1000L);
+        unit = 'm';
+    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000000L) <= 99999999L) {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 1000000L);
+        unit = 'S';
+    } else if (grpc_lite_ceil_div_timeout(timeout_us, 60000000L) <= 99999999L) {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 60000000L);
+        unit = 'M';
+    } else {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 3600000000L);
+        if (value > 99999999L) {
+            value = 99999999L;
+        }
+        unit = 'H';
+    }
+    snprintf(timeout_buf, sizeof(timeout_buf), "%ld%c", value, unit);
     array_init(&timeout_values);
     add_next_index_string(&timeout_values, timeout_buf);
     zend_hash_str_update(Z_ARRVAL_P(metadata), "grpc-timeout", sizeof("grpc-timeout") - 1, &timeout_values);
@@ -155,9 +181,27 @@ static int grpc_lite_status_from_result(zval *result)
     if (value != NULL && zend_is_true(value)) return GRPC_STATUS_DEADLINE_EXCEEDED;
     value = zend_hash_str_find(Z_ARRVAL_P(result), "cancelled", sizeof("cancelled") - 1);
     if (value != NULL && zend_is_true(value)) return GRPC_STATUS_CANCELLED;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "http_status", sizeof("http_status") - 1);
-    if (value != NULL && Z_TYPE_P(value) == IS_LONG && Z_LVAL_P(value) == 503) return GRPC_STATUS_UNAVAILABLE;
-    if (value != NULL && Z_TYPE_P(value) == IS_LONG && Z_LVAL_P(value) < 0) return GRPC_STATUS_UNAVAILABLE;
+    value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_grpc_status", sizeof("invalid_grpc_status") - 1);
+    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNKNOWN;
+    value = zend_hash_str_find(Z_ARRVAL_P(result), "grpc_status", sizeof("grpc_status") - 1);
+    if (value == NULL || Z_TYPE_P(value) != IS_LONG || Z_LVAL_P(value) < 0) {
+        value = zend_hash_str_find(Z_ARRVAL_P(result), "http_status", sizeof("http_status") - 1);
+        if (value != NULL && Z_TYPE_P(value) == IS_LONG && Z_LVAL_P(value) != 200) {
+            switch (Z_LVAL_P(value)) {
+                case 400: return GRPC_STATUS_INTERNAL;
+                case 401: return GRPC_STATUS_UNAUTHENTICATED;
+                case 403: return GRPC_STATUS_PERMISSION_DENIED;
+                case 404: return GRPC_STATUS_UNIMPLEMENTED;
+                case 429:
+                case 502:
+                case 503:
+                case 504:
+                    return GRPC_STATUS_UNAVAILABLE;
+                default:
+                    return Z_LVAL_P(value) < 0 ? GRPC_STATUS_UNAVAILABLE : GRPC_STATUS_UNKNOWN;
+            }
+        }
+    }
     value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_content_type", sizeof("invalid_content_type") - 1);
     if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNKNOWN;
     value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_grpc_status", sizeof("invalid_grpc_status") - 1);
@@ -174,6 +218,33 @@ static int grpc_lite_status_from_result(zval *result)
     if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNIMPLEMENTED;
     value = zend_hash_str_find(Z_ARRVAL_P(result), "grpc_status", sizeof("grpc_status") - 1);
     if (value != NULL && Z_TYPE_P(value) == IS_LONG && Z_LVAL_P(value) >= 0) return (int) Z_LVAL_P(value);
+    value = zend_hash_str_find(Z_ARRVAL_P(result), "stream_reset_seen", sizeof("stream_reset_seen") - 1);
+    if (value != NULL && zend_is_true(value)) {
+        zval *code = zend_hash_str_find(Z_ARRVAL_P(result), "stream_error_code", sizeof("stream_error_code") - 1);
+        zend_long stream_error_code = code != NULL && Z_TYPE_P(code) == IS_LONG ? Z_LVAL_P(code) : -1;
+        switch (stream_error_code) {
+            case NGHTTP2_CANCEL:
+                return GRPC_STATUS_CANCELLED;
+            case NGHTTP2_REFUSED_STREAM:
+                return GRPC_STATUS_UNAVAILABLE;
+            case NGHTTP2_ENHANCE_YOUR_CALM:
+                return GRPC_STATUS_RESOURCE_EXHAUSTED;
+            case NGHTTP2_INADEQUATE_SECURITY:
+                return GRPC_STATUS_PERMISSION_DENIED;
+            case NGHTTP2_NO_ERROR:
+            case NGHTTP2_PROTOCOL_ERROR:
+            case NGHTTP2_INTERNAL_ERROR:
+            case NGHTTP2_FLOW_CONTROL_ERROR:
+            case NGHTTP2_SETTINGS_TIMEOUT:
+            case NGHTTP2_STREAM_CLOSED:
+            case NGHTTP2_FRAME_SIZE_ERROR:
+            case NGHTTP2_COMPRESSION_ERROR:
+            case NGHTTP2_CONNECT_ERROR:
+                return GRPC_STATUS_INTERNAL;
+            default:
+                return GRPC_STATUS_UNKNOWN;
+        }
+    }
     return GRPC_STATUS_UNKNOWN;
 }
 
@@ -227,6 +298,18 @@ static zend_string *grpc_lite_details_from_result(zval *result, int code)
         case GRPC_STATUS_RESOURCE_EXHAUSTED:
             return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
         case GRPC_STATUS_INTERNAL:
+            value = zend_hash_str_find(Z_ARRVAL_P(result), "malformed_response_frame", sizeof("malformed_response_frame") - 1);
+            if (value != NULL && zend_is_true(value)) {
+                return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
+            }
+            value = zend_hash_str_find(Z_ARRVAL_P(result), "stream_reset_seen", sizeof("stream_reset_seen") - 1);
+            if (value != NULL && zend_is_true(value)) {
+                zval *stream_error_code = zend_hash_str_find(Z_ARRVAL_P(result), "stream_error_code", sizeof("stream_error_code") - 1);
+                if (stream_error_code != NULL && Z_TYPE_P(stream_error_code) == IS_LONG) {
+                    return strpprintf(0, "HTTP/2 stream reset: %ld", Z_LVAL_P(stream_error_code));
+                }
+                return zend_string_init("HTTP/2 stream reset", sizeof("HTTP/2 stream reset") - 1, 0);
+            }
             return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
         case GRPC_STATUS_UNIMPLEMENTED:
             value = zend_hash_str_find(Z_ARRVAL_P(result), "unsupported_response_encoding", sizeof("unsupported_response_encoding") - 1);
@@ -241,6 +324,14 @@ static zend_string *grpc_lite_details_from_result(zval *result, int code)
         case GRPC_STATUS_CANCELLED:
             return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
         default:
+            value = zend_hash_str_find(Z_ARRVAL_P(result), "stream_reset_seen", sizeof("stream_reset_seen") - 1);
+            if (value != NULL && zend_is_true(value)) {
+                zval *stream_error_code = zend_hash_str_find(Z_ARRVAL_P(result), "stream_error_code", sizeof("stream_error_code") - 1);
+                if (stream_error_code != NULL && Z_TYPE_P(stream_error_code) == IS_LONG) {
+                    return strpprintf(0, "HTTP/2 stream reset: %ld", Z_LVAL_P(stream_error_code));
+                }
+                return zend_string_init("HTTP/2 stream reset", sizeof("HTTP/2 stream reset") - 1, 0);
+            }
             return zend_empty_string;
     }
 }
@@ -279,6 +370,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     zval result;
     zend_string *payload = NULL;
     int status_code;
+    bool protocol_failure;
     zend_string *details;
     zval *initial_metadata;
     zval *trailing_metadata;
@@ -347,12 +439,12 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zval_ptr_dtor(&result);
         return FAILURE;
     }
-    if (!channel_usable(h2)) {
-        remove_unusable_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), h2);
-    }
+    protocol_failure = grpc_lite_result_has_protocol_failure(&result);
     status_code = grpc_lite_status_from_result(&result);
-    if (grpc_lite_result_has_protocol_failure(&result)) {
-        detach_persistent_channel_by_ptr(h2);
+    if (protocol_failure) {
+        discard_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), h2);
+    } else if (!channel_usable(h2)) {
+        remove_unusable_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), h2);
     }
     details = grpc_lite_details_from_result(&result, status_code);
     initial_metadata = zend_hash_str_find(Z_ARRVAL(result), "initial_metadata", sizeof("initial_metadata") - 1);
@@ -538,6 +630,11 @@ PHP_METHOD(Call, startBatch)
         Z_PARAM_ARRAY(ops)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (!call->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
+        RETURN_THROWS();
+    }
+
     if (zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_INITIAL_METADATA) ||
         zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_MESSAGE) ||
         zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_CLOSE_FROM_CLIENT)) {
@@ -657,6 +754,11 @@ PHP_METHOD(Call, startBatch)
 PHP_METHOD(Call, cancel)
 {
     grpc_lite_call_obj *call = Z_GRPC_LITE_CALL_P(ZEND_THIS);
+    ZEND_PARSE_PARAMETERS_NONE();
+    if (!call->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
+        RETURN_THROWS();
+    }
     call->cancelled = true;
     if (call->stream_opened && Z_TYPE(call->stream) == IS_RESOURCE) {
         grpc_lite_cancel_stream_resource(&call->stream);
@@ -666,7 +768,17 @@ PHP_METHOD(Call, cancel)
 PHP_METHOD(Call, getPeer)
 {
     grpc_lite_call_obj *call = Z_GRPC_LITE_CALL_P(ZEND_THIS);
-    grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
+    grpc_lite_channel_obj *channel;
+    ZEND_PARSE_PARAMETERS_NONE();
+    if (!call->initialized || Z_TYPE(call->channel) != IS_OBJECT) {
+        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
+        RETURN_THROWS();
+    }
+    channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
+    if (!channel->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
+        RETURN_THROWS();
+    }
     RETURN_STR_COPY(channel->target);
 }
 

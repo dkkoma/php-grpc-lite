@@ -74,4 +74,70 @@ final class ExtensionSurfaceTest extends TestCase
             }
         }
     }
+
+    public function testChannelRejectsDoubleConstructionAndUninitializedUse(): void
+    {
+        $channel = new Channel('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+        ]);
+
+        $this->expectException(\Throwable::class);
+        $channel->__construct('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+        ]);
+    }
+
+    public function testUninitializedChannelMethodThrows(): void
+    {
+        $channel = (new \ReflectionClass(Channel::class))->newInstanceWithoutConstructor();
+
+        $this->expectException(\Throwable::class);
+        $channel->getTarget();
+    }
+
+    public function testChannelRejectsNulInTarget(): void
+    {
+        $this->expectException(\Throwable::class);
+
+        new Channel("test-server\0:50051", [
+            'credentials' => ChannelCredentials::createInsecure(),
+        ]);
+    }
+
+    public function testChannelCanBeConstructedAfterFailedConstructionAttempt(): void
+    {
+        $channel = (new \ReflectionClass(Channel::class))->newInstanceWithoutConstructor();
+
+        try {
+            $channel->__construct("test-server\0:50051", [
+                'credentials' => ChannelCredentials::createInsecure(),
+            ]);
+            self::fail('expected invalid target to throw');
+        } catch (\Throwable) {
+        }
+
+        $channel->__construct('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+        ]);
+
+        self::assertSame('test-server:50051', $channel->getTarget());
+    }
+
+    public function testCallRejectsInvalidMethodPathAndUninitializedUse(): void
+    {
+        $channel = new Channel('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+        ]);
+
+        $this->expectException(\Throwable::class);
+        new Call($channel, '/bad method/Name', Timeval::infFuture());
+    }
+
+    public function testUninitializedCallMethodThrows(): void
+    {
+        $call = (new \ReflectionClass(Call::class))->newInstanceWithoutConstructor();
+
+        $this->expectException(\Throwable::class);
+        $call->getPeer();
+    }
 }

@@ -25,6 +25,7 @@ PHP_GINIT_FUNCTION(grpc_lite)
 #endif
     zend_hash_init(&grpc_lite_globals->persistent_channels, 8, NULL, NULL, 1);
     grpc_lite_globals->persistent_channels_initialized = true;
+    grpc_lite_globals->default_roots_pem = NULL;
 }
 
 PHP_GSHUTDOWN_FUNCTION(grpc_lite)
@@ -41,6 +42,10 @@ PHP_GSHUTDOWN_FUNCTION(grpc_lite)
 
     zend_hash_destroy(&grpc_lite_globals->persistent_channels);
     grpc_lite_globals->persistent_channels_initialized = false;
+    if (grpc_lite_globals->default_roots_pem != NULL) {
+        zend_string_release_ex(grpc_lite_globals->default_roots_pem, true);
+        grpc_lite_globals->default_roots_pem = NULL;
+    }
 }
 
 PHP_MINIT_FUNCTION(grpc_lite)
@@ -137,10 +142,6 @@ PHP_MINIT_FUNCTION(grpc_lite)
 
 PHP_MSHUTDOWN_FUNCTION(grpc_lite)
 {
-    if (grpc_default_roots_pem != NULL) {
-        zend_string_release(grpc_default_roots_pem);
-        grpc_default_roots_pem = NULL;
-    }
     return SUCCESS;
 }
 

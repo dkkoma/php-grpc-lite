@@ -395,7 +395,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         if (client->grpc_message != NULL) {
             zend_string_release(client->grpc_message);
         }
-        client->grpc_message = zend_string_init((const char *) value, valuelen, 0);
+        client->grpc_message = grpc_lite_decode_grpc_message(value, valuelen);
         trailing = true;
     } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
         if (client->bench.first_response_header_us == 0) {

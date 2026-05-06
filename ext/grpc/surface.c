@@ -34,8 +34,8 @@ static void grpc_lite_channel_credentials_init(zval *return_value, grpc_lite_cre
     obj->type = type;
     if (root_certs != NULL) {
         obj->root_certs = zend_string_copy(root_certs);
-    } else if ((type == GRPC_LITE_CREDENTIALS_SSL || type == GRPC_LITE_CREDENTIALS_DEFAULT) && grpc_default_roots_pem != NULL) {
-        obj->root_certs = zend_string_copy(grpc_default_roots_pem);
+    } else if ((type == GRPC_LITE_CREDENTIALS_SSL || type == GRPC_LITE_CREDENTIALS_DEFAULT) && PHP_GRPC_LITE_G(default_roots_pem) != NULL) {
+        obj->root_certs = zend_string_copy(PHP_GRPC_LITE_G(default_roots_pem));
     }
     if (private_key != NULL) {
         obj->private_key = zend_string_copy(private_key);
@@ -81,25 +81,44 @@ PHP_METHOD(ChannelCredentials, setDefaultRootsPem)
         Z_PARAM_STR(roots)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (grpc_default_roots_pem != NULL) {
-        zend_string_release(grpc_default_roots_pem);
+    if (PHP_GRPC_LITE_G(default_roots_pem) != NULL) {
+        zend_string_release_ex(PHP_GRPC_LITE_G(default_roots_pem), true);
     }
-    grpc_default_roots_pem = zend_string_init(ZSTR_VAL(roots), ZSTR_LEN(roots), 1);
+    PHP_GRPC_LITE_G(default_roots_pem) = zend_string_init(ZSTR_VAL(roots), ZSTR_LEN(roots), 1);
 }
 
 PHP_METHOD(ChannelCredentials, isDefaultRootsPemSet)
 {
     ZEND_PARSE_PARAMETERS_NONE();
-    RETURN_BOOL(grpc_default_roots_pem != NULL);
+    RETURN_BOOL(PHP_GRPC_LITE_G(default_roots_pem) != NULL);
 }
 
 PHP_METHOD(ChannelCredentials, invalidateDefaultRootsPem)
 {
     ZEND_PARSE_PARAMETERS_NONE();
-    if (grpc_default_roots_pem != NULL) {
-        zend_string_release(grpc_default_roots_pem);
-        grpc_default_roots_pem = NULL;
+    if (PHP_GRPC_LITE_G(default_roots_pem) != NULL) {
+        zend_string_release_ex(PHP_GRPC_LITE_G(default_roots_pem), true);
+        PHP_GRPC_LITE_G(default_roots_pem) = NULL;
     }
+}
+
+static zend_long grpc_lite_saturating_add(zend_long left, zend_long right)
+{
+    if (right > 0 && left > ZEND_LONG_MAX - right) {
+        return ZEND_LONG_MAX;
+    }
+    if (right < 0 && left < ZEND_LONG_MIN - right) {
+        return ZEND_LONG_MIN;
+    }
+    return left + right;
+}
+
+static zend_long grpc_lite_saturating_subtract(zend_long left, zend_long right)
+{
+    if (right == ZEND_LONG_MIN) {
+        return left >= 0 ? ZEND_LONG_MAX : grpc_lite_saturating_add(left, ZEND_LONG_MAX);
+    }
+    return grpc_lite_saturating_add(left, -right);
 }
 
 static zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce)
@@ -183,7 +202,7 @@ PHP_METHOD(Timeval, add)
         Z_PARAM_OBJECT_OF_CLASS(other, grpc_ce_timeval)
     ZEND_PARSE_PARAMETERS_END();
     object_init_ex(return_value, grpc_ce_timeval);
-    Z_GRPC_LITE_TIMEVAL_P(return_value)->microseconds = Z_GRPC_LITE_TIMEVAL_P(ZEND_THIS)->microseconds + Z_GRPC_LITE_TIMEVAL_P(other)->microseconds;
+    Z_GRPC_LITE_TIMEVAL_P(return_value)->microseconds = grpc_lite_saturating_add(Z_GRPC_LITE_TIMEVAL_P(ZEND_THIS)->microseconds, Z_GRPC_LITE_TIMEVAL_P(other)->microseconds);
 }
 
 PHP_METHOD(Timeval, subtract)
@@ -193,7 +212,7 @@ PHP_METHOD(Timeval, subtract)
         Z_PARAM_OBJECT_OF_CLASS(other, grpc_ce_timeval)
     ZEND_PARSE_PARAMETERS_END();
     object_init_ex(return_value, grpc_ce_timeval);
-    Z_GRPC_LITE_TIMEVAL_P(return_value)->microseconds = Z_GRPC_LITE_TIMEVAL_P(ZEND_THIS)->microseconds - Z_GRPC_LITE_TIMEVAL_P(other)->microseconds;
+    Z_GRPC_LITE_TIMEVAL_P(return_value)->microseconds = grpc_lite_saturating_subtract(Z_GRPC_LITE_TIMEVAL_P(ZEND_THIS)->microseconds, Z_GRPC_LITE_TIMEVAL_P(other)->microseconds);
 }
 
 PHP_METHOD(Timeval, compare)
@@ -203,8 +222,14 @@ PHP_METHOD(Timeval, compare)
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_OBJECT_OF_CLASS(other, grpc_ce_timeval)
     ZEND_PARSE_PARAMETERS_END();
-    value = Z_GRPC_LITE_TIMEVAL_P(ZEND_THIS)->microseconds - Z_GRPC_LITE_TIMEVAL_P(other)->microseconds;
-    RETURN_LONG(value < 0 ? -1 : (value > 0 ? 1 : 0));
+    value = Z_GRPC_LITE_TIMEVAL_P(ZEND_THIS)->microseconds;
+    if (value < Z_GRPC_LITE_TIMEVAL_P(other)->microseconds) {
+        RETURN_LONG(-1);
+    }
+    if (value > Z_GRPC_LITE_TIMEVAL_P(other)->microseconds) {
+        RETURN_LONG(1);
+    }
+    RETURN_LONG(0);
 }
 
 PHP_METHOD(Timeval, microtime)
@@ -238,15 +263,39 @@ static zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
     return &obj->std;
 }
 
+static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
+{
+    if (obj->target != NULL) {
+        zend_string_release(obj->target);
+        obj->target = NULL;
+    }
+    if (obj->host != NULL) {
+        zend_string_release(obj->host);
+        obj->host = NULL;
+    }
+    if (obj->authority != NULL) {
+        zend_string_release(obj->authority);
+        obj->authority = NULL;
+    }
+    if (obj->tls_verify_name != NULL) {
+        zend_string_release(obj->tls_verify_name);
+        obj->tls_verify_name = NULL;
+    }
+    if (obj->primary_user_agent != NULL) {
+        zend_string_release(obj->primary_user_agent);
+        obj->primary_user_agent = NULL;
+    }
+    zval_ptr_dtor(&obj->credentials);
+    ZVAL_UNDEF(&obj->credentials);
+    obj->port = 443;
+    obj->max_receive_message_length = 0;
+    obj->initialized = false;
+}
+
 static void grpc_lite_channel_free_object(zend_object *object)
 {
     grpc_lite_channel_obj *obj = grpc_lite_channel_fetch(object);
-    if (obj->target != NULL) zend_string_release(obj->target);
-    if (obj->host != NULL) zend_string_release(obj->host);
-    if (obj->authority != NULL) zend_string_release(obj->authority);
-    if (obj->tls_verify_name != NULL) zend_string_release(obj->tls_verify_name);
-    if (obj->primary_user_agent != NULL) zend_string_release(obj->primary_user_agent);
-    zval_ptr_dtor(&obj->credentials);
+    grpc_lite_channel_clear_fields(obj);
     zend_object_std_dtor(&obj->std);
 }
 
@@ -304,11 +353,18 @@ PHP_METHOD(Channel, __construct)
     zval *user_agent;
     zval *max_receive_message_length;
     grpc_lite_channel_obj *obj = Z_GRPC_LITE_CHANNEL_P(ZEND_THIS);
+    const char *error_message;
 
     ZEND_PARSE_PARAMETERS_START(2, 2)
         Z_PARAM_STR(target)
         Z_PARAM_ARRAY(opts)
     ZEND_PARSE_PARAMETERS_END();
+
+    if (obj->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Channel is already initialized", 0);
+        RETURN_THROWS();
+    }
+    grpc_lite_channel_clear_fields(obj);
 
     credentials = zend_hash_str_find(Z_ARRVAL_P(opts), "credentials", sizeof("credentials") - 1);
     if (credentials == NULL || Z_TYPE_P(credentials) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(credentials), grpc_ce_channel_credentials)) {
@@ -317,6 +373,7 @@ PHP_METHOD(Channel, __construct)
     }
     obj->target = zend_string_copy(target);
     if (split_target_to_host_port(target, &obj->host, &obj->port) != SUCCESS) {
+        grpc_lite_channel_clear_fields(obj);
         zend_throw_exception(NULL, "invalid gRPC target port", 0);
         RETURN_THROWS();
     }
@@ -337,16 +394,37 @@ PHP_METHOD(Channel, __construct)
     max_receive_message_length = zend_hash_str_find(Z_ARRVAL_P(opts), "grpc.max_receive_message_length", sizeof("grpc.max_receive_message_length") - 1);
     if (max_receive_message_length != NULL) {
         if (Z_TYPE_P(max_receive_message_length) != IS_LONG || Z_LVAL_P(max_receive_message_length) < -1) {
+            grpc_lite_channel_clear_fields(obj);
             zend_throw_exception(NULL, "grpc.max_receive_message_length must be -1 or non-negative", 0);
             RETURN_THROWS();
         }
         obj->max_receive_message_length = Z_LVAL_P(max_receive_message_length);
     }
+    error_message = validate_channel_inputs(
+        ZSTR_VAL(target),
+        ZSTR_LEN(target),
+        ZSTR_VAL(obj->host),
+        ZSTR_LEN(obj->host),
+        obj->port,
+        obj->authority != NULL ? ZSTR_VAL(obj->authority) : NULL,
+        obj->authority != NULL ? ZSTR_LEN(obj->authority) : 0,
+        obj->tls_verify_name != NULL ? ZSTR_VAL(obj->tls_verify_name) : NULL,
+        obj->tls_verify_name != NULL ? ZSTR_LEN(obj->tls_verify_name) : 0);
+    if (error_message != NULL) {
+        grpc_lite_channel_clear_fields(obj);
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
+    obj->initialized = true;
 }
 
 PHP_METHOD(Channel, getTarget)
 {
     ZEND_PARSE_PARAMETERS_NONE();
+    if (!Z_GRPC_LITE_CHANNEL_P(ZEND_THIS)->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
+        RETURN_THROWS();
+    }
     RETURN_STR_COPY(Z_GRPC_LITE_CHANNEL_P(ZEND_THIS)->target);
 }
 
@@ -373,6 +451,10 @@ PHP_METHOD(Channel, close)
     grpc_lite_channel_obj *obj = Z_GRPC_LITE_CHANNEL_P(ZEND_THIS);
     zend_string *key = NULL;
     ZEND_PARSE_PARAMETERS_NONE();
+    if (!obj->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
+        RETURN_THROWS();
+    }
     grpc_lite_channel_key(obj, &key);
     if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
         h2_channel *channel = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key);
@@ -390,6 +472,10 @@ PHP_METHOD(Channel, getConnectivityState)
         Z_PARAM_OPTIONAL
         Z_PARAM_BOOL(try_to_connect)
     ZEND_PARSE_PARAMETERS_END();
+    if (!Z_GRPC_LITE_CHANNEL_P(ZEND_THIS)->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
+        RETURN_THROWS();
+    }
     RETURN_LONG(2);
 }
 
@@ -401,6 +487,10 @@ PHP_METHOD(Channel, watchConnectivityState)
         Z_PARAM_LONG(state)
         Z_PARAM_OBJECT_OF_CLASS(deadline, grpc_ce_timeval)
     ZEND_PARSE_PARAMETERS_END();
+    if (!Z_GRPC_LITE_CHANNEL_P(ZEND_THIS)->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
+        RETURN_THROWS();
+    }
     RETURN_FALSE;
 }
 
@@ -441,6 +531,8 @@ PHP_METHOD(Call, __construct)
     zend_string *method;
     zval *deadline;
     grpc_lite_call_obj *obj = Z_GRPC_LITE_CALL_P(ZEND_THIS);
+    grpc_lite_channel_obj *channel_obj;
+    const char *error_message;
 
     ZEND_PARSE_PARAMETERS_START(3, 3)
         Z_PARAM_OBJECT_OF_CLASS(channel, grpc_ce_channel)
@@ -448,9 +540,24 @@ PHP_METHOD(Call, __construct)
         Z_PARAM_OBJECT_OF_CLASS(deadline, grpc_ce_timeval)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (obj->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Call is already initialized", 0);
+        RETURN_THROWS();
+    }
+    channel_obj = Z_GRPC_LITE_CHANNEL_P(channel);
+    if (!channel_obj->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
+        RETURN_THROWS();
+    }
+    error_message = validate_grpc_path(ZSTR_VAL(method), ZSTR_LEN(method));
+    if (error_message != NULL) {
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
     ZVAL_COPY(&obj->channel, channel);
     obj->method = zend_string_copy(method);
     obj->deadline_us = Z_GRPC_LITE_TIMEVAL_P(deadline)->microseconds;
+    obj->initialized = true;
 }
 
 PHP_METHOD(Call, setCredentials)
@@ -462,6 +569,10 @@ PHP_METHOD(Call, setCredentials)
         Z_PARAM_OBJECT_OF_CLASS(credentials, grpc_ce_call_credentials)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (!obj->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
+        RETURN_THROWS();
+    }
     zval_ptr_dtor(&obj->credentials);
     ZVAL_COPY(&obj->credentials, credentials);
 }
