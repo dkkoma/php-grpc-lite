@@ -65,6 +65,26 @@ final class MetadataCompatibilityTest extends TestCase
         self::assertSame($metadata['x-bench-echo-ascii'], $call->getTrailingMetadata()['x-bench-trailing-ascii'] ?? null);
     }
 
+    public function testResponseMetadataLimitCanBeRaisedByChannelOption(): void
+    {
+        $metadata = [
+            'x-bench-response-metadata-count' => ['8'],
+            'x-bench-response-metadata-value-bytes' => ['512'],
+        ];
+
+        $limitedCall = $this->client([
+            'grpc.absolute_max_metadata_size' => 1024,
+        ])->BenchUnary(new BenchRequest(), $metadata);
+        [, $limitedStatus] = $limitedCall->wait();
+        self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $limitedStatus->code);
+
+        $raisedCall = $this->client([
+            'grpc.absolute_max_metadata_size' => 16 * 1024,
+        ])->BenchUnary(new BenchRequest(), $metadata);
+        [, $raisedStatus] = $raisedCall->wait();
+        self::assertSame(\Grpc\STATUS_OK, $raisedStatus->code, $raisedStatus->details);
+    }
+
     public function testServerStreamingDuplicateMetadataRoundTripPreservesValues(): void
     {
         $client = $this->client();
@@ -90,9 +110,10 @@ final class MetadataCompatibilityTest extends TestCase
         self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-duplicate'] ?? null);
     }
 
-    private function client(): GreeterClient
+    /** @param array<string, mixed> $opts */
+    private function client(array $opts = []): GreeterClient
     {
-        return new GreeterClient('test-server:50051', [
+        return new GreeterClient('test-server:50051', $opts + [
             'credentials' => ChannelCredentials::createInsecure(),
         ]);
     }

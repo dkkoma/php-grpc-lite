@@ -259,6 +259,7 @@ static zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
     ZVAL_UNDEF(&obj->credentials);
     obj->port = 443;
     obj->max_receive_message_length = 0;
+    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(-1, -1);
     obj->std.handlers = &grpc_channel_handlers;
     return &obj->std;
 }
@@ -289,6 +290,7 @@ static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
     ZVAL_UNDEF(&obj->credentials);
     obj->port = 443;
     obj->max_receive_message_length = 0;
+    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(-1, -1);
     obj->initialized = false;
 }
 
@@ -352,6 +354,10 @@ PHP_METHOD(Channel, __construct)
     zval *tls_verify_name;
     zval *user_agent;
     zval *max_receive_message_length;
+    zval *max_metadata_size;
+    zval *absolute_max_metadata_size;
+    zend_long max_metadata_size_value = -1;
+    zend_long absolute_max_metadata_size_value = -1;
     grpc_lite_channel_obj *obj = Z_GRPC_LITE_CHANNEL_P(ZEND_THIS);
     const char *error_message;
 
@@ -400,6 +406,30 @@ PHP_METHOD(Channel, __construct)
         }
         obj->max_receive_message_length = Z_LVAL_P(max_receive_message_length);
     }
+    max_metadata_size = zend_hash_str_find(Z_ARRVAL_P(opts), "grpc.max_metadata_size", sizeof("grpc.max_metadata_size") - 1);
+    if (max_metadata_size != NULL) {
+        if (Z_TYPE_P(max_metadata_size) != IS_LONG || Z_LVAL_P(max_metadata_size) < 0) {
+            grpc_lite_channel_clear_fields(obj);
+            zend_throw_exception(NULL, "grpc.max_metadata_size must be non-negative", 0);
+            RETURN_THROWS();
+        }
+        max_metadata_size_value = Z_LVAL_P(max_metadata_size);
+    }
+    absolute_max_metadata_size = zend_hash_str_find(Z_ARRVAL_P(opts), "grpc.absolute_max_metadata_size", sizeof("grpc.absolute_max_metadata_size") - 1);
+    if (absolute_max_metadata_size != NULL) {
+        if (Z_TYPE_P(absolute_max_metadata_size) != IS_LONG || Z_LVAL_P(absolute_max_metadata_size) < 0) {
+            grpc_lite_channel_clear_fields(obj);
+            zend_throw_exception(NULL, "grpc.absolute_max_metadata_size must be non-negative", 0);
+            RETURN_THROWS();
+        }
+        absolute_max_metadata_size_value = Z_LVAL_P(absolute_max_metadata_size);
+    }
+    if (max_metadata_size_value >= 0 && absolute_max_metadata_size_value >= 0 && absolute_max_metadata_size_value < max_metadata_size_value) {
+        grpc_lite_channel_clear_fields(obj);
+        zend_throw_exception(NULL, "grpc.absolute_max_metadata_size must be greater than or equal to grpc.max_metadata_size", 0);
+        RETURN_THROWS();
+    }
+    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(max_metadata_size_value, absolute_max_metadata_size_value);
     error_message = validate_channel_inputs(
         ZSTR_VAL(target),
         ZSTR_LEN(target),

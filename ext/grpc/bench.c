@@ -2200,7 +2200,7 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
-    if (grpc_lite_unary_call_perform_on_connection(connection, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, true, persistent_reused, return_value) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_on_connection(connection, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), true, persistent_reused, return_value) != SUCCESS) {
         if (connection != NULL && !connection_usable(connection)) {
             remove_unusable_persistent_connection(key, key_len, connection);
         }
@@ -2256,7 +2256,7 @@ PHP_FUNCTION(grpc_lite_server_streaming_open)
         Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (server_streaming_call_open_resource(key, key_len, host, host_len, port, path, path_len, request, request_len, headers_zv, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, authority, authority_len, tls_verify_name, tls_verify_name_len, return_value) != SUCCESS) {
+    if (server_streaming_call_open_resource(key, key_len, host, host_len, port, path, path_len, request, request_len, headers_zv, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), authority, authority_len, tls_verify_name, tls_verify_name_len, return_value) != SUCCESS) {
         RETURN_THROWS();
     }
 }

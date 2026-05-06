@@ -118,8 +118,19 @@ production buildでは低レベル診断entrypointをPHP関数として公開し
 | `grpc.ssl_target_name_override` | TLS verify name override |
 | `grpc.primary_user_agent` | official wrapperが組み立てた user-agent |
 | `grpc.max_receive_message_length` | response message size上限。`-1` は無制限 |
+| `grpc.max_metadata_size` | response metadata soft limit。`grpc.absolute_max_metadata_size` 未指定時は hard limit 算出に使う |
+| `grpc.absolute_max_metadata_size` | response metadata hard limit。超過時は `RESOURCE_EXHAUSTED` |
 
 PHP object自体はsocketを持ちません。HTTP/2 session/socketのpersistent cacheは拡張のprocess-local globalにあります。
+
+## 4.1 INI
+
+| INI | default | 扱い |
+|---|---:|---|
+| `grpc_lite.http2_stream_window_size` | `8388608` | HTTP/2 `SETTINGS_INITIAL_WINDOW_SIZE` として送るstream receive window |
+| `grpc_lite.http2_connection_window_size` | `8388608` | 接続直後のconnection receive window。初期値との差分を `WINDOW_UPDATE` で広げる |
+
+window size は `65535` 未満ならHTTP/2 defaultへ丸め、HTTP/2上限を超える値は上限へ丸めます。
 
 ## 5. `Grpc\Call::startBatch()`
 

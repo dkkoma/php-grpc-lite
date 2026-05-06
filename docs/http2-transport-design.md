@@ -118,7 +118,7 @@ Requirements:
 - PHP userlandではchannel resource/socket/sessionを保持しない。
 - error/cancel/途中終了時はC側persistent channelをdead扱いにし、次RPCで新規接続する。
 - server streamingはC stream resourceをPHP Generatorがpullし、messageごとにyieldする。
-- client receive stream / connection windowは8MiBをdefaultにし、large responseでHTTP/2 flow-controlによる送信停止とWINDOW_UPDATE往復を減らす。
+- client receive stream / connection windowは8MiBをdefaultにし、large responseでHTTP/2 flow-controlによる送信停止とWINDOW_UPDATE往復を減らす。どちらも `grpc_lite.http2_stream_window_size` / `grpc_lite.http2_connection_window_size` INIで調整可能にする。
 - slow consumer時はPHPが次messageを要求するまで追加readとWINDOW_UPDATE送信を進めず、transport側でbackpressureをかける。
 - `cancel()` はactive streamへ `RST_STREAM(CANCEL)` を送る。
 
@@ -162,6 +162,8 @@ HTTP/2 resourceの所有権はC extension側に閉じる。`grpc_call` per-call 
 `timeout` / `grpc-timeout` はconnect、TLS handshake、RPC send/recvに適用する。ただしDNS解決はlibc `getaddrinfo()` の同期呼び出しであり、C extension内では途中中断できない。DNS解決が長時間blockする環境では、OS resolver設定、host cache、または将来のasync resolver/c-ares導入で扱う。
 
 response message sizeは `grpc.max_receive_message_length` で制御する。channel optionを基本とし、call optionで上書きできる。未指定時は64MiBを上限にし、`-1` は上限なしとして扱う。上限超過は `STATUS_RESOURCE_EXHAUSTED` として返し、unary pathではbody集約前にgRPC frame headerを検査して過大messageを捨てる。
+
+response metadata sizeは `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` channel optionで制御する。未指定時のhard limitは64KiB。超過時は `STATUS_RESOURCE_EXHAUSTED` とし、streamをcancelしてconnectionは再利用しない。
 
 ## Multiplex PoC
 

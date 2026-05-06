@@ -433,7 +433,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         return SUCCESS;
     }
     array_init(&result);
-    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(framed), ZSTR_LEN(framed), &call->metadata, timeout_us, channel->max_receive_message_length, true, persistent_reused, &result) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(framed), ZSTR_LEN(framed), &call->metadata, timeout_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
         zend_string_release(framed);
         zend_string_release(key);
         zval_ptr_dtor(&result);
@@ -523,6 +523,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
             credentials->private_key != NULL ? ZSTR_VAL(credentials->private_key) : NULL,
             credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
             channel->max_receive_message_length,
+            channel->max_response_metadata_bytes,
             channel->authority != NULL ? ZSTR_VAL(channel->authority) : NULL,
             channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
             channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,

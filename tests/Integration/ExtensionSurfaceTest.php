@@ -123,6 +123,23 @@ final class ExtensionSurfaceTest extends TestCase
         self::assertSame('test-server:50051', $channel->getTarget());
     }
 
+    public function testChannelRejectsInvalidMetadataLimitOptions(): void
+    {
+        $this->expectException(\Throwable::class);
+
+        new Channel('test-server:50051', [
+            'credentials' => ChannelCredentials::createInsecure(),
+            'grpc.max_metadata_size' => 1024,
+            'grpc.absolute_max_metadata_size' => 512,
+        ]);
+    }
+
+    public function testHttp2WindowIniEntriesAreRegistered(): void
+    {
+        self::assertSame('8388608', ini_get('grpc_lite.http2_stream_window_size'));
+        self::assertSame('8388608', ini_get('grpc_lite.http2_connection_window_size'));
+    }
+
     public function testCallRejectsInvalidMethodPathAndUninitializedUse(): void
     {
         $channel = new Channel('test-server:50051', [

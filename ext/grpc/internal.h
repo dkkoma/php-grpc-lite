@@ -7,6 +7,7 @@
  */
 
 #include <php.h>
+#include <php_ini.h>
 #include <ext/standard/info.h>
 #include <ext/standard/base64.h>
 #include <Zend/zend_exceptions.h>
@@ -101,6 +102,7 @@ typedef struct {
     zend_string *tls_verify_name;
     zend_string *primary_user_agent;
     zend_long max_receive_message_length;
+    size_t max_response_metadata_bytes;
     zval credentials;
     bool initialized;
     zend_object std;
@@ -395,6 +397,7 @@ struct _grpc_call {
     metadata_entry *metadata_tail;
     size_t metadata_entry_count;
     size_t metadata_bytes;
+    size_t max_response_metadata_bytes;
     size_t response_parse_offset;
     uint8_t response_header_buf[5];
     size_t response_header_len;
@@ -514,6 +517,7 @@ static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
 static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
 static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length);
+static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit);
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
@@ -563,8 +567,8 @@ static void free_metadata_entries(grpc_call *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
 static void cleanup_grpc_call(grpc_call *client);
 
-static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool connection_reused, bool persistent_reused, zval *return_value);
-static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value);
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);
+static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value);
 static int server_streaming_call_next_resource(zval *stream_zv, zval *return_value);
 static int server_streaming_call_cancel_resource(zval *stream_zv);
 static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key);
@@ -573,6 +577,8 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_connections;
     bool persistent_connections_initialized;
     zend_string *default_roots_pem;
+    zend_long http2_stream_window_size;
+    zend_long http2_connection_window_size;
 ZEND_END_MODULE_GLOBALS(grpc_lite)
 
 ZEND_EXTERN_MODULE_GLOBALS(grpc_lite)

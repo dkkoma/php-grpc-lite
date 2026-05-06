@@ -1,7 +1,7 @@
 /* Unary gRPC client call execution over an HTTP/2 connection. Included by main.c. */
 
 #include "internal.h"
-static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool connection_reused, bool persistent_reused, zval *return_value)
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value)
 {
     grpc_call client;
     nghttp2_data_provider data_provider;
@@ -39,6 +39,7 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
     client.request = (const uint8_t *) request;
     client.request_len = request_len;
     client.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
+    client.max_response_metadata_bytes = max_response_metadata_bytes;
     total_started = monotonic_us();
     client.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
     if (set_socket_timeout_us(connection->fd, timeout_us) != 0) {

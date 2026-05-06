@@ -8,6 +8,11 @@ ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 
 static int le_server_streaming_call_state;
 
+PHP_INI_BEGIN()
+    STD_PHP_INI_ENTRY("grpc_lite.http2_stream_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_stream_window_size, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_ENTRY("grpc_lite.http2_connection_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_connection_window_size, zend_grpc_lite_globals, grpc_lite_globals)
+PHP_INI_END()
+
 #include "surface.c"
 #include "transport.c"
 #include "unary_call.c"
@@ -29,6 +34,8 @@ PHP_GINIT_FUNCTION(grpc_lite)
     zend_hash_init(&grpc_lite_globals->persistent_connections, 8, NULL, NULL, 1);
     grpc_lite_globals->persistent_connections_initialized = true;
     grpc_lite_globals->default_roots_pem = NULL;
+    grpc_lite_globals->http2_stream_window_size = 8 * 1024 * 1024;
+    grpc_lite_globals->http2_connection_window_size = 8 * 1024 * 1024;
 }
 
 PHP_GSHUTDOWN_FUNCTION(grpc_lite)
@@ -57,6 +64,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
 #ifdef SIGPIPE
     signal(SIGPIPE, SIG_IGN);
 #endif
+    REGISTER_INI_ENTRIES();
     le_server_streaming_call_state = zend_register_list_destructors_ex(server_streaming_call_state_dtor, NULL, "grpc_lite_server_streaming_call_state", module_number);
 
     memcpy(&grpc_channel_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
@@ -145,6 +153,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
 
 PHP_MSHUTDOWN_FUNCTION(grpc_lite)
 {
+    UNREGISTER_INI_ENTRIES();
     return SUCCESS;
 }
 
@@ -152,6 +161,8 @@ PHP_MINFO_FUNCTION(grpc_lite)
 {
     php_info_print_table_start();
     php_info_print_table_row(2, "grpc_lite bridge", "enabled");
+    php_info_print_table_row(2, "grpc_lite.http2_stream_window_size", INI_STR("grpc_lite.http2_stream_window_size"));
+    php_info_print_table_row(2, "grpc_lite.http2_connection_window_size", INI_STR("grpc_lite.http2_connection_window_size"));
     php_info_print_table_end();
 }
 

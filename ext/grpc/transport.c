@@ -11,10 +11,12 @@
 
 #define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
 #define GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE 65535
-#define GRPC_LITE_HTTP2_RECEIVE_WINDOW_SIZE (8 * 1024 * 1024)
+#define GRPC_LITE_HTTP2_MAX_WINDOW_SIZE 2147483647L
 #define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
-#define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
+#define GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES (64 * 1024)
+#define GRPC_LITE_DEFAULT_METADATA_SOFT_BYTES (8 * 1024)
+#define GRPC_LITE_DEFAULT_METADATA_HARD_BYTES (16 * 1024)
 #define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
 
 static void destroy_h2_connection(h2_connection *connection);
@@ -43,6 +45,8 @@ static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
 static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
 static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length);
+static uint32_t effective_http2_window_size(zend_long configured);
+static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit);
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
@@ -601,6 +605,35 @@ static size_t effective_max_receive_message_bytes(zend_long max_receive_message_
     return GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES;
 }
 
+static uint32_t effective_http2_window_size(zend_long configured)
+{
+    if (configured < GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE) {
+        return GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE;
+    }
+    if (configured > GRPC_LITE_HTTP2_MAX_WINDOW_SIZE) {
+        return GRPC_LITE_HTTP2_MAX_WINDOW_SIZE;
+    }
+    return (uint32_t) configured;
+}
+
+static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit)
+{
+    if (hard_limit >= 0) {
+        return (size_t) hard_limit;
+    }
+    if (soft_limit >= 0) {
+        double derived = (double) soft_limit * 1.25;
+        if (derived > (double) SIZE_MAX) {
+            return SIZE_MAX;
+        }
+        if (derived < GRPC_LITE_DEFAULT_METADATA_HARD_BYTES) {
+            return GRPC_LITE_DEFAULT_METADATA_HARD_BYTES;
+        }
+        return (size_t) derived;
+    }
+    return GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES;
+}
+
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us)
 {
     while (true) {
@@ -950,6 +983,8 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
     h2_connection *connection;
     grpc_call open_client;
     int rv;
+    uint32_t stream_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_stream_window_size));
+    uint32_t connection_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_connection_window_size));
 
     connection = pecalloc(1, sizeof(h2_connection), persistent);
     connection->persistent = persistent;
@@ -997,7 +1032,7 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
     {
         nghttp2_settings_entry settings[] = {
             { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
-            { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, GRPC_LITE_HTTP2_RECEIVE_WINDOW_SIZE },
+            { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, stream_window_size },
         };
         rv = nghttp2_submit_settings(connection->session, NGHTTP2_FLAG_NONE, settings, sizeof(settings) / sizeof(settings[0]));
         if (rv != 0) {
@@ -1005,11 +1040,13 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
             *error_message = "failed to submit HTTP/2 settings";
             return NULL;
         }
-        rv = nghttp2_submit_window_update(connection->session, NGHTTP2_FLAG_NONE, 0, GRPC_LITE_HTTP2_RECEIVE_WINDOW_SIZE - GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE);
-        if (rv != 0) {
-            destroy_h2_connection(connection);
-            *error_message = "failed to expand HTTP/2 connection receive window";
-            return NULL;
+        if (connection_window_size > GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE) {
+            rv = nghttp2_submit_window_update(connection->session, NGHTTP2_FLAG_NONE, 0, connection_window_size - GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE);
+            if (rv != 0) {
+                destroy_h2_connection(connection);
+                *error_message = "failed to expand HTTP/2 connection receive window";
+                return NULL;
+            }
         }
     }
     rv = nghttp2_session_send(connection->session);
@@ -2247,8 +2284,8 @@ static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t nam
     }
     if (client->metadata_too_large
         || client->metadata_entry_count >= GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES
-        || entry_bytes > GRPC_LITE_MAX_RESPONSE_METADATA_BYTES
-        || client->metadata_bytes > GRPC_LITE_MAX_RESPONSE_METADATA_BYTES - entry_bytes) {
+        || entry_bytes > client->max_response_metadata_bytes
+        || client->metadata_bytes > client->max_response_metadata_bytes - entry_bytes) {
         client->metadata_too_large = true;
         client->discard_response_body = true;
         if (client->stream_id > 0) {

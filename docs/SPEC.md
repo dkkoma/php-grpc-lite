@@ -78,7 +78,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 | Call 種別 | 関数 | 理由 |
 |---|---|---|
 | Unary | persistent HTTP/2 connection + 1 HTTP/2 stream | 単発往復。C側でHTTP/2 session/socketをprocess-local / thread-localに再利用する |
-| Server streaming | HTTP/2 stream resource + Generator pull | message単位でyieldする。client receive windowは8MiBに広げ、slow consumer時はread/WINDOW_UPDATE進行を抑える |
+| Server streaming | HTTP/2 stream resource + Generator pull | message単位でyieldする。client receive stream / connection windowは既定8MiBに広げ、INIで調整可能。slow consumer時はread/WINDOW_UPDATE進行を抑える |
 | Client streaming(後回し) | 未実装 | 後続フェーズで設計 |
 | Bidi streaming(後回し) | 未実装 | 後続フェーズで設計 |
 
@@ -217,6 +217,8 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 gRPC metadata は同一 key に複数 values を持てる。php-grpc-lite の PHP API では request / initial / trailing / status metadata を `array<string, list<string>>` として扱い、同一 key 複数 values の順序と内容を保持する。`*-bin` metadata は PHP API 上 raw binary values、HTTP/2 wire 上 base64 values とし、response 側で comma-joined binary metadata を受けた場合も split して複数 raw binary values として返す。
 
 2026-05-04 の観測では、公式 ext-grpc PHP API は同一 key 複数 values の最後 value のみを返した。これは gRPC Core / HTTP/2 metadata semantics ではなく PHP extension surface の情報落ちとして扱う。drop-in 互換のために php-grpc-lite 側で metadata values を最後値へ畳む処理は入れない。
+
+response metadata size は `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` channel optionで制御する。未指定時のphp-grpc-lite既定hard limitは64KiB。`grpc.absolute_max_metadata_size` があればそれをhard limitとし、soft limitのみ指定された場合は公式gRPC Coreと同じく `max(16KiB, soft * 1.25)` をhard limitとして扱う。超過時は `RESOURCE_EXHAUSTED` を返し、該当streamはcancelする。
 
 ### 6.2 Request metadata control policy
 
