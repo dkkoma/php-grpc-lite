@@ -242,17 +242,8 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
         mark_channel_dead(channel, rv);
-        if (client.timed_out) {
-            clear_channel_call_owner(channel, &client);
-            free_request_headers(&request_headers);
-            recv_loop_us = 0;
-            goto build_unary_result;
-        }
-        clear_channel_call_owner(channel, &client);
-        free_request_headers(&request_headers);
-        cleanup_grpc_call(&client);
-        zend_throw_exception(NULL, "nghttp2_session_send failed", 0);
-        return FAILURE;
+        recv_loop_us = 0;
+        goto build_unary_result;
     }
 
     recv_loop_started = monotonic_us();
@@ -616,18 +607,47 @@ static void grpc_lite_channel_free_object(zend_object *object)
     zend_object_std_dtor(&obj->std);
 }
 
+static int parse_target_port(const char *value, size_t len, zend_long *port)
+{
+    zend_long parsed = 0;
+    size_t i;
+
+    if (len == 0) {
+        return FAILURE;
+    }
+    for (i = 0; i < len; i++) {
+        unsigned char ch = (unsigned char) value[i];
+        if (ch < '0' || ch > '9') {
+            return FAILURE;
+        }
+        parsed = parsed * 10 + (zend_long) (ch - '0');
+        if (parsed > 65535) {
+            return FAILURE;
+        }
+    }
+    if (parsed <= 0) {
+        return FAILURE;
+    }
+    *port = parsed;
+    return SUCCESS;
+}
+
 static int split_target_to_host_port(zend_string *target, zend_string **host, zend_long *port)
 {
     const char *value = ZSTR_VAL(target);
     size_t len = ZSTR_LEN(target);
     const char *colon = memrchr(value, ':', len);
+    size_t port_len;
     if (colon == NULL || colon == value || colon == value + len - 1) {
         *host = zend_string_copy(target);
         *port = 443;
         return SUCCESS;
     }
+    port_len = (size_t) (value + len - colon - 1);
+    if (parse_target_port(colon + 1, port_len, port) != SUCCESS) {
+        return FAILURE;
+    }
     *host = zend_string_init(value, (size_t) (colon - value), 0);
-    *port = zend_atol(colon + 1, (size_t) (value + len - colon - 1));
     return SUCCESS;
 }
 
@@ -653,7 +673,10 @@ PHP_METHOD(Channel, __construct)
         RETURN_THROWS();
     }
     obj->target = zend_string_copy(target);
-    split_target_to_host_port(target, &obj->host, &obj->port);
+    if (split_target_to_host_port(target, &obj->host, &obj->port) != SUCCESS) {
+        zend_throw_exception(NULL, "invalid gRPC target port", 0);
+        RETURN_THROWS();
+    }
     ZVAL_COPY(&obj->credentials, credentials);
 
     authority = zend_hash_str_find(Z_ARRVAL_P(opts), "grpc.default_authority", sizeof("grpc.default_authority") - 1);
