@@ -1,21 +1,21 @@
 {
-    "name": "php-grpc-lite/php-grpc-lite",
-    "description": "ext-grpc drop-in replacement candidate: PHP gRPC client with source-build HTTP/2 transport",
-    "type": "library",
+    "name": "dkkoma/php-grpc-lite",
+    "description": "Source-built grpc extension for PHP: php-grpc-lite HTTP/2 transport drop-in candidate for ext-grpc",
+    "type": "php-ext",
     "license": "MIT",
     "require": {
-        "php": ">=8.4",
-        "grpc/grpc": "^1.80"
+        "php": ">=8.4"
     },
     "require-dev": {
+        "grpc/grpc": "^1.80",
         "google/cloud-spanner": "^2.6",
         "google/protobuf": "^4.0",
         "phpbench/phpbench": "^1.6",
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
-        "ext-protobuf": "Use the protobuf C extension for faster serialization",
-        "ext-grpc": "Build and load this repository's ext/grpc source as grpc.so before relying on the ext-grpc provide entry"
+        "grpc/grpc": "Install the official PHP wrapper package in applications that use generated stubs or gax clients",
+        "ext-protobuf": "Use the protobuf C extension for faster serialization"
     },
     "autoload-dev": {
         "psr-4": {
@@ -31,5 +31,11 @@
         "platform": {
             "ext-grpc": "1.62.0"
         }
+    },
+    "php-ext": {
+        "extension-name": "grpc",
+        "build-path": "ext/grpc",
+        "support-nts": true,
+        "support-zts": true
     }
 }

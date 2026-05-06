@@ -1,6 +1,6 @@
 # php-grpc-lite
 
-`php-grpc-lite` is a PHP gRPC client implementation aiming to be a drop-in replacement for official `ext-grpc` in selected client workloads.
+`php-grpc-lite` is a source-built PHP extension aiming to be a drop-in replacement for official `ext-grpc` in selected client workloads.
 
 Current review status:
 
@@ -14,13 +14,21 @@ Current review status:
 
 ## Install
 
-Install the official PHP wrapper dependency with Composer:
+Install the extension with PIE:
+
+```bash
+pie install dkkoma/php-grpc-lite
+```
+
+Then enable `extension=grpc` if PIE did not enable it automatically.
+
+Applications that use generated stubs or gax clients should also install the official PHP wrapper dependency with Composer:
 
 ```bash
 composer require grpc/grpc
 ```
 
-Build the source-built grpc extension from this repository:
+For local source builds without PIE:
 
 ```bash
 git clone <php-grpc-lite repository URL> php-grpc-lite
@@ -30,8 +38,6 @@ phpize
 make -j"$(nproc)"
 sudo make install
 ```
-
-Then enable `extension=grpc.so` in PHP.
 
 Full install notes, verification commands, rollback notes, and large-streaming guidance are in `docs/install-native-extension.md`.
 
@@ -62,6 +68,14 @@ Verify source install on the official Docker Hub `php` image:
 docker build -f Dockerfile.install-grpc -t php-grpc-lite-install-grpc .
 docker run --rm php-grpc-lite-install-grpc php -m | grep -x grpc
 docker run --rm php-grpc-lite-install-grpc php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
+```
+
+Verify PIE install on the official Docker Hub `php` image:
+
+```bash
+docker build -f Dockerfile.install-pie -t php-grpc-lite-install-pie .
+docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
+docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 ```
 
 Design and QA status:

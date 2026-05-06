@@ -164,12 +164,10 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 ### 5.3 ビルド/配布
 
 - 開発時: ローカルビルド(`phpize && ./configure && make`)
-- 配布: 最終的に PIE(`pecl/pie`)経由
-  - `grpc-php-rs` はroot package自体を `type: php-ext` にして `pie install bsn4/grpc` 可能にしている。
-  - このrepositoryはPHP userland libraryも同居するため、root packageを `type: php-ext` へ変えない。PIE対応はextension packageを分ける。
-  - 想定package分割:
-    - `php-grpc-lite/php-grpc-lite`: Composer library。`Grpc\*` userland APIを提供。
-    - `php-grpc-lite/grpc-extension`: PIE用 `type: php-ext` package。module名は `grpc`、sourceは `ext/grpc/`。
+- 配布: PIE経由
+  - root package自体を `type: php-ext` とし、`pie install dkkoma/php-grpc-lite` で `grpc.so` をbuild/installする。
+  - `php-ext.extension-name` は `grpc`、`php-ext.build-path` は `ext/grpc`。
+  - 高レベル `Grpc\*` wrapper は公式 `grpc/grpc` Composer packageをアプリ側で導入する。このrepository packageはComposer libraryとしてautoloadされるruntime codeを提供しない。
   - first releaseはsource buildを基本にし、pre-packaged binary配布はCI matrixとrelease artifact整備後に判断する。
 
 ### 5.4 Composer library と extension の分担

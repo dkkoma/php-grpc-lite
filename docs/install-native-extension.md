@@ -1,18 +1,18 @@
 # Native extension install guide
 
-`php-grpc-lite` のPHP userland実装はComposerで導入し、HTTP/2 transport extensionはこのrepositoryをcloneしてsource buildする。
+`php-grpc-lite` はPIEでinstallするPHP extension packageとして扱う。アプリケーション側の高レベルPHP wrapperは公式 `grpc/grpc` Composer packageを使う。
 
 このextensionはPHP module名として `grpc` を使い、`grpc.so` を生成する。これはdrop-in検証のために `extension_loaded('grpc')` を満たす設計であり、公式 `grpc/grpc` の `ext-grpc` と同時にloadしてはいけない。
 
 ## Install model
 
-- PHP classes: Composer package `php-grpc-lite/php-grpc-lite` が `Grpc\*` API surfaceをautoloadする。
-- Native extension: このrepositoryの `ext/grpc/` を `phpize` でbuildする。
+- PHP classes: 高レベル wrapper は公式 `grpc/grpc` Composer package が提供する。このpackage自体はComposer autoload用runtime codeを提供しない。
+- Native extension: このrepository package自体を `type: php-ext` としてPIEでbuild/installする。sourceは `ext/grpc/`。
 - Runtime transport: HTTP/2 transportのみ。release readiness is still gated by C extension memory/lifecycle QA.
-- Composer metadata: package は `ext-grpc` を `provide` するが、Composerはsource-built grpc extensionをbuild/loadしない。source buildと `extension=grpc.so` の有効化を完了してから、drop-in replacementとして扱う。
-- PIE packaging: `grpc-php-rs` はroot packageを `type: php-ext` にして `pie install bsn4/grpc` を提供している。このrepositoryはPHP userland libraryとextension sourceを同居させるため、root packageは `type: library` のままにし、PIE対応時は別のextension packageとして切り出す。
+- Composer metadata: root package は `type: php-ext`、`php-ext.extension-name: grpc`、`php-ext.build-path: ext/grpc` を持つ。Composer libraryとしてautoloadされるruntime codeは提供しない。
+- PIE packaging: `pie install dkkoma/php-grpc-lite` を主install経路にする。PIEは `phpize` / `./configure` / `make` / `make install` を実行する。
 - Rollback:
-  - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc.so` を無効化し、公式側の `grpc.so` を有効化する。
+  - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc` を無効化し、公式側の `grpc.so` を有効化する。
 
 ## Requirements
 
@@ -29,7 +29,23 @@ Debian系の例:
 sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev
 ```
 
-## PHP userland code
+## Install with PIE
+
+依存ライブラリを先に入れる。
+
+```bash
+sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev
+```
+
+PIEでextensionをinstallする。
+
+```bash
+pie install dkkoma/php-grpc-lite
+```
+
+PIEが自動で有効化しない環境では、install先に合わせて `extension=grpc` をPHP設定へ追加する。
+
+## PHP userland wrapper
 
 アプリケーションにはComposerでPHP codeを入れる。
 
@@ -39,9 +55,9 @@ composer require grpc/grpc
 
 `Grpc\BaseStub`、`Grpc\UnaryCall`、`Grpc\ServerStreamingCall` などの高レベル wrapper は公式 `grpc/grpc` Composer package が提供する。`Grpc\Channel`、`Grpc\Call`、credentials、`Grpc\Timeval`、`Grpc\STATUS_*` などの低レベルsurfaceは、このrepositoryのsource-built grpc extensionが提供する。
 
-## Build source-built grpc extension
+## Build source-built grpc extension without PIE
 
-このrepositoryをcloneし、`ext/grpc/` をbuildする。
+PIEを使わずに検証する場合は、このrepositoryをcloneし、`ext/grpc/` をbuildする。
 
 ```bash
 git clone <php-grpc-lite repository URL> php-grpc-lite
@@ -59,19 +75,27 @@ docker compose run --rm dev sh -lc 'cd ext/grpc && phpize && ./configure --enabl
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 ```
 
+公式 `php` image上でPIE install手順を検証する場合:
+
+```bash
+docker build -f Dockerfile.install-pie -t php-grpc-lite-install-pie .
+docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
+docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
+```
+
 ## Enable extension
 
-`make install` が出力したinstall先に合わせて、PHPの設定へ `extension=grpc.so` を追加する。
+PIEまたは `make install` が出力したinstall先に合わせて、必要ならPHPの設定へ `extension=grpc` を追加する。
 
 例:
 
 ```bash
-echo 'extension=grpc.so' | sudo tee /etc/php/conf.d/20-php-grpc-lite.ini
+echo 'extension=grpc' | sudo tee /etc/php/conf.d/20-php-grpc-lite.ini
 php -m | grep '^grpc$'
 php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 ```
 
-公式 `ext-grpc` が既に有効な環境では、先に公式側の `extension=grpc.so` 設定を外す。同名moduleなので同時loadはできない。
+公式 `ext-grpc` が既に有効な環境では、先に公式側の `extension=grpc` 設定を外す。同名moduleなので同時loadはできない。
 
 ## Application usage
 
