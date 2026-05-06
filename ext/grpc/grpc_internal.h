@@ -275,6 +275,8 @@ typedef struct {
     nghttp2_nv *nva;
     size_t len;
     size_t capacity;
+    zend_string **name_strings;
+    size_t name_count;
     zend_string **value_strings;
     size_t value_count;
 } h2_request_headers;

@@ -146,6 +146,9 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
             if (client.timed_out) {
                 break;
             }
+            if (client.stream_closed) {
+                break;
+            }
             clear_channel_call_owner(channel, &client);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&client);

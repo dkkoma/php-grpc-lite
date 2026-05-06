@@ -1261,8 +1261,10 @@ static int init_request_headers(h2_request_headers *headers, size_t custom_value
     }
     headers->capacity = 7 + custom_values;
     headers->len = 0;
+    headers->name_count = 0;
     headers->value_count = 0;
     headers->nva = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(nghttp2_nv));
+    headers->name_strings = custom_values > 0 ? ecalloc(custom_values, sizeof(zend_string *)) : NULL;
     headers->value_strings = custom_values > 0 ? ecalloc(custom_values, sizeof(zend_string *)) : NULL;
     return 0;
 }
@@ -1352,7 +1354,7 @@ static bool is_invalid_custom_request_header_value(zend_string *value)
     length = ZSTR_LEN(value);
     for (index = 0; index < length; index++) {
         unsigned char ch = (unsigned char) bytes[index];
-        if (ch == '\r' || ch == '\n' || ch >= 0x80) {
+        if (ch < 0x20 || ch == 0x7f || ch >= 0x80) {
             return true;
         }
     }
@@ -1362,6 +1364,7 @@ static bool is_invalid_custom_request_header_value(zend_string *value)
 static int append_custom_request_header_value(h2_request_headers *headers, zend_string *key, zval *value)
 {
     zend_string *value_str = zval_get_string(value);
+    zend_string *name_str;
 
     if (EG(exception) || value_str == NULL) {
         return -1;
@@ -1371,10 +1374,14 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
         zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
         return -1;
     }
+    name_str = zend_string_copy(key);
+    if (headers->name_strings != NULL) {
+        headers->name_strings[headers->name_count++] = name_str;
+    }
     if (headers->value_strings != NULL) {
         headers->value_strings[headers->value_count++] = value_str;
     }
-    append_request_header(headers, ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    append_request_header(headers, ZSTR_VAL(name_str), ZSTR_LEN(name_str), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
     return 0;
 }
 
@@ -1413,6 +1420,14 @@ static int append_custom_request_headers(h2_request_headers *headers, zval *head
 static void free_request_headers(h2_request_headers *headers)
 {
     size_t i;
+    if (headers->name_strings != NULL) {
+        for (i = 0; i < headers->name_count; i++) {
+            if (headers->name_strings[i] != NULL) {
+                zend_string_release(headers->name_strings[i]);
+            }
+        }
+        efree(headers->name_strings);
+    }
     if (headers->value_strings != NULL) {
         for (i = 0; i < headers->value_count; i++) {
             if (headers->value_strings[i] != NULL) {
@@ -1425,9 +1440,11 @@ static void free_request_headers(h2_request_headers *headers)
         efree(headers->nva);
     }
     headers->nva = NULL;
+    headers->name_strings = NULL;
     headers->value_strings = NULL;
     headers->len = 0;
     headers->capacity = 0;
+    headers->name_count = 0;
     headers->value_count = 0;
 }
 

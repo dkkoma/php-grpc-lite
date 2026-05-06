@@ -203,8 +203,8 @@ abstract class AbstractCall
         if ($this->isBinaryMetadataKey($key)) {
             return;
         }
-        if (str_contains($value, "\r") || str_contains($value, "\n")) {
-            throw new \InvalidArgumentException("invalid metadata value for '$key': CR/LF is not allowed");
+        if (preg_match('/[\x00-\x1f\x7f]/', $value) === 1) {
+            throw new \InvalidArgumentException("invalid metadata value for '$key': control characters are not allowed");
         }
         if (preg_match('/[^\x00-\x7f]/', $value) === 1) {
             throw new \InvalidArgumentException("invalid metadata value for '$key': non-ASCII is not allowed");

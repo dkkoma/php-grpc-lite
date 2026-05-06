@@ -238,7 +238,8 @@ final class Http2Transport
 
         $metadata = self::extractInitialMetadata($result);
         $httpStatus = (int) ($result['http_status'] ?? 0);
-        if ($httpStatus !== 0 && $httpStatus !== 200) {
+        $grpcStatus = (int) ($result['grpc_status'] ?? -1);
+        if ($httpStatus !== 0 && $httpStatus !== 200 && $grpcStatus < 0) {
             return [self::mapHttpStatusToGrpcStatus($httpStatus), "HTTP status $httpStatus without grpc-status"];
         }
 
@@ -287,7 +288,6 @@ final class Http2Transport
             return [\Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'];
         }
 
-        $grpcStatus = (int) ($result['grpc_status'] ?? -1);
         if ($grpcStatus >= 0) {
             $message = $result['grpc_message'] ?? '';
             return [$grpcStatus, is_string($message) ? rawurldecode($message) : ''];
