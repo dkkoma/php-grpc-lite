@@ -165,6 +165,33 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 
 - 開発時: ローカルビルド(`phpize && ./configure && make`)
 - 配布: 最終的に PIE(`pecl/pie`)経由
+  - `grpc-php-rs` はroot package自体を `type: php-ext` にして `pie install bsn4/grpc` 可能にしている。
+  - このrepositoryはPHP userland libraryも同居するため、root packageを `type: php-ext` へ変えない。PIE対応はextension packageを分ける。
+  - 想定package分割:
+    - `php-grpc-lite/php-grpc-lite`: Composer library。`Grpc\*` userland APIを提供。
+    - `php-grpc-lite/grpc-extension`: PIE用 `type: php-ext` package。module名は `grpc`、sourceは `ext/grpc/`。
+  - first releaseはsource buildを基本にし、pre-packaged binary配布はCI matrixとrelease artifact整備後に判断する。
+
+### 5.4 Composer library と extension の分担
+
+公式 `ext-grpc` は `grpc.so` だけで全PHP surfaceを提供するわけではない。低レベルの transport object と定数は拡張側、generated stub が直接使う高レベル wrapper は Composer library 側に分かれている。
+
+このrepositoryも同じ分担へ寄せる。
+
+| surface | 公式の所有者 | php-grpc-liteの目標 |
+|---|---|---|
+| `Grpc\Channel` | extension | extension側で登録 |
+| `Grpc\Call` | extension | extension側で登録または互換上不要なら明示的にscope外 |
+| `Grpc\ChannelCredentials` | extension | extension側で登録 |
+| `Grpc\CallCredentials` | extension | extension側で登録 |
+| `Grpc\Timeval` | extension | extension側で登録 |
+| `Grpc\STATUS_*` / `CALL_*` / `OP_*` / `CHANNEL_*` / `VERSION` | extension | extension側で登録 |
+| `Grpc\BaseStub` | Composer library | Composer library側 |
+| `Grpc\AbstractCall` / `UnaryCall` / `ServerStreamingCall` | Composer library | Composer library側 |
+| `Grpc\ClientStreamingCall` / `BidiStreamingCall` | Composer library | Composer library側で未実装例外 |
+| `Grpc\Interceptor*` / `CallInvoker` | Composer library | Composer library側 |
+
+短期的にはPHP実装済みの `Grpc\Channel` / credentials / `Timeval` / constants をC拡張へ移し、Composer libraryから同名class/constant定義を外す。これにより `grpc/grpc` や `grpc-php-rs` と同じ配布モデルに近づき、PIE用extension packageを独立させやすくする。
 
 ---
 

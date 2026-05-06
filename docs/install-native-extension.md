@@ -10,6 +10,7 @@
 - Native extension: このrepositoryの `ext/grpc/` を `phpize` でbuildする。
 - Runtime transport: HTTP/2 transportのみ。release readiness is still gated by C extension memory/lifecycle QA.
 - Composer metadata: package は `ext-grpc` を `provide` するが、Composerはsource-built grpc extensionをbuild/loadしない。source buildと `extension=grpc.so` の有効化を完了してから、drop-in replacementとして扱う。
+- PIE packaging: `grpc-php-rs` はroot packageを `type: php-ext` にして `pie install bsn4/grpc` を提供している。このrepositoryはPHP userland libraryとextension sourceを同居させるため、root packageは `type: library` のままにし、PIE対応時は別のextension packageとして切り出す。
 - Rollback:
   - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc.so` を無効化し、公式側の `grpc.so` を有効化する。
 
@@ -36,7 +37,7 @@ sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl
 composer require php-grpc-lite/php-grpc-lite
 ```
 
-`Grpc\Channel`、`Grpc\BaseStub`、`Grpc\ChannelCredentials` などのclassはComposer autoloadが提供する。source-built grpc extensionはこれらのclassをCで登録しない。
+`Grpc\BaseStub`、`Grpc\UnaryCall`、`Grpc\ServerStreamingCall` などの高レベル wrapper はComposer autoloadが提供する。`Grpc\Channel`、credentials、`Grpc\Timeval`、`Grpc\STATUS_*` などの低レベルsurfaceは、公式 `ext-grpc` と同じくsource-built grpc extension側で提供する方針へ移行する。
 
 ## Build source-built grpc extension
 
