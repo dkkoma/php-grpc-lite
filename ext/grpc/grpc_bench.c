@@ -797,11 +797,7 @@ static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, co
     }
 
     if (client->bench.poll_loop) {
-        int write_rv = write_data_frame_nonblocking(client, framehd, length);
-        if (write_rv == NGHTTP2_ERR_WOULDBLOCK) {
-            return NGHTTP2_ERR_WOULDBLOCK;
-        }
-        if (write_rv != 0) {
+        if (write_data_frame(client, framehd, length) != 0) {
             return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
     } else if (write_data_frame(client, framehd, length) != 0) {
@@ -1427,6 +1423,18 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
 
     if (iterations < 1) {
         zend_throw_exception(NULL, "iterations must be positive", 0);
+        RETURN_THROWS();
+    }
+    if (timeout_us < 0) {
+        zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
+        RETURN_THROWS();
+    }
+    if (data_frame_size < 0 || data_frame_size > 0x3fff) {
+        zend_throw_exception(NULL, "data_frame_size must be between 0 and 16383", 0);
+        RETURN_THROWS();
+    }
+    if (recv_stream_window_size < 0 || recv_connection_window_size < 0 || recv_buffer_size < 0) {
+        zend_throw_exception(NULL, "receive sizes must be non-negative", 0);
         RETURN_THROWS();
     }
     if (response_callback_zv != NULL && Z_TYPE_P(response_callback_zv) != IS_NULL) {

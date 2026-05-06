@@ -160,6 +160,9 @@ static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
+        if (client.metadata_too_large) {
+            break;
+        }
         rv = nghttp2_session_send(channel->session);
         if (rv != 0) {
             mark_channel_dead(channel, rv);

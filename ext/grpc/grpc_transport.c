@@ -178,9 +178,13 @@ static void clear_channel_stream_owner(h2_stream *stream)
     if (channel->session != NULL) {
         nghttp2_session_set_user_data(channel->session, NULL);
     }
+    if (!channel_usable(channel)) {
+        detach_persistent_channel_by_ptr(channel);
+    }
     channel->busy = false;
     channel->active_stream_owner = NULL;
     stream->channel = NULL;
+    stream->client.channel = NULL;
     if (channel->detached_from_cache) {
         destroy_h2_channel(channel);
     }
@@ -664,6 +668,14 @@ static int configure_tls_channel(h2_channel *channel, const char *host, const ch
         set_channel_error_detail(channel, "failed to create SSL_CTX");
         return -1;
     }
+    if (SSL_CTX_set_min_proto_version(channel->ssl_ctx, TLS1_2_VERSION) != 1) {
+        set_channel_error_detail(channel, "failed to set TLS minimum protocol version");
+        return -1;
+    }
+    SSL_CTX_set_options(channel->ssl_ctx, SSL_OP_NO_COMPRESSION);
+#ifdef SSL_OP_NO_RENEGOTIATION
+    SSL_CTX_set_options(channel->ssl_ctx, SSL_OP_NO_RENEGOTIATION);
+#endif
     SSL_CTX_set_verify(channel->ssl_ctx, SSL_VERIFY_PEER, NULL);
 
     if (root_certs != NULL && root_certs_len > 0) {
@@ -929,7 +941,12 @@ static h2_channel *create_h2_channel(const char *host, zend_long port, const cha
         return NULL;
     }
 
-    nghttp2_submit_settings(channel->session, NGHTTP2_FLAG_NONE, NULL, 0);
+    {
+        nghttp2_settings_entry settings[] = {
+            { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
+        };
+        nghttp2_submit_settings(channel->session, NGHTTP2_FLAG_NONE, settings, sizeof(settings) / sizeof(settings[0]));
+    }
     rv = nghttp2_session_send(channel->session);
     if (rv != 0) {
         if (open_client.timed_out) {
@@ -1299,6 +1316,12 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
         if (client->initial_grpc_status_seen && !client->initial_headers_end_stream) {
             client->invalid_grpc_status = true;
             client->discard_response_body = true;
+        }
+    } else if (frame->hd.type == NGHTTP2_PUSH_PROMISE && frame->hd.stream_id == client->stream_id) {
+        client->malformed_response_frame = true;
+        client->discard_response_body = true;
+        if (session != NULL && client->stream_id > 0) {
+            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_PROTOCOL_ERROR);
         }
     }
     return 0;
@@ -2008,6 +2031,13 @@ static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t nam
         || entry_bytes > GRPC_LITE_MAX_RESPONSE_METADATA_BYTES
         || client->metadata_bytes > GRPC_LITE_MAX_RESPONSE_METADATA_BYTES - entry_bytes) {
         client->metadata_too_large = true;
+        client->discard_response_body = true;
+        if (client->stream_id > 0) {
+            nghttp2_session *session = client->channel != NULL ? client->channel->session : NULL;
+            if (session != NULL) {
+                nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            }
+        }
         return 0;
     }
 
