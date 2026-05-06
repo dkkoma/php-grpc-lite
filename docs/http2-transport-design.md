@@ -118,6 +118,7 @@ Requirements:
 - PHP userlandではchannel resource/socket/sessionを保持しない。
 - error/cancel/途中終了時はC側persistent channelをdead扱いにし、次RPCで新規接続する。
 - server streamingはC stream resourceをPHP Generatorがpullし、messageごとにyieldする。
+- client receive stream / connection windowは8MiBをdefaultにし、large responseでHTTP/2 flow-controlによる送信停止とWINDOW_UPDATE往復を減らす。
 - slow consumer時はPHPが次messageを要求するまで追加readとWINDOW_UPDATE送信を進めず、transport側でbackpressureをかける。
 - `cancel()` はactive streamへ `RST_STREAM(CANCEL)` を送る。
 

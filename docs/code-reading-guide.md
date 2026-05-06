@@ -149,6 +149,7 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_channe
 - response `*-bin` metadataのbase64 decode
 - gRPC 5B frame parse/build
 - deadlineをconnect、TLS handshake、read/write poll loopへ適用
+- client receive stream / connection windowを8MiBに広げ、large responseでWINDOW_UPDATE待ちを減らす
 - response size / metadata size上限
 - GOAWAY / EOF / RST_STREAM / protocol failure時のHTTP/2 connection lifecycle管理
 

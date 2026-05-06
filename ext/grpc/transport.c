@@ -10,6 +10,8 @@
  */
 
 #define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
+#define GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE 65535
+#define GRPC_LITE_HTTP2_RECEIVE_WINDOW_SIZE (8 * 1024 * 1024)
 #define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_MAX_RESPONSE_METADATA_BYTES (64 * 1024)
@@ -995,8 +997,20 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
     {
         nghttp2_settings_entry settings[] = {
             { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
+            { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, GRPC_LITE_HTTP2_RECEIVE_WINDOW_SIZE },
         };
-        nghttp2_submit_settings(connection->session, NGHTTP2_FLAG_NONE, settings, sizeof(settings) / sizeof(settings[0]));
+        rv = nghttp2_submit_settings(connection->session, NGHTTP2_FLAG_NONE, settings, sizeof(settings) / sizeof(settings[0]));
+        if (rv != 0) {
+            destroy_h2_connection(connection);
+            *error_message = "failed to submit HTTP/2 settings";
+            return NULL;
+        }
+        rv = nghttp2_submit_window_update(connection->session, NGHTTP2_FLAG_NONE, 0, GRPC_LITE_HTTP2_RECEIVE_WINDOW_SIZE - GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE);
+        if (rv != 0) {
+            destroy_h2_connection(connection);
+            *error_message = "failed to expand HTTP/2 connection receive window";
+            return NULL;
+        }
     }
     rv = nghttp2_session_send(connection->session);
     if (rv != 0) {

@@ -235,6 +235,14 @@ static int server_streaming_call_next_resource(zval *stream_zv, zval *return_val
             stream->completed = true;
             break;
         }
+        if (nghttp2_session_want_write(stream->connection->session)) {
+            rv = nghttp2_session_send(stream->connection->session);
+            if (rv != 0) {
+                mark_connection_dead(stream->connection, rv);
+                stream->completed = true;
+                break;
+            }
+        }
     }
 
     if (client->response_message_too_large || client->compressed_response_seen || client->malformed_response_frame || client->invalid_content_type || client->unsupported_response_encoding || client->metadata_too_large) {

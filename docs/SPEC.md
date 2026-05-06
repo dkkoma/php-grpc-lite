@@ -78,7 +78,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 | Call 種別 | 関数 | 理由 |
 |---|---|---|
 | Unary | persistent HTTP/2 connection + 1 HTTP/2 stream | 単発往復。C側でHTTP/2 session/socketをprocess-local / thread-localに再利用する |
-| Server streaming | HTTP/2 stream resource + Generator pull | message単位でyieldし、slow consumer時はread/WINDOW_UPDATE進行を抑える |
+| Server streaming | HTTP/2 stream resource + Generator pull | message単位でyieldする。client receive windowは8MiBに広げ、slow consumer時はread/WINDOW_UPDATE進行を抑える |
 | Client streaming(後回し) | 未実装 | 後続フェーズで設計 |
 | Bidi streaming(後回し) | 未実装 | 後続フェーズで設計 |
 
