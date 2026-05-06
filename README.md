@@ -56,6 +56,14 @@ docker compose run --rm dev sh -lc 'cd ext/grpc && phpize && ./configure --enabl
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_lite_unary"));'
 ```
 
+Verify source install on the official Docker Hub `php` image:
+
+```bash
+docker build -f Dockerfile.install-grpc -t php-grpc-lite-install-grpc .
+docker run --rm php-grpc-lite-install-grpc php -m | grep -x grpc
+docker run --rm php-grpc-lite-install-grpc php -r 'var_dump(extension_loaded("grpc"), function_exists("grpc_lite_unary"));'
+```
+
 Design and QA status:
 
 - `docs/SPEC.md`

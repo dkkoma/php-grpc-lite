@@ -1,0 +1,13 @@
+FROM php:8.4-cli-trixie
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libnghttp2-dev \
+        libssl-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ext/grpc/config.m4 ext/grpc/*.c ext/grpc/*.h /usr/src/php/ext/grpc/
+
+RUN docker-php-ext-install grpc
+
+CMD ["php", "-m"]
