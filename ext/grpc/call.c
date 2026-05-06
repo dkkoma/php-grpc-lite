@@ -1,5 +1,7 @@
 /* Official grpc/grpc wrapper Call bridge. Included by main.c. */
 
+#include "internal.h"
+
 static zend_long grpc_lite_call_timeout_us(grpc_lite_call_obj *call)
 {
     uint64_t now;

@@ -1,5 +1,7 @@
 /* Low-level diagnostic/direct API and unary transport bridge. Included by main.c. */
 
+#include "internal.h"
+
 static int le_h2_stream;
 
 static void terminate_stream_with_cancel(h2_stream *stream)

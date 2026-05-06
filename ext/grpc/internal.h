@@ -37,6 +37,138 @@
 typedef struct _h2_channel h2_channel;
 typedef struct _h2_stream h2_stream;
 
+static zend_class_entry *grpc_ce_channel;
+static zend_class_entry *grpc_ce_call;
+static zend_class_entry *grpc_ce_channel_credentials;
+static zend_class_entry *grpc_ce_call_credentials;
+static zend_class_entry *grpc_ce_timeval;
+static zend_object_handlers grpc_channel_handlers;
+static zend_object_handlers grpc_call_handlers;
+static zend_object_handlers grpc_channel_credentials_handlers;
+static zend_object_handlers grpc_call_credentials_handlers;
+static zend_object_handlers grpc_timeval_handlers;
+static zend_string *grpc_default_roots_pem;
+
+#define GRPC_STATUS_OK 0
+#define GRPC_STATUS_CANCELLED 1
+#define GRPC_STATUS_UNKNOWN 2
+#define GRPC_STATUS_INVALID_ARGUMENT 3
+#define GRPC_STATUS_DEADLINE_EXCEEDED 4
+#define GRPC_STATUS_NOT_FOUND 5
+#define GRPC_STATUS_ALREADY_EXISTS 6
+#define GRPC_STATUS_PERMISSION_DENIED 7
+#define GRPC_STATUS_RESOURCE_EXHAUSTED 8
+#define GRPC_STATUS_FAILED_PRECONDITION 9
+#define GRPC_STATUS_ABORTED 10
+#define GRPC_STATUS_OUT_OF_RANGE 11
+#define GRPC_STATUS_UNIMPLEMENTED 12
+#define GRPC_STATUS_INTERNAL 13
+#define GRPC_STATUS_UNAVAILABLE 14
+#define GRPC_STATUS_DATA_LOSS 15
+#define GRPC_STATUS_UNAUTHENTICATED 16
+
+#define GRPC_OP_SEND_INITIAL_METADATA 0
+#define GRPC_OP_SEND_MESSAGE 1
+#define GRPC_OP_SEND_CLOSE_FROM_CLIENT 2
+#define GRPC_OP_RECV_INITIAL_METADATA 4
+#define GRPC_OP_RECV_MESSAGE 5
+#define GRPC_OP_RECV_STATUS_ON_CLIENT 6
+
+typedef enum {
+    GRPC_LITE_CREDENTIALS_INSECURE = 0,
+    GRPC_LITE_CREDENTIALS_SSL = 1,
+    GRPC_LITE_CREDENTIALS_DEFAULT = 2
+} grpc_lite_credentials_type;
+
+typedef struct {
+    grpc_lite_credentials_type type;
+    zend_string *root_certs;
+    zend_string *private_key;
+    zend_string *cert_chain;
+    zend_object std;
+} grpc_lite_channel_credentials_obj;
+
+typedef struct {
+    zval callback;
+    zend_object std;
+} grpc_lite_call_credentials_obj;
+
+typedef struct {
+    zend_string *target;
+    zend_string *host;
+    zend_long port;
+    zend_string *authority;
+    zend_string *tls_verify_name;
+    zend_string *primary_user_agent;
+    zend_long max_receive_message_length;
+    zval credentials;
+    zend_object std;
+} grpc_lite_channel_obj;
+
+typedef struct {
+    zval channel;
+    zend_string *method;
+    zend_long deadline_us;
+    zval credentials;
+    zend_string *request;
+    zval metadata;
+    zval stream;
+    zval initial_metadata;
+    zval trailing_metadata;
+    zval status;
+    bool sent;
+    bool unary_performed;
+    bool stream_opened;
+    bool initial_metadata_ready;
+    bool status_ready;
+    bool cancelled;
+    zend_object std;
+} grpc_lite_call_obj;
+
+typedef struct {
+    zend_long microseconds;
+    zend_object std;
+} grpc_lite_timeval_obj;
+
+static inline grpc_lite_channel_credentials_obj *grpc_lite_channel_credentials_fetch(zend_object *obj)
+{
+    return (grpc_lite_channel_credentials_obj *) ((char *) obj - XtOffsetOf(grpc_lite_channel_credentials_obj, std));
+}
+
+static inline grpc_lite_call_credentials_obj *grpc_lite_call_credentials_fetch(zend_object *obj)
+{
+    return (grpc_lite_call_credentials_obj *) ((char *) obj - XtOffsetOf(grpc_lite_call_credentials_obj, std));
+}
+
+static inline grpc_lite_channel_obj *grpc_lite_channel_fetch(zend_object *obj)
+{
+    return (grpc_lite_channel_obj *) ((char *) obj - XtOffsetOf(grpc_lite_channel_obj, std));
+}
+
+static inline grpc_lite_call_obj *grpc_lite_call_fetch(zend_object *obj)
+{
+    return (grpc_lite_call_obj *) ((char *) obj - XtOffsetOf(grpc_lite_call_obj, std));
+}
+
+static inline grpc_lite_timeval_obj *grpc_lite_timeval_fetch(zend_object *obj)
+{
+    return (grpc_lite_timeval_obj *) ((char *) obj - XtOffsetOf(grpc_lite_timeval_obj, std));
+}
+
+#define Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(zv) grpc_lite_channel_credentials_fetch(Z_OBJ_P((zv)))
+#define Z_GRPC_LITE_CALL_CREDENTIALS_P(zv) grpc_lite_call_credentials_fetch(Z_OBJ_P((zv)))
+#define Z_GRPC_LITE_CHANNEL_P(zv) grpc_lite_channel_fetch(Z_OBJ_P((zv)))
+#define Z_GRPC_LITE_CALL_P(zv) grpc_lite_call_fetch(Z_OBJ_P((zv)))
+#define Z_GRPC_LITE_TIMEVAL_P(zv) grpc_lite_timeval_fetch(Z_OBJ_P((zv)))
+
+PHP_METHOD(Call, __construct);
+PHP_METHOD(Call, setCredentials);
+PHP_METHOD(Call, cancel);
+PHP_METHOD(Call, getPeer);
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_no_args, 0, 0, 0)
+ZEND_END_ARG_INFO()
+
 typedef struct queued_payload {
     zend_string *payload;
     uint64_t ready_abs_us;
@@ -347,6 +479,82 @@ struct _h2_stream {
     bool completed;
     bool cancelled;
 };
+
+
+static void destroy_h2_channel(h2_channel *channel);
+static void detach_persistent_channel_by_ptr(h2_channel *channel);
+static bool channel_owned_by_stream(h2_channel *channel, h2_stream *stream);
+static bool channel_owned_by_call(h2_channel *channel, grpc_call *client);
+static void clear_channel_stream_owner(h2_stream *stream);
+static void clear_channel_call_owner(h2_channel *channel, grpc_call *client);
+static void cancel_active_stream(h2_stream *stream, uint32_t error_code);
+static void destroy_h2_stream(h2_stream *stream);
+static void h2_stream_dtor(zend_resource *rsrc);
+static int configure_callbacks(nghttp2_session_callbacks **callbacks);
+static void mark_channel_dead(h2_channel *channel, int error_code);
+static void set_channel_error_detail(h2_channel *channel, const char *detail);
+static void mark_channel_draining(h2_channel *channel, int32_t last_stream_id, uint32_t error_code);
+static bool channel_usable(h2_channel *channel);
+static zend_ulong hash_bytes(const char *data, size_t data_len);
+static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
+static void set_channel_identity(h2_channel *channel, const char *host, zend_long port, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool channel_matches_identity(h2_channel *channel, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static bool preflight_persistent_channel(h2_channel *channel);
+static void remove_unusable_persistent_channel(const char *key, size_t key_len, h2_channel *channel);
+static int set_socket_timeout_us(int fd, zend_long timeout_us);
+static int set_fd_nonblocking_mode(int fd, bool nonblocking);
+static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
+static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
+static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length);
+static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
+static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
+static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
+static int configure_tls_channel(h2_channel *channel, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
+static ssize_t channel_send(grpc_call *client, const uint8_t *data, size_t length);
+static ssize_t channel_recv(h2_channel *channel, uint8_t *data, size_t length, uint64_t deadline_abs_us);
+static h2_channel *create_h2_channel(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
+static h2_channel *get_persistent_channel(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
+static void discard_persistent_channel(const char *key, size_t key_len, h2_channel *channel);
+static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
+static int set_nonblocking(int fd);
+static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
+static size_t remaining_request_bytes(grpc_call *client);
+static size_t copy_request_bytes(grpc_call *client, uint8_t *buf, size_t length);
+static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
+static void set_grpc_header(grpc_call *client, size_t payload_len);
+static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
+static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
+static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
+static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
+static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);
+static uint64_t monotonic_us(void);
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
+#endif
+static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
+static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen);
+static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen);
+static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
+static const char *validate_grpc_path(const char *path, size_t path_len);
+static size_t count_custom_header_values(zval *headers_zv);
+static int init_request_headers(h2_request_headers *headers, size_t custom_values);
+static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
+static void free_request_headers(h2_request_headers *headers);
+static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
+static int process_response_data_direct(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
+static int enqueue_response_payload(grpc_call *client, zend_string *payload);
+static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us);
+static int deliver_queued_response_payloads(grpc_call *client);
+static void free_queued_response_payloads(grpc_call *client);
+static void mark_response_metadata_as_trailing(grpc_call *client);
+static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+static void free_metadata_entries(grpc_call *client);
+static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
+static void cleanup_grpc_call(grpc_call *client);
+
+static int perform_h2_channel_unary(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value);
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_channels;
