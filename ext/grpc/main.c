@@ -8,8 +8,15 @@ ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 
 #include "surface.c"
 #include "transport.c"
-#include "direct_api.c"
+#include "rpc_transport.c"
 #include "call.c"
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+#include "bench.c"
+#else
+static const zend_function_entry grpc_lite_functions[] = {
+    PHP_FE_END
+};
+#endif
 
 PHP_GINIT_FUNCTION(grpc_lite)
 {

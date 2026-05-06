@@ -13,7 +13,7 @@ generated client / gax
   -> ext/grpc/main.c
      -> surface.c
      -> call.c
-     -> direct_api.c
+     -> rpc_transport.c
      -> transport.c
      -> nghttp2 + socket / OpenSSL
 ```
@@ -29,7 +29,7 @@ generated client / gax
 5. `ext/grpc/main.c`
 6. `ext/grpc/surface.c`
 7. `ext/grpc/call.c`
-8. `ext/grpc/direct_api.c`
+8. `ext/grpc/rpc_transport.c`
 9. `ext/grpc/transport.c`
 10. `ext/grpc/internal.h`
 
@@ -135,7 +135,7 @@ official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
 
 unaryは `RECV_STATUS` を含むbatchで `perform_h2_channel_unary()` が走ります。server streamingは最初の `RECV_MESSAGE` でC stream resourceを開き、以後C helperで1 messageずつ返します。
 
-`ext/grpc/direct_api.c` は wrapper bridge が使うC helperと、bench build限定のdiagnostic PHP関数を分離して持ちます。通常のwrapper経路は `Grpc\Call::startBatch()` 経由で、diagnostic関数をPHPから直接呼ぶ設計ではありません。
+`ext/grpc/rpc_transport.c` は wrapper bridge が使う production RPC helper を持ちます。bench build限定のdiagnostic PHP関数は `ext/grpc/bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
 
 ## 6. HTTP/2 transport
 

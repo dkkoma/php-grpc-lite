@@ -2115,3 +2115,251 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_bench_unary_batch, 0, 
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, read_ahead_max_bytes, IS_LONG, 0, "0")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
+
+/* Bench-build diagnostic PHP entrypoints for direct transport measurement. */
+PHP_FUNCTION(grpc_lite_unary)
+{
+    char *key = NULL;
+    size_t key_len = 0;
+    char *host = NULL;
+    size_t host_len = 0;
+    zend_long port = 0;
+    char *path = NULL;
+    size_t path_len = 0;
+    char *request = NULL;
+    size_t request_len = 0;
+    zval *headers_zv = NULL;
+    zend_long timeout_us = 0;
+    bool use_tls = false;
+    char *root_certs = NULL;
+    size_t root_certs_len = 0;
+    char *cert_chain = NULL;
+    size_t cert_chain_len = 0;
+    char *private_key = NULL;
+    size_t private_key_len = 0;
+    zend_long max_receive_message_length = 0;
+    char *authority = NULL;
+    size_t authority_len = 0;
+    char *tls_verify_name = NULL;
+    size_t tls_verify_name_len = 0;
+    h2_channel *channel;
+    bool persistent_reused = false;
+    const char *error_message = NULL;
+    char error_detail[256] = {0};
+    uint64_t deadline_abs_us = 0;
+    zend_long remaining_timeout_us = 0;
+
+    ZEND_PARSE_PARAMETERS_START(5, 14)
+        Z_PARAM_STRING(key, key_len)
+        Z_PARAM_STRING(host, host_len)
+        Z_PARAM_LONG(port)
+        Z_PARAM_STRING(path, path_len)
+        Z_PARAM_STRING(request, request_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_LONG(timeout_us)
+        Z_PARAM_BOOL(use_tls)
+        Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
+        Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
+        Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
+        Z_PARAM_LONG(max_receive_message_length)
+        Z_PARAM_STRING_OR_NULL(authority, authority_len)
+        Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
+    if (error_message != NULL) {
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
+    if (timeout_us < 0) {
+        zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
+        RETURN_THROWS();
+    }
+    error_message = validate_grpc_path(path, path_len);
+    if (error_message != NULL) {
+        zend_throw_exception(NULL, error_message, 0);
+        RETURN_THROWS();
+    }
+
+    if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+        zend_throw_exception(NULL, "persistent channel cache is not initialized", 0);
+        RETURN_THROWS();
+    }
+
+    deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
+    channel = get_persistent_channel(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
+    if (channel == NULL) {
+        zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent channel", 0);
+        RETURN_THROWS();
+    }
+
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
+        RETURN_THROWS();
+    }
+
+    if (perform_h2_channel_unary(channel, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, true, persistent_reused, return_value) != SUCCESS) {
+        if (channel != NULL && !channel_usable(channel)) {
+            remove_unusable_persistent_channel(key, key_len, channel);
+        }
+        RETURN_THROWS();
+    }
+
+    if (!channel_usable(channel)) {
+        remove_unusable_persistent_channel(key, key_len, channel);
+    }
+}
+
+PHP_FUNCTION(grpc_lite_stream_open)
+{
+    char *key = NULL;
+    size_t key_len = 0;
+    char *host = NULL;
+    size_t host_len = 0;
+    zend_long port = 0;
+    char *path = NULL;
+    size_t path_len = 0;
+    char *request = NULL;
+    size_t request_len = 0;
+    zval *headers_zv = NULL;
+    zend_long timeout_us = 0;
+    bool use_tls = false;
+    char *root_certs = NULL;
+    size_t root_certs_len = 0;
+    char *cert_chain = NULL;
+    size_t cert_chain_len = 0;
+    char *private_key = NULL;
+    size_t private_key_len = 0;
+    zend_long max_receive_message_length = 0;
+    char *authority = NULL;
+    size_t authority_len = 0;
+    char *tls_verify_name = NULL;
+    size_t tls_verify_name_len = 0;
+
+    ZEND_PARSE_PARAMETERS_START(5, 14)
+        Z_PARAM_STRING(key, key_len)
+        Z_PARAM_STRING(host, host_len)
+        Z_PARAM_LONG(port)
+        Z_PARAM_STRING(path, path_len)
+        Z_PARAM_STRING(request, request_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_LONG(timeout_us)
+        Z_PARAM_BOOL(use_tls)
+        Z_PARAM_STRING_OR_NULL(root_certs, root_certs_len)
+        Z_PARAM_STRING_OR_NULL(cert_chain, cert_chain_len)
+        Z_PARAM_STRING_OR_NULL(private_key, private_key_len)
+        Z_PARAM_LONG(max_receive_message_length)
+        Z_PARAM_STRING_OR_NULL(authority, authority_len)
+        Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (grpc_lite_open_stream_resource(key, key_len, host, host_len, port, path, path_len, request, request_len, headers_zv, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, authority, authority_len, tls_verify_name, tls_verify_name_len, return_value) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+PHP_FUNCTION(grpc_lite_stream_next)
+{
+    zval *stream_zv = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_RESOURCE(stream_zv)
+    ZEND_PARSE_PARAMETERS_END();
+    if (grpc_lite_stream_next_resource(stream_zv, return_value) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+PHP_FUNCTION(grpc_lite_stream_cancel)
+{
+    zval *stream_zv = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_RESOURCE(stream_zv)
+    ZEND_PARSE_PARAMETERS_END();
+    if (grpc_lite_cancel_stream_resource(stream_zv) != SUCCESS) {
+        RETURN_THROWS();
+    }
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(grpc_lite_channel_close)
+{
+    char *key = NULL;
+    size_t key_len = 0;
+    h2_channel *channel;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STRING(key, key_len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (!PHP_GRPC_LITE_G(persistent_channels_initialized)) {
+        RETURN_FALSE;
+    }
+
+    channel = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key, key_len);
+    if (channel == NULL) {
+        RETURN_FALSE;
+    }
+
+    discard_persistent_channel(key, key_len, channel);
+    RETURN_TRUE;
+}
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_unary, 0, 5, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
+    ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, use_tls, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, root_certs, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, authority, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tls_verify_name, IS_STRING, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_grpc_lite_stream_open, 0, 0, 5)
+    ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, host, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, port, IS_LONG, 0)
+    ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, request, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, headers, IS_ARRAY, 0, "[]")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, timeout_us, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, use_tls, _IS_BOOL, 0, "false")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, root_certs, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cert_chain, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, private_key, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, max_receive_message_length, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, authority, IS_STRING, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tls_verify_name, IS_STRING, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_next, 0, 1, IS_ARRAY, 0)
+    ZEND_ARG_INFO(0, stream)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_stream_cancel, 0, 1, _IS_BOOL, 0)
+    ZEND_ARG_INFO(0, stream)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_channel_close, 0, 1, _IS_BOOL, 0)
+    ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+static const zend_function_entry grpc_lite_functions[] = {
+    PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
+    PHP_FE(grpc_lite_stream_open, arginfo_grpc_lite_stream_open)
+    PHP_FE(grpc_lite_stream_next, arginfo_grpc_lite_stream_next)
+    PHP_FE(grpc_lite_stream_cancel, arginfo_grpc_lite_stream_cancel)
+    PHP_FE(grpc_lite_channel_close, arginfo_grpc_lite_channel_close)
+    PHP_FE(grpc_lite_multiplex_unary, arginfo_grpc_lite_multiplex_unary)
+    PHP_FE(grpc_lite_bench_unary_batch, arginfo_grpc_lite_bench_unary_batch)
+    PHP_FE_END
+};
