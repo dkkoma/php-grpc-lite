@@ -6,10 +6,9 @@
 # benchmarks.
 #
 # This runner compares:
-#   1. php-grpc-lite libcurl transport
-#   2. php-grpc-lite HTTP/2 transport
-#   3. official ext-grpc
-#   4. HTTP/2 transport PoC variants when INCLUDE_POC=1
+#   1. php-grpc-lite HTTP/2 transport
+#   2. official ext-grpc
+#   3. HTTP/2 transport PoC variants when INCLUDE_POC=1
 #
 set -euo pipefail
 
@@ -18,7 +17,7 @@ cd "$(dirname "$0")/../.."
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 native_response_mode="${NATIVE_RESPONSE_MODE:-stream}"
-include_poc="${INCLUDE_POC:-1}"
+include_poc="${INCLUDE_POC:-0}"
 warmup_streams="${WARMUP_STREAMS:-3}"
 mkdir -p "$output_dir"
 
@@ -174,10 +173,6 @@ for case_spec in "${cases[@]}"; do
 
     echo
     echo "== $case_name: streams=$streams message_count=$message_count payload_bytes=$payload_bytes =="
-
-    run_streaming_diagnostic "$case_name" dev php-grpc-lite curl \
-        "$streams" "$message_count" "$payload_bytes" vendor/autoload.php \
-        --transport=curl
 
     native_file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-native-$native_response_mode.json"
     docker compose run --rm dev sh -lc \

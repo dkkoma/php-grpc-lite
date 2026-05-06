@@ -54,18 +54,6 @@ append_results() {
 
 printf "case\timplementation\tvariant\trequest_bytes\tresponse_bytes\tcalls\tcalls_per_second\tp50_us\tp99_us\tjson\n" > "$summary_tsv"
 
-curl_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-curl.json"
-docker compose run --rm dev php tools/phase2/unary-shape.php \
-    --suite=spanner-dml-unary-shape \
-    --implementation=php-grpc-lite \
-    --autoload=vendor/autoload.php \
-    --output="$curl_json" \
-    --duration="$duration" \
-    --warmup-calls="$warmup_calls" \
-    --max-calls="$max_calls" \
-    --transport=curl
-append_results php-grpc-lite curl "$curl_json"
-
 native_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-native.json"
 docker compose run --rm dev sh -lc \
     "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/unary-shape.php --suite=spanner-dml-unary-shape --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_json' --duration='$duration' --warmup-calls='$warmup_calls' --max-calls='$max_calls' --transport=native"

@@ -19,6 +19,8 @@ BENCH_TAG=20260506-native-hardening ./bench/run.sh tls
 BENCH_TAG=20260506-native-hardening ./bench/phase2/preset.sh compare
 ```
 
+`bench/phase2/preset.sh compare` は、汎用 transport ベンチに加えて Spanner 主用途の shape ベンチも実行する。
+
 ## PHPBench
 
 | case | php-grpc-lite mode | php-grpc-lite rstdev | ext-grpc mode | ext-grpc rstdev | 見解 |
@@ -70,6 +72,29 @@ BENCH_TAG=20260506-native-hardening ./bench/phase2/preset.sh compare
 | large streaming 1000x100B | 448,761 | 254,807 | nativeが速い |
 | large streaming 10000x100B | 570,541 | 420,184 | nativeが速い |
 
+## Phase 2: Spanner small SELECT shape
+
+1 stream = 1 message の小さな server streaming response。Spanner `ExecuteStreamingSql` が 1 `PartialResultSet` で返る小さな SELECT を近似する。
+
+| case | php-grpc-lite p50 | php-grpc-lite p99 | php-grpc-lite msg/s | ext-grpc p50 | ext-grpc p99 | ext-grpc msg/s | 見解 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 1x100B | 48.5μs | 559.0μs | 13,102 | 105.5μs | 863.2μs | 6,722 | nativeが速い |
+| 1x1KiB | 58.0μs | 552.7μs | 12,442 | 115.3μs | 899.3μs | 6,159 | nativeが速い |
+| 1x4KiB | 62.0μs | 664.0μs | 10,989 | 112.2μs | 2,016.8μs | 4,897 | nativeが速い |
+| 1x10KiB | 63.4μs | 760.9μs | 9,941 | 116.6μs | 988.8μs | 5,654 | nativeが速い |
+
+## Phase 2: Spanner DML unary shape
+
+Spanner DML flow の unary request/response shape。10列テーブルへの DML と transaction control を近似する。
+
+| case | req | resp | php-grpc-lite calls/s | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc calls/s | ext-grpc p50 | ext-grpc p99 | 見解 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| begin_txn | 92B | 18B | 25,491 | 33.2μs | 104.2μs | 16,062 | 57.0μs | 111.9μs | nativeが速い |
+| dml_insert_10col | 355B | 8B | 26,545 | 31.9μs | 72.5μs | 15,852 | 58.3μs | 105.8μs | nativeが速い |
+| dml_update_10col | 327B | 8B | 25,954 | 32.2μs | 73.5μs | 15,802 | 59.0μs | 104.7μs | nativeが速い |
+| dml_delete_10col | 144B | 8B | 26,059 | 31.9μs | 76.2μs | 16,029 | 58.1μs | 99.3μs | nativeが速い |
+| commit_txn | 106B | 14B | 26,836 | 31.8μs | 70.1μs | 15,539 | 60.6μs | 107.1μs | nativeが速い |
+
 ## Phase 2: metadata
 
 | case | php-grpc-lite calls/s | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc calls/s | ext-grpc p50 | ext-grpc p99 | 見解 |
@@ -83,6 +108,7 @@ BENCH_TAG=20260506-native-hardening ./bench/phase2/preset.sh compare
 ## 見解
 
 - hardening後も small unary / small server streaming は native が ext-grpc より速い。
+- Spanner主用途の small SELECT shape と DML unary shape でも native が ext-grpc より速い。
 - TLS/mTLS unary は native が優位。cold mTLS の ext-grpc は今回も大きい固定費が出ている。
 - 100KiB unary、10KiB streaming、metadata大量系では ext-grpc が throughput または p99 で優位なケースが残る。
 - RTTが数ms入るケースではtransport差は概ね埋もれる。0ms cold direct の native p99 は単発外れ値として扱い、必要なら再計測する。

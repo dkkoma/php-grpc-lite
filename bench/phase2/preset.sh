@@ -33,6 +33,13 @@ run_compare() {
     ./bench/phase2/compare.sh "$suite" "$@"
 }
 
+run_script() {
+    local script="$1"
+    shift
+
+    "$script" "$@"
+}
+
 validate_json() {
     docker compose run --rm \
         -e BENCH_TAG="$BENCH_TAG" \
@@ -87,6 +94,8 @@ case "$preset" in
         run_compare throughput-streaming --duration=0.5 --message-count=100 --payload-bytes=100 --warmup-streams=1
         run_compare large-streaming --message-counts=1000,10000 --payload-bytes=100
         run_compare payload-streaming --streams=5 --message-count=100 --payload-sizes=0,100,1024,10240
+        INCLUDE_POC=0 run_script ./bench/phase2/compare-small-select-streaming.sh
+        DURATION=1 WARMUP_CALLS=3 run_script ./bench/phase2/compare-spanner-dml-unary-shape.sh
         run_compare metadata-header --calls=10
         run_single metadata-header-diagnostic --calls=10
         ;;
@@ -101,6 +110,8 @@ case "$preset" in
         run_compare throughput-streaming --duration=5 --message-count=1000 --payload-bytes=100 --warmup-streams=3
         run_compare large-streaming --message-counts=10000,100000 --payload-bytes=100
         run_compare payload-streaming --streams=30 --message-count=100 --payload-sizes=0,100,1024,10240
+        INCLUDE_POC=0 run_script ./bench/phase2/compare-small-select-streaming.sh
+        DURATION=3 WARMUP_CALLS=10 run_script ./bench/phase2/compare-spanner-dml-unary-shape.sh
         run_compare metadata-header --calls=100
         run_single metadata-header-diagnostic --calls=100
         ;;
