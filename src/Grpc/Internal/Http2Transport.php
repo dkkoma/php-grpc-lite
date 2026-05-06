@@ -278,7 +278,7 @@ final class Http2Transport
         }
 
         $streamErrorCode = (int) ($result['stream_error_code'] ?? 0);
-        if (($result['stream_reset_seen'] ?? false) === true && $streamErrorCode === 0 && $grpcStatus < 0) {
+        if (($result['stream_reset_seen'] ?? false) === true && $streamErrorCode === 0) {
             return [\Grpc\STATUS_INTERNAL, 'HTTP/2 stream reset: 0'];
         }
         if ($streamErrorCode !== 0) {
@@ -368,6 +368,9 @@ final class Http2Transport
         $normalized = [];
         foreach ($metadata as $key => $values) {
             if (!is_string($key) || str_starts_with($key, ':')) {
+                continue;
+            }
+            if (strtolower($key) === 'grpc-status-details-bin') {
                 continue;
             }
             foreach ((array) $values as $value) {
