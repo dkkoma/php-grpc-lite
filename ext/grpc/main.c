@@ -33,14 +33,14 @@ PHP_GINIT_FUNCTION(grpc_lite)
 
 PHP_GSHUTDOWN_FUNCTION(grpc_lite)
 {
-    h2_channel *channel;
+    h2_connection *connection;
 
     if (!grpc_lite_globals->persistent_channels_initialized) {
         return;
     }
 
-    ZEND_HASH_FOREACH_PTR(&grpc_lite_globals->persistent_channels, channel) {
-        destroy_h2_channel(channel);
+    ZEND_HASH_FOREACH_PTR(&grpc_lite_globals->persistent_channels, connection) {
+        destroy_h2_connection(connection);
     } ZEND_HASH_FOREACH_END();
 
     zend_hash_destroy(&grpc_lite_globals->persistent_channels);

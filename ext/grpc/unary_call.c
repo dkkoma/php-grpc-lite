@@ -1,7 +1,7 @@
-/* Unary gRPC client call execution over an HTTP/2 channel. Included by main.c. */
+/* Unary gRPC client call execution over an HTTP/2 connection. Included by main.c. */
 
 #include "internal.h"
-static int grpc_lite_unary_call_perform_on_channel(h2_channel *channel, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value)
+static int grpc_lite_unary_call_perform_on_channel(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, bool channel_reused, bool persistent_reused, zval *return_value)
 {
     grpc_call client;
     nghttp2_data_provider data_provider;
@@ -17,12 +17,12 @@ static int grpc_lite_unary_call_perform_on_channel(h2_channel *channel, const ch
     uint64_t initial_send_us = 0;
     uint64_t recv_loop_started = 0;
     uint64_t recv_loop_us = 0;
-    if (!channel_usable(channel)) {
-        zend_throw_exception(NULL, "invalid grpc_lite channel", 0);
+    if (!channel_usable(connection)) {
+        zend_throw_exception(NULL, "invalid grpc_lite connection", 0);
         return FAILURE;
     }
-    if (channel->busy) {
-        zend_throw_exception(NULL, "HTTP/2 channel already has an active stream", 0);
+    if (connection->busy) {
+        zend_throw_exception(NULL, "HTTP/2 connection already has an active stream", 0);
         return FAILURE;
     }
     if (request_len > UINT32_MAX) {
@@ -31,8 +31,8 @@ static int grpc_lite_unary_call_perform_on_channel(h2_channel *channel, const ch
     }
 
     memset(&client, 0, sizeof(client));
-    client.fd = channel->fd;
-    client.channel = channel;
+    client.fd = connection->fd;
+    client.connection = connection;
     client.grpc_status = -1;
     client.http_status = -1;
     client.max_response_messages = 1;
@@ -41,31 +41,31 @@ static int grpc_lite_unary_call_perform_on_channel(h2_channel *channel, const ch
     client.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     total_started = monotonic_us();
     client.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
-    if (set_socket_timeout_us(channel->fd, timeout_us) != 0) {
-        mark_channel_dead(channel, errno);
+    if (set_socket_timeout_us(connection->fd, timeout_us) != 0) {
+        mark_channel_dead(connection, errno);
         zend_throw_exception(NULL, "failed to set socket timeout", 0);
         return FAILURE;
     }
 
     setup_started = monotonic_us();
     // cppcheck-suppress autoVariables
-    nghttp2_session_set_user_data(channel->session, &client);
-    channel->busy = true;
+    nghttp2_session_set_user_data(connection->session, &client);
+    connection->busy = true;
     // cppcheck-suppress autoVariables
-    channel->active_call_owner = &client;
+    connection->active_call_owner = &client;
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
-        clear_channel_call_owner(channel, &client);
+        clear_channel_call_owner(connection, &client);
         cleanup_grpc_call(&client);
         return FAILURE;
     }
     append_request_header(&request_headers, ":method", sizeof(":method") - 1, "POST", sizeof("POST") - 1);
-    append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, channel->tls ? "https" : "http", channel->tls ? sizeof("https") - 1 : sizeof("http") - 1);
-    append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, channel->authority, strlen(channel->authority));
+    append_request_header(&request_headers, ":scheme", sizeof(":scheme") - 1, connection->tls ? "https" : "http", connection->tls ? sizeof("https") - 1 : sizeof("http") - 1);
+    append_request_header(&request_headers, ":authority", sizeof(":authority") - 1, connection->authority, strlen(connection->authority));
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
     if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
-        clear_channel_call_owner(channel, &client);
+        clear_channel_call_owner(connection, &client);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&client);
         return FAILURE;
@@ -76,10 +76,10 @@ static int grpc_lite_unary_call_perform_on_channel(h2_channel *channel, const ch
     setup_us = monotonic_us() - setup_started;
 
     submit_started = monotonic_us();
-    client.stream_id = nghttp2_submit_request(channel->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
+    client.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     submit_us = monotonic_us() - submit_started;
     if (client.stream_id < 0) {
-        clear_channel_call_owner(channel, &client);
+        clear_channel_call_owner(connection, &client);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&client);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
@@ -87,62 +87,62 @@ static int grpc_lite_unary_call_perform_on_channel(h2_channel *channel, const ch
     }
 
     initial_send_started = monotonic_us();
-    rv = nghttp2_session_send(channel->session);
+    rv = nghttp2_session_send(connection->session);
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
-        mark_channel_dead(channel, rv);
+        mark_channel_dead(connection, rv);
         recv_loop_us = 0;
         goto build_unary_result;
     }
 
     recv_loop_started = monotonic_us();
     while (!client.stream_closed) {
-        ssize_t nread = channel_recv(channel, (uint8_t *) recv_buf, sizeof(recv_buf), client.deadline_abs_us);
+        ssize_t nread = channel_recv(connection, (uint8_t *) recv_buf, sizeof(recv_buf), client.deadline_abs_us);
         if (nread <= 0) {
             bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && client.deadline_abs_us > 0;
             if (nread < 0) {
                 client.last_io_errno = errno;
-                client.last_ssl_error = channel->last_ssl_error;
-                snprintf(client.last_io_error_detail, sizeof(client.last_io_error_detail), "%s", channel->last_error_detail);
+                client.last_ssl_error = connection->last_ssl_error;
+                snprintf(client.last_io_error_detail, sizeof(client.last_io_error_detail), "%s", connection->last_error_detail);
             }
             if (socket_timeout) {
                 client.timed_out = true;
             }
             if (!client.stream_closed) {
-                mark_channel_dead(channel, nread == 0 ? 0 : errno);
+                mark_channel_dead(connection, nread == 0 ? 0 : errno);
             }
             break;
         }
         client.bytes_received += (size_t) nread;
-        rv = nghttp2_session_mem_recv(channel->session, (const uint8_t *) recv_buf, (size_t) nread);
+        rv = nghttp2_session_mem_recv(connection->session, (const uint8_t *) recv_buf, (size_t) nread);
         if (rv < 0) {
-            mark_channel_dead(channel, rv);
-            clear_channel_call_owner(channel, &client);
+            mark_channel_dead(connection, rv);
+            clear_channel_call_owner(connection, &client);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&client);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
         if (client.metadata_too_large) {
-            rv = nghttp2_session_send(channel->session);
+            rv = nghttp2_session_send(connection->session);
             if (rv != 0) {
-                mark_channel_dead(channel, rv);
+                mark_channel_dead(connection, rv);
             }
             if (!client.stream_closed) {
-                mark_channel_dead(channel, NGHTTP2_CANCEL);
+                mark_channel_dead(connection, NGHTTP2_CANCEL);
             }
             break;
         }
-        rv = nghttp2_session_send(channel->session);
+        rv = nghttp2_session_send(connection->session);
         if (rv != 0) {
-            mark_channel_dead(channel, rv);
+            mark_channel_dead(connection, rv);
             break;
         }
         client.last_session_error = rv;
     }
     recv_loop_us = monotonic_us() - recv_loop_started;
 build_unary_result:
-    clear_channel_call_owner(channel, &client);
+    clear_channel_call_owner(connection, &client);
 
     array_init(return_value);
     smart_str_0(&client.body);
@@ -191,16 +191,16 @@ build_unary_result:
     add_assoc_bool(return_value, "timed_out", client.timed_out);
     add_assoc_bool(return_value, "channel_reused", channel_reused);
     add_assoc_bool(return_value, "persistent_reused", persistent_reused);
-    add_assoc_bool(return_value, "channel_dead", channel->dead);
-    add_assoc_bool(return_value, "channel_draining", channel->draining);
-    add_assoc_long(return_value, "channel_last_error", channel->last_error);
-    add_assoc_long(return_value, "channel_last_io_errno", channel->last_io_errno);
-    add_assoc_long(return_value, "channel_last_ssl_error", channel->last_ssl_error);
-    add_assoc_long(return_value, "channel_tls_verify_result", (zend_long) channel->tls_verify_result);
-    add_assoc_string(return_value, "channel_last_error_detail", channel->last_error_detail);
-    add_assoc_string(return_value, "channel_negotiated_protocol", channel->negotiated_protocol);
-    add_assoc_long(return_value, "channel_last_goaway_error_code", channel->last_goaway_error_code);
-    add_assoc_long(return_value, "channel_last_goaway_stream_id", channel->last_goaway_stream_id);
+    add_assoc_bool(return_value, "channel_dead", connection->dead);
+    add_assoc_bool(return_value, "channel_draining", connection->draining);
+    add_assoc_long(return_value, "channel_last_error", connection->last_error);
+    add_assoc_long(return_value, "channel_last_io_errno", connection->last_io_errno);
+    add_assoc_long(return_value, "channel_last_ssl_error", connection->last_ssl_error);
+    add_assoc_long(return_value, "channel_tls_verify_result", (zend_long) connection->tls_verify_result);
+    add_assoc_string(return_value, "channel_last_error_detail", connection->last_error_detail);
+    add_assoc_string(return_value, "channel_negotiated_protocol", connection->negotiated_protocol);
+    add_assoc_long(return_value, "channel_last_goaway_error_code", connection->last_goaway_error_code);
+    add_assoc_long(return_value, "channel_last_goaway_stream_id", connection->last_goaway_stream_id);
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
     free_request_headers(&request_headers);

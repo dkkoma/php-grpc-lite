@@ -457,9 +457,9 @@ PHP_METHOD(Channel, close)
     }
     grpc_lite_channel_key(obj, &key);
     if (PHP_GRPC_LITE_G(persistent_channels_initialized)) {
-        h2_channel *channel = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key);
-        if (channel != NULL) {
-            discard_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), channel);
+        h2_connection *connection = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_channels), key);
+        if (connection != NULL) {
+            discard_persistent_channel(ZSTR_VAL(key), ZSTR_LEN(key), connection);
         }
     }
     zend_string_release(key);

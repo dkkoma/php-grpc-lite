@@ -361,7 +361,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
     zend_string *key = NULL;
     zend_string *framed = NULL;
-    h2_channel *h2;
+    h2_connection *h2;
     bool persistent_reused = false;
     const char *error_message = NULL;
     char error_detail[256] = {0};
