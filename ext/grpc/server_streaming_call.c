@@ -341,7 +341,7 @@ static int server_streaming_call_cancel_resource(zval *server_streaming_resource
     }
     if (state != NULL && !state->completed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection)) {
         state->cancelled = true;
-        state->call.grpc_status = 1;
+        state->call.grpc_status = GRPC_STATUS_CANCELLED;
         server_streaming_call_terminate_with_cancel(state);
         clear_connection_server_streaming_call_state_owner(state);
     }
