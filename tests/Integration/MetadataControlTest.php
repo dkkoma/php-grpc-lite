@@ -63,6 +63,13 @@ final class MetadataControlTest extends TestCase
         ]);
     }
 
+    public function testUserSuppliedGrpcTimeoutMetadataIsRejected(): void
+    {
+        $this->assertInvalidMetadata([
+            'grpc-timeout' => ['1S'],
+        ]);
+    }
+
     public function testInvalidAsciiMetadataValueIsRejected(): void
     {
         $this->assertInvalidMetadata([

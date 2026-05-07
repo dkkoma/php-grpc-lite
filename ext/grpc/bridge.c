@@ -28,45 +28,6 @@ static void grpc_lite_copy_metadata(zval *dest, zval *src)
     zend_hash_copy(Z_ARRVAL_P(dest), Z_ARRVAL_P(src), zval_add_ref);
 }
 
-static zend_long grpc_lite_ceil_div_timeout(zend_long value, zend_long unit)
-{
-    return value / unit + (value % unit != 0 ? 1 : 0);
-}
-
-static void grpc_lite_append_timeout_metadata(zval *metadata, zend_long timeout_us)
-{
-    char timeout_buf[32];
-    zval timeout_values;
-    zend_long value;
-    char unit;
-    if (timeout_us <= 0) {
-        return;
-    }
-    if (timeout_us <= 99999999L) {
-        value = timeout_us;
-        unit = 'u';
-    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000L) <= 99999999L) {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 1000L);
-        unit = 'm';
-    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000000L) <= 99999999L) {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 1000000L);
-        unit = 'S';
-    } else if (grpc_lite_ceil_div_timeout(timeout_us, 60000000L) <= 99999999L) {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 60000000L);
-        unit = 'M';
-    } else {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 3600000000L);
-        if (value > 99999999L) {
-            value = 99999999L;
-        }
-        unit = 'H';
-    }
-    snprintf(timeout_buf, sizeof(timeout_buf), "%ld%c", value, unit);
-    array_init(&timeout_values);
-    add_next_index_string(&timeout_values, timeout_buf);
-    zend_hash_str_update(Z_ARRVAL_P(metadata), "grpc-timeout", sizeof("grpc-timeout") - 1, &timeout_values);
-}
-
 static void grpc_lite_append_user_agent(grpc_lite_channel_obj *channel, zval *metadata)
 {
     zval values;
@@ -220,7 +181,6 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;
     }
-    grpc_lite_append_timeout_metadata(&call->metadata, timeout_us);
     grpc_lite_append_user_agent(channel, &call->metadata);
     grpc_lite_channel_key(channel, &key);
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
@@ -326,7 +286,6 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;
     }
-    grpc_lite_append_timeout_metadata(&call->metadata, timeout_us);
     grpc_lite_append_user_agent(channel, &call->metadata);
     grpc_lite_channel_key(channel, &key);
 

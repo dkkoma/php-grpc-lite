@@ -67,6 +67,7 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
+    append_grpc_timeout_request_header(&request_headers, timeout_us);
     if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);

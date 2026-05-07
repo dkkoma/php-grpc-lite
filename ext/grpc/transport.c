@@ -80,6 +80,7 @@ static const char *validate_grpc_path(const char *path, size_t path_len);
 static size_t count_custom_header_values(zval *headers_zv);
 static int init_request_headers(h2_request_headers *headers, size_t custom_values);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
 static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
@@ -1814,6 +1815,42 @@ static void append_request_header(h2_request_headers *headers, const char *name,
     };
 }
 
+static zend_long grpc_lite_ceil_div_timeout(zend_long value, zend_long unit)
+{
+    return value / unit + (value % unit != 0 ? 1 : 0);
+}
+
+static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us)
+{
+    char timeout_buf[32];
+    zend_long value;
+    char unit;
+    if (timeout_us <= 0) {
+        return;
+    }
+    if (timeout_us <= 99999999L) {
+        value = timeout_us;
+        unit = 'u';
+    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000L) <= 99999999L) {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 1000L);
+        unit = 'm';
+    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000000L) <= 99999999L) {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 1000000L);
+        unit = 'S';
+    } else if (grpc_lite_ceil_div_timeout(timeout_us, 60000000L) <= 99999999L) {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 60000000L);
+        unit = 'M';
+    } else {
+        value = grpc_lite_ceil_div_timeout(timeout_us, 3600000000L);
+        if (value > 99999999L) {
+            value = 99999999L;
+        }
+        unit = 'H';
+    }
+    snprintf(timeout_buf, sizeof(timeout_buf), "%ld%c", value, unit);
+    append_request_header(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, timeout_buf, strlen(timeout_buf));
+}
+
 static bool is_valid_custom_request_header_name_char(unsigned char ch)
 {
     return (ch >= 'a' && ch <= 'z')
@@ -1845,40 +1882,8 @@ static bool is_reserved_custom_request_header(const char *name, size_t name_len)
             return true;
         }
     }
-    if (name_len > sizeof("grpc-") - 1 && memcmp(name, "grpc-", sizeof("grpc-") - 1) == 0) {
-        return !(name_len == sizeof("grpc-timeout") - 1 && memcmp(name, "grpc-timeout", name_len) == 0);
-    }
+    if (name_len > sizeof("grpc-") - 1 && memcmp(name, "grpc-", sizeof("grpc-") - 1) == 0) return true;
     return false;
-}
-
-static bool is_valid_grpc_timeout_header_value(zend_string *value)
-{
-    const char *bytes;
-    size_t len;
-    size_t index;
-    char unit;
-
-    if (value == NULL) {
-        return false;
-    }
-    bytes = ZSTR_VAL(value);
-    len = ZSTR_LEN(value);
-    if (len < 2 || len > 9) {
-        return false;
-    }
-    unit = bytes[len - 1];
-    if (!(unit == 'H' || unit == 'M' || unit == 'S' || unit == 'm' || unit == 'u' || unit == 'n')) {
-        return false;
-    }
-    if (bytes[0] == '0') {
-        return false;
-    }
-    for (index = 0; index < len - 1; index++) {
-        if (bytes[index] < '0' || bytes[index] > '9') {
-            return false;
-        }
-    }
-    return true;
 }
 
 static bool is_forbidden_custom_request_header(zend_string *key)
@@ -1974,14 +1979,7 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
     } else {
         value_str = zend_string_copy(Z_STR_P(value));
     }
-    if (ZSTR_LEN(name_str) == sizeof("grpc-timeout") - 1 && memcmp(ZSTR_VAL(name_str), "grpc-timeout", ZSTR_LEN(name_str)) == 0) {
-        if (!is_valid_grpc_timeout_header_value(value_str)) {
-            zend_string_release(name_str);
-            zend_string_release(value_str);
-            zend_throw_exception(NULL, "invalid grpc-timeout metadata value", 0);
-            return -1;
-        }
-    } else if (is_binary_metadata_header(name_str) ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
+    if (is_binary_metadata_header(name_str) ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
         zend_string_release(name_str);
         zend_string_release(value_str);
         zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
