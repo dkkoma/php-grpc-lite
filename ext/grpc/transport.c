@@ -2537,23 +2537,28 @@ static void add_binary_metadata_values_to_map(zval *metadata, zend_string *key, 
     }
 }
 
-static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing)
+static void grpc_protocol_copy_metadata_map(zval *metadata, grpc_call *call, bool trailing)
 {
-    zval metadata;
     metadata_entry *entry;
 
-    array_init(&metadata);
+    array_init(metadata);
     for (entry = call->metadata_head; entry != NULL; entry = entry->next) {
         if (entry->trailing != trailing) {
             continue;
         }
         if (is_binary_metadata_header(entry->key)) {
-            add_binary_metadata_values_to_map(&metadata, entry->key, entry->value);
+            add_binary_metadata_values_to_map(metadata, entry->key, entry->value);
         } else {
-            add_metadata_value_to_map(&metadata, entry->key, zend_string_copy(entry->value));
+            add_metadata_value_to_map(metadata, entry->key, zend_string_copy(entry->value));
         }
     }
+}
 
+static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing)
+{
+    zval metadata;
+
+    grpc_protocol_copy_metadata_map(&metadata, call, trailing);
     add_assoc_zval(return_value, name, &metadata);
 }
 

@@ -91,18 +91,17 @@ static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, g
     return SUCCESS;
 }
 
-static int grpc_lite_extract_unary_payload(zval *result, zend_string **payload)
+static int grpc_lite_extract_unary_payload(zend_string *body_string, zend_string **payload)
 {
-    zval *body_zv = zend_hash_str_find(Z_ARRVAL_P(result), "body", sizeof("body") - 1);
     const unsigned char *body;
     size_t body_len;
     uint32_t payload_len;
-    if (body_zv == NULL || Z_TYPE_P(body_zv) != IS_STRING) {
+    if (body_string == NULL) {
         *payload = NULL;
         return SUCCESS;
     }
-    body = (const unsigned char *) Z_STRVAL_P(body_zv);
-    body_len = Z_STRLEN_P(body_zv);
+    body = (const unsigned char *) ZSTR_VAL(body_string);
+    body_len = ZSTR_LEN(body_string);
     if (body_len == 0) {
         *payload = NULL;
         return SUCCESS;
@@ -220,18 +219,12 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     call->initial_metadata_ready = true;
     call->status_ready = true;
     if (status_code == GRPC_STATUS_OK && result.body != NULL) {
-        zval body_result;
-        array_init(&body_result);
-        add_assoc_str(&body_result, "body", zend_string_copy(result.body));
-        if (grpc_lite_extract_unary_payload(&body_result, &payload) != SUCCESS) {
-            zval_ptr_dtor(&body_result);
+        if (grpc_lite_extract_unary_payload(result.body, &payload) != SUCCESS) {
             status_code = GRPC_STATUS_INTERNAL;
             zend_string_release(details);
             details = zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
             zval_ptr_dtor(&call->status);
             grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
-        } else {
-            zval_ptr_dtor(&body_result);
         }
     } else if (status_code == GRPC_STATUS_OK) {
         status_code = GRPC_STATUS_INTERNAL;

@@ -183,7 +183,20 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     zend_string_release(status_result.details);
 }
 
-static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value)
+static void server_streaming_call_fill_status_result(grpc_lite_streaming_next_result *result, server_streaming_call_state *state)
+{
+    grpc_lite_status_result status_result;
+
+    resolve_grpc_call_status(&state->call, state->cancelled, &status_result);
+    result->done = true;
+    result->status.code = status_result.code;
+    result->status.details = zend_string_copy(status_result.details);
+    grpc_protocol_copy_metadata_map(&result->initial_metadata, &state->call, false);
+    grpc_protocol_copy_metadata_map(&result->trailing_metadata, &state->call, true);
+    zend_string_release(status_result.details);
+}
+
+static int server_streaming_call_next_resource_core(zval *server_streaming_resource_zv, zval *diagnostic_result, grpc_lite_streaming_next_result *typed_result)
 {
     server_streaming_call_state *state;
     grpc_call *call;
@@ -195,7 +208,9 @@ static int server_streaming_call_next_resource_diagnostic(zval *server_streaming
     }
     call = &state->call;
 
-    array_init(return_value);
+    if (diagnostic_result != NULL) {
+        array_init(diagnostic_result);
+    }
 
     while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large) {
         int rv;
@@ -265,9 +280,16 @@ static int server_streaming_call_next_resource_diagnostic(zval *server_streaming
         }
         call->response_queue_count--;
         call->response_queue_bytes -= ZSTR_LEN(entry->payload);
-        add_assoc_bool(return_value, "done", false);
-        add_assoc_str(return_value, "payload", entry->payload);
-        grpc_protocol_add_metadata_map_to_return(return_value, "initial_metadata", call, false);
+        if (typed_result != NULL) {
+            typed_result->done = false;
+            typed_result->payload = entry->payload;
+            grpc_protocol_copy_metadata_map(&typed_result->initial_metadata, call, false);
+        }
+        if (diagnostic_result != NULL) {
+            add_assoc_bool(diagnostic_result, "done", false);
+            add_assoc_str(diagnostic_result, "payload", entry->payload);
+            grpc_protocol_add_metadata_map_to_return(diagnostic_result, "initial_metadata", call, false);
+        }
         efree(entry);
         return SUCCESS;
     }
@@ -276,9 +298,19 @@ static int server_streaming_call_next_resource_diagnostic(zval *server_streaming
         call->malformed_response_frame = true;
     }
     state->completed = true;
-    server_streaming_call_add_status(return_value, state);
+    if (typed_result != NULL) {
+        server_streaming_call_fill_status_result(typed_result, state);
+    }
+    if (diagnostic_result != NULL) {
+        server_streaming_call_add_status(diagnostic_result, state);
+    }
     clear_connection_server_streaming_call_state_owner(state);
     return SUCCESS;
+}
+
+static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value)
+{
+    return server_streaming_call_next_resource_core(server_streaming_resource_zv, return_value, NULL);
 }
 
 static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result)
@@ -295,34 +327,8 @@ static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result
 
 static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result)
 {
-    zval diagnostic;
-    zval *done;
-    zval *payload;
-    zval *status_code;
-    zval *initial_metadata;
-    zval *trailing_metadata;
-
     memset(result, 0, sizeof(*result));
-    ZVAL_UNDEF(&diagnostic);
-    if (server_streaming_call_next_resource_diagnostic(server_streaming_resource_zv, &diagnostic) != SUCCESS) {
-        zval_ptr_dtor(&diagnostic);
-        return FAILURE;
-    }
-    done = zend_hash_str_find(Z_ARRVAL(diagnostic), "done", sizeof("done") - 1);
-    result->done = done != NULL && zend_is_true(done);
-    payload = zend_hash_str_find(Z_ARRVAL(diagnostic), "payload", sizeof("payload") - 1);
-    if (payload != NULL && Z_TYPE_P(payload) == IS_STRING) {
-        result->payload = zend_string_copy(Z_STR_P(payload));
-    }
-    status_code = zend_hash_str_find(Z_ARRVAL(diagnostic), "status_code", sizeof("status_code") - 1);
-    result->status.code = status_code != NULL && Z_TYPE_P(status_code) == IS_LONG ? (int) Z_LVAL_P(status_code) : GRPC_STATUS_UNKNOWN;
-    result->status.details = grpc_lite_result_string(&diagnostic, "status_details", sizeof("status_details") - 1);
-    initial_metadata = zend_hash_str_find(Z_ARRVAL(diagnostic), "initial_metadata", sizeof("initial_metadata") - 1);
-    trailing_metadata = zend_hash_str_find(Z_ARRVAL(diagnostic), "trailing_metadata", sizeof("trailing_metadata") - 1);
-    grpc_lite_copy_result_metadata(&result->initial_metadata, initial_metadata);
-    grpc_lite_copy_result_metadata(&result->trailing_metadata, trailing_metadata);
-    zval_ptr_dtor(&diagnostic);
-    return SUCCESS;
+    return server_streaming_call_next_resource_core(server_streaming_resource_zv, NULL, result);
 }
 
 static int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv)

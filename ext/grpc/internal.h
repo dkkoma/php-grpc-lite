@@ -587,6 +587,7 @@ static void free_queued_response_payloads(grpc_call *call);
 static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
 static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
 static void grpc_protocol_free_response_metadata_entries(grpc_call *call);
+static void grpc_protocol_copy_metadata_map(zval *metadata, grpc_call *call, bool trailing);
 static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
 static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
