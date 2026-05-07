@@ -33,6 +33,7 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks);
 static void mark_connection_dead(h2_connection *connection, int error_code);
 static void set_connection_error_detail(h2_connection *connection, const char *detail);
 static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
+static void retire_connection(h2_connection *connection, const char *detail);
 static bool connection_usable(h2_connection *connection);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
@@ -251,8 +252,7 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *str
         return;
     }
     if (!stream->completed && !stream->call.stream_closed && connection_owned_by_server_streaming_call_state(stream->connection, stream) && connection_usable(stream->connection) && stream->call.stream_id > 0) {
-        set_connection_error_detail(stream->connection, "active stream resource destroyed before completion");
-        mark_connection_dead(stream->connection, NGHTTP2_CANCEL);
+        retire_connection(stream->connection, "active stream resource destroyed before completion");
         detach_persistent_connection_by_ptr(stream->connection);
     }
     clear_connection_server_streaming_call_state_owner(stream);
@@ -325,9 +325,18 @@ static void mark_connection_draining(h2_connection *connection, int32_t last_str
     connection->last_goaway_error_code = error_code;
 }
 
+static void retire_connection(h2_connection *connection, const char *detail)
+{
+    if (connection == NULL) {
+        return;
+    }
+    connection->retired = true;
+    set_connection_error_detail(connection, detail);
+}
+
 static bool connection_usable(h2_connection *connection)
 {
-    return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
+    return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining && !connection->retired;
 }
 
 static zend_ulong hash_bytes(const char *data, size_t data_len)

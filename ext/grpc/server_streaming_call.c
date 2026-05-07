@@ -172,6 +172,7 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     add_assoc_long(return_value, "bytes_received", call->bytes_received);
     add_assoc_bool(return_value, "connection_dead", state->connection != NULL ? state->connection->dead : false);
     add_assoc_bool(return_value, "connection_draining", state->connection != NULL ? state->connection->draining : false);
+    add_assoc_bool(return_value, "connection_retired", state->connection != NULL ? state->connection->retired : false);
     add_assoc_long(return_value, "connection_last_error", state->connection != NULL ? state->connection->last_error : 0);
     add_assoc_long(return_value, "connection_last_io_errno", state->connection != NULL ? state->connection->last_io_errno : call->last_io_errno);
     add_assoc_long(return_value, "connection_last_ssl_error", state->connection != NULL ? state->connection->last_ssl_error : call->last_ssl_error);

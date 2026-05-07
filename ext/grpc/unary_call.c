@@ -187,6 +187,7 @@ build_unary_result:
     add_assoc_bool(return_value, "persistent_reused", persistent_reused);
     add_assoc_bool(return_value, "connection_dead", connection->dead);
     add_assoc_bool(return_value, "connection_draining", connection->draining);
+    add_assoc_bool(return_value, "connection_retired", connection->retired);
     add_assoc_long(return_value, "connection_last_error", connection->last_error);
     add_assoc_long(return_value, "connection_last_io_errno", connection->last_io_errno);
     add_assoc_long(return_value, "connection_last_ssl_error", connection->last_ssl_error);

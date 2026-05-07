@@ -162,7 +162,7 @@ stream-local failureはconnection failureと分ける。message size超過、met
 
 retry policyやidempotency判断はtransport lifecycleとは分離し、将来の明示機能として扱う。
 
-HTTP/2 resourceの所有権はC extension側に閉じる。`grpc_call` per-call stateが持つbody buffer、queued payload、metadata、`grpc-message` はcall完了・failure・resource destructorのいずれでも同じcleanup pathを通す。明示cancel時は `RST_STREAM(CANCEL)` を送る。stream resource destructorはPHP shutdown/destructor中にblocking I/Oを行わず、未完了streamを検出した場合はchannelをdead扱いにしてbusy状態を解除する。
+HTTP/2 resourceの所有権はC extension側に閉じる。`grpc_call` per-call stateが持つbody buffer、queued payload、metadata、`grpc-message` はcall完了・failure・resource destructorのいずれでも同じcleanup pathを通す。明示cancel時は `RST_STREAM(CANCEL)` を送る。stream resource destructorはPHP shutdown/destructor中にblocking I/Oを行わず、未完了streamを検出した場合は安全側にconnectionをretired扱いとしてpersistent cacheから外し、busy状態を解除する。これはsocket/TLS/nghttp2 failureではなく、active stream abandonに対するsafe discard policyである。
 
 `timeout` / `grpc-timeout` はconnect、TLS handshake、RPC send/recvに適用する。ただしDNS解決はlibc `getaddrinfo()` の同期呼び出しであり、C extension内では途中中断できない。DNS解決が長時間blockする環境では、OS resolver設定、host cache、または将来のasync resolver/c-ares導入で扱う。
 

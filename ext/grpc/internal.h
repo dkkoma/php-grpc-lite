@@ -448,6 +448,7 @@ struct _h2_connection {
     char authority[512];
     bool dead;
     bool draining;
+    bool retired;
     bool busy;
     bool detached_from_cache;
     grpc_call *active_call;
@@ -512,6 +513,7 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks);
 static void mark_connection_dead(h2_connection *connection, int error_code);
 static void set_connection_error_detail(h2_connection *connection, const char *detail);
 static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
+static void retire_connection(h2_connection *connection, const char *detail);
 static bool connection_usable(h2_connection *connection);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
