@@ -105,7 +105,15 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
-    append_grpc_timeout_request_header(&request_headers, timeout_us);
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        state->call.timed_out = true;
+        free_request_headers(&request_headers);
+        destroy_server_streaming_call_state(state);
+        zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
+        return FAILURE;
+    }
+    append_grpc_timeout_request_header(&request_headers, remaining_timeout_us);
     if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
         free_request_headers(&request_headers);
         destroy_server_streaming_call_state(state);
