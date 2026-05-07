@@ -1499,7 +1499,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         zend_throw_exception(NULL, errno == ETIMEDOUT ? "HTTP/2 transport deadline exceeded" : "failed to connect", 0);
         RETURN_THROWS();
     }
-    if (poll_loop && set_nonblocking(client.fd) != 0) {
+    if (poll_loop && set_fd_nonblocking_mode(client.fd, true) != 0) {
         close(client.fd);
         zend_throw_exception(NULL, "failed to set nonblocking", 0);
         RETURN_THROWS();
