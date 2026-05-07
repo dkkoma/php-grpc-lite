@@ -7,9 +7,9 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
     if (state == NULL) {
         return;
     }
-    free_queued_response_payloads(&state->client);
-    if (connection_owned_by_server_streaming_call_state(state->connection, state) && connection_usable(state->connection) && state->client.stream_id > 0) {
-        int rv = nghttp2_submit_rst_stream(state->connection->session, NGHTTP2_FLAG_NONE, state->client.stream_id, NGHTTP2_CANCEL);
+    free_queued_response_payloads(&state->call);
+    if (connection_owned_by_server_streaming_call_state(state->connection, state) && connection_usable(state->connection) && state->call.stream_id > 0) {
+        int rv = nghttp2_submit_rst_stream(state->connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, NGHTTP2_CANCEL);
         if (rv == 0) {
             rv = nghttp2_session_send(state->connection->session);
         }
@@ -80,22 +80,22 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     state->recv_buf_len = 65536;
     state->recv_buf = emalloc(state->recv_buf_len);
 
-    memset(&state->client, 0, sizeof(state->client));
-    state->client.fd = connection->fd;
-    state->client.connection = connection;
-    state->client.grpc_status = -1;
-    state->client.http_status = -1;
-    state->client.request = (const uint8_t *) ZSTR_VAL(state->request);
-    state->client.request_len = ZSTR_LEN(state->request);
-    state->client.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
-    state->client.max_response_metadata_bytes = max_response_metadata_bytes;
-    state->client.deadline_abs_us = deadline_abs_us > 0 ? deadline_abs_us : 0;
-    state->client.decode_response_incrementally = true;
-    state->client.direct_response_payload = true;
-    state->client.queue_response_payloads = true;
-    set_grpc_header(&state->client, state->client.request_len);
+    memset(&state->call, 0, sizeof(state->call));
+    state->call.fd = connection->fd;
+    state->call.connection = connection;
+    state->call.grpc_status = -1;
+    state->call.http_status = -1;
+    state->call.request = (const uint8_t *) ZSTR_VAL(state->request);
+    state->call.request_len = ZSTR_LEN(state->request);
+    state->call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
+    state->call.max_response_metadata_bytes = max_response_metadata_bytes;
+    state->call.deadline_abs_us = deadline_abs_us > 0 ? deadline_abs_us : 0;
+    state->call.decode_response_incrementally = true;
+    state->call.direct_response_payload = true;
+    state->call.queue_response_payloads = true;
+    set_grpc_header(&state->call, state->call.request_len);
 
-    nghttp2_session_set_user_data(connection->session, &state->client);
+    nghttp2_session_set_user_data(connection->session, &state->call);
     connection->busy = true;
     connection->active_server_streaming_call_owner = state;
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
@@ -116,8 +116,8 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
-    state->client.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
-    if (state->client.stream_id < 0) {
+    state->call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
+    if (state->call.stream_id < 0) {
         free_request_headers(&request_headers);
         destroy_server_streaming_call_state(state);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
@@ -126,7 +126,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
 
     rv = nghttp2_session_send(connection->session);
     if (rv != 0) {
-        bool stream_timed_out = state->client.timed_out;
+        bool stream_timed_out = state->call.timed_out;
         mark_connection_dead(connection, rv);
         free_request_headers(&request_headers);
         destroy_server_streaming_call_state(state);
@@ -145,63 +145,63 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
 
 static void server_streaming_call_add_status(zval *return_value, server_streaming_call_state *state)
 {
-    grpc_call *client = &state->client;
+    grpc_call *call = &state->call;
     grpc_lite_status_result status_result;
-    resolve_grpc_call_status(client, state->cancelled, &status_result);
+    resolve_grpc_call_status(call, state->cancelled, &status_result);
     add_assoc_bool(return_value, "done", true);
     add_status_result_to_return(return_value, &status_result);
-    add_assoc_long(return_value, "grpc_status", client->grpc_status);
-    add_assoc_str(return_value, "grpc_message", client->grpc_message != NULL ? zend_string_copy(client->grpc_message) : zend_empty_string);
-    add_assoc_long(return_value, "http_status", client->http_status);
-    add_assoc_long(return_value, "stream_error_code", client->stream_error_code);
-    add_assoc_bool(return_value, "stream_reset_seen", client->stream_reset_seen);
-    add_assoc_bool(return_value, "invalid_grpc_status", client->invalid_grpc_status);
-    add_assoc_str(return_value, "content_type", client->content_type != NULL ? zend_string_copy(client->content_type) : zend_empty_string);
-    add_assoc_str(return_value, "grpc_encoding", client->grpc_encoding != NULL ? zend_string_copy(client->grpc_encoding) : zend_empty_string);
-    add_assoc_bool(return_value, "compressed_response_seen", client->compressed_response_seen);
-    add_assoc_bool(return_value, "response_message_too_large", client->response_message_too_large);
-    add_assoc_bool(return_value, "malformed_response_frame", client->malformed_response_frame);
-    add_assoc_bool(return_value, "metadata_too_large", client->metadata_too_large);
-    add_assoc_bool(return_value, "invalid_content_type", client->invalid_content_type);
-    add_assoc_bool(return_value, "unsupported_response_encoding", client->unsupported_response_encoding);
-    add_assoc_long(return_value, "max_receive_message_length", client->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) client->max_receive_message_bytes);
-    add_assoc_bool(return_value, "timed_out", client->timed_out);
+    add_assoc_long(return_value, "grpc_status", call->grpc_status);
+    add_assoc_str(return_value, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
+    add_assoc_long(return_value, "http_status", call->http_status);
+    add_assoc_long(return_value, "stream_error_code", call->stream_error_code);
+    add_assoc_bool(return_value, "stream_reset_seen", call->stream_reset_seen);
+    add_assoc_bool(return_value, "invalid_grpc_status", call->invalid_grpc_status);
+    add_assoc_str(return_value, "content_type", call->content_type != NULL ? zend_string_copy(call->content_type) : zend_empty_string);
+    add_assoc_str(return_value, "grpc_encoding", call->grpc_encoding != NULL ? zend_string_copy(call->grpc_encoding) : zend_empty_string);
+    add_assoc_bool(return_value, "compressed_response_seen", call->compressed_response_seen);
+    add_assoc_bool(return_value, "response_message_too_large", call->response_message_too_large);
+    add_assoc_bool(return_value, "malformed_response_frame", call->malformed_response_frame);
+    add_assoc_bool(return_value, "metadata_too_large", call->metadata_too_large);
+    add_assoc_bool(return_value, "invalid_content_type", call->invalid_content_type);
+    add_assoc_bool(return_value, "unsupported_response_encoding", call->unsupported_response_encoding);
+    add_assoc_long(return_value, "max_receive_message_length", call->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) call->max_receive_message_bytes);
+    add_assoc_bool(return_value, "timed_out", call->timed_out);
     add_assoc_bool(return_value, "cancelled", state->cancelled);
     add_assoc_long(return_value, "body_bytes", 0);
-    add_assoc_long(return_value, "bytes_sent", client->bytes_sent);
-    add_assoc_long(return_value, "bytes_received", client->bytes_received);
+    add_assoc_long(return_value, "bytes_sent", call->bytes_sent);
+    add_assoc_long(return_value, "bytes_received", call->bytes_received);
     add_assoc_bool(return_value, "connection_dead", state->connection != NULL ? state->connection->dead : false);
     add_assoc_bool(return_value, "connection_draining", state->connection != NULL ? state->connection->draining : false);
     add_assoc_long(return_value, "connection_last_error", state->connection != NULL ? state->connection->last_error : 0);
-    add_assoc_long(return_value, "connection_last_io_errno", state->connection != NULL ? state->connection->last_io_errno : client->last_io_errno);
-    add_assoc_long(return_value, "connection_last_ssl_error", state->connection != NULL ? state->connection->last_ssl_error : client->last_ssl_error);
+    add_assoc_long(return_value, "connection_last_io_errno", state->connection != NULL ? state->connection->last_io_errno : call->last_io_errno);
+    add_assoc_long(return_value, "connection_last_ssl_error", state->connection != NULL ? state->connection->last_ssl_error : call->last_ssl_error);
     add_assoc_long(return_value, "connection_tls_verify_result", state->connection != NULL ? (zend_long) state->connection->tls_verify_result : 0);
-    add_assoc_string(return_value, "connection_last_error_detail", state->connection != NULL ? state->connection->last_error_detail : client->last_io_error_detail);
+    add_assoc_string(return_value, "connection_last_error_detail", state->connection != NULL ? state->connection->last_error_detail : call->last_io_error_detail);
     add_assoc_string(return_value, "connection_negotiated_protocol", state->connection != NULL ? state->connection->negotiated_protocol : "");
-    add_metadata_map_to_return(return_value, "initial_metadata", client, false);
-    add_metadata_map_to_return(return_value, "trailing_metadata", client, true);
+    add_metadata_map_to_return(return_value, "initial_metadata", call, false);
+    add_metadata_map_to_return(return_value, "trailing_metadata", call, true);
     zend_string_release(status_result.details);
 }
 
 static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, zval *return_value)
 {
     server_streaming_call_state *state;
-    grpc_call *client;
+    grpc_call *call;
 
     state = (server_streaming_call_state *) zend_fetch_resource(Z_RES_P(server_streaming_resource_zv), "grpc_lite_server_streaming_call_state", le_server_streaming_call_state);
     if (state == NULL) {
         zend_throw_exception(NULL, "invalid grpc_lite_server_streaming_call_state resource", 0);
         return FAILURE;
     }
-    client = &state->client;
+    call = &state->call;
 
     array_init(return_value);
 
-    while (client->response_queue_head == NULL && !client->stream_closed && !state->completed && !client->response_message_too_large && !client->compressed_response_seen && !client->malformed_response_frame && !client->invalid_content_type && !client->unsupported_response_encoding && !client->metadata_too_large) {
+    while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large) {
         int rv;
         ssize_t nread;
-        if (client->deadline_abs_us > 0 && monotonic_us() >= client->deadline_abs_us) {
-            client->timed_out = true;
+        if (call->deadline_abs_us > 0 && monotonic_us() >= call->deadline_abs_us) {
+            call->timed_out = true;
             cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);
             state->completed = true;
             break;
@@ -209,23 +209,23 @@ static int server_streaming_call_next_resource(zval *server_streaming_resource_z
         rv = nghttp2_session_send(state->connection->session);
         if (rv != 0) {
             mark_connection_dead(state->connection, rv);
-            if (client->timed_out) {
+            if (call->timed_out) {
                 state->completed = true;
                 break;
             }
             state->completed = true;
             break;
         }
-        nread = connection_recv(state->connection, (uint8_t *) state->recv_buf, state->recv_buf_len, client->deadline_abs_us);
+        nread = connection_recv(state->connection, (uint8_t *) state->recv_buf, state->recv_buf_len, call->deadline_abs_us);
         if (nread <= 0) {
-            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && client->deadline_abs_us > 0;
+            bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && call->deadline_abs_us > 0;
             if (nread < 0) {
-                client->last_io_errno = errno;
-                client->last_ssl_error = state->connection->last_ssl_error;
-                snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "%s", state->connection->last_error_detail);
+                call->last_io_errno = errno;
+                call->last_ssl_error = state->connection->last_ssl_error;
+                snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "%s", state->connection->last_error_detail);
             }
             if (socket_timeout) {
-                client->timed_out = true;
+                call->timed_out = true;
                 cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);
             } else {
                 mark_connection_dead(state->connection, nread == 0 ? 0 : errno);
@@ -233,7 +233,7 @@ static int server_streaming_call_next_resource(zval *server_streaming_resource_z
             state->completed = true;
             break;
         }
-        client->bytes_received += (size_t) nread;
+        call->bytes_received += (size_t) nread;
         rv = nghttp2_session_mem_recv(state->connection->session, (const uint8_t *) state->recv_buf, (size_t) nread);
         if (rv < 0) {
             mark_connection_dead(state->connection, rv);
@@ -250,30 +250,30 @@ static int server_streaming_call_next_resource(zval *server_streaming_resource_z
         }
     }
 
-    if (client->response_message_too_large || client->compressed_response_seen || client->malformed_response_frame || client->invalid_content_type || client->unsupported_response_encoding || client->metadata_too_large) {
+    if (call->response_message_too_large || call->compressed_response_seen || call->malformed_response_frame || call->invalid_content_type || call->unsupported_response_encoding || call->metadata_too_large) {
         server_streaming_call_terminate_with_cancel(state);
         if (!connection_usable(state->connection)) {
             detach_persistent_connection_by_ptr(state->connection);
         }
     }
 
-    if (client->response_queue_head != NULL) {
-        queued_payload *entry = client->response_queue_head;
-        client->response_queue_head = entry->next;
-        if (client->response_queue_head == NULL) {
-            client->response_queue_tail = NULL;
+    if (call->response_queue_head != NULL) {
+        queued_payload *entry = call->response_queue_head;
+        call->response_queue_head = entry->next;
+        if (call->response_queue_head == NULL) {
+            call->response_queue_tail = NULL;
         }
-        client->response_queue_count--;
-        client->response_queue_bytes -= ZSTR_LEN(entry->payload);
+        call->response_queue_count--;
+        call->response_queue_bytes -= ZSTR_LEN(entry->payload);
         add_assoc_bool(return_value, "done", false);
         add_assoc_str(return_value, "payload", entry->payload);
-        add_metadata_map_to_return(return_value, "initial_metadata", client, false);
+        add_metadata_map_to_return(return_value, "initial_metadata", call, false);
         efree(entry);
         return SUCCESS;
     }
 
-    if (!client->response_message_too_large && !client->compressed_response_seen && (client->response_header_len != 0 || client->response_payload != NULL || client->response_payload_offset != 0)) {
-        client->malformed_response_frame = true;
+    if (!call->response_message_too_large && !call->compressed_response_seen && (call->response_header_len != 0 || call->response_payload != NULL || call->response_payload_offset != 0)) {
+        call->malformed_response_frame = true;
     }
     state->completed = true;
     server_streaming_call_add_status(return_value, state);
@@ -292,7 +292,7 @@ static int server_streaming_call_cancel_resource(zval *server_streaming_resource
     }
     if (state != NULL && !state->completed && connection_owned_by_server_streaming_call_state(state->connection, state) && connection_usable(state->connection)) {
         state->cancelled = true;
-        state->client.grpc_status = 1;
+        state->call.grpc_status = 1;
         server_streaming_call_terminate_with_cancel(state);
         clear_connection_server_streaming_call_state_owner(state);
     }

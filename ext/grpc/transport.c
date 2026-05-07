@@ -23,9 +23,9 @@ static void destroy_h2_connection(h2_connection *connection);
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
 static void detach_persistent_connection_by_ptr(h2_connection *connection);
 static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream);
-static bool connection_owned_by_call(h2_connection *connection, grpc_call *client);
+static bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
 static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream);
-static void clear_connection_call_owner(h2_connection *connection, grpc_call *client);
+static void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code);
 static void destroy_server_streaming_call_state(server_streaming_call_state *stream);
 static void server_streaming_call_state_dtor(zend_resource *rsrc);
@@ -51,7 +51,7 @@ static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
 static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
-static ssize_t connection_send(grpc_call *client, const uint8_t *data, size_t length);
+static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
 static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
 static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
 static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
@@ -59,10 +59,10 @@ static void discard_persistent_connection(const char *key, size_t key_len, h2_co
 static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
 static int set_nonblocking(int fd);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
-static size_t remaining_request_bytes(grpc_call *client);
-static size_t copy_request_bytes(grpc_call *client, uint8_t *buf, size_t length);
+static size_t remaining_request_bytes(grpc_call *call);
+static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
-static void set_grpc_header(grpc_call *client, size_t payload_len);
+static void set_grpc_header(grpc_call *call, size_t payload_len);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
@@ -83,19 +83,19 @@ static int init_request_headers(h2_request_headers *headers, size_t custom_value
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
-static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
-static int process_response_data_direct(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len);
-static int enqueue_response_payload(grpc_call *client, zend_string *payload);
-static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us);
-static int deliver_queued_response_payloads(grpc_call *client);
-static void free_queued_response_payloads(grpc_call *client);
-static void mark_response_metadata_as_trailing(grpc_call *client);
-static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void free_metadata_entries(grpc_call *client);
-static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
-static void resolve_grpc_call_status(grpc_call *client, bool cancelled, grpc_lite_status_result *result);
+static int validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+static int process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+static int enqueue_response_payload(grpc_call *call, zend_string *payload);
+static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us);
+static int deliver_queued_response_payloads(grpc_call *call);
+static void free_queued_response_payloads(grpc_call *call);
+static void mark_response_metadata_as_trailing(grpc_call *call);
+static int add_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+static void free_metadata_entries(grpc_call *call);
+static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
+static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
-static void cleanup_grpc_call(grpc_call *client);
+static void cleanup_grpc_call(grpc_call *call);
 
 static void destroy_h2_connection(h2_connection *connection)
 {
@@ -182,9 +182,9 @@ static bool connection_owned_by_server_streaming_call_state(h2_connection *conne
     return connection != NULL && stream != NULL && connection->active_server_streaming_call_owner == stream;
 }
 
-static bool connection_owned_by_call(h2_connection *connection, grpc_call *client)
+static bool connection_owned_by_call(h2_connection *connection, grpc_call *call)
 {
-    return connection != NULL && client != NULL && connection->active_call_owner == client;
+    return connection != NULL && call != NULL && connection->active_call_owner == call;
 }
 
 static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream)
@@ -208,15 +208,15 @@ static void clear_connection_server_streaming_call_state_owner(server_streaming_
     connection->busy = false;
     connection->active_server_streaming_call_owner = NULL;
     stream->connection = NULL;
-    stream->client.connection = NULL;
+    stream->call.connection = NULL;
     if (connection->detached_from_cache) {
         destroy_h2_connection(connection);
     }
 }
 
-static void clear_connection_call_owner(h2_connection *connection, grpc_call *client)
+static void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
 {
-    if (!connection_owned_by_call(connection, client)) {
+    if (!connection_owned_by_call(connection, call)) {
         return;
     }
     if (connection->session != NULL) {
@@ -230,10 +230,10 @@ static void cancel_active_server_streaming_call_state(server_streaming_call_stat
 {
     int rv;
 
-    if (stream == NULL || stream->completed || !connection_owned_by_server_streaming_call_state(stream->connection, stream) || !connection_usable(stream->connection) || stream->client.stream_id <= 0) {
+    if (stream == NULL || stream->completed || !connection_owned_by_server_streaming_call_state(stream->connection, stream) || !connection_usable(stream->connection) || stream->call.stream_id <= 0) {
         return;
     }
-    rv = nghttp2_submit_rst_stream(stream->connection->session, NGHTTP2_FLAG_NONE, stream->client.stream_id, error_code);
+    rv = nghttp2_submit_rst_stream(stream->connection->session, NGHTTP2_FLAG_NONE, stream->call.stream_id, error_code);
     if (rv != 0) {
         mark_connection_dead(stream->connection, rv);
         return;
@@ -249,7 +249,7 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *str
     if (stream == NULL) {
         return;
     }
-    if (!stream->completed && !stream->client.stream_closed && connection_owned_by_server_streaming_call_state(stream->connection, stream) && connection_usable(stream->connection) && stream->client.stream_id > 0) {
+    if (!stream->completed && !stream->call.stream_closed && connection_owned_by_server_streaming_call_state(stream->connection, stream) && connection_usable(stream->connection) && stream->call.stream_id > 0) {
         set_connection_error_detail(stream->connection, "active stream resource destroyed before completion");
         mark_connection_dead(stream->connection, NGHTTP2_CANCEL);
         detach_persistent_connection_by_ptr(stream->connection);
@@ -261,7 +261,7 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *str
     if (stream->recv_buf != NULL) {
         efree(stream->recv_buf);
     }
-    cleanup_grpc_call(&stream->client);
+    cleanup_grpc_call(&stream->call);
     efree(stream);
 }
 
@@ -873,49 +873,49 @@ static int configure_tls_connection(h2_connection *connection, const char *host,
     return 0;
 }
 
-static ssize_t connection_send(grpc_call *client, const uint8_t *data, size_t length)
+static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length)
 {
     zend_long remaining_timeout_us;
-    if (client == NULL) {
+    if (call == NULL) {
         errno = EINVAL;
         return -1;
     }
-    remaining_timeout_us = remaining_timeout_us_for_deadline(client->deadline_abs_us);
+    remaining_timeout_us = remaining_timeout_us_for_deadline(call->deadline_abs_us);
     if (remaining_timeout_us < 0) {
         errno = ETIMEDOUT;
-        client->timed_out = true;
+        call->timed_out = true;
         return -1;
     }
-    if (client->connection != NULL && set_socket_timeout_us(client->connection->fd, remaining_timeout_us) != 0) {
+    if (call->connection != NULL && set_socket_timeout_us(call->connection->fd, remaining_timeout_us) != 0) {
         return -1;
     }
-    if (client->connection != NULL && client->connection->ssl != NULL) {
+    if (call->connection != NULL && call->connection->ssl != NULL) {
         if (length > INT_MAX) {
             errno = EMSGSIZE;
-            client->last_io_errno = errno;
-            client->connection->last_io_errno = errno;
-            set_connection_error_detail(client->connection, "SSL_write length exceeds INT_MAX");
+            call->last_io_errno = errno;
+            call->connection->last_io_errno = errno;
+            set_connection_error_detail(call->connection, "SSL_write length exceeds INT_MAX");
             return -1;
         }
-        int written = SSL_write(client->connection->ssl, data, (int) length);
+        int written = SSL_write(call->connection->ssl, data, (int) length);
         if (written <= 0) {
-            int ssl_error = SSL_get_error(client->connection->ssl, written);
-            client->last_ssl_error = ssl_error;
-            client->connection->last_ssl_error = ssl_error;
+            int ssl_error = SSL_get_error(call->connection->ssl, written);
+            call->last_ssl_error = ssl_error;
+            call->connection->last_ssl_error = ssl_error;
             errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
-            if ((errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0) {
-                client->timed_out = true;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && call->deadline_abs_us > 0) {
+                call->timed_out = true;
                 errno = ETIMEDOUT;
             }
-            client->last_io_errno = errno;
-            client->connection->last_io_errno = errno;
-            snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
-            set_connection_error_detail(client->connection, client->last_io_error_detail);
+            call->last_io_errno = errno;
+            call->connection->last_io_errno = errno;
+            snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
+            set_connection_error_detail(call->connection, call->last_io_error_detail);
             return -1;
         }
         return written;
     }
-    ssize_t written = send(client->fd, data, length,
+    ssize_t written = send(call->fd, data, length,
 #ifdef MSG_NOSIGNAL
         MSG_NOSIGNAL
 #else
@@ -923,15 +923,15 @@ static ssize_t connection_send(grpc_call *client, const uint8_t *data, size_t le
 #endif
     );
     if (written < 0) {
-        if ((errno == EAGAIN || errno == EWOULDBLOCK) && client->deadline_abs_us > 0) {
-            client->timed_out = true;
+        if ((errno == EAGAIN || errno == EWOULDBLOCK) && call->deadline_abs_us > 0) {
+            call->timed_out = true;
             errno = ETIMEDOUT;
         }
-        client->last_io_errno = errno;
-        snprintf(client->last_io_error_detail, sizeof(client->last_io_error_detail), "send failed: %s", strerror(errno));
-        if (client->connection != NULL) {
-            client->connection->last_io_errno = errno;
-            set_connection_error_detail(client->connection, client->last_io_error_detail);
+        call->last_io_errno = errno;
+        snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "send failed: %s", strerror(errno));
+        if (call->connection != NULL) {
+            call->connection->last_io_errno = errno;
+            set_connection_error_detail(call->connection, call->last_io_error_detail);
         }
     }
     return written;
@@ -1222,57 +1222,57 @@ static int set_nonblocking(int fd)
 
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
+    grpc_call *call = (grpc_call *) user_data;
     size_t total_written = 0;
     (void) session;
     (void) flags;
 
-    if (client == NULL) {
+    if (call == NULL) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
 
     while (total_written < length) {
-        ssize_t written = connection_send(client, data + total_written, length - total_written);
+        ssize_t written = connection_send(call, data + total_written, length - total_written);
         if (written <= 0) {
             return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
         total_written += (size_t) written;
     }
-    client->bytes_sent += total_written;
+    call->bytes_sent += total_written;
     return (ssize_t) total_written;
 }
 
-static size_t remaining_request_bytes(grpc_call *client)
+static size_t remaining_request_bytes(grpc_call *call)
 {
-    size_t total_len = client->grpc_header_len + client->request_len;
-    if (client->request_offset >= total_len) {
+    size_t total_len = call->grpc_header_len + call->request_len;
+    if (call->request_offset >= total_len) {
         return 0;
     }
-    return total_len - client->request_offset;
+    return total_len - call->request_offset;
 }
 
-static size_t copy_request_bytes(grpc_call *client, uint8_t *buf, size_t length)
+static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
 {
     size_t copied = 0;
-    size_t total_len = client->grpc_header_len + client->request_len;
+    size_t total_len = call->grpc_header_len + call->request_len;
 
-    while (copied < length && client->request_offset < total_len) {
-        if (client->request_offset < client->grpc_header_len) {
-            size_t header_offset = client->request_offset;
-            size_t remaining = client->grpc_header_len - header_offset;
+    while (copied < length && call->request_offset < total_len) {
+        if (call->request_offset < call->grpc_header_len) {
+            size_t header_offset = call->request_offset;
+            size_t remaining = call->grpc_header_len - header_offset;
             size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
-            memcpy(buf + copied, client->grpc_header + header_offset, to_copy);
+            memcpy(buf + copied, call->grpc_header + header_offset, to_copy);
             copied += to_copy;
-            client->request_offset += to_copy;
+            call->request_offset += to_copy;
             continue;
         }
 
-        size_t payload_offset = client->request_offset - client->grpc_header_len;
-        size_t remaining = client->request_len - payload_offset;
+        size_t payload_offset = call->request_offset - call->grpc_header_len;
+        size_t remaining = call->request_len - payload_offset;
         size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
-        memcpy(buf + copied, client->request + payload_offset, to_copy);
+        memcpy(buf + copied, call->request + payload_offset, to_copy);
         copied += to_copy;
-        client->request_offset += to_copy;
+        call->request_offset += to_copy;
     }
 
     return copied;
@@ -1280,53 +1280,53 @@ static size_t copy_request_bytes(grpc_call *client, uint8_t *buf, size_t length)
 
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
-    size_t total_len = client->grpc_header_len + client->request_len;
-    size_t remaining = remaining_request_bytes(client);
+    grpc_call *call = (grpc_call *) user_data;
+    size_t total_len = call->grpc_header_len + call->request_len;
+    size_t remaining = remaining_request_bytes(call);
     size_t to_send = remaining < length ? remaining : length;
     (void) session;
     (void) stream_id;
     (void) source;
 
     *data_flags = 0;
-    client->data_read_calls++;
+    call->data_read_calls++;
 
-    size_t copied = copy_request_bytes(client, buf, to_send);
-    if (client->request_offset >= total_len) {
+    size_t copied = copy_request_bytes(call, buf, to_send);
+    if (call->request_offset >= total_len) {
         *data_flags = NGHTTP2_DATA_FLAG_EOF;
     }
     return (ssize_t) copied;
 }
 
-static void set_grpc_header(grpc_call *client, size_t payload_len)
+static void set_grpc_header(grpc_call *call, size_t payload_len)
 {
-    client->grpc_header[0] = 0;
-    client->grpc_header[1] = (uint8_t) ((payload_len >> 24) & 0xff);
-    client->grpc_header[2] = (uint8_t) ((payload_len >> 16) & 0xff);
-    client->grpc_header[3] = (uint8_t) ((payload_len >> 8) & 0xff);
-    client->grpc_header[4] = (uint8_t) (payload_len & 0xff);
-    client->grpc_header_len = 5;
+    call->grpc_header[0] = 0;
+    call->grpc_header[1] = (uint8_t) ((payload_len >> 24) & 0xff);
+    call->grpc_header[2] = (uint8_t) ((payload_len >> 16) & 0xff);
+    call->grpc_header[3] = (uint8_t) ((payload_len >> 8) & 0xff);
+    call->grpc_header[4] = (uint8_t) (payload_len & 0xff);
+    call->grpc_header_len = 5;
 }
 
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
+    grpc_call *call = (grpc_call *) user_data;
     (void) session;
     (void) flags;
-    if (stream_id == client->stream_id && len > 0) {
-        client->data_recv_calls++;
-        if (client->direct_response_payload && client->decode_response_incrementally && ((client->payload_callback_fci != NULL && client->payload_callback_fcc != NULL) || client->queue_response_payloads)) {
-            if (process_response_data_direct(session, client, data, len) != 0) {
+    if (stream_id == call->stream_id && len > 0) {
+        call->data_recv_calls++;
+        if (call->direct_response_payload && call->decode_response_incrementally && ((call->payload_callback_fci != NULL && call->payload_callback_fcc != NULL) || call->queue_response_payloads)) {
+            if (process_response_data_direct(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
         } else {
-            if (validate_response_message_lengths(session, client, data, len) != 0) {
+            if (validate_response_message_lengths(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
-            if (client->discard_response_body) {
+            if (call->discard_response_body) {
                 return 0;
             }
-            smart_str_appendl(&client->body, (const char *) data, len);
+            smart_str_appendl(&call->body, (const char *) data, len);
         }
     }
     return 0;
@@ -1334,45 +1334,45 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
+    grpc_call *call = (grpc_call *) user_data;
     bool trailing;
     (void) session;
     (void) flags;
-    if (frame->hd.stream_id != client->stream_id) {
+    if (frame->hd.stream_id != call->stream_id) {
         return 0;
     }
     trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
-    if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && client->grpc_status >= 0) {
+    if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && call->grpc_status >= 0) {
         trailing = true;
     }
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            client->initial_grpc_status_seen = true;
+            call->initial_grpc_status_seen = true;
         }
-        if (client->grpc_status_seen) {
-            client->invalid_grpc_status = true;
+        if (call->grpc_status_seen) {
+            call->invalid_grpc_status = true;
         }
-        client->grpc_status_seen = true;
-        client->grpc_status = parse_grpc_status_value(value, valuelen);
-        if (client->grpc_status < 0) {
-            client->invalid_grpc_status = true;
+        call->grpc_status_seen = true;
+        call->grpc_status = parse_grpc_status_value(value, valuelen);
+        if (call->grpc_status < 0) {
+            call->invalid_grpc_status = true;
         }
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            mark_response_metadata_as_trailing(client);
+            mark_response_metadata_as_trailing(call);
         }
         trailing = true;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            client->initial_grpc_status_seen = true;
+            call->initial_grpc_status_seen = true;
         }
-        if (client->grpc_message != NULL) {
-            zend_string_release(client->grpc_message);
+        if (call->grpc_message != NULL) {
+            zend_string_release(call->grpc_message);
         }
-        client->grpc_message = grpc_lite_decode_grpc_message(value, valuelen);
+        call->grpc_message = grpc_lite_decode_grpc_message(value, valuelen);
         trailing = true;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            client->initial_grpc_status_seen = true;
+            call->initial_grpc_status_seen = true;
         }
         trailing = true;
     } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
@@ -1380,28 +1380,28 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
         memcpy(status_buf, value, copy_len);
         status_buf[copy_len] = '\0';
-        client->http_status = atoi(status_buf);
+        call->http_status = atoi(status_buf);
     } else if (namelen == sizeof("content-type") - 1 && memcmp(name, "content-type", namelen) == 0) {
-        client->content_type_seen = true;
-        if (client->content_type != NULL) {
-            zend_string_release(client->content_type);
+        call->content_type_seen = true;
+        if (call->content_type != NULL) {
+            zend_string_release(call->content_type);
         }
-        client->content_type = zend_string_init((const char *) value, valuelen, 0);
+        call->content_type = zend_string_init((const char *) value, valuelen, 0);
         if (!is_valid_grpc_content_type(value, valuelen)) {
-            client->invalid_content_type = true;
-            client->discard_response_body = true;
+            call->invalid_content_type = true;
+            call->discard_response_body = true;
         }
     } else if (namelen == sizeof("grpc-encoding") - 1 && memcmp(name, "grpc-encoding", namelen) == 0) {
-        if (client->grpc_encoding != NULL) {
-            zend_string_release(client->grpc_encoding);
+        if (call->grpc_encoding != NULL) {
+            zend_string_release(call->grpc_encoding);
         }
-        client->grpc_encoding = zend_string_init((const char *) value, valuelen, 0);
+        call->grpc_encoding = zend_string_init((const char *) value, valuelen, 0);
         if (!is_identity_grpc_encoding(value, valuelen)) {
-            client->unsupported_response_encoding = true;
-            client->discard_response_body = true;
+            call->unsupported_response_encoding = true;
+            call->discard_response_body = true;
         }
     }
-    if (add_metadata_entry(client, name, namelen, value, valuelen, trailing) != 0) {
+    if (add_metadata_entry(call, name, namelen, value, valuelen, trailing) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     return 0;
@@ -1409,59 +1409,59 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
 
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
+    grpc_call *call = (grpc_call *) user_data;
     (void) session;
     (void) error_code;
-    if (stream_id == client->stream_id) {
-        client->stream_closed = true;
-        client->stream_error_code = error_code;
+    if (stream_id == call->stream_id) {
+        call->stream_closed = true;
+        call->stream_error_code = error_code;
     }
     return 0;
 }
 
 static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
+    grpc_call *call = (grpc_call *) user_data;
     (void) session;
-    client->sent_frames++;
-    client->last_sent_frame_type = frame->hd.type;
-    client->last_sent_frame_flags = frame->hd.flags;
+    call->sent_frames++;
+    call->last_sent_frame_type = frame->hd.type;
+    call->last_sent_frame_flags = frame->hd.flags;
     return 0;
 }
 
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
+    grpc_call *call = (grpc_call *) user_data;
     (void) session;
-    client->recv_frames++;
-    client->last_recv_frame_type = frame->hd.type;
-    client->last_recv_frame_flags = frame->hd.flags;
+    call->recv_frames++;
+    call->last_recv_frame_type = frame->hd.type;
+    call->last_recv_frame_flags = frame->hd.flags;
     if (frame->hd.type == NGHTTP2_GOAWAY) {
-        mark_connection_draining(client->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
-        if (client->stream_id > 0 && frame->goaway.last_stream_id < client->stream_id) {
-            client->stream_error_code = NGHTTP2_REFUSED_STREAM;
-            client->stream_closed = true;
+        mark_connection_draining(call->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
+        if (call->stream_id > 0 && frame->goaway.last_stream_id < call->stream_id) {
+            call->stream_error_code = NGHTTP2_REFUSED_STREAM;
+            call->stream_closed = true;
         }
     } else if (frame->hd.type == NGHTTP2_HEADERS
-        && frame->hd.stream_id == client->stream_id
+        && frame->hd.stream_id == call->stream_id
         && frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-        client->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-        if (!client->content_type_seen && !(client->grpc_status_seen && client->initial_headers_end_stream)) {
-            client->invalid_content_type = true;
-            client->discard_response_body = true;
+        call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
+        if (!call->content_type_seen && !(call->grpc_status_seen && call->initial_headers_end_stream)) {
+            call->invalid_content_type = true;
+            call->discard_response_body = true;
         }
-        if (client->initial_grpc_status_seen && !client->initial_headers_end_stream) {
-            client->invalid_grpc_status = true;
-            client->discard_response_body = true;
+        if (call->initial_grpc_status_seen && !call->initial_headers_end_stream) {
+            call->invalid_grpc_status = true;
+            call->discard_response_body = true;
         }
-    } else if (frame->hd.type == NGHTTP2_RST_STREAM && frame->hd.stream_id == client->stream_id) {
-        client->stream_reset_seen = true;
-        client->stream_error_code = frame->rst_stream.error_code;
-    } else if (frame->hd.type == NGHTTP2_PUSH_PROMISE && frame->hd.stream_id == client->stream_id) {
-        client->malformed_response_frame = true;
-        client->discard_response_body = true;
-        if (session != NULL && client->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_PROTOCOL_ERROR);
+    } else if (frame->hd.type == NGHTTP2_RST_STREAM && frame->hd.stream_id == call->stream_id) {
+        call->stream_reset_seen = true;
+        call->stream_error_code = frame->rst_stream.error_code;
+    } else if (frame->hd.type == NGHTTP2_PUSH_PROMISE && frame->hd.stream_id == call->stream_id) {
+        call->malformed_response_frame = true;
+        call->discard_response_body = true;
+        if (session != NULL && call->stream_id > 0) {
+            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_PROTOCOL_ERROR);
         }
     }
     return 0;
@@ -1469,11 +1469,11 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 
 static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
 {
-    grpc_call *client = (grpc_call *) user_data;
+    grpc_call *call = (grpc_call *) user_data;
     (void) session;
-    client->not_sent_frames++;
-    client->last_not_sent_frame_type = frame->hd.type;
-    client->last_not_sent_error = lib_error_code;
+    call->not_sent_frames++;
+    call->last_not_sent_frame_type = frame->hd.type;
+    call->last_not_sent_error = lib_error_code;
     return 0;
 }
 
@@ -1568,13 +1568,13 @@ static zend_string *grpc_lite_decode_grpc_message(const uint8_t *value, size_t v
     return decoded.s != NULL ? decoded.s : zend_string_copy(zend_empty_string);
 }
 
-static int grpc_lite_status_code_from_call(grpc_call *client, bool cancelled)
+static int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
 {
-    if (client->timed_out) return GRPC_STATUS_DEADLINE_EXCEEDED;
+    if (call->timed_out) return GRPC_STATUS_DEADLINE_EXCEEDED;
     if (cancelled) return GRPC_STATUS_CANCELLED;
-    if (client->invalid_grpc_status) return GRPC_STATUS_UNKNOWN;
-    if (client->grpc_status < 0 && client->http_status != 200) {
-        switch (client->http_status) {
+    if (call->invalid_grpc_status) return GRPC_STATUS_UNKNOWN;
+    if (call->grpc_status < 0 && call->http_status != 200) {
+        switch (call->http_status) {
             case 400: return GRPC_STATUS_INTERNAL;
             case 401: return GRPC_STATUS_UNAUTHENTICATED;
             case 403: return GRPC_STATUS_PERMISSION_DENIED;
@@ -1585,16 +1585,16 @@ static int grpc_lite_status_code_from_call(grpc_call *client, bool cancelled)
             case 504:
                 return GRPC_STATUS_UNAVAILABLE;
             default:
-                return client->http_status < 0 ? GRPC_STATUS_UNAVAILABLE : GRPC_STATUS_UNKNOWN;
+                return call->http_status < 0 ? GRPC_STATUS_UNAVAILABLE : GRPC_STATUS_UNKNOWN;
         }
     }
-    if (client->invalid_content_type) return GRPC_STATUS_UNKNOWN;
-    if (client->response_message_too_large || client->metadata_too_large) return GRPC_STATUS_RESOURCE_EXHAUSTED;
-    if (client->malformed_response_frame) return GRPC_STATUS_INTERNAL;
-    if (client->compressed_response_seen || client->unsupported_response_encoding) return GRPC_STATUS_UNIMPLEMENTED;
-    if (client->grpc_status >= 0) return client->grpc_status;
-    if (client->stream_reset_seen) {
-        switch (client->stream_error_code) {
+    if (call->invalid_content_type) return GRPC_STATUS_UNKNOWN;
+    if (call->response_message_too_large || call->metadata_too_large) return GRPC_STATUS_RESOURCE_EXHAUSTED;
+    if (call->malformed_response_frame) return GRPC_STATUS_INTERNAL;
+    if (call->compressed_response_seen || call->unsupported_response_encoding) return GRPC_STATUS_UNIMPLEMENTED;
+    if (call->grpc_status >= 0) return call->grpc_status;
+    if (call->stream_reset_seen) {
+        switch (call->stream_error_code) {
             case NGHTTP2_CANCEL:
                 return GRPC_STATUS_CANCELLED;
             case NGHTTP2_REFUSED_STREAM:
@@ -1620,21 +1620,21 @@ static int grpc_lite_status_code_from_call(grpc_call *client, bool cancelled)
     return GRPC_STATUS_UNKNOWN;
 }
 
-static zend_string *grpc_lite_status_details_from_call(grpc_call *client, int code)
+static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code)
 {
-    if (client->grpc_message != NULL && ZSTR_LEN(client->grpc_message) > 0) {
-        return zend_string_copy(client->grpc_message);
+    if (call->grpc_message != NULL && ZSTR_LEN(call->grpc_message) > 0) {
+        return zend_string_copy(call->grpc_message);
     }
-    if (client->http_status != 200) {
-        return strpprintf(0, "HTTP status %d without grpc-status", client->http_status);
+    if (call->http_status != 200) {
+        return strpprintf(0, "HTTP status %d without grpc-status", call->http_status);
     }
-    if (client->invalid_content_type) {
-        if (client->content_type != NULL && ZSTR_LEN(client->content_type) > 0) {
-            return strpprintf(0, "invalid gRPC content-type: %s", ZSTR_VAL(client->content_type));
+    if (call->invalid_content_type) {
+        if (call->content_type != NULL && ZSTR_LEN(call->content_type) > 0) {
+            return strpprintf(0, "invalid gRPC content-type: %s", ZSTR_VAL(call->content_type));
         }
         return zend_string_init("invalid gRPC content-type", sizeof("invalid gRPC content-type") - 1, 0);
     }
-    if (client->invalid_grpc_status) {
+    if (call->invalid_grpc_status) {
         return zend_string_init("invalid grpc-status trailer", sizeof("invalid grpc-status trailer") - 1, 0);
     }
     switch (code) {
@@ -1643,17 +1643,17 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *client, int co
         case GRPC_STATUS_RESOURCE_EXHAUSTED:
             return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
         case GRPC_STATUS_INTERNAL:
-            if (client->malformed_response_frame) {
+            if (call->malformed_response_frame) {
                 return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
             }
-            if (client->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 stream reset: %u", client->stream_error_code);
+            if (call->stream_reset_seen) {
+                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
             }
             return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
         case GRPC_STATUS_UNIMPLEMENTED:
-            if (client->unsupported_response_encoding) {
-                if (client->grpc_encoding != NULL && ZSTR_LEN(client->grpc_encoding) > 0) {
-                    return strpprintf(0, "unsupported grpc-encoding: %s", ZSTR_VAL(client->grpc_encoding));
+            if (call->unsupported_response_encoding) {
+                if (call->grpc_encoding != NULL && ZSTR_LEN(call->grpc_encoding) > 0) {
+                    return strpprintf(0, "unsupported grpc-encoding: %s", ZSTR_VAL(call->grpc_encoding));
                 }
                 return zend_string_init("unsupported grpc-encoding", sizeof("unsupported grpc-encoding") - 1, 0);
             }
@@ -1661,17 +1661,17 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *client, int co
         case GRPC_STATUS_CANCELLED:
             return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
         default:
-            if (client->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 stream reset: %u", client->stream_error_code);
+            if (call->stream_reset_seen) {
+                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
             }
             return zend_string_copy(zend_empty_string);
     }
 }
 
-static void resolve_grpc_call_status(grpc_call *client, bool cancelled, grpc_lite_status_result *result)
+static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result)
 {
-    result->code = grpc_lite_status_code_from_call(client, cancelled);
-    result->details = grpc_lite_status_details_from_call(client, result->code);
+    result->code = grpc_lite_status_code_from_call(call, cancelled);
+    result->details = grpc_lite_status_details_from_call(call, result->code);
 }
 
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status)
@@ -2066,84 +2066,84 @@ static void free_request_headers(h2_request_headers *headers)
     headers->value_count = 0;
 }
 
-static int validate_response_message_lengths(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len)
+static int validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
 
-    if (client->grpc_status_seen) {
-        client->invalid_grpc_status = true;
-        client->discard_response_body = true;
-        if (session != NULL && client->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+    if (call->grpc_status_seen) {
+        call->invalid_grpc_status = true;
+        call->discard_response_body = true;
+        if (session != NULL && call->stream_id > 0) {
+            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
         }
         return 0;
     }
 
-    while (offset < len && !client->response_message_too_large) {
-        if (client->response_header_len < 5) {
-            size_t need = 5 - client->response_header_len;
+    while (offset < len && !call->response_message_too_large) {
+        if (call->response_header_len < 5) {
+            size_t need = 5 - call->response_header_len;
             size_t take = need < len - offset ? need : len - offset;
-            memcpy(client->response_header_buf + client->response_header_len, data + offset, take);
-            client->response_header_len += take;
+            memcpy(call->response_header_buf + call->response_header_len, data + offset, take);
+            call->response_header_len += take;
             offset += take;
-            if (client->response_header_len < 5) {
+            if (call->response_header_len < 5) {
                 continue;
             }
 
-            client->response_payload_len = ((uint32_t) client->response_header_buf[1] << 24)
-                | ((uint32_t) client->response_header_buf[2] << 16)
-                | ((uint32_t) client->response_header_buf[3] << 8)
-                | (uint32_t) client->response_header_buf[4];
-            if (client->max_response_messages > 0 && ++client->response_message_count > client->max_response_messages) {
-                client->malformed_response_frame = true;
-                client->discard_response_body = true;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            call->response_payload_len = ((uint32_t) call->response_header_buf[1] << 24)
+                | ((uint32_t) call->response_header_buf[2] << 16)
+                | ((uint32_t) call->response_header_buf[3] << 8)
+                | (uint32_t) call->response_header_buf[4];
+            if (call->max_response_messages > 0 && ++call->response_message_count > call->max_response_messages) {
+                call->malformed_response_frame = true;
+                call->discard_response_body = true;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
                 return 0;
             }
-            if (client->response_header_buf[0] > 1) {
-                client->malformed_response_frame = true;
-                client->discard_response_body = true;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            if (call->response_header_buf[0] > 1) {
+                call->malformed_response_frame = true;
+                call->discard_response_body = true;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
                 return 0;
             }
-            if (client->response_header_buf[0] == 1) {
-                client->compressed_response_seen = true;
-                client->discard_response_body = true;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            if (call->response_header_buf[0] == 1) {
+                call->compressed_response_seen = true;
+                call->discard_response_body = true;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
                 return 0;
             }
-            client->response_payload_offset = 0;
-            if ((size_t) client->response_payload_len > client->max_receive_message_bytes) {
-                client->response_message_too_large = true;
-                client->discard_response_body = true;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            call->response_payload_offset = 0;
+            if ((size_t) call->response_payload_len > call->max_receive_message_bytes) {
+                call->response_message_too_large = true;
+                call->discard_response_body = true;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
                 return 0;
             }
-            if (client->response_payload_len == 0) {
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
+            if (call->response_payload_len == 0) {
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
                 continue;
             }
         }
 
-        if (client->response_payload_len > 0) {
-            size_t need = client->response_payload_len - client->response_payload_offset;
+        if (call->response_payload_len > 0) {
+            size_t need = call->response_payload_len - call->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
-            client->response_payload_offset += take;
+            call->response_payload_offset += take;
             offset += take;
-            if (client->response_payload_offset == client->response_payload_len) {
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
+            if (call->response_payload_offset == call->response_payload_len) {
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
             }
         }
     }
@@ -2151,141 +2151,141 @@ static int validate_response_message_lengths(nghttp2_session *session, grpc_call
     return 0;
 }
 
-static int process_response_data_direct(nghttp2_session *session, grpc_call *client, const uint8_t *data, size_t len)
+static int process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
 
-    if (client->grpc_status_seen) {
-        client->invalid_grpc_status = true;
-        client->discard_response_body = true;
-        if (session != NULL && client->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+    if (call->grpc_status_seen) {
+        call->invalid_grpc_status = true;
+        call->discard_response_body = true;
+        if (session != NULL && call->stream_id > 0) {
+            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
         }
         return 0;
     }
 
-    while (offset < len && !client->response_message_too_large && !client->compressed_response_seen && !client->malformed_response_frame) {
-        if (client->response_header_len < 5) {
-            size_t need = 5 - client->response_header_len;
+    while (offset < len && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame) {
+        if (call->response_header_len < 5) {
+            size_t need = 5 - call->response_header_len;
             size_t take = need < len - offset ? need : len - offset;
-            memcpy(client->response_header_buf + client->response_header_len, data + offset, take);
-            client->response_header_len += take;
+            memcpy(call->response_header_buf + call->response_header_len, data + offset, take);
+            call->response_header_len += take;
             offset += take;
-            if (client->response_header_len < 5) {
+            if (call->response_header_len < 5) {
                 continue;
             }
 
-            client->response_payload_len = ((uint32_t) client->response_header_buf[1] << 24)
-                | ((uint32_t) client->response_header_buf[2] << 16)
-                | ((uint32_t) client->response_header_buf[3] << 8)
-                | (uint32_t) client->response_header_buf[4];
-            if (client->max_response_messages > 0 && ++client->response_message_count > client->max_response_messages) {
-                client->malformed_response_frame = true;
-                client->discard_response_body = true;
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            call->response_payload_len = ((uint32_t) call->response_header_buf[1] << 24)
+                | ((uint32_t) call->response_header_buf[2] << 16)
+                | ((uint32_t) call->response_header_buf[3] << 8)
+                | (uint32_t) call->response_header_buf[4];
+            if (call->max_response_messages > 0 && ++call->response_message_count > call->max_response_messages) {
+                call->malformed_response_frame = true;
+                call->discard_response_body = true;
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
                 continue;
             }
-            if ((size_t) client->response_payload_len > client->max_receive_message_bytes) {
-                client->response_message_too_large = true;
-                client->discard_response_body = true;
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
-                client->response_current_compressed = false;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            if ((size_t) call->response_payload_len > call->max_receive_message_bytes) {
+                call->response_message_too_large = true;
+                call->discard_response_body = true;
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
+                call->response_current_compressed = false;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
-                client->response_payload_offset = 0;
+                call->response_payload_offset = 0;
                 continue;
             }
-            client->response_current_compressed = client->response_header_buf[0] != 0;
-            if (client->response_header_buf[0] > 1) {
-                client->malformed_response_frame = true;
-                client->discard_response_body = true;
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
-                client->response_current_compressed = false;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
-                }
-                continue;
-            }
-            if (client->response_header_buf[0] == 1) {
-                client->compressed_response_seen = true;
-                client->discard_response_body = true;
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
-                client->response_current_compressed = false;
-                if (session != NULL && client->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+            call->response_current_compressed = call->response_header_buf[0] != 0;
+            if (call->response_header_buf[0] > 1) {
+                call->malformed_response_frame = true;
+                call->discard_response_body = true;
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
+                call->response_current_compressed = false;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
                 continue;
             }
-            client->response_payload_offset = 0;
-            if (client->response_current_compressed) {
-                if (client->response_payload_len == 0) {
-                    client->response_header_len = 0;
-                    client->response_payload_len = 0;
-                    client->response_payload_offset = 0;
-                    client->response_current_compressed = false;
+            if (call->response_header_buf[0] == 1) {
+                call->compressed_response_seen = true;
+                call->discard_response_body = true;
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
+                call->response_current_compressed = false;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+                }
+                continue;
+            }
+            call->response_payload_offset = 0;
+            if (call->response_current_compressed) {
+                if (call->response_payload_len == 0) {
+                    call->response_header_len = 0;
+                    call->response_payload_len = 0;
+                    call->response_payload_offset = 0;
+                    call->response_current_compressed = false;
                 }
             } else {
-                client->response_payload = zend_string_alloc(client->response_payload_len, 0);
-                if (client->response_payload_len == 0) {
-                    ZSTR_VAL(client->response_payload)[0] = '\0';
+                call->response_payload = zend_string_alloc(call->response_payload_len, 0);
+                if (call->response_payload_len == 0) {
+                    ZSTR_VAL(call->response_payload)[0] = '\0';
                 }
             }
         }
 
-        if (client->response_current_compressed) {
-            size_t need = client->response_payload_len - client->response_payload_offset;
+        if (call->response_current_compressed) {
+            size_t need = call->response_payload_len - call->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
-            client->response_payload_offset += take;
+            call->response_payload_offset += take;
             offset += take;
-            if (client->response_payload_offset == client->response_payload_len) {
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
-                client->response_current_compressed = false;
+            if (call->response_payload_offset == call->response_payload_len) {
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
+                call->response_current_compressed = false;
             }
-        } else if (client->response_payload != NULL) {
-            size_t need = client->response_payload_len - client->response_payload_offset;
+        } else if (call->response_payload != NULL) {
+            size_t need = call->response_payload_len - call->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
-            uint64_t payload_copy_started = client->observe_payload_copy != NULL ? monotonic_us() : 0;
+            uint64_t payload_copy_started = call->observe_payload_copy != NULL ? monotonic_us() : 0;
             if (take > 0) {
-                memcpy(ZSTR_VAL(client->response_payload) + client->response_payload_offset, data + offset, take);
-                client->response_payload_offset += take;
+                memcpy(ZSTR_VAL(call->response_payload) + call->response_payload_offset, data + offset, take);
+                call->response_payload_offset += take;
                 offset += take;
             }
-            if (client->observe_payload_copy != NULL) {
-                client->observe_payload_copy(client, monotonic_us() - payload_copy_started);
+            if (call->observe_payload_copy != NULL) {
+                call->observe_payload_copy(call, monotonic_us() - payload_copy_started);
             }
 
-            if (client->response_payload_offset == client->response_payload_len) {
-                zend_string *payload = client->response_payload;
+            if (call->response_payload_offset == call->response_payload_len) {
+                zend_string *payload = call->response_payload;
                 uint64_t ready_abs_us = monotonic_us();
 
-                if (client->observe_message_ready != NULL) {
-                    client->observe_message_ready(client, ready_abs_us);
+                if (call->observe_message_ready != NULL) {
+                    call->observe_message_ready(call, ready_abs_us);
                 }
-                ZSTR_VAL(payload)[client->response_payload_len] = '\0';
-                client->response_payload = NULL;
-                client->response_header_len = 0;
-                client->response_payload_len = 0;
-                client->response_payload_offset = 0;
+                ZSTR_VAL(payload)[call->response_payload_len] = '\0';
+                call->response_payload = NULL;
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
 
-                if (client->queue_response_payloads) {
-                    if (enqueue_response_payload(client, payload) != 0) {
+                if (call->queue_response_payloads) {
+                    if (enqueue_response_payload(call, payload) != 0) {
                         return -1;
                     }
-                } else if (deliver_response_payload(client, payload, ready_abs_us) != 0) {
+                } else if (deliver_response_payload(call, payload, ready_abs_us) != 0) {
                     return -1;
                 }
             }
@@ -2295,56 +2295,56 @@ static int process_response_data_direct(nghttp2_session *session, grpc_call *cli
     return 0;
 }
 
-static int enqueue_response_payload(grpc_call *client, zend_string *payload)
+static int enqueue_response_payload(grpc_call *call, zend_string *payload)
 {
     queued_payload *entry = emalloc(sizeof(queued_payload));
     entry->payload = payload;
     entry->ready_abs_us = monotonic_us();
     entry->next = NULL;
 
-    if (client->response_queue_tail == NULL) {
-        client->response_queue_head = entry;
+    if (call->response_queue_tail == NULL) {
+        call->response_queue_head = entry;
     } else {
-        client->response_queue_tail->next = entry;
+        call->response_queue_tail->next = entry;
     }
-    client->response_queue_tail = entry;
-    client->response_queue_count++;
-    client->response_queue_bytes += ZSTR_LEN(payload);
-    if (client->observe_payload_queued != NULL) {
-        client->observe_payload_queued(client);
+    call->response_queue_tail = entry;
+    call->response_queue_count++;
+    call->response_queue_bytes += ZSTR_LEN(payload);
+    if (call->observe_payload_queued != NULL) {
+        call->observe_payload_queued(call);
     }
 
-    if (client->flush_queue_if_limited != NULL && client->flush_queue_if_limited(client) != 0) {
+    if (call->flush_queue_if_limited != NULL && call->flush_queue_if_limited(call) != 0) {
         return -1;
     }
 
     return 0;
 }
 
-static int deliver_response_payload(grpc_call *client, zend_string *payload, uint64_t ready_abs_us)
+static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us)
 {
     zval params[1];
     zval retval;
-    uint64_t started = client->observe_payload_delivered != NULL ? monotonic_us() : 0;
+    uint64_t started = call->observe_payload_delivered != NULL ? monotonic_us() : 0;
 
     ZVAL_STR(&params[0], payload);
     ZVAL_UNDEF(&retval);
     // cppcheck-suppress autoVariables
-    client->payload_callback_fci->params = params;
-    client->payload_callback_fci->param_count = 1;
+    call->payload_callback_fci->params = params;
+    call->payload_callback_fci->param_count = 1;
     // cppcheck-suppress autoVariables
-    client->payload_callback_fci->retval = &retval;
+    call->payload_callback_fci->retval = &retval;
 
-    if (zend_call_function(client->payload_callback_fci, client->payload_callback_fcc) != SUCCESS || EG(exception)) {
+    if (zend_call_function(call->payload_callback_fci, call->payload_callback_fcc) != SUCCESS || EG(exception)) {
         zval_ptr_dtor(&params[0]);
         if (!Z_ISUNDEF(retval)) {
             zval_ptr_dtor(&retval);
         }
         return -1;
     }
-    if (client->observe_payload_delivered != NULL) {
+    if (call->observe_payload_delivered != NULL) {
         uint64_t elapsed = monotonic_us() - started;
-        client->observe_payload_delivered(client, ready_abs_us, started, elapsed);
+        call->observe_payload_delivered(call, ready_abs_us, started, elapsed);
     }
 
     zval_ptr_dtor(&params[0]);
@@ -2355,17 +2355,17 @@ static int deliver_response_payload(grpc_call *client, zend_string *payload, uin
     return 0;
 }
 
-static int deliver_queued_response_payloads(grpc_call *client)
+static int deliver_queued_response_payloads(grpc_call *call)
 {
-    while (client->response_queue_head != NULL) {
-        queued_payload *entry = client->response_queue_head;
-        client->response_queue_head = entry->next;
-        if (client->response_queue_head == NULL) {
-            client->response_queue_tail = NULL;
+    while (call->response_queue_head != NULL) {
+        queued_payload *entry = call->response_queue_head;
+        call->response_queue_head = entry->next;
+        if (call->response_queue_head == NULL) {
+            call->response_queue_tail = NULL;
         }
-        client->response_queue_count--;
-        client->response_queue_bytes -= ZSTR_LEN(entry->payload);
-        if (deliver_response_payload(client, entry->payload, entry->ready_abs_us) != 0) {
+        call->response_queue_count--;
+        call->response_queue_bytes -= ZSTR_LEN(entry->payload);
+        if (deliver_response_payload(call, entry->payload, entry->ready_abs_us) != 0) {
             efree(entry);
             return -1;
         }
@@ -2375,20 +2375,20 @@ static int deliver_queued_response_payloads(grpc_call *client)
     return 0;
 }
 
-static void free_queued_response_payloads(grpc_call *client)
+static void free_queued_response_payloads(grpc_call *call)
 {
-    while (client->response_queue_head != NULL) {
-        queued_payload *entry = client->response_queue_head;
-        client->response_queue_head = entry->next;
+    while (call->response_queue_head != NULL) {
+        queued_payload *entry = call->response_queue_head;
+        call->response_queue_head = entry->next;
         zend_string_release(entry->payload);
         efree(entry);
     }
-    client->response_queue_tail = NULL;
-    client->response_queue_count = 0;
-    client->response_queue_bytes = 0;
+    call->response_queue_tail = NULL;
+    call->response_queue_count = 0;
+    call->response_queue_bytes = 0;
 }
 
-static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
+static int add_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
 {
     metadata_entry *entry;
     size_t entry_bytes = namelen + valuelen;
@@ -2396,16 +2396,16 @@ static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t nam
     if (namelen == 0 || name[0] == ':') {
         return 0;
     }
-    if (client->metadata_too_large
-        || client->metadata_entry_count >= GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES
-        || entry_bytes > client->max_response_metadata_bytes
-        || client->metadata_bytes > client->max_response_metadata_bytes - entry_bytes) {
-        client->metadata_too_large = true;
-        client->discard_response_body = true;
-        if (client->stream_id > 0) {
-            nghttp2_session *session = client->connection != NULL ? client->connection->session : NULL;
+    if (call->metadata_too_large
+        || call->metadata_entry_count >= GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES
+        || entry_bytes > call->max_response_metadata_bytes
+        || call->metadata_bytes > call->max_response_metadata_bytes - entry_bytes) {
+        call->metadata_too_large = true;
+        call->discard_response_body = true;
+        if (call->stream_id > 0) {
+            nghttp2_session *session = call->connection != NULL ? call->connection->session : NULL;
             if (session != NULL) {
-                nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, client->stream_id, NGHTTP2_CANCEL);
+                nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
             }
         }
         return 0;
@@ -2417,36 +2417,36 @@ static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t nam
     entry->trailing = trailing;
     entry->next = NULL;
 
-    if (client->metadata_tail == NULL) {
-        client->metadata_head = entry;
+    if (call->metadata_tail == NULL) {
+        call->metadata_head = entry;
     } else {
-        client->metadata_tail->next = entry;
+        call->metadata_tail->next = entry;
     }
-    client->metadata_tail = entry;
-    client->metadata_entry_count++;
-    client->metadata_bytes += entry_bytes;
+    call->metadata_tail = entry;
+    call->metadata_entry_count++;
+    call->metadata_bytes += entry_bytes;
 
     return 0;
 }
 
-static void mark_response_metadata_as_trailing(grpc_call *client)
+static void mark_response_metadata_as_trailing(grpc_call *call)
 {
     metadata_entry *entry;
-    for (entry = client->metadata_head; entry != NULL; entry = entry->next) {
+    for (entry = call->metadata_head; entry != NULL; entry = entry->next) {
         entry->trailing = true;
     }
 }
 
-static void free_metadata_entries(grpc_call *client)
+static void free_metadata_entries(grpc_call *call)
 {
-    while (client->metadata_head != NULL) {
-        metadata_entry *entry = client->metadata_head;
-        client->metadata_head = entry->next;
+    while (call->metadata_head != NULL) {
+        metadata_entry *entry = call->metadata_head;
+        call->metadata_head = entry->next;
         zend_string_release(entry->key);
         zend_string_release(entry->value);
         efree(entry);
     }
-    client->metadata_tail = NULL;
+    call->metadata_tail = NULL;
 }
 
 static void add_metadata_value_to_map(zval *metadata, zend_string *key, zend_string *value)
@@ -2489,13 +2489,13 @@ static void add_binary_metadata_values_to_map(zval *metadata, zend_string *key, 
     }
 }
 
-static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing)
+static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing)
 {
     zval metadata;
     metadata_entry *entry;
 
     array_init(&metadata);
-    for (entry = client->metadata_head; entry != NULL; entry = entry->next) {
+    for (entry = call->metadata_head; entry != NULL; entry = entry->next) {
         if (entry->trailing != trailing) {
             continue;
         }
@@ -2509,28 +2509,28 @@ static void add_metadata_map_to_return(zval *return_value, const char *name, grp
     add_assoc_zval(return_value, name, &metadata);
 }
 
-static void cleanup_grpc_call(grpc_call *client)
+static void cleanup_grpc_call(grpc_call *call)
 {
-    if (client == NULL) {
+    if (call == NULL) {
         return;
     }
-    if (client->response_payload != NULL) {
-        zend_string_release(client->response_payload);
-        client->response_payload = NULL;
+    if (call->response_payload != NULL) {
+        zend_string_release(call->response_payload);
+        call->response_payload = NULL;
     }
-    free_queued_response_payloads(client);
-    free_metadata_entries(client);
-    if (client->grpc_message != NULL) {
-        zend_string_release(client->grpc_message);
-        client->grpc_message = NULL;
+    free_queued_response_payloads(call);
+    free_metadata_entries(call);
+    if (call->grpc_message != NULL) {
+        zend_string_release(call->grpc_message);
+        call->grpc_message = NULL;
     }
-    if (client->content_type != NULL) {
-        zend_string_release(client->content_type);
-        client->content_type = NULL;
+    if (call->content_type != NULL) {
+        zend_string_release(call->content_type);
+        call->content_type = NULL;
     }
-    if (client->grpc_encoding != NULL) {
-        zend_string_release(client->grpc_encoding);
-        client->grpc_encoding = NULL;
+    if (call->grpc_encoding != NULL) {
+        zend_string_release(call->grpc_encoding);
+        call->grpc_encoding = NULL;
     }
-    smart_str_free(&client->body);
+    smart_str_free(&call->body);
 }
