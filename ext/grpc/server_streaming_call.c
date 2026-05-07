@@ -169,6 +169,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     return SUCCESS;
 }
 
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static void server_streaming_call_add_status(zval *return_value, server_streaming_call_state *state)
 {
     grpc_call *call = &state->call;
@@ -210,6 +211,7 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     grpc_protocol_add_metadata_map_to_return(return_value, "trailing_metadata", call, true);
     zend_string_release(status_result.details);
 }
+#endif
 
 static void server_streaming_call_fill_status_result(grpc_lite_streaming_next_result *result, server_streaming_call_state *state)
 {
@@ -224,7 +226,11 @@ static void server_streaming_call_fill_status_result(grpc_lite_streaming_next_re
     zend_string_release(status_result.details);
 }
 
-static int server_streaming_call_next_resource_core(zval *server_streaming_resource_zv, zval *diagnostic_result, grpc_lite_streaming_next_result *typed_result)
+static int server_streaming_call_next_resource_core(zval *server_streaming_resource_zv,
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+    zval *diagnostic_result,
+#endif
+    grpc_lite_streaming_next_result *typed_result)
 {
     server_streaming_call_state *state;
     grpc_call *call;
@@ -236,9 +242,11 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     }
     call = &state->call;
 
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     if (diagnostic_result != NULL) {
         array_init(diagnostic_result);
     }
+#endif
 
     while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large) {
         int rv;
@@ -313,11 +321,13 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             typed_result->payload = entry->payload;
             grpc_protocol_copy_metadata_map(&typed_result->initial_metadata, call, false);
         }
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
         if (diagnostic_result != NULL) {
             add_assoc_bool(diagnostic_result, "done", false);
             add_assoc_str(diagnostic_result, "payload", entry->payload);
             grpc_protocol_add_metadata_map_to_return(diagnostic_result, "initial_metadata", call, false);
         }
+#endif
         efree(entry);
         return SUCCESS;
     }
@@ -329,17 +339,21 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     if (typed_result != NULL) {
         server_streaming_call_fill_status_result(typed_result, state);
     }
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     if (diagnostic_result != NULL) {
         server_streaming_call_add_status(diagnostic_result, state);
     }
+#endif
     clear_connection_server_streaming_call_state_owner(state);
     return SUCCESS;
 }
 
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value)
 {
     return server_streaming_call_next_resource_core(server_streaming_resource_zv, return_value, NULL);
 }
+#endif
 
 static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result)
 {
@@ -356,7 +370,11 @@ static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result
 static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result)
 {
     memset(result, 0, sizeof(*result));
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     return server_streaming_call_next_resource_core(server_streaming_resource_zv, NULL, result);
+#else
+    return server_streaming_call_next_resource_core(server_streaming_resource_zv, result);
+#endif
 }
 
 static int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv)
