@@ -1,4 +1,4 @@
-# Native Transport Design
+# HTTP/2 Transport Design
 
 ## Goal
 
