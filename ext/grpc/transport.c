@@ -1482,6 +1482,7 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
         mark_connection_draining(call->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
         if (call->stream_id > 0 && frame->goaway.last_stream_id < call->stream_id) {
             call->stream_error_code = NGHTTP2_REFUSED_STREAM;
+            call->stream_refused_seen = true;
             call->stream_closed = true;
         }
     } else if (frame->hd.type == NGHTTP2_HEADERS
@@ -1638,6 +1639,7 @@ static int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
     if (call->malformed_response_frame) return GRPC_STATUS_INTERNAL;
     if (call->compressed_response_seen || call->unsupported_response_encoding) return GRPC_STATUS_UNIMPLEMENTED;
     if (call->grpc_status >= 0) return call->grpc_status;
+    if (call->stream_refused_seen) return GRPC_STATUS_UNAVAILABLE;
     if (call->stream_reset_seen) {
         switch (call->stream_error_code) {
             case NGHTTP2_CANCEL:
@@ -1706,6 +1708,9 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
         case GRPC_STATUS_CANCELLED:
             return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
         default:
+            if (call->stream_refused_seen) {
+                return zend_string_init("HTTP/2 stream refused by GOAWAY", sizeof("HTTP/2 stream refused by GOAWAY") - 1, 0);
+            }
             if (call->stream_reset_seen) {
                 return strpprintf(0, "HTTP/2 state reset: %u", call->stream_error_code);
             }

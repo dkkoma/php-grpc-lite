@@ -153,6 +153,7 @@ build_unary_result:
         add_assoc_long(diagnostic_result, "http_status", call.http_status);
         add_assoc_long(diagnostic_result, "stream_error_code", call.stream_error_code);
         add_assoc_bool(diagnostic_result, "stream_reset_seen", call.stream_reset_seen);
+        add_assoc_bool(diagnostic_result, "stream_refused_seen", call.stream_refused_seen);
         add_assoc_bool(diagnostic_result, "invalid_grpc_status", call.invalid_grpc_status);
         add_assoc_str(diagnostic_result, "content_type", call.content_type != NULL ? zend_string_copy(call.content_type) : zend_empty_string);
         add_assoc_str(diagnostic_result, "grpc_encoding", call.grpc_encoding != NULL ? zend_string_copy(call.grpc_encoding) : zend_empty_string);

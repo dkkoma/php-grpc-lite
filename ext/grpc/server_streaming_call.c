@@ -153,6 +153,7 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     add_assoc_long(return_value, "http_status", call->http_status);
     add_assoc_long(return_value, "stream_error_code", call->stream_error_code);
     add_assoc_bool(return_value, "stream_reset_seen", call->stream_reset_seen);
+    add_assoc_bool(return_value, "stream_refused_seen", call->stream_refused_seen);
     add_assoc_bool(return_value, "invalid_grpc_status", call->invalid_grpc_status);
     add_assoc_str(return_value, "content_type", call->content_type != NULL ? zend_string_copy(call->content_type) : zend_empty_string);
     add_assoc_str(return_value, "grpc_encoding", call->grpc_encoding != NULL ? zend_string_copy(call->grpc_encoding) : zend_empty_string);

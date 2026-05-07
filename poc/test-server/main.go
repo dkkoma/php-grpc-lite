@@ -480,6 +480,7 @@ func serveLifecycleH2C() {
 	go serveMidStreamFailureH2C(":50057")
 	go serveServerRstThenOKH2C(":50058")
 	go serveServerRstThenOKH2C(":50059")
+	go serveGoAwayRefusedH2C(":50060")
 }
 
 func serveRawH2C(addr string, sendGoAway bool, firstConnectionEOF bool) {
@@ -701,6 +702,57 @@ func writeRawRstThenOKResponse(framer *http2.Framer, streamID uint32, completedS
 		return
 	}
 	writeRawGrpcOK(framer, streamID, false)
+}
+
+func serveGoAwayRefusedH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c GOAWAY refused fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleGoAwayRefusedH2C(conn)
+	}
+}
+
+func handleGoAwayRefusedH2C(conn net.Conn) {
+	defer conn.Close()
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			if f.Header().StreamID > 0 {
+				_ = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
+				return
+			}
+		case *http2.DataFrame:
+			if f.Header().StreamID > 0 {
+				_ = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
+				return
+			}
+		}
+	}
 }
 
 func encodeHeaders(fields []hpack.HeaderField) []byte {

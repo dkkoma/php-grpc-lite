@@ -83,6 +83,16 @@ final class ControlSemanticsTest extends TestCase
         self::assertSame(\Grpc\STATUS_OK, $secondCall->getStatus()->code, $secondCall->getStatus()->details);
     }
 
+    public function testUnaryGoAwayRefusedStreamReturnsUnavailable(): void
+    {
+        $client = $this->client('test-server:50060');
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code, $status->details);
+    }
+
     private function client(string $target = 'test-server:50051'): GreeterClient
     {
         return new GreeterClient($target, [
