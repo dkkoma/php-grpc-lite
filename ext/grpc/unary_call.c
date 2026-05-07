@@ -183,7 +183,7 @@ build_unary_result:
     add_assoc_long(return_value, "recv_loop_us", (zend_long) recv_loop_us);
     add_assoc_long(return_value, "cleanup_us", 0);
     add_assoc_bool(return_value, "timed_out", call.timed_out);
-    add_assoc_bool(return_value, "channel_reused", connection_reused);
+    add_assoc_bool(return_value, "connection_reused", connection_reused);
     add_assoc_bool(return_value, "persistent_reused", persistent_reused);
     add_assoc_bool(return_value, "connection_dead", connection->dead);
     add_assoc_bool(return_value, "connection_draining", connection->draining);

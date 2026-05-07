@@ -147,7 +147,7 @@ official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
 | `OP_RECV_MESSAGE` | unary payloadまたはserver streamingの次messageを返す |
 | `OP_RECV_STATUS_ON_CLIENT` | final status objectを返す |
 
-unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_channel()` が走ります。server streamingは最初の `RECV_MESSAGE` でC stream resourceを開き、以後C helperで1 messageずつ返します。
+unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connection()` が走ります。server streamingは最初の `RECV_MESSAGE` でC stream resourceを開き、以後C helperで1 messageずつ返します。
 
 `ext/grpc/bridge.c` は official wrapper の `Grpc\Call` batch API を受け、`ext/grpc/unary_call.c` と `ext/grpc/server_streaming_call.c` の production RPC helperへ委譲します。bench build限定のdiagnostic PHP関数は `ext/grpc/bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
 
