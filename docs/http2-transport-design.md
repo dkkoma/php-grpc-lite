@@ -170,6 +170,8 @@ response message sizeは `grpc.max_receive_message_length` で制御する。cha
 
 response metadata sizeは `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` channel optionで制御する。未指定時のhard limitは64KiB。超過時は `STATUS_RESOURCE_EXHAUSTED` とし、該当streamをcancelする。
 
+response metadataは、公式ext-grpc PHP surfaceとの互換性を優先し、`content-type`、`grpc-status`、`grpc-message` などのprotocol-owned response headers/trailersもPHP metadata mapへ残す。request側は別方針で、library-owned headersをuser metadataから送信させない。
+
 ## Multiplex PoC
 
 HTTP/2 session自体は複数streamを同時にin-flightにできる。`--enable-grpc-bench` 付きbuildのbench/diagnostic entrypointである `grpc_lite_multiplex_unary()` で同一session上に複数unary streamをsubmitし、全streamが独立に完了することを検証した。通常buildではこのentrypointを公開しない。
