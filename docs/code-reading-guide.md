@@ -131,8 +131,10 @@ PHP object自体はsocketを持ちません。HTTP/2 session/socketのpersistent
 |---|---:|---|
 | `grpc_lite.http2_stream_window_size` | `8388608` | HTTP/2 `SETTINGS_INITIAL_WINDOW_SIZE` として送るstream receive window |
 | `grpc_lite.http2_connection_window_size` | `8388608` | 接続直後のconnection receive window。初期値との差分を `WINDOW_UPDATE` で広げる |
+| `grpc_lite.server_streaming_read_ahead_max_messages` | `32` | 別streamのI/Oで先読みされたserver streaming payload queueのmessage上限 |
+| `grpc_lite.server_streaming_read_ahead_max_bytes` | `8388608` | 別streamのI/Oで先読みされたserver streaming payload queueのbyte上限 |
 
-window size は `65535` 未満ならHTTP/2 defaultへ丸め、HTTP/2上限を超える値は上限へ丸めます。
+window size は `65535` 未満ならHTTP/2 defaultへ丸め、HTTP/2上限を超える値は上限へ丸めます。read-ahead上限は0以下ならdefaultへ戻します。
 
 ## 5. `Grpc\Call::startBatch()`
 

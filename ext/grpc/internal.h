@@ -626,6 +626,8 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     zend_string *default_roots_pem;
     zend_long http2_stream_window_size;
     zend_long http2_connection_window_size;
+    zend_long server_streaming_read_ahead_max_messages;
+    zend_long server_streaming_read_ahead_max_bytes;
 ZEND_END_MODULE_GLOBALS(grpc_lite)
 
 ZEND_EXTERN_MODULE_GLOBALS(grpc_lite)

@@ -16,8 +16,8 @@
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES (64 * 1024)
 #define GRPC_LITE_DEFAULT_METADATA_SOFT_BYTES (8 * 1024)
-#define GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_MESSAGES 4
-#define GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_BYTES (256 * 1024)
+#define GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_MESSAGES 32
+#define GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_BYTES (8 * 1024 * 1024)
 #define GRPC_LITE_DEFAULT_METADATA_HARD_BYTES (16 * 1024)
 #define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
 
@@ -696,6 +696,20 @@ static uint32_t effective_http2_window_size(zend_long configured)
         return GRPC_LITE_HTTP2_MAX_WINDOW_SIZE;
     }
     return (uint32_t) configured;
+}
+
+static size_t effective_server_streaming_read_ahead_max_messages(void)
+{
+    return PHP_GRPC_LITE_G(server_streaming_read_ahead_max_messages) > 0
+        ? (size_t) PHP_GRPC_LITE_G(server_streaming_read_ahead_max_messages)
+        : GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_MESSAGES;
+}
+
+static size_t effective_server_streaming_read_ahead_max_bytes(void)
+{
+    return PHP_GRPC_LITE_G(server_streaming_read_ahead_max_bytes) > 0
+        ? (size_t) PHP_GRPC_LITE_G(server_streaming_read_ahead_max_bytes)
+        : GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_BYTES;
 }
 
 static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit)
@@ -2480,14 +2494,16 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
 
 static bool server_streaming_read_ahead_limit_would_exceed(grpc_call *call, size_t payload_len)
 {
+    size_t max_messages = effective_server_streaming_read_ahead_max_messages();
+    size_t max_bytes = effective_server_streaming_read_ahead_max_bytes();
     return call != NULL
         && call->queue_response_payloads
         && call->connection != NULL
         && call->connection->current_read_call != NULL
         && call->connection->current_read_call != call
-        && (call->response_queue_count >= GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_MESSAGES
-            || payload_len > GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_BYTES
-            || call->response_queue_bytes > GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_BYTES - payload_len);
+        && (call->response_queue_count >= max_messages
+            || payload_len > max_bytes
+            || call->response_queue_bytes > max_bytes - payload_len);
 }
 
 static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call)

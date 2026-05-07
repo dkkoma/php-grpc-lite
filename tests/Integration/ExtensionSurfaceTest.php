@@ -138,6 +138,8 @@ final class ExtensionSurfaceTest extends TestCase
     {
         self::assertSame('8388608', ini_get('grpc_lite.http2_stream_window_size'));
         self::assertSame('8388608', ini_get('grpc_lite.http2_connection_window_size'));
+        self::assertSame('32', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'));
+        self::assertSame('8388608', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'));
     }
 
     public function testCallRejectsInvalidMethodPathAndUninitializedUse(): void

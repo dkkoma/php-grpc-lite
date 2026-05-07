@@ -126,26 +126,35 @@ final class ControlSemanticsTest extends TestCase
 
     public function testUnrelatedRpcDoesNotReadAheadServerStreamWithoutBound(): void
     {
-        $client = $this->client();
-        $streamRequest = new BenchRequest();
-        $streamRequest->setMessageCount(2);
-        $streamRequest->setPayloadBytes(300_000);
+        $previousMaxMessages = ini_get('grpc_lite.server_streaming_read_ahead_max_messages');
+        $previousMaxBytes = ini_get('grpc_lite.server_streaming_read_ahead_max_bytes');
+        self::assertTrue(ini_set('grpc_lite.server_streaming_read_ahead_max_messages', '1') !== false);
+        self::assertTrue(ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '262144') !== false);
+        try {
+            $client = $this->client();
+            $streamRequest = new BenchRequest();
+            $streamRequest->setMessageCount(2);
+            $streamRequest->setPayloadBytes(300_000);
 
-        $streamCall = $client->BenchServerStream($streamRequest);
-        foreach ($streamCall->responses() as $_reply) {
-            break;
+            $streamCall = $client->BenchServerStream($streamRequest);
+            foreach ($streamCall->responses() as $_reply) {
+                break;
+            }
+
+            [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
+            self::assertNotNull($response);
+            self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+
+            foreach ($streamCall->responses() as $_reply) {
+            }
+            $streamStatus = $streamCall->getStatus();
+
+            self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $streamStatus->code, $streamStatus->details);
+            self::assertSame('server streaming read-ahead queue limit exceeded', $streamStatus->details);
+        } finally {
+            ini_set('grpc_lite.server_streaming_read_ahead_max_messages', $previousMaxMessages);
+            ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', $previousMaxBytes);
         }
-
-        [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
-        self::assertNotNull($response);
-        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
-
-        foreach ($streamCall->responses() as $_reply) {
-        }
-        $streamStatus = $streamCall->getStatus();
-
-        self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $streamStatus->code, $streamStatus->details);
-        self::assertSame('server streaming read-ahead queue limit exceeded', $streamStatus->details);
     }
 
     public function testChannelCloseWaitsForLiveClosedServerStreamResource(): void
