@@ -51,11 +51,9 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
     }
 
     setup_started = monotonic_us();
-    // cppcheck-suppress autoVariables
-    nghttp2_session_set_user_data(connection->session, &call);
     connection->busy = true;
     // cppcheck-suppress autoVariables
-    connection->active_call_owner = &call;
+    connection->active_call = &call;
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
         clear_connection_call_owner(connection, &call);
         cleanup_grpc_call(&call);

@@ -450,8 +450,9 @@ struct _h2_connection {
     bool draining;
     bool busy;
     bool detached_from_cache;
-    grpc_call *active_call_owner;
-    server_streaming_call_state *active_server_streaming_call_owner;
+    grpc_call *active_call;
+    uint64_t setup_deadline_abs_us;
+    bool setup_timed_out;
     int last_error;
     int last_io_errno;
     int last_ssl_error;

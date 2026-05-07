@@ -52,6 +52,7 @@ static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
 static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
 static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
+static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out);
 static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
 static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
 static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
@@ -96,6 +97,12 @@ static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const c
 static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
 static void cleanup_grpc_call(grpc_call *call);
+
+static grpc_call *active_grpc_call_from_session_user_data(void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    return connection != NULL ? connection->active_call : NULL;
+}
 
 static void destroy_h2_connection(h2_connection *connection)
 {
@@ -179,12 +186,12 @@ static void detach_persistent_connection_by_ptr(h2_connection *connection)
 
 static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream)
 {
-    return connection != NULL && stream != NULL && connection->active_server_streaming_call_owner == stream;
+    return connection != NULL && stream != NULL && connection->active_call == &stream->call;
 }
 
 static bool connection_owned_by_call(h2_connection *connection, grpc_call *call)
 {
-    return connection != NULL && call != NULL && connection->active_call_owner == call;
+    return connection != NULL && call != NULL && connection->active_call == call;
 }
 
 static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream)
@@ -199,14 +206,11 @@ static void clear_connection_server_streaming_call_state_owner(server_streaming_
         return;
     }
 
-    if (connection->session != NULL) {
-        nghttp2_session_set_user_data(connection->session, NULL);
-    }
     if (!connection_usable(connection)) {
         detach_persistent_connection_by_ptr(connection);
     }
     connection->busy = false;
-    connection->active_server_streaming_call_owner = NULL;
+    connection->active_call = NULL;
     stream->connection = NULL;
     stream->call.connection = NULL;
     if (connection->detached_from_cache) {
@@ -219,11 +223,8 @@ static void clear_connection_call_owner(h2_connection *connection, grpc_call *ca
     if (!connection_owned_by_call(connection, call)) {
         return;
     }
-    if (connection->session != NULL) {
-        nghttp2_session_set_user_data(connection->session, NULL);
-    }
     connection->busy = false;
-    connection->active_call_owner = NULL;
+    connection->active_call = NULL;
 }
 
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code)
@@ -875,47 +876,67 @@ static int configure_tls_connection(h2_connection *connection, const char *host,
 
 static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length)
 {
-    zend_long remaining_timeout_us;
+    ssize_t written;
     if (call == NULL) {
         errno = EINVAL;
         return -1;
     }
-    remaining_timeout_us = remaining_timeout_us_for_deadline(call->deadline_abs_us);
+    written = h2_connection_send(call->connection, data, length, call->deadline_abs_us, &call->timed_out);
+    if (written < 0) {
+        call->last_io_errno = errno;
+        if (call->connection != NULL) {
+            call->last_ssl_error = call->connection->last_ssl_error;
+            snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "%s", call->connection->last_error_detail);
+        }
+    }
+    return written;
+}
+
+static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out)
+{
+    zend_long remaining_timeout_us;
+    if (connection == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
         errno = ETIMEDOUT;
-        call->timed_out = true;
+        if (timed_out != NULL) {
+            *timed_out = true;
+        }
+        connection->last_io_errno = errno;
+        set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
         return -1;
     }
-    if (call->connection != NULL && set_socket_timeout_us(call->connection->fd, remaining_timeout_us) != 0) {
+    if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
         return -1;
     }
-    if (call->connection != NULL && call->connection->ssl != NULL) {
+    if (connection->ssl != NULL) {
         if (length > INT_MAX) {
             errno = EMSGSIZE;
-            call->last_io_errno = errno;
-            call->connection->last_io_errno = errno;
-            set_connection_error_detail(call->connection, "SSL_write length exceeds INT_MAX");
+            connection->last_io_errno = errno;
+            set_connection_error_detail(connection, "SSL_write length exceeds INT_MAX");
             return -1;
         }
-        int written = SSL_write(call->connection->ssl, data, (int) length);
+        int written = SSL_write(connection->ssl, data, (int) length);
         if (written <= 0) {
-            int ssl_error = SSL_get_error(call->connection->ssl, written);
-            call->last_ssl_error = ssl_error;
-            call->connection->last_ssl_error = ssl_error;
+            int ssl_error = SSL_get_error(connection->ssl, written);
+            connection->last_ssl_error = ssl_error;
             errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
-            if ((errno == EAGAIN || errno == EWOULDBLOCK) && call->deadline_abs_us > 0) {
-                call->timed_out = true;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
+                if (timed_out != NULL) {
+                    *timed_out = true;
+                }
                 errno = ETIMEDOUT;
             }
-            call->last_io_errno = errno;
-            call->connection->last_io_errno = errno;
-            snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
-            set_connection_error_detail(call->connection, call->last_io_error_detail);
+            connection->last_io_errno = errno;
+            snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
             return -1;
         }
         return written;
     }
-    ssize_t written = send(call->fd, data, length,
+    ssize_t written = send(connection->fd, data, length,
 #ifdef MSG_NOSIGNAL
         MSG_NOSIGNAL
 #else
@@ -923,16 +944,14 @@ static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t leng
 #endif
     );
     if (written < 0) {
-        if ((errno == EAGAIN || errno == EWOULDBLOCK) && call->deadline_abs_us > 0) {
-            call->timed_out = true;
+        if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
+            if (timed_out != NULL) {
+                *timed_out = true;
+            }
             errno = ETIMEDOUT;
         }
-        call->last_io_errno = errno;
-        snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "send failed: %s", strerror(errno));
-        if (call->connection != NULL) {
-            call->connection->last_io_errno = errno;
-            set_connection_error_detail(call->connection, call->last_io_error_detail);
-        }
+        connection->last_io_errno = errno;
+        snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "send failed: %s", strerror(errno));
     }
     return written;
 }
@@ -983,7 +1002,6 @@ static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t 
 static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
 {
     h2_connection *connection;
-    grpc_call open_client;
     int rv;
     uint32_t stream_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_stream_window_size));
     uint32_t connection_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_connection_window_size));
@@ -1013,19 +1031,14 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         return NULL;
     }
 
-    memset(&open_client, 0, sizeof(open_client));
-    open_client.fd = connection->fd;
-    open_client.connection = connection;
-    open_client.grpc_status = -1;
-    open_client.http_status = -1;
-    open_client.deadline_abs_us = deadline_abs_us;
+    connection->setup_deadline_abs_us = deadline_abs_us;
 
     if (configure_callbacks(&connection->callbacks) != 0) {
         destroy_h2_connection(connection);
         *error_message = "failed to configure callbacks";
         return NULL;
     }
-    if (nghttp2_session_client_new(&connection->session, connection->callbacks, &open_client) != 0) {
+    if (nghttp2_session_client_new(&connection->session, connection->callbacks, connection) != 0) {
         destroy_h2_connection(connection);
         *error_message = "failed to create nghttp2 session";
         return NULL;
@@ -1053,7 +1066,7 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
     }
     rv = nghttp2_session_send(connection->session);
     if (rv != 0) {
-        if (open_client.timed_out) {
+        if (connection->setup_timed_out) {
             *error_message = "HTTP/2 transport deadline exceeded";
         } else {
             *error_message = "nghttp2_session_send failed";
@@ -1061,8 +1074,6 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         destroy_h2_connection(connection);
         return NULL;
     }
-    nghttp2_session_set_user_data(connection->session, NULL);
-
     build_authority(connection->authority, sizeof(connection->authority), host, port, authority, authority_len);
     return connection;
 }
@@ -1217,23 +1228,29 @@ static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_u
 
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call;
     size_t total_written = 0;
     (void) session;
     (void) flags;
 
-    if (call == NULL) {
+    if (connection == NULL) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
+    call = connection->active_call;
 
     while (total_written < length) {
-        ssize_t written = connection_send(call, data + total_written, length - total_written);
+        ssize_t written = call != NULL
+            ? connection_send(call, data + total_written, length - total_written)
+            : h2_connection_send(connection, data + total_written, length - total_written, connection->setup_deadline_abs_us, &connection->setup_timed_out);
         if (written <= 0) {
             return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
         total_written += (size_t) written;
     }
-    call->bytes_sent += total_written;
+    if (call != NULL) {
+        call->bytes_sent += total_written;
+    }
     return (ssize_t) total_written;
 }
 
@@ -1275,15 +1292,22 @@ static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
 
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
-    size_t total_len = call->grpc_header_len + call->request_len;
-    size_t remaining = remaining_request_bytes(call);
-    size_t to_send = remaining < length ? remaining : length;
+    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    size_t total_len;
+    size_t remaining;
+    size_t to_send;
     (void) session;
     (void) stream_id;
     (void) source;
 
     *data_flags = 0;
+    if (call == NULL) {
+        *data_flags = NGHTTP2_DATA_FLAG_EOF;
+        return 0;
+    }
+    total_len = call->grpc_header_len + call->request_len;
+    remaining = remaining_request_bytes(call);
+    to_send = remaining < length ? remaining : length;
     call->data_read_calls++;
 
     size_t copied = copy_request_bytes(call, buf, to_send);
@@ -1305,9 +1329,12 @@ static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len
 
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
+    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
     (void) session;
     (void) flags;
+    if (call == NULL) {
+        return 0;
+    }
     if (stream_id == call->stream_id && len > 0) {
         call->data_recv_calls++;
         if (call->direct_response_payload && call->decode_response_incrementally && ((call->payload_callback_fci != NULL && call->payload_callback_fcc != NULL) || call->queue_response_payloads)) {
@@ -1329,10 +1356,13 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
+    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
     bool trailing;
     (void) session;
     (void) flags;
+    if (call == NULL) {
+        return 0;
+    }
     if (frame->hd.stream_id != call->stream_id) {
         return 0;
     }
@@ -1404,9 +1434,12 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
 
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
+    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
     (void) session;
     (void) error_code;
+    if (call == NULL) {
+        return 0;
+    }
     if (stream_id == call->stream_id) {
         call->stream_closed = true;
         call->stream_error_code = error_code;
@@ -1416,8 +1449,11 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
 
 static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
+    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
     (void) session;
+    if (call == NULL) {
+        return 0;
+    }
     call->sent_frames++;
     call->last_sent_frame_type = frame->hd.type;
     call->last_sent_frame_flags = frame->hd.flags;
@@ -1426,8 +1462,11 @@ static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame 
 
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
+    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
     (void) session;
+    if (call == NULL) {
+        return 0;
+    }
     call->recv_frames++;
     call->last_recv_frame_type = frame->hd.type;
     call->last_recv_frame_flags = frame->hd.flags;
@@ -1464,8 +1503,11 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 
 static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
 {
-    grpc_call *call = (grpc_call *) user_data;
+    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
     (void) session;
+    if (call == NULL) {
+        return 0;
+    }
     call->not_sent_frames++;
     call->last_not_sent_frame_type = frame->hd.type;
     call->last_not_sent_error = lib_error_code;
