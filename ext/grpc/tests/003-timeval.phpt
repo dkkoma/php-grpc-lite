@@ -15,12 +15,18 @@ require __DIR__ . '/helpers.inc';
 grpc_lite_phpt_assert_same(123456, (new Grpc\Timeval(123456))->microtime(), 'microtime');
 grpc_lite_phpt_assert_same(PHP_INT_MAX, (new Grpc\Timeval(PHP_INT_MAX))->add(new Grpc\Timeval(1))->microtime(), 'add saturates');
 grpc_lite_phpt_assert_same(PHP_INT_MIN, (new Grpc\Timeval(PHP_INT_MIN))->subtract(new Grpc\Timeval(1))->microtime(), 'subtract saturates');
+grpc_lite_phpt_assert_same(PHP_INT_MAX, (new Grpc\Timeval(1))->subtract(new Grpc\Timeval(PHP_INT_MIN))->microtime(), 'subtract min from positive saturates');
+grpc_lite_phpt_assert_same(PHP_INT_MAX - 1, (new Grpc\Timeval(-1))->subtract(new Grpc\Timeval(PHP_INT_MIN))->microtime(), 'subtract min from negative saturates via add');
 grpc_lite_phpt_assert_same(1, (new Grpc\Timeval(PHP_INT_MAX))->compare(new Grpc\Timeval(PHP_INT_MIN)), 'compare max/min');
 grpc_lite_phpt_assert_same(-1, (new Grpc\Timeval(PHP_INT_MIN))->compare(new Grpc\Timeval(PHP_INT_MAX)), 'compare min/max');
 grpc_lite_phpt_assert_same(0, (new Grpc\Timeval(123))->compare(new Grpc\Timeval(123)), 'compare equal');
+grpc_lite_phpt_assert_true(Grpc\Timeval::now()->microtime() > 0, 'now returns positive microseconds');
+grpc_lite_phpt_assert_same(PHP_INT_MAX, Grpc\Timeval::infFuture()->microtime(), 'infFuture');
+grpc_lite_phpt_assert_same(PHP_INT_MIN, Grpc\Timeval::infPast()->microtime(), 'infPast');
+grpc_lite_phpt_assert_same(0, Grpc\Timeval::zero()->microtime(), 'zero');
+Grpc\Timeval::zero()->sleepUntil();
 
 echo "OK\n";
 ?>
 --EXPECT--
 OK
-

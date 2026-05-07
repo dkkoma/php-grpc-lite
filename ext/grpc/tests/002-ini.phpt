@@ -21,9 +21,12 @@ grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_me
 grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '262144') !== false, 'read-ahead bytes can be changed at runtime');
 grpc_lite_phpt_assert_same('4', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'changed read-ahead messages ini');
 grpc_lite_phpt_assert_same('262144', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'changed read-ahead bytes ini');
+grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_messages', '-1') !== false, 'invalid read-ahead messages ini accepted then clamped');
+grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '-1') !== false, 'invalid read-ahead bytes ini accepted then clamped');
+grpc_lite_phpt_assert_same('-1', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'invalid read-ahead messages ini stored');
+grpc_lite_phpt_assert_same('-1', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'invalid read-ahead bytes ini stored');
 
 echo "OK\n";
 ?>
 --EXPECT--
 OK
-

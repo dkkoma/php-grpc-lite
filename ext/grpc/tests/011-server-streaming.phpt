@@ -40,6 +40,11 @@ grpc_lite_phpt_assert_same([
 ], $messages, 'server streaming messages');
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $call->getStatus()->code, 'server streaming status');
 
+$call = $client->SayManyHellos($request);
+grpc_lite_phpt_assert_same('test-server:50051', $call->getPeer(), 'server streaming peer');
+$call->cancel();
+grpc_lite_phpt_assert_same(Grpc\STATUS_CANCELLED, $call->getStatus()->code, 'cancelled server streaming status');
+
 echo "OK\n";
 ?>
 --EXPECT--
