@@ -56,3 +56,11 @@ missing
 mkinstalldirs
 run-tests.php
 tmp-php.ini
+
+# PHPT transient outputs
+ext/grpc/tests/*.diff
+ext/grpc/tests/*.exp
+ext/grpc/tests/*.log
+ext/grpc/tests/*.out
+ext/grpc/tests/*.php
+ext/grpc/tests/*.sh

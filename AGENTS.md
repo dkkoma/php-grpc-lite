@@ -31,14 +31,16 @@
 - サブエージェントへのレビュー依頼は英語でよい。
 - レビュー指摘は `docs/reviews/issues/` にMarkdownで残す。テンプレートは `docs/reviews/templates/review-issue.md` を使う。
 - issue本文は日本語を基本にし、HTTP/2 / gRPC / PHP extension の仕様語は英語のまま使う。
-- レビューエージェントを起動するときは、対象scope、review role、確認観点を明示し、指摘をissue形式で返すよう依頼する。
+- レビューエージェントを起動するときは、対象scope、review role、確認観点を明示し、指摘を `docs/reviews/issues/` のissueファイルへ直接書くよう依頼する。エージェントが書けない場合だけ、親エージェントが返されたissue形式の指摘を転記する。
 - 修正時は同じissueに `Status`, `Fix summary`, `Fix commit`, `Verification` を追記する。
 - design docには現在と未来の設計だけを残し、過渡的なレビュー指摘や修正履歴は `docs/reviews/` に残す。
 
 ## 検証
 
 - ホストの PHP ではなく Docker compose 内で実行する。
-- 統合テスト: `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
+- C拡張PHPT: `./bench/phase2/check-native-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051` / `50052` / `50053` / `50054` をpreflightで必須にする。
+- 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
+- C拡張静的解析: `./bench/phase2/check-native-static-analysis.sh`
 - 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`
 - ext-grpc 比較: `./bench/run.sh compare` または互換入口の `./bench/compare.sh`
 - grpc-php-rs 任意比較: `./bench/compare-rs.sh`。通常比較はあくまで php-grpc-lite vs 公式 ext-grpc とし、grpc-php-rs は明示依頼がある場合だけ使う。

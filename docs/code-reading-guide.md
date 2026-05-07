@@ -182,19 +182,23 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 
 | テスト | 見るもの |
 |---|---|
-| `tests/Integration/UnaryTest.php` | unary success、metadata/trailer、sequential reuse |
-| `tests/Integration/ServerStreamingTest.php` | server streaming yield |
-| `tests/Integration/DeadlineTest.php` | client-side deadline |
-| `tests/Integration/MetadataControlTest.php` | request metadata validation/filtering |
-| `tests/Integration/MetadataCompatibilityTest.php` | duplicate/binary metadata |
-| `tests/Integration/CompressionTest.php` | compression unsupported status |
-| `tests/Integration/HttpValidationTest.php` | content-type / grpc-status / malformed frame |
-| `tests/Integration/TlsTest.php` / `MtlsTest.php` | TLS/mTLS |
+| `ext/grpc/tests/*.phpt` | C拡張surface、INI、object lifecycle、basic unary/server streaming、deadline status、TLS/mTLS baseline、protocol error、metadata/call credentialsのPHPT gate |
+| `tests/Integration/DeadlineTest.php` | deadlineのelapsed/count/immediate timeoutなど、PHPT baselineより細かいclient-side挙動 |
+| `tests/Integration/CompressionTest.php` | server streaming compression、grpc-status併用、stream-local failure後のrecovery |
+| `tests/Integration/HttpValidationTest.php` | PHPT baselineにないcontent-type / grpc-status validation variants |
+| `tests/Integration/ErrorSemanticsTest.php` | trailers-only error statusとmetadata propagation |
+| `tests/Integration/MetadataCompatibilityTest.php` | duplicate binary metadata、large/many metadata、response metadata limit、server streaming duplicate metadata |
+| `tests/Integration/ControlSemanticsTest.php` | cancel、RST_STREAM、GOAWAY、abandoned stream、read-ahead boundなど複合lifecycle制御 |
+| `tests/Integration/InterceptorTest.php` | PHP wrapper interceptor chain |
+| `tests/Integration/TlsTest.php` / `MtlsTest.php` | TLS server streaming、mTLS client certificate failure |
 | `tests/Integration/Spanner/*` | gax / Spanner emulator compatibility |
 
 標準検証コマンド:
 
 ```bash
 docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc)'
+./bench/phase2/check-native-phpt.sh
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
+
+`check-native-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051` / `:50052` / `:50053` / `:50054` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。

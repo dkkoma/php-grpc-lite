@@ -12,24 +12,6 @@ use PHPUnit\Framework\TestCase;
 #[Group('integration')]
 final class MetadataCompatibilityTest extends TestCase
 {
-    public function testDuplicateAsciiMetadataRoundTripPreservesValues(): void
-    {
-        $client = $this->client();
-        $values = ['first', 'second', 'third'];
-
-        $call = $client->BenchUnary(new BenchRequest(), [
-            'x-bench-echo-ascii' => $values,
-            'x-bench-response-duplicate' => $values,
-        ]);
-        [, $status] = $call->wait();
-
-        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
-        self::assertSame($values, $call->getMetadata()['x-bench-initial-ascii'] ?? null);
-        self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-ascii'] ?? null);
-        self::assertSame($values, $call->getMetadata()['x-bench-initial-duplicate'] ?? null);
-        self::assertSame($values, $call->getTrailingMetadata()['x-bench-trailing-duplicate'] ?? null);
-    }
-
     public function testDuplicateBinaryMetadataRoundTripPreservesValues(): void
     {
         $client = $this->client();
