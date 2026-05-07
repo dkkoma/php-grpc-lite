@@ -32,7 +32,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     }
 
     memset(&call, 0, sizeof(call));
-    call.fd = connection->fd;
     call.connection = connection;
     call.grpc_status = -1;
     call.http_status = -1;

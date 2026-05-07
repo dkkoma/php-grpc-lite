@@ -355,7 +355,9 @@ typedef struct {
 #endif
 
 struct _grpc_call {
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     int fd;
+#endif
     h2_connection *connection;
     int32_t stream_id;
     bool stream_closed;

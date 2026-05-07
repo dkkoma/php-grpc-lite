@@ -80,7 +80,6 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     state->recv_buf = emalloc(state->recv_buf_len);
 
     memset(&state->call, 0, sizeof(state->call));
-    state->call.fd = connection->fd;
     state->call.connection = connection;
     state->call.grpc_status = -1;
     state->call.http_status = -1;
