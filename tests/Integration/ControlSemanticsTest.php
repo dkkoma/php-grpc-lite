@@ -90,7 +90,8 @@ final class ControlSemanticsTest extends TestCase
         [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
 
         self::assertNull($response);
-        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code, $status->details);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $status->code);
+        self::assertSame('HTTP/2 stream refused by GOAWAY', $status->details);
     }
 
     private function client(string $target = 'test-server:50051'): GreeterClient

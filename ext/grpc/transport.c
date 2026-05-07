@@ -1672,6 +1672,15 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
     if (call->grpc_message != NULL && ZSTR_LEN(call->grpc_message) > 0) {
         return zend_string_copy(call->grpc_message);
     }
+    if (call->stream_refused_seen) {
+        return zend_string_init("HTTP/2 stream refused by GOAWAY", sizeof("HTTP/2 stream refused by GOAWAY") - 1, 0);
+    }
+    if (call->last_io_error_detail[0] != '\0') {
+        return zend_string_init(call->last_io_error_detail, strlen(call->last_io_error_detail), 0);
+    }
+    if (call->connection != NULL && call->connection->last_error_detail[0] != '\0') {
+        return zend_string_init(call->connection->last_error_detail, strlen(call->connection->last_error_detail), 0);
+    }
     if (call->http_status != 200) {
         return strpprintf(0, "HTTP status %d without grpc-status", call->http_status);
     }
@@ -1687,6 +1696,11 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
     switch (code) {
         case GRPC_STATUS_DEADLINE_EXCEEDED:
             return zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
+        case GRPC_STATUS_UNAVAILABLE:
+            if (call->stream_reset_seen) {
+                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
+            }
+            return zend_string_copy(zend_empty_string);
         case GRPC_STATUS_RESOURCE_EXHAUSTED:
             return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
         case GRPC_STATUS_INTERNAL:
@@ -1694,7 +1708,7 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
                 return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
             }
             if (call->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 state reset: %u", call->stream_error_code);
+                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
             }
             return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
         case GRPC_STATUS_UNIMPLEMENTED:
@@ -1708,12 +1722,6 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
         case GRPC_STATUS_CANCELLED:
             return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
         default:
-            if (call->stream_refused_seen) {
-                return zend_string_init("HTTP/2 stream refused by GOAWAY", sizeof("HTTP/2 stream refused by GOAWAY") - 1, 0);
-            }
-            if (call->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 state reset: %u", call->stream_error_code);
-            }
             return zend_string_copy(zend_empty_string);
     }
 }
