@@ -11,14 +11,15 @@
 ```text
 Grpc\BaseStub
   -> UnaryCall / ServerStreamingCall
-    -> NativeChannelTransport
-      -> NativeHttp2Session
-        -> nghttp2_session
-        -> socket / TLS stream
-        -> stream state map
+    -> Grpc\Call bridge
+      -> grpc_channel
+        -> h2_connection
+          -> socket / TLS
+          -> nghttp2_session
+          -> active grpc_call
 ```
 
-HTTP/2 transport は `Grpc\Channel` に紐づく HTTP/2 transport resource として実装する。`UnaryCall` / `ServerStreamingCall` は transport backend を直接意識せず、既存 `Grpc\` API surface を維持する。
+HTTP/2 transport は `Grpc\Channel` に紐づく persistent `h2_connection` として実装する。`grpc_channel` はgRPC channel identityとchannel optionを保持し、`h2_connection` はHTTP/2 connection resource(TCP/TLS socket、nghttp2 session、GOAWAY/draining/dead state)を保持する。現行production実装は同一connection上で同時に1つのactive `grpc_call` だけを扱う。HTTP/2 multiplex / stream tableはbench PoCで検証済みだが、production採用はfuture workとして分離する。
 
 ## Request Path
 
