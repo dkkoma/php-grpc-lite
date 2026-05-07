@@ -16,6 +16,8 @@
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES (64 * 1024)
 #define GRPC_LITE_DEFAULT_METADATA_SOFT_BYTES (8 * 1024)
+#define GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_MESSAGES 4
+#define GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_BYTES (256 * 1024)
 #define GRPC_LITE_DEFAULT_METADATA_HARD_BYTES (16 * 1024)
 #define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
 
@@ -33,7 +35,6 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks);
 static void mark_connection_dead(h2_connection *connection, int error_code);
 static void set_connection_error_detail(h2_connection *connection, const char *detail);
 static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
-static void retire_connection(h2_connection *connection, const char *detail);
 static bool connection_usable(h2_connection *connection);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
@@ -87,7 +88,9 @@ static int append_custom_request_headers(h2_request_headers *headers, zval *head
 static void free_request_headers(h2_request_headers *headers);
 static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
-static int enqueue_response_payload(grpc_call *call, zend_string *payload);
+static bool server_streaming_read_ahead_limit_would_exceed(grpc_call *call, size_t payload_len);
+static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call);
+static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
 static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us);
 static int deliver_queued_response_payloads(grpc_call *call);
 static void free_queued_response_payloads(grpc_call *call);
@@ -99,10 +102,71 @@ static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
 static void cleanup_grpc_call(grpc_call *call);
 
-static grpc_call *active_grpc_call_from_session_user_data(void *user_data)
+static grpc_call *grpc_call_from_stream_id(h2_connection *connection, int32_t stream_id)
 {
-    h2_connection *connection = (h2_connection *) user_data;
-    return connection != NULL ? connection->active_call : NULL;
+    if (connection == NULL || connection->session == NULL || stream_id <= 0) {
+        return NULL;
+    }
+    return (grpc_call *) nghttp2_session_get_stream_user_data(connection->session, stream_id);
+}
+
+static int register_grpc_call_stream(h2_connection *connection, grpc_call *call)
+{
+    if (connection == NULL || call == NULL || call->stream_id <= 0) {
+        return FAILURE;
+    }
+    if (nghttp2_session_set_stream_user_data(connection->session, call->stream_id, call) != 0) {
+        return FAILURE;
+    }
+    call->connection = connection;
+    call->stream_registered = true;
+    call->connection_owned = true;
+    call->next_active_stream = connection->active_streams;
+    connection->active_streams = call;
+    connection->active_stream_count++;
+    connection->stream_owner_count++;
+    return SUCCESS;
+}
+
+static void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call)
+{
+    if (connection == NULL) {
+        return;
+    }
+    if (call != NULL && call->stream_id > 0 && connection->session != NULL) {
+        nghttp2_session_set_stream_user_data(connection->session, call->stream_id, NULL);
+    }
+    set_connection_error_detail(connection, "failed to register HTTP/2 stream");
+    mark_connection_dead(connection, NGHTTP2_ERR_INVALID_ARGUMENT);
+}
+
+static void unregister_grpc_call_stream(grpc_call *call)
+{
+    h2_connection *connection;
+
+    if (call == NULL || !call->stream_registered || call->connection == NULL || call->stream_id <= 0) {
+        return;
+    }
+    connection = call->connection;
+    if (connection->session != NULL) {
+        nghttp2_session_set_stream_user_data(connection->session, call->stream_id, NULL);
+    }
+    if (connection->active_streams == call) {
+        connection->active_streams = call->next_active_stream;
+    } else {
+        grpc_call *previous = connection->active_streams;
+        while (previous != NULL && previous->next_active_stream != call) {
+            previous = previous->next_active_stream;
+        }
+        if (previous != NULL) {
+            previous->next_active_stream = call->next_active_stream;
+        }
+    }
+    call->next_active_stream = NULL;
+    call->stream_registered = false;
+    if (connection->active_stream_count > 0) {
+        connection->active_stream_count--;
+    }
 }
 
 static void destroy_h2_connection(h2_connection *connection)
@@ -127,6 +191,13 @@ static void destroy_h2_connection(h2_connection *connection)
         nghttp2_session_callbacks_del(connection->callbacks);
     }
     pefree(connection, connection->persistent);
+}
+
+static void destroy_detached_connection_if_unowned(h2_connection *connection)
+{
+    if (connection != NULL && connection->detached_from_cache && connection->stream_owner_count == 0) {
+        destroy_h2_connection(connection);
+    }
 }
 
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection)
@@ -187,12 +258,12 @@ static void detach_persistent_connection_by_ptr(h2_connection *connection)
 
 static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state)
 {
-    return connection != NULL && state != NULL && connection->active_call == &state->call;
+    return connection != NULL && state != NULL && state->call.connection == connection;
 }
 
 static bool connection_owned_by_call(h2_connection *connection, grpc_call *call)
 {
-    return connection != NULL && call != NULL && connection->active_call == call;
+    return connection != NULL && call != NULL && call->connection == connection;
 }
 
 static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state)
@@ -210,12 +281,13 @@ static void clear_connection_server_streaming_call_state_owner(server_streaming_
     if (!connection_usable(connection)) {
         detach_persistent_connection_by_ptr(connection);
     }
-    connection->busy = false;
-    connection->active_call = NULL;
-    state->call.connection = NULL;
-    if (connection->detached_from_cache) {
-        destroy_h2_connection(connection);
+    unregister_grpc_call_stream(&state->call);
+    if (state->call.connection_owned && connection->stream_owner_count > 0) {
+        connection->stream_owner_count--;
     }
+    state->call.connection_owned = false;
+    state->call.connection = NULL;
+    destroy_detached_connection_if_unowned(connection);
 }
 
 static void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
@@ -223,8 +295,11 @@ static void clear_connection_call_owner(h2_connection *connection, grpc_call *ca
     if (!connection_owned_by_call(connection, call)) {
         return;
     }
-    connection->busy = false;
-    connection->active_call = NULL;
+    unregister_grpc_call_stream(call);
+    if (call->connection_owned && connection->stream_owner_count > 0) {
+        connection->stream_owner_count--;
+    }
+    call->connection_owned = false;
 }
 
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code)
@@ -239,7 +314,7 @@ static void cancel_active_server_streaming_call_state(server_streaming_call_stat
         mark_connection_dead(state->call.connection, rv);
         return;
     }
-    rv = nghttp2_session_send(state->call.connection->session);
+    rv = send_pending_h2_frames(state->call.connection, &state->call);
     if (rv != 0) {
         mark_connection_dead(state->call.connection, rv);
     }
@@ -251,8 +326,10 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *sta
         return;
     }
     if (!state->completed && !state->call.stream_closed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection) && state->call.stream_id > 0) {
-        retire_connection(state->call.connection, "active stream resource destroyed before completion");
-        detach_persistent_connection_by_ptr(state->call.connection);
+        cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);
+        if (!connection_usable(state->call.connection)) {
+            detach_persistent_connection_by_ptr(state->call.connection);
+        }
     }
     clear_connection_server_streaming_call_state_owner(state);
     if (state->request != NULL) {
@@ -324,18 +401,9 @@ static void mark_connection_draining(h2_connection *connection, int32_t last_str
     connection->last_goaway_error_code = error_code;
 }
 
-static void retire_connection(h2_connection *connection, const char *detail)
-{
-    if (connection == NULL) {
-        return;
-    }
-    connection->retired = true;
-    set_connection_error_detail(connection, detail);
-}
-
 static bool connection_usable(h2_connection *connection)
 {
-    return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining && !connection->retired;
+    return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
 }
 
 static zend_ulong hash_bytes(const char *data, size_t data_len)
@@ -464,8 +532,11 @@ static bool preflight_persistent_connection(h2_connection *connection)
     char byte;
     ssize_t rv;
 
-    if (!connection_usable(connection) || connection->busy) {
+    if (!connection_usable(connection)) {
         return connection_usable(connection);
+    }
+    if (connection->active_stream_count > 0) {
+        return true;
     }
     if (connection->ssl != NULL) {
         int ssl_error;
@@ -530,7 +601,7 @@ static void remove_unusable_persistent_connection(const char *key, size_t key_le
         entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
         zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     }
-    if (connection->busy) {
+    if (connection->stream_owner_count > 0) {
         connection->detached_from_cache = true;
         destroy_persistent_connection_entry(entry, false);
         return;
@@ -1150,7 +1221,7 @@ static void discard_persistent_connection(const char *key, size_t key_len, h2_co
         destroy_persistent_connection_entry(entry, false);
         return;
     }
-    if (connection->busy) {
+    if (connection->stream_owner_count > 0) {
         connection->detached_from_cache = true;
         destroy_persistent_connection_entry(entry, false);
         return;
@@ -1245,21 +1316,47 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     if (connection == NULL) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    call = connection->active_call;
+    call = connection->current_io_call;
 
     while (total_written < length) {
-        ssize_t written = call != NULL
-            ? connection_send(call, data + total_written, length - total_written)
-            : h2_connection_send(connection, data + total_written, length - total_written, connection->setup_deadline_abs_us, &connection->setup_timed_out);
+        bool *timed_out = connection->current_write_deadline_abs_us > 0
+            ? &connection->current_write_timed_out
+            : &connection->setup_timed_out;
+        uint64_t deadline_abs_us = connection->current_write_deadline_abs_us > 0
+            ? connection->current_write_deadline_abs_us
+            : connection->setup_deadline_abs_us;
+        ssize_t written = h2_connection_send(connection, data + total_written, length - total_written, deadline_abs_us, timed_out);
         if (written <= 0) {
             return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
         total_written += (size_t) written;
     }
-    if (call != NULL) {
-        call->bytes_sent += total_written;
-    }
     return (ssize_t) total_written;
+}
+
+static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
+{
+    int rv;
+
+    if (connection == NULL || connection->session == NULL) {
+        return NGHTTP2_ERR_INVALID_ARGUMENT;
+    }
+    connection->current_io_call = call;
+    connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : connection->setup_deadline_abs_us;
+    connection->current_write_timed_out = false;
+    rv = nghttp2_session_send(connection->session);
+    if (rv != 0 && call != NULL) {
+        if (connection->current_write_timed_out) {
+            call->timed_out = true;
+        }
+        call->last_io_errno = connection->last_io_errno;
+        call->last_ssl_error = connection->last_ssl_error;
+        snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "%s", connection->last_error_detail);
+    }
+    connection->current_io_call = NULL;
+    connection->current_write_deadline_abs_us = 0;
+    connection->current_write_timed_out = false;
+    return rv;
 }
 
 static size_t remaining_request_bytes(grpc_call *call)
@@ -1300,13 +1397,13 @@ static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
 
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
-    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    grpc_call *call = source != NULL ? (grpc_call *) source->ptr : NULL;
     size_t total_len;
     size_t remaining;
     size_t to_send;
     (void) session;
     (void) stream_id;
-    (void) source;
+    (void) user_data;
 
     *data_flags = 0;
     if (call == NULL) {
@@ -1337,7 +1434,8 @@ static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len
 
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
 {
-    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, stream_id);
     (void) session;
     (void) flags;
     if (call == NULL) {
@@ -1364,7 +1462,8 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
-    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     bool trailing;
     (void) session;
     (void) flags;
@@ -1442,7 +1541,8 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
 
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
 {
-    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, stream_id);
     (void) session;
     (void) error_code;
     if (call == NULL) {
@@ -1451,13 +1551,15 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     if (stream_id == call->stream_id) {
         call->stream_closed = true;
         call->stream_error_code = error_code;
+        unregister_grpc_call_stream(call);
     }
     return 0;
 }
 
 static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     (void) session;
     if (call == NULL) {
         return 0;
@@ -1465,27 +1567,39 @@ static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame 
     call->sent_frames++;
     call->last_sent_frame_type = frame->hd.type;
     call->last_sent_frame_flags = frame->hd.flags;
+    call->bytes_sent += frame->hd.length;
     return 0;
 }
 
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
-    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     (void) session;
+    if (frame->hd.type == NGHTTP2_GOAWAY) {
+        if (connection != NULL) {
+            grpc_call *active_stream = connection->active_streams;
+            mark_connection_draining(connection, frame->goaway.last_stream_id, frame->goaway.error_code);
+            while (active_stream != NULL) {
+                grpc_call *next_active_stream = active_stream->next_active_stream;
+                if (active_stream->stream_id > 0 && frame->goaway.last_stream_id < active_stream->stream_id) {
+                    active_stream->stream_error_code = NGHTTP2_REFUSED_STREAM;
+                    active_stream->stream_refused_seen = true;
+                    active_stream->stream_closed = true;
+                    unregister_grpc_call_stream(active_stream);
+                }
+                active_stream = next_active_stream;
+            }
+        }
+        return 0;
+    }
     if (call == NULL) {
         return 0;
     }
     call->recv_frames++;
     call->last_recv_frame_type = frame->hd.type;
     call->last_recv_frame_flags = frame->hd.flags;
-    if (frame->hd.type == NGHTTP2_GOAWAY) {
-        mark_connection_draining(call->connection, frame->goaway.last_stream_id, frame->goaway.error_code);
-        if (call->stream_id > 0 && frame->goaway.last_stream_id < call->stream_id) {
-            call->stream_error_code = NGHTTP2_REFUSED_STREAM;
-            call->stream_refused_seen = true;
-            call->stream_closed = true;
-        }
-    } else if (frame->hd.type == NGHTTP2_HEADERS
+    if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
         && frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
         call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
@@ -1512,7 +1626,8 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 
 static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
 {
-    grpc_call *call = active_grpc_call_from_session_user_data(user_data);
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     (void) session;
     if (call == NULL) {
         return 0;
@@ -1635,7 +1750,7 @@ static int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
         }
     }
     if (call->invalid_content_type) return GRPC_STATUS_UNKNOWN;
-    if (call->response_message_too_large || call->metadata_too_large) return GRPC_STATUS_RESOURCE_EXHAUSTED;
+    if (call->response_message_too_large || call->metadata_too_large || call->response_queue_limit_exceeded) return GRPC_STATUS_RESOURCE_EXHAUSTED;
     if (call->malformed_response_frame) return GRPC_STATUS_INTERNAL;
     if (call->compressed_response_seen || call->unsupported_response_encoding) return GRPC_STATUS_UNIMPLEMENTED;
     if (call->grpc_status >= 0) return call->grpc_status;
@@ -1702,6 +1817,9 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
             }
             return zend_string_copy(zend_empty_string);
         case GRPC_STATUS_RESOURCE_EXHAUSTED:
+            if (call->response_queue_limit_exceeded) {
+                return zend_string_init("server streaming read-ahead queue limit exceeded", sizeof("server streaming read-ahead queue limit exceeded") - 1, 0);
+            }
             return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
         case GRPC_STATUS_INTERNAL:
             if (call->malformed_response_frame) {
@@ -2289,6 +2407,10 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
                 }
                 continue;
             }
+            if (server_streaming_read_ahead_limit_would_exceed(call, call->response_payload_len)) {
+                mark_server_streaming_read_ahead_limit_exceeded(session, call);
+                return 0;
+            }
             call->response_payload_offset = 0;
             if (call->response_current_compressed) {
                 if (call->response_payload_len == 0) {
@@ -2343,7 +2465,7 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
                 call->response_payload_offset = 0;
 
                 if (call->queue_response_payloads) {
-                    if (enqueue_response_payload(call, payload) != 0) {
+                    if (enqueue_response_payload(session, call, payload) != 0) {
                         return -1;
                     }
                 } else if (deliver_response_payload(call, payload, ready_abs_us) != 0) {
@@ -2356,8 +2478,42 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
     return 0;
 }
 
-static int enqueue_response_payload(grpc_call *call, zend_string *payload)
+static bool server_streaming_read_ahead_limit_would_exceed(grpc_call *call, size_t payload_len)
 {
+    return call != NULL
+        && call->queue_response_payloads
+        && call->connection != NULL
+        && call->connection->current_read_call != NULL
+        && call->connection->current_read_call != call
+        && (call->response_queue_count >= GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_MESSAGES
+            || payload_len > GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_BYTES
+            || call->response_queue_bytes > GRPC_LITE_MAX_SERVER_STREAMING_READ_AHEAD_BYTES - payload_len);
+}
+
+static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call)
+{
+    if (call == NULL) {
+        return;
+    }
+    call->response_queue_limit_exceeded = true;
+    call->discard_response_body = true;
+    call->response_header_len = 0;
+    call->response_payload_len = 0;
+    call->response_payload_offset = 0;
+    call->response_current_compressed = false;
+    if (session != NULL && call->stream_id > 0) {
+        nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+    }
+}
+
+static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload)
+{
+    if (server_streaming_read_ahead_limit_would_exceed(call, ZSTR_LEN(payload))) {
+        zend_string_release(payload);
+        mark_server_streaming_read_ahead_limit_exceeded(session, call);
+        return 0;
+    }
+
     queued_payload *entry = emalloc(sizeof(queued_payload));
     entry->payload = payload;
     entry->ready_abs_us = monotonic_us();

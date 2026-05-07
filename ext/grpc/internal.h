@@ -359,7 +359,10 @@ struct _grpc_call {
     int fd;
 #endif
     h2_connection *connection;
+    grpc_call *next_active_stream;
     int32_t stream_id;
+    bool stream_registered;
+    bool connection_owned;
     bool stream_closed;
     int grpc_status;
     zend_string *grpc_message;
@@ -374,6 +377,7 @@ struct _grpc_call {
     bool content_type_seen;
     bool invalid_content_type;
     bool unsupported_response_encoding;
+    bool response_queue_limit_exceeded;
     zend_string *content_type;
     zend_string *grpc_encoding;
     bool discard_response_body;
@@ -466,10 +470,14 @@ struct _h2_connection {
     char authority[512];
     bool dead;
     bool draining;
-    bool retired;
-    bool busy;
     bool detached_from_cache;
-    grpc_call *active_call;
+    size_t active_stream_count;
+    size_t stream_owner_count;
+    grpc_call *active_streams;
+    grpc_call *current_io_call;
+    grpc_call *current_read_call;
+    uint64_t current_write_deadline_abs_us;
+    bool current_write_timed_out;
     uint64_t setup_deadline_abs_us;
     bool setup_timed_out;
     int last_error;
@@ -523,6 +531,9 @@ static bool connection_owned_by_server_streaming_call_state(h2_connection *conne
 static bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
 static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state);
 static void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
+static void destroy_detached_connection_if_unowned(h2_connection *connection);
+static void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call);
+static int send_pending_h2_frames(h2_connection *connection, grpc_call *call);
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
 static void destroy_server_streaming_call_state(server_streaming_call_state *state);
 static void server_streaming_call_state_dtor(zend_resource *rsrc);
@@ -530,7 +541,6 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks);
 static void mark_connection_dead(h2_connection *connection, int error_code);
 static void set_connection_error_detail(h2_connection *connection, const char *detail);
 static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
-static void retire_connection(h2_connection *connection, const char *detail);
 static bool connection_usable(h2_connection *connection);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
@@ -583,7 +593,7 @@ static int append_custom_request_headers(h2_request_headers *headers, zval *head
 static void free_request_headers(h2_request_headers *headers);
 static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
-static int enqueue_response_payload(grpc_call *call, zend_string *payload);
+static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
 static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us);
 static int deliver_queued_response_payloads(grpc_call *call);
 static void free_queued_response_payloads(grpc_call *call);

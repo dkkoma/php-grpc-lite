@@ -136,7 +136,7 @@ stateは最小scopeに置く。
 - connection failureをcall semantic failureへ畳んで隠していないか。
 - GOAWAY後に新規streamを同connectionへ載せていないか。
 - EOF/TLS/socket error後にconnectionをcacheへ残していないか。
-- stream-local failure後にowner/busyが解除されるか。
+- stream-local failure後にstream user data / active stream tableから解除されるか。
 - transport層で同じRPCを暗黙retryしていないか。
 
 ## 8. HTTP/2 modelレビュー

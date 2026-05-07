@@ -174,7 +174,7 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 
 `Grpc\Channel` はtarget、credentials、channel optionsから再利用keyを作るidentity元です。cache entryはこのidentityと `h2_connection` を束ね、`h2_connection` はsocket/TLS/nghttp2 sessionなどwire transport状態だけを持ちます。
 
-再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。connectionがdead/draining/busy、またはcache entryのidentity mismatchの場合はcacheから外し、次RPCで新規接続します。
+再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。connectionがdead/draining、またはcache entryのidentity mismatchの場合はcacheから外し、次RPCで新規接続します。active streamが残っていても、HTTP/2 stream idごとにdispatchできるため同じconnection上へ新しいstreamを作れます。
 
 ## 8. 主要テスト
 

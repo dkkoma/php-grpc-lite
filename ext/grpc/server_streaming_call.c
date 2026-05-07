@@ -11,7 +11,7 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
     if (connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection) && state->call.stream_id > 0) {
         int rv = nghttp2_submit_rst_stream(state->call.connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, NGHTTP2_CANCEL);
         if (rv == 0) {
-            rv = nghttp2_session_send(state->call.connection->session);
+            rv = send_pending_h2_frames(state->call.connection, &state->call);
         }
         if (rv != 0) {
             mark_connection_dead(state->call.connection, rv);
@@ -66,10 +66,6 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent connection", 0);
         return FAILURE;
     }
-    if (connection->busy) {
-        zend_throw_exception(NULL, "HTTP/2 connection already has an active HTTP/2 stream", 0);
-        return FAILURE;
-    }
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
         if (setup_failure != NULL) {
@@ -113,8 +109,6 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     state->call.queue_response_payloads = true;
     grpc_protocol_set_message_header(&state->call, state->call.request_len);
 
-    connection->busy = true;
-    connection->active_call = &state->call;
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
         destroy_server_streaming_call_state(state);
         return FAILURE;
@@ -149,6 +143,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
+    data_provider.source.ptr = &state->call;
     state->call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (state->call.stream_id < 0) {
         if (setup_failure != NULL) {
@@ -164,8 +159,23 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }
+    if (register_grpc_call_stream(connection, &state->call) != SUCCESS) {
+        mark_grpc_call_stream_registration_failed(connection, &state->call);
+        if (setup_failure != NULL) {
+            setup_failure->code = GRPC_STATUS_UNAVAILABLE;
+            setup_failure->details = zend_string_init("failed to register HTTP/2 stream", sizeof("failed to register HTTP/2 stream") - 1, 0);
+            free_request_headers(&request_headers);
+            destroy_server_streaming_call_state(state);
+            ZVAL_UNDEF(return_value);
+            return SUCCESS;
+        }
+        free_request_headers(&request_headers);
+        destroy_server_streaming_call_state(state);
+        zend_throw_exception(NULL, "failed to register HTTP/2 stream", 0);
+        return FAILURE;
+    }
 
-    rv = nghttp2_session_send(connection->session);
+    rv = send_pending_h2_frames(connection, &state->call);
     if (rv != 0) {
         bool stream_timed_out = state->call.timed_out;
         mark_connection_dead(connection, rv);
@@ -223,7 +233,6 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     add_assoc_long(return_value, "bytes_received", call->bytes_received);
     add_assoc_bool(return_value, "connection_dead", state->call.connection != NULL ? state->call.connection->dead : false);
     add_assoc_bool(return_value, "connection_draining", state->call.connection != NULL ? state->call.connection->draining : false);
-    add_assoc_bool(return_value, "connection_retired", state->call.connection != NULL ? state->call.connection->retired : false);
     add_assoc_long(return_value, "connection_last_error", state->call.connection != NULL ? state->call.connection->last_error : 0);
     add_assoc_long(return_value, "connection_last_io_errno", state->call.connection != NULL ? state->call.connection->last_io_errno : call->last_io_errno);
     add_assoc_long(return_value, "connection_last_ssl_error", state->call.connection != NULL ? state->call.connection->last_ssl_error : call->last_ssl_error);
@@ -271,7 +280,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     }
 #endif
 
-    while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large) {
+    while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large && !call->response_queue_limit_exceeded) {
         int rv;
         ssize_t nread;
         if (call->deadline_abs_us > 0 && monotonic_us() >= call->deadline_abs_us) {
@@ -280,7 +289,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             state->completed = true;
             break;
         }
-        rv = nghttp2_session_send(state->call.connection->session);
+        rv = send_pending_h2_frames(state->call.connection, call);
         if (rv != 0) {
             mark_connection_dead(state->call.connection, rv);
             if (call->timed_out) {
@@ -308,14 +317,16 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             break;
         }
         call->bytes_received += (size_t) nread;
+        state->call.connection->current_read_call = call;
         rv = nghttp2_session_mem_recv(state->call.connection->session, (const uint8_t *) state->recv_buf, (size_t) nread);
+        state->call.connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(state->call.connection, rv);
             state->completed = true;
             break;
         }
         if (nghttp2_session_want_write(state->call.connection->session)) {
-            rv = nghttp2_session_send(state->call.connection->session);
+            rv = send_pending_h2_frames(state->call.connection, call);
             if (rv != 0) {
                 mark_connection_dead(state->call.connection, rv);
                 state->completed = true;
@@ -324,7 +335,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
         }
     }
 
-    if (call->response_message_too_large || call->compressed_response_seen || call->malformed_response_frame || call->invalid_content_type || call->unsupported_response_encoding || call->metadata_too_large) {
+    if (call->response_message_too_large || call->compressed_response_seen || call->malformed_response_frame || call->invalid_content_type || call->unsupported_response_encoding || call->metadata_too_large || call->response_queue_limit_exceeded) {
         server_streaming_call_terminate_with_cancel(state);
         if (!connection_usable(state->call.connection)) {
             detach_persistent_connection_by_ptr(state->call.connection);
@@ -409,7 +420,7 @@ static int server_streaming_call_cancel_resource(zval *server_streaming_resource
         zend_throw_exception(NULL, "invalid grpc_lite_server_streaming_call_state resource", 0);
         return FAILURE;
     }
-    if (state != NULL && !state->completed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection)) {
+    if (!state->completed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection)) {
         state->cancelled = true;
         state->call.grpc_status = GRPC_STATUS_CANCELLED;
         server_streaming_call_terminate_with_cancel(state);

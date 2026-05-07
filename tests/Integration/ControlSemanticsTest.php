@@ -83,6 +83,91 @@ final class ControlSemanticsTest extends TestCase
         self::assertSame(\Grpc\STATUS_OK, $secondCall->getStatus()->code, $secondCall->getStatus()->details);
     }
 
+    public function testUnaryCanRunWhilePreviousServerStreamIsAbandoned(): void
+    {
+        $client = $this->client();
+        $streamRequest = new BenchRequest();
+        $streamRequest->setMessageCount(3);
+        $streamRequest->setPayloadBytes(10);
+        $streamRequest->setServerDelayMs(10);
+
+        $streamCall = $client->BenchServerStream($streamRequest);
+        foreach ($streamCall->responses() as $_reply) {
+            break;
+        }
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
+
+        self::assertNotNull($response);
+        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+        $streamCall->cancel();
+    }
+
+    public function testDroppedServerStreamDoesNotPoisonConnection(): void
+    {
+        $client = $this->client();
+        $streamRequest = new BenchRequest();
+        $streamRequest->setMessageCount(3);
+        $streamRequest->setPayloadBytes(10);
+
+        $streamCall = $client->BenchServerStream($streamRequest);
+        $responses = $streamCall->responses();
+        foreach ($responses as $_reply) {
+            break;
+        }
+        unset($responses, $streamCall);
+        gc_collect_cycles();
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
+
+        self::assertNotNull($response);
+        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+    }
+
+    public function testUnrelatedRpcDoesNotReadAheadServerStreamWithoutBound(): void
+    {
+        $client = $this->client();
+        $streamRequest = new BenchRequest();
+        $streamRequest->setMessageCount(2);
+        $streamRequest->setPayloadBytes(300_000);
+
+        $streamCall = $client->BenchServerStream($streamRequest);
+        foreach ($streamCall->responses() as $_reply) {
+            break;
+        }
+
+        [$response, $status] = $client->BenchUnary(new BenchRequest())->wait();
+        self::assertNotNull($response);
+        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+
+        foreach ($streamCall->responses() as $_reply) {
+        }
+        $streamStatus = $streamCall->getStatus();
+
+        self::assertSame(\Grpc\STATUS_RESOURCE_EXHAUSTED, $streamStatus->code, $streamStatus->details);
+        self::assertSame('server streaming read-ahead queue limit exceeded', $streamStatus->details);
+    }
+
+    public function testChannelCloseWaitsForLiveClosedServerStreamResource(): void
+    {
+        $client = $this->client();
+        $streamRequest = new BenchRequest();
+        $streamRequest->setMessageCount(1);
+        $streamRequest->setPayloadBytes(10);
+
+        $streamCall = $client->BenchServerStream($streamRequest);
+        $count = 0;
+        foreach ($streamCall->responses() as $_reply) {
+            $count++;
+        }
+
+        $client->close();
+        $status = $streamCall->getStatus();
+
+        self::assertSame(1, $count);
+        self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
+    }
+
     public function testUnaryGoAwayRefusedStreamReturnsUnavailable(): void
     {
         $client = $this->client('test-server:50060');

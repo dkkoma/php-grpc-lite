@@ -55,7 +55,6 @@ static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, grpc_
     add_assoc_bool(diagnostic_result, "persistent_reused", persistent_reused);
     add_assoc_bool(diagnostic_result, "connection_dead", connection->dead);
     add_assoc_bool(diagnostic_result, "connection_draining", connection->draining);
-    add_assoc_bool(diagnostic_result, "connection_retired", connection->retired);
     add_assoc_long(diagnostic_result, "connection_last_error", connection->last_error);
     add_assoc_long(diagnostic_result, "connection_last_io_errno", connection->last_io_errno);
     add_assoc_long(diagnostic_result, "connection_last_ssl_error", connection->last_ssl_error);
@@ -95,10 +94,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         zend_throw_exception(NULL, "invalid grpc_lite connection", 0);
         return FAILURE;
     }
-    if (connection->busy) {
-        zend_throw_exception(NULL, "HTTP/2 connection already has an active stream", 0);
-        return FAILURE;
-    }
     if (request_len > UINT32_MAX) {
         zend_throw_exception(NULL, "gRPC request message exceeds 32-bit frame length", 0);
         return FAILURE;
@@ -128,9 +123,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     }
 
     setup_started = monotonic_us();
-    connection->busy = true;
-    // cppcheck-suppress autoVariables
-    connection->active_call = &call;
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
         clear_connection_call_owner(connection, &call);
         cleanup_grpc_call(&call);
@@ -158,6 +150,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
+    data_provider.source.ptr = &call;
     setup_us = monotonic_us() - setup_started;
 
     submit_started = monotonic_us();
@@ -170,9 +163,17 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }
+    if (register_grpc_call_stream(connection, &call) != SUCCESS) {
+        mark_grpc_call_stream_registration_failed(connection, &call);
+        clear_connection_call_owner(connection, &call);
+        free_request_headers(&request_headers);
+        cleanup_grpc_call(&call);
+        zend_throw_exception(NULL, "failed to register HTTP/2 stream", 0);
+        return FAILURE;
+    }
 
     initial_send_started = monotonic_us();
-    rv = nghttp2_session_send(connection->session);
+    rv = send_pending_h2_frames(connection, &call);
     initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
         mark_connection_dead(connection, rv);
@@ -199,26 +200,28 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             break;
         }
         call.bytes_received += (size_t) nread;
+        connection->current_read_call = &call;
         rv = nghttp2_session_mem_recv(connection->session, (const uint8_t *) recv_buf, (size_t) nread);
+        connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(connection, rv);
             clear_connection_call_owner(connection, &call);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&call);
+            destroy_detached_connection_if_unowned(connection);
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
-        rv = nghttp2_session_send(connection->session);
+        rv = send_pending_h2_frames(connection, &call);
         if (rv != 0) {
             mark_connection_dead(connection, rv);
             break;
         }
         call.last_session_error = rv;
     }
-    recv_loop_us = monotonic_us() - recv_loop_started;
-build_unary_result:
-    clear_connection_call_owner(connection, &call);
-    resolve_grpc_call_status(&call, false, &status_result);
+	    recv_loop_us = monotonic_us() - recv_loop_started;
+	build_unary_result:
+	    resolve_grpc_call_status(&call, false, &status_result);
 
     smart_str_0(&call.body);
     if (typed_result != NULL) {
@@ -229,15 +232,17 @@ build_unary_result:
         grpc_protocol_copy_metadata_map(&typed_result->trailing_metadata, &call, true);
     }
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-    if (diagnostic_result != NULL) {
-        grpc_lite_unary_add_diagnostic_result(diagnostic_result, &call, connection, &status_result, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
-    }
-#endif
-    zend_string_release(status_result.details);
-    free_request_headers(&request_headers);
-    cleanup_grpc_call(&call);
-    return SUCCESS;
-}
+	    if (diagnostic_result != NULL) {
+	        grpc_lite_unary_add_diagnostic_result(diagnostic_result, &call, connection, &status_result, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
+	    }
+	#endif
+	    clear_connection_call_owner(connection, &call);
+	    zend_string_release(status_result.details);
+	    free_request_headers(&request_headers);
+	    cleanup_grpc_call(&call);
+	    destroy_detached_connection_if_unowned(connection);
+	    return SUCCESS;
+	}
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value)
