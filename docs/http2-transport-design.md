@@ -111,6 +111,8 @@ Requirements:
 
 最初のproduction実装では1 session内1 active streamでもよい。ただし構造は後でmultiple active streamsへ拡張できるように分離する。
 
+現在のC実装では、この1 RPC over 1 HTTP/2 streamの状態を `grpc_call` にまとめて保持する。`grpc_call` は純粋なgRPC semantic stateだけではなく、HTTP/2 stream id、request offset、response frame parser、metadata/status、diagnosticsを含む combined state である。multiplex / shared event loop をproduction採用する段階では、`grpc_call` からHTTP/2 stream-local stateを分離し、connection上のstream tableで所有する。
+
 ## Channel Lifetime
 
 - Channel identityからC側persistent channel keyを作る。
