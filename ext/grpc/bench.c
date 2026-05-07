@@ -2200,7 +2200,7 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
-    if (grpc_lite_unary_call_perform_on_connection(connection, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), true, persistent_reused, return_value) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_diagnostic_on_connection(connection, path, path_len, request, request_len, headers_zv, remaining_timeout_us, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), true, persistent_reused, return_value) != SUCCESS) {
         if (connection != NULL && !connection_usable(connection)) {
             remove_unusable_persistent_connection(key, key_len, connection);
         }
@@ -2267,7 +2267,7 @@ PHP_FUNCTION(grpc_lite_server_streaming_next)
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_RESOURCE(stream_zv)
     ZEND_PARSE_PARAMETERS_END();
-    if (server_streaming_call_next_resource(stream_zv, return_value) != SUCCESS) {
+    if (server_streaming_call_next_resource_diagnostic(stream_zv, return_value) != SUCCESS) {
         RETURN_THROWS();
     }
 }

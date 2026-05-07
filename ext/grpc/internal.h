@@ -194,6 +194,21 @@ typedef struct {
     zend_string *details;
 } grpc_lite_status_result;
 
+typedef struct {
+    zend_string *body;
+    grpc_lite_status_result status;
+    zval initial_metadata;
+    zval trailing_metadata;
+} grpc_lite_unary_result;
+
+typedef struct {
+    bool done;
+    zend_string *payload;
+    grpc_lite_status_result status;
+    zval initial_metadata;
+    zval trailing_metadata;
+} grpc_lite_streaming_next_result;
+
 typedef void (*grpc_call_payload_copy_observer)(grpc_call *call, uint64_t elapsed_us);
 typedef void (*grpc_call_message_ready_observer)(grpc_call *call, uint64_t ready_abs_us);
 typedef void (*grpc_call_payload_queued_observer)(grpc_call *call);
@@ -578,9 +593,13 @@ static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
 static void cleanup_grpc_call(grpc_call *call);
 
-static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);
+static void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result);
+static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result);
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result);
+static int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);
 static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value);
-static int server_streaming_call_next_resource(zval *stream_zv, zval *return_value);
+static int server_streaming_call_next_resource(zval *stream_zv, grpc_lite_streaming_next_result *result);
+static int server_streaming_call_next_resource_diagnostic(zval *stream_zv, zval *return_value);
 static int server_streaming_call_cancel_resource(zval *stream_zv);
 static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key);
 

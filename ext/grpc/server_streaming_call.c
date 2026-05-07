@@ -183,7 +183,7 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     zend_string_release(status_result.details);
 }
 
-static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, zval *return_value)
+static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value)
 {
     server_streaming_call_state *state;
     grpc_call *call;
@@ -278,6 +278,50 @@ static int server_streaming_call_next_resource(zval *server_streaming_resource_z
     state->completed = true;
     server_streaming_call_add_status(return_value, state);
     clear_connection_server_streaming_call_state_owner(state);
+    return SUCCESS;
+}
+
+static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result)
+{
+    if (result->payload != NULL) {
+        zend_string_release(result->payload);
+    }
+    if (result->status.details != NULL) {
+        zend_string_release(result->status.details);
+    }
+    zval_ptr_dtor(&result->initial_metadata);
+    zval_ptr_dtor(&result->trailing_metadata);
+}
+
+static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result)
+{
+    zval diagnostic;
+    zval *done;
+    zval *payload;
+    zval *status_code;
+    zval *initial_metadata;
+    zval *trailing_metadata;
+
+    memset(result, 0, sizeof(*result));
+    ZVAL_UNDEF(&diagnostic);
+    if (server_streaming_call_next_resource_diagnostic(server_streaming_resource_zv, &diagnostic) != SUCCESS) {
+        zval_ptr_dtor(&diagnostic);
+        return FAILURE;
+    }
+    done = zend_hash_str_find(Z_ARRVAL(diagnostic), "done", sizeof("done") - 1);
+    result->done = done != NULL && zend_is_true(done);
+    payload = zend_hash_str_find(Z_ARRVAL(diagnostic), "payload", sizeof("payload") - 1);
+    if (payload != NULL && Z_TYPE_P(payload) == IS_STRING) {
+        result->payload = zend_string_copy(Z_STR_P(payload));
+    }
+    status_code = zend_hash_str_find(Z_ARRVAL(diagnostic), "status_code", sizeof("status_code") - 1);
+    result->status.code = status_code != NULL && Z_TYPE_P(status_code) == IS_LONG ? (int) Z_LVAL_P(status_code) : GRPC_STATUS_UNKNOWN;
+    result->status.details = grpc_lite_result_string(&diagnostic, "status_details", sizeof("status_details") - 1);
+    initial_metadata = zend_hash_str_find(Z_ARRVAL(diagnostic), "initial_metadata", sizeof("initial_metadata") - 1);
+    trailing_metadata = zend_hash_str_find(Z_ARRVAL(diagnostic), "trailing_metadata", sizeof("trailing_metadata") - 1);
+    grpc_lite_copy_result_metadata(&result->initial_metadata, initial_metadata);
+    grpc_lite_copy_result_metadata(&result->trailing_metadata, trailing_metadata);
+    zval_ptr_dtor(&diagnostic);
     return SUCCESS;
 }
 

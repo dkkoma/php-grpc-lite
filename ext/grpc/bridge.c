@@ -118,25 +118,6 @@ static int grpc_lite_extract_unary_payload(zval *result, zend_string **payload)
     return SUCCESS;
 }
 
-static int grpc_lite_status_from_result(zval *result)
-{
-    zval *value = zend_hash_str_find(Z_ARRVAL_P(result), "status_code", sizeof("status_code") - 1);
-    if (value != NULL && Z_TYPE_P(value) == IS_LONG) {
-        return (int) Z_LVAL_P(value);
-    }
-    return GRPC_STATUS_UNKNOWN;
-}
-
-static zend_string *grpc_lite_details_from_result(zval *result, int code)
-{
-    zval *details = zend_hash_str_find(Z_ARRVAL_P(result), "status_details", sizeof("status_details") - 1);
-    (void) code;
-    if (details != NULL && Z_TYPE_P(details) == IS_STRING) {
-        return zend_string_copy(Z_STR_P(details));
-    }
-    return zend_empty_string;
-}
-
 static void grpc_lite_make_status_object(zval *status, int code, zend_string *details, zval *metadata)
 {
     object_init(status);
@@ -167,12 +148,10 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     char error_detail[256] = {0};
     uint64_t deadline_abs_us = 0;
     zend_long timeout_us = grpc_lite_call_timeout_us(call);
-    zval result;
+    grpc_lite_unary_result result;
     zend_string *payload = NULL;
     int status_code;
     zend_string *details;
-    zval *initial_metadata;
-    zval *trailing_metadata;
 
     if (call->request_payload == NULL) {
         zend_throw_exception(NULL, "Call has no request message", 0);
@@ -225,26 +204,36 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zend_string_release(key);
         return SUCCESS;
     }
-    array_init(&result);
     if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, timeout_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
         zend_string_release(key);
-        zval_ptr_dtor(&result);
         return FAILURE;
     }
-    status_code = grpc_lite_status_from_result(&result);
+    status_code = result.status.code;
     if (!connection_usable(h2)) {
         remove_unusable_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), h2);
     }
-    details = grpc_lite_details_from_result(&result, status_code);
-    initial_metadata = zend_hash_str_find(Z_ARRVAL(result), "initial_metadata", sizeof("initial_metadata") - 1);
-    trailing_metadata = zend_hash_str_find(Z_ARRVAL(result), "trailing_metadata", sizeof("trailing_metadata") - 1);
-    grpc_lite_copy_metadata(&call->initial_metadata, initial_metadata);
-    grpc_lite_copy_metadata(&call->trailing_metadata, trailing_metadata);
+    details = zend_string_copy(result.status.details);
+    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
+    grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
     zval_ptr_dtor(&call->status);
     grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
     call->initial_metadata_ready = true;
     call->status_ready = true;
-    if (status_code == GRPC_STATUS_OK && grpc_lite_extract_unary_payload(&result, &payload) != SUCCESS) {
+    if (status_code == GRPC_STATUS_OK && result.body != NULL) {
+        zval body_result;
+        array_init(&body_result);
+        add_assoc_str(&body_result, "body", zend_string_copy(result.body));
+        if (grpc_lite_extract_unary_payload(&body_result, &payload) != SUCCESS) {
+            zval_ptr_dtor(&body_result);
+            status_code = GRPC_STATUS_INTERNAL;
+            zend_string_release(details);
+            details = zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
+            zval_ptr_dtor(&call->status);
+            grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
+        } else {
+            zval_ptr_dtor(&body_result);
+        }
+    } else if (status_code == GRPC_STATUS_OK) {
         status_code = GRPC_STATUS_INTERNAL;
         zend_string_release(details);
         details = zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
@@ -265,7 +254,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     call->unary_performed = true;
     zend_string_release(details);
     zend_string_release(key);
-    zval_ptr_dtor(&result);
+    grpc_lite_unary_result_dtor(&result);
     return SUCCESS;
 }
 
@@ -324,7 +313,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     return SUCCESS;
 }
 
-static int grpc_lite_server_streaming_next_for_call(grpc_lite_call_obj *call, zval *result)
+static int grpc_lite_server_streaming_next_for_call(grpc_lite_call_obj *call, grpc_lite_streaming_next_result *result)
 {
     if (!call->server_streaming_opened && grpc_lite_open_call_stream(call) != SUCCESS) {
         return FAILURE;
@@ -461,68 +450,48 @@ PHP_METHOD(Call, startBatch)
                 RETURN_THROWS();
             }
         } else if (call->server_streaming_opened && !call->status_ready) {
-            zval result;
+            grpc_lite_streaming_next_result result;
             do {
-                ZVAL_UNDEF(&result);
                 if (grpc_lite_server_streaming_next_for_call(call, &result) != SUCCESS) {
                     RETURN_THROWS();
                 }
-                if (Z_TYPE(result) == IS_ARRAY) {
-                    zval *done = zend_hash_str_find(Z_ARRVAL(result), "done", sizeof("done") - 1);
-                    if (done != NULL && zend_is_true(done)) {
-                        int code = grpc_lite_status_from_result(&result);
-                        zend_string *details = grpc_lite_details_from_result(&result, code);
-                        zval *initial_metadata = zend_hash_str_find(Z_ARRVAL(result), "initial_metadata", sizeof("initial_metadata") - 1);
-                        zval *trailing_metadata = zend_hash_str_find(Z_ARRVAL(result), "trailing_metadata", sizeof("trailing_metadata") - 1);
-                        if (!call->initial_metadata_ready) {
-                            grpc_lite_copy_metadata(&call->initial_metadata, initial_metadata);
-                            call->initial_metadata_ready = true;
-                        }
-                        grpc_lite_copy_metadata(&call->trailing_metadata, trailing_metadata);
-                        zval_ptr_dtor(&call->status);
-                        grpc_lite_make_status_object(&call->status, code, details, &call->trailing_metadata);
-                        call->status_ready = true;
-                        zend_string_release(details);
+                if (result.done) {
+                    if (!call->initial_metadata_ready) {
+                        grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
+                        call->initial_metadata_ready = true;
                     }
+                    grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
+                    zval_ptr_dtor(&call->status);
+                    grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
+                    call->status_ready = true;
                 }
-                zval_ptr_dtor(&result);
+                grpc_lite_streaming_next_result_dtor(&result);
             } while (!call->status_ready);
         }
     } else if (wants_message && !call->unary_performed) {
         if (call->server_streaming_opened || !zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_STATUS_ON_CLIENT)) {
-            zval result;
-            ZVAL_UNDEF(&result);
+            grpc_lite_streaming_next_result result;
             if (grpc_lite_server_streaming_next_for_call(call, &result) != SUCCESS) {
                 RETURN_THROWS();
             }
-            if (Z_TYPE(result) == IS_ARRAY) {
-                zval *done = zend_hash_str_find(Z_ARRVAL(result), "done", sizeof("done") - 1);
-                if (done != NULL && zend_is_true(done)) {
-                    int code = grpc_lite_status_from_result(&result);
-                    zend_string *details = grpc_lite_details_from_result(&result, code);
-                    zval *initial_metadata = zend_hash_str_find(Z_ARRVAL(result), "initial_metadata", sizeof("initial_metadata") - 1);
-                    zval *trailing_metadata = zend_hash_str_find(Z_ARRVAL(result), "trailing_metadata", sizeof("trailing_metadata") - 1);
-                    if (!call->initial_metadata_ready) {
-                        grpc_lite_copy_metadata(&call->initial_metadata, initial_metadata);
-                        call->initial_metadata_ready = true;
-                    }
-                    grpc_lite_copy_metadata(&call->trailing_metadata, trailing_metadata);
-                    zval_ptr_dtor(&call->status);
-                    grpc_lite_make_status_object(&call->status, code, details, &call->trailing_metadata);
-                    call->status_ready = true;
-                    grpc_lite_add_event_message(return_value, NULL);
-                    zend_string_release(details);
-                } else {
-                    zval *payload = zend_hash_str_find(Z_ARRVAL(result), "payload", sizeof("payload") - 1);
-                    zval *initial_metadata = zend_hash_str_find(Z_ARRVAL(result), "initial_metadata", sizeof("initial_metadata") - 1);
-                    if (!call->initial_metadata_ready) {
-                        grpc_lite_copy_metadata(&call->initial_metadata, initial_metadata);
-                        call->initial_metadata_ready = true;
-                    }
-                    grpc_lite_add_event_message(return_value, payload != NULL && Z_TYPE_P(payload) == IS_STRING ? Z_STR_P(payload) : NULL);
+            if (result.done) {
+                if (!call->initial_metadata_ready) {
+                    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
+                    call->initial_metadata_ready = true;
                 }
+                grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
+                zval_ptr_dtor(&call->status);
+                grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
+                call->status_ready = true;
+                grpc_lite_add_event_message(return_value, NULL);
+            } else {
+                if (!call->initial_metadata_ready) {
+                    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
+                    call->initial_metadata_ready = true;
+                }
+                grpc_lite_add_event_message(return_value, result.payload);
             }
-            zval_ptr_dtor(&result);
+            grpc_lite_streaming_next_result_dtor(&result);
         } else {
             if (grpc_lite_perform_call_unary(call) != SUCCESS) {
                 RETURN_THROWS();

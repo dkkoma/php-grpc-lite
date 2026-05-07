@@ -1,7 +1,7 @@
 /* Unary gRPC client call execution over an HTTP/2 connection. Included by main.c. */
 
 #include "internal.h"
-static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value)
+static int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value)
 {
     grpc_call call;
     nghttp2_data_provider data_provider;
@@ -201,5 +201,59 @@ build_unary_result:
     zend_string_release(status_result.details);
     free_request_headers(&request_headers);
     cleanup_grpc_call(&call);
+    return SUCCESS;
+}
+
+static void grpc_lite_copy_result_metadata(zval *dest, zval *src)
+{
+    array_init(dest);
+    if (src != NULL && Z_TYPE_P(src) == IS_ARRAY) {
+        zend_hash_copy(Z_ARRVAL_P(dest), Z_ARRVAL_P(src), zval_add_ref);
+    }
+}
+
+static zend_string *grpc_lite_result_string(zval *result, const char *key, size_t key_len)
+{
+    zval *value = zend_hash_str_find(Z_ARRVAL_P(result), key, key_len);
+    if (value != NULL && Z_TYPE_P(value) == IS_STRING) {
+        return zend_string_copy(Z_STR_P(value));
+    }
+    return zend_string_copy(zend_empty_string);
+}
+
+static void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result)
+{
+    if (result->body != NULL) {
+        zend_string_release(result->body);
+    }
+    if (result->status.details != NULL) {
+        zend_string_release(result->status.details);
+    }
+    zval_ptr_dtor(&result->initial_metadata);
+    zval_ptr_dtor(&result->trailing_metadata);
+}
+
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result)
+{
+    zval diagnostic;
+    zval *status_code;
+    zval *initial_metadata;
+    zval *trailing_metadata;
+
+    memset(result, 0, sizeof(*result));
+    ZVAL_UNDEF(&diagnostic);
+    if (grpc_lite_unary_call_perform_diagnostic_on_connection(connection, path, path_len, request, request_len, headers_zv, timeout_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, &diagnostic) != SUCCESS) {
+        zval_ptr_dtor(&diagnostic);
+        return FAILURE;
+    }
+    result->body = grpc_lite_result_string(&diagnostic, "body", sizeof("body") - 1);
+    status_code = zend_hash_str_find(Z_ARRVAL(diagnostic), "status_code", sizeof("status_code") - 1);
+    result->status.code = status_code != NULL && Z_TYPE_P(status_code) == IS_LONG ? (int) Z_LVAL_P(status_code) : GRPC_STATUS_UNKNOWN;
+    result->status.details = grpc_lite_result_string(&diagnostic, "status_details", sizeof("status_details") - 1);
+    initial_metadata = zend_hash_str_find(Z_ARRVAL(diagnostic), "initial_metadata", sizeof("initial_metadata") - 1);
+    trailing_metadata = zend_hash_str_find(Z_ARRVAL(diagnostic), "trailing_metadata", sizeof("trailing_metadata") - 1);
+    grpc_lite_copy_result_metadata(&result->initial_metadata, initial_metadata);
+    grpc_lite_copy_result_metadata(&result->trailing_metadata, trailing_metadata);
+    zval_ptr_dtor(&diagnostic);
     return SUCCESS;
 }
