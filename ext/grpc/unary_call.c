@@ -1,6 +1,74 @@
 /* Unary gRPC client call execution over an HTTP/2 connection. Included by main.c. */
 
 #include "internal.h"
+
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status_result, uint64_t total_started, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused)
+{
+    array_init(diagnostic_result);
+    add_status_result_to_return(diagnostic_result, status_result);
+    add_assoc_str(diagnostic_result, "body", call->body.s ? zend_string_copy(call->body.s) : zend_empty_string);
+    add_assoc_long(diagnostic_result, "grpc_status", call->grpc_status);
+    add_assoc_str(diagnostic_result, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
+    add_assoc_long(diagnostic_result, "http_status", call->http_status);
+    add_assoc_long(diagnostic_result, "stream_error_code", call->stream_error_code);
+    add_assoc_bool(diagnostic_result, "stream_reset_seen", call->stream_reset_seen);
+    add_assoc_bool(diagnostic_result, "stream_refused_seen", call->stream_refused_seen);
+    add_assoc_bool(diagnostic_result, "invalid_grpc_status", call->invalid_grpc_status);
+    add_assoc_str(diagnostic_result, "content_type", call->content_type != NULL ? zend_string_copy(call->content_type) : zend_empty_string);
+    add_assoc_str(diagnostic_result, "grpc_encoding", call->grpc_encoding != NULL ? zend_string_copy(call->grpc_encoding) : zend_empty_string);
+    add_assoc_bool(diagnostic_result, "compressed_response_seen", call->compressed_response_seen);
+    add_assoc_bool(diagnostic_result, "response_message_too_large", call->response_message_too_large);
+    add_assoc_bool(diagnostic_result, "malformed_response_frame", call->malformed_response_frame);
+    add_assoc_bool(diagnostic_result, "metadata_too_large", call->metadata_too_large);
+    add_assoc_bool(diagnostic_result, "invalid_content_type", call->invalid_content_type);
+    add_assoc_bool(diagnostic_result, "unsupported_response_encoding", call->unsupported_response_encoding);
+    add_assoc_long(diagnostic_result, "max_receive_message_length", call->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) call->max_receive_message_bytes);
+    add_assoc_long(diagnostic_result, "body_bytes", call->body.s ? ZSTR_LEN(call->body.s) : 0);
+    add_assoc_long(diagnostic_result, "request_offset", call->request_offset);
+    add_assoc_long(diagnostic_result, "bytes_sent", call->bytes_sent);
+    add_assoc_long(diagnostic_result, "bytes_received", call->bytes_received);
+    add_assoc_long(diagnostic_result, "data_read_calls", call->data_read_calls);
+    add_assoc_long(diagnostic_result, "data_recv_calls", call->data_recv_calls);
+    add_assoc_long(diagnostic_result, "last_session_error", call->last_session_error);
+    add_assoc_long(diagnostic_result, "last_sent_frame_type", call->last_sent_frame_type);
+    add_assoc_long(diagnostic_result, "last_recv_frame_type", call->last_recv_frame_type);
+    add_assoc_long(diagnostic_result, "last_sent_frame_flags", call->last_sent_frame_flags);
+    add_assoc_long(diagnostic_result, "last_recv_frame_flags", call->last_recv_frame_flags);
+    add_assoc_long(diagnostic_result, "last_not_sent_frame_type", call->last_not_sent_frame_type);
+    add_assoc_long(diagnostic_result, "last_not_sent_error", call->last_not_sent_error);
+    add_assoc_long(diagnostic_result, "sent_frames", call->sent_frames);
+    add_assoc_long(diagnostic_result, "recv_frames", call->recv_frames);
+    add_assoc_long(diagnostic_result, "not_sent_frames", call->not_sent_frames);
+    add_assoc_long(diagnostic_result, "last_io_errno", call->last_io_errno);
+    add_assoc_long(diagnostic_result, "last_ssl_error", call->last_ssl_error);
+    add_assoc_string(diagnostic_result, "last_io_error_detail", call->last_io_error_detail);
+    add_assoc_long(diagnostic_result, "total_us", (zend_long) (monotonic_us() - total_started));
+    add_assoc_long(diagnostic_result, "connect_us", 0);
+    add_assoc_long(diagnostic_result, "setup_us", (zend_long) setup_us);
+    add_assoc_long(diagnostic_result, "submit_us", (zend_long) submit_us);
+    add_assoc_long(diagnostic_result, "initial_send_us", (zend_long) initial_send_us);
+    add_assoc_long(diagnostic_result, "recv_loop_us", (zend_long) recv_loop_us);
+    add_assoc_long(diagnostic_result, "cleanup_us", 0);
+    add_assoc_bool(diagnostic_result, "timed_out", call->timed_out);
+    add_assoc_bool(diagnostic_result, "connection_reused", connection_reused);
+    add_assoc_bool(diagnostic_result, "persistent_reused", persistent_reused);
+    add_assoc_bool(diagnostic_result, "connection_dead", connection->dead);
+    add_assoc_bool(diagnostic_result, "connection_draining", connection->draining);
+    add_assoc_bool(diagnostic_result, "connection_retired", connection->retired);
+    add_assoc_long(diagnostic_result, "connection_last_error", connection->last_error);
+    add_assoc_long(diagnostic_result, "connection_last_io_errno", connection->last_io_errno);
+    add_assoc_long(diagnostic_result, "connection_last_ssl_error", connection->last_ssl_error);
+    add_assoc_long(diagnostic_result, "connection_tls_verify_result", (zend_long) connection->tls_verify_result);
+    add_assoc_string(diagnostic_result, "connection_last_error_detail", connection->last_error_detail);
+    add_assoc_string(diagnostic_result, "connection_negotiated_protocol", connection->negotiated_protocol);
+    add_assoc_long(diagnostic_result, "connection_last_goaway_error_code", connection->last_goaway_error_code);
+    add_assoc_long(diagnostic_result, "connection_last_goaway_stream_id", connection->last_goaway_stream_id);
+    grpc_protocol_add_metadata_map_to_return(diagnostic_result, "initial_metadata", call, false);
+    grpc_protocol_add_metadata_map_to_return(diagnostic_result, "trailing_metadata", call, true);
+}
+#endif
+
 static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused,
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zval *diagnostic_result,
@@ -162,67 +230,7 @@ build_unary_result:
     }
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     if (diagnostic_result != NULL) {
-        array_init(diagnostic_result);
-        add_status_result_to_return(diagnostic_result, &status_result);
-        add_assoc_str(diagnostic_result, "body", call.body.s ? zend_string_copy(call.body.s) : zend_empty_string);
-        add_assoc_long(diagnostic_result, "grpc_status", call.grpc_status);
-        add_assoc_str(diagnostic_result, "grpc_message", call.grpc_message != NULL ? zend_string_copy(call.grpc_message) : zend_empty_string);
-        add_assoc_long(diagnostic_result, "http_status", call.http_status);
-        add_assoc_long(diagnostic_result, "stream_error_code", call.stream_error_code);
-        add_assoc_bool(diagnostic_result, "stream_reset_seen", call.stream_reset_seen);
-        add_assoc_bool(diagnostic_result, "stream_refused_seen", call.stream_refused_seen);
-        add_assoc_bool(diagnostic_result, "invalid_grpc_status", call.invalid_grpc_status);
-        add_assoc_str(diagnostic_result, "content_type", call.content_type != NULL ? zend_string_copy(call.content_type) : zend_empty_string);
-        add_assoc_str(diagnostic_result, "grpc_encoding", call.grpc_encoding != NULL ? zend_string_copy(call.grpc_encoding) : zend_empty_string);
-        add_assoc_bool(diagnostic_result, "compressed_response_seen", call.compressed_response_seen);
-        add_assoc_bool(diagnostic_result, "response_message_too_large", call.response_message_too_large);
-        add_assoc_bool(diagnostic_result, "malformed_response_frame", call.malformed_response_frame);
-        add_assoc_bool(diagnostic_result, "metadata_too_large", call.metadata_too_large);
-        add_assoc_bool(diagnostic_result, "invalid_content_type", call.invalid_content_type);
-        add_assoc_bool(diagnostic_result, "unsupported_response_encoding", call.unsupported_response_encoding);
-        add_assoc_long(diagnostic_result, "max_receive_message_length", call.max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) call.max_receive_message_bytes);
-        add_assoc_long(diagnostic_result, "body_bytes", call.body.s ? ZSTR_LEN(call.body.s) : 0);
-        add_assoc_long(diagnostic_result, "request_offset", call.request_offset);
-        add_assoc_long(diagnostic_result, "bytes_sent", call.bytes_sent);
-        add_assoc_long(diagnostic_result, "bytes_received", call.bytes_received);
-        add_assoc_long(diagnostic_result, "data_read_calls", call.data_read_calls);
-        add_assoc_long(diagnostic_result, "data_recv_calls", call.data_recv_calls);
-        add_assoc_long(diagnostic_result, "last_session_error", call.last_session_error);
-        add_assoc_long(diagnostic_result, "last_sent_frame_type", call.last_sent_frame_type);
-        add_assoc_long(diagnostic_result, "last_recv_frame_type", call.last_recv_frame_type);
-        add_assoc_long(diagnostic_result, "last_sent_frame_flags", call.last_sent_frame_flags);
-        add_assoc_long(diagnostic_result, "last_recv_frame_flags", call.last_recv_frame_flags);
-        add_assoc_long(diagnostic_result, "last_not_sent_frame_type", call.last_not_sent_frame_type);
-        add_assoc_long(diagnostic_result, "last_not_sent_error", call.last_not_sent_error);
-        add_assoc_long(diagnostic_result, "sent_frames", call.sent_frames);
-        add_assoc_long(diagnostic_result, "recv_frames", call.recv_frames);
-        add_assoc_long(diagnostic_result, "not_sent_frames", call.not_sent_frames);
-        add_assoc_long(diagnostic_result, "last_io_errno", call.last_io_errno);
-        add_assoc_long(diagnostic_result, "last_ssl_error", call.last_ssl_error);
-        add_assoc_string(diagnostic_result, "last_io_error_detail", call.last_io_error_detail);
-        add_assoc_long(diagnostic_result, "total_us", (zend_long) (monotonic_us() - total_started));
-        add_assoc_long(diagnostic_result, "connect_us", 0);
-        add_assoc_long(diagnostic_result, "setup_us", (zend_long) setup_us);
-        add_assoc_long(diagnostic_result, "submit_us", (zend_long) submit_us);
-        add_assoc_long(diagnostic_result, "initial_send_us", (zend_long) initial_send_us);
-        add_assoc_long(diagnostic_result, "recv_loop_us", (zend_long) recv_loop_us);
-        add_assoc_long(diagnostic_result, "cleanup_us", 0);
-        add_assoc_bool(diagnostic_result, "timed_out", call.timed_out);
-        add_assoc_bool(diagnostic_result, "connection_reused", connection_reused);
-        add_assoc_bool(diagnostic_result, "persistent_reused", persistent_reused);
-        add_assoc_bool(diagnostic_result, "connection_dead", connection->dead);
-        add_assoc_bool(diagnostic_result, "connection_draining", connection->draining);
-        add_assoc_bool(diagnostic_result, "connection_retired", connection->retired);
-        add_assoc_long(diagnostic_result, "connection_last_error", connection->last_error);
-        add_assoc_long(diagnostic_result, "connection_last_io_errno", connection->last_io_errno);
-        add_assoc_long(diagnostic_result, "connection_last_ssl_error", connection->last_ssl_error);
-        add_assoc_long(diagnostic_result, "connection_tls_verify_result", (zend_long) connection->tls_verify_result);
-        add_assoc_string(diagnostic_result, "connection_last_error_detail", connection->last_error_detail);
-        add_assoc_string(diagnostic_result, "connection_negotiated_protocol", connection->negotiated_protocol);
-        add_assoc_long(diagnostic_result, "connection_last_goaway_error_code", connection->last_goaway_error_code);
-        add_assoc_long(diagnostic_result, "connection_last_goaway_stream_id", connection->last_goaway_stream_id);
-        grpc_protocol_add_metadata_map_to_return(diagnostic_result, "initial_metadata", &call, false);
-        grpc_protocol_add_metadata_map_to_return(diagnostic_result, "trailing_metadata", &call, true);
+        grpc_lite_unary_add_diagnostic_result(diagnostic_result, &call, connection, &status_result, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
     }
 #endif
     zend_string_release(status_result.details);
