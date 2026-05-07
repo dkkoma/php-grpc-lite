@@ -1846,8 +1846,8 @@ static int init_request_headers(h2_request_headers *headers, size_t custom_value
     headers->name_count = 0;
     headers->value_count = 0;
     headers->nva = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(nghttp2_nv));
-    headers->name_strings = custom_values > 0 ? ecalloc(custom_values, sizeof(zend_string *)) : NULL;
-    headers->value_strings = custom_values > 0 ? ecalloc(custom_values, sizeof(zend_string *)) : NULL;
+    headers->name_strings = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(zend_string *));
+    headers->value_strings = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(zend_string *));
     return 0;
 }
 
