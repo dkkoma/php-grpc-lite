@@ -21,6 +21,7 @@ require __DIR__ . '/helpers.inc';
 grpc_lite_phpt_require_autoload();
 
 use Grpc\ChannelCredentials;
+use Helloworld\BenchRequest;
 use Helloworld\HelloRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
 
@@ -47,6 +48,23 @@ $mtlsClient = new GreeterClient('test-server:50053', [
 [$response, $status] = $mtlsClient->SayHello($request)->wait();
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'mTLS status');
 grpc_lite_phpt_assert_same('Hello, mTLS', $response->getMessage(), 'mTLS response');
+
+$streamRequest = new BenchRequest();
+$streamRequest->setMessageCount(2);
+$streamRequest->setPayloadBytes(16);
+$streamCall = $tlsClient->BenchServerStream($streamRequest);
+$streamCount = 0;
+foreach ($streamCall->responses() as $_reply) {
+    $streamCount++;
+}
+grpc_lite_phpt_assert_same(2, $streamCount, 'TLS server streaming count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $streamCall->getStatus()->code, 'TLS server streaming status');
+
+$noCertClient = new GreeterClient('test-server:50053', [
+    'credentials' => ChannelCredentials::createSsl($root),
+]);
+[, $noCertStatus] = $noCertClient->SayHello(new HelloRequest())->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $noCertStatus->code, 'mTLS without client cert status');
 
 $badClient = new GreeterClient('test-server:50052', [
     'credentials' => ChannelCredentials::createSsl("-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----\n"),

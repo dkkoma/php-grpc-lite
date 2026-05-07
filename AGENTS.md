@@ -38,7 +38,8 @@
 ## 検証
 
 - ホストの PHP ではなく Docker compose 内で実行する。
-- C拡張PHPT: `./bench/phase2/check-native-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051` / `50052` / `50053` / `50054` をpreflightで必須にする。
+- C拡張PHPT: `./bench/phase2/check-native-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051`〜`50054`、raw lifecycle fixture ports `50055`〜`50060` をpreflightで必須にする。
+- C拡張PHPT coverage: `./bench/phase2/check-native-phpt-coverage.sh`。`var/coverage/phpt-lcov/` にlcov traceとHTMLを出力する。
 - 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
 - C拡張静的解析: `./bench/phase2/check-native-static-analysis.sh`
 - 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`

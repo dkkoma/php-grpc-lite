@@ -1,0 +1,117 @@
+--TEST--
+grpc transport control semantics handle malformed frames, RST_STREAM, GOAWAY, and read-ahead limits
+--SKIPIF--
+<?php
+if (!extension_loaded('grpc')) {
+    die('skip grpc extension not loaded');
+}
+require __DIR__ . '/helpers.inc';
+grpc_lite_phpt_skip_if_integration_unavailable([50051, 50055, 50056, 50057, 50058, 50059, 50060]);
+?>
+--FILE--
+<?php
+declare(strict_types=1);
+
+require __DIR__ . '/helpers.inc';
+grpc_lite_phpt_require_autoload();
+
+use Grpc\ChannelCredentials;
+use Helloworld\BenchRequest;
+use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
+
+$client = static function (string $target = 'test-server:50051'): GreeterClient {
+    return new GreeterClient($target, [
+        'credentials' => ChannelCredentials::createInsecure(),
+    ]);
+};
+
+[, $status] = $client('test-server:50057')->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($status->code !== Grpc\STATUS_OK, 'malformed unary frame must fail');
+
+[, $status] = $client('test-server:59999')->BenchUnary(new BenchRequest(), [], ['timeout' => 50000])->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $status->code, 'connection refused unary status');
+
+$goAwayAfterOk = $client('test-server:50055');
+[$response, $status] = $goAwayAfterOk->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($response !== null, 'GOAWAY after OK response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'GOAWAY after OK status');
+
+$firstEof = $client('test-server:50056');
+[$response, $status] = $firstEof->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_same(null, $response, 'first EOF response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $status->code, 'first EOF status');
+[$response, $status] = $firstEof->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($response !== null, 'second after EOF response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'second after EOF status');
+
+$rstUnary = $client('test-server:50058');
+[$firstResponse, $firstStatus] = $rstUnary->BenchUnary(new BenchRequest())->wait();
+[$secondResponse, $secondStatus] = $rstUnary->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_same(null, $firstResponse, 'RST unary first response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $firstStatus->code, 'RST unary first status');
+grpc_lite_phpt_assert_true($secondResponse !== null, 'RST unary second response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $secondStatus->code, 'RST unary second status');
+
+$rstStream = $client('test-server:50059');
+$firstCall = $rstStream->BenchServerStream(new BenchRequest());
+$firstCount = 0;
+foreach ($firstCall->responses() as $_reply) {
+    $firstCount++;
+}
+$secondCall = $rstStream->BenchServerStream(new BenchRequest());
+$secondCount = 0;
+foreach ($secondCall->responses() as $_reply) {
+    $secondCount++;
+}
+grpc_lite_phpt_assert_same(0, $firstCount, 'RST stream first count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $firstCall->getStatus()->code, 'RST stream first status');
+grpc_lite_phpt_assert_same(1, $secondCount, 'RST stream second count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $secondCall->getStatus()->code, 'RST stream second status');
+
+[$goAwayResponse, $goAwayStatus] = $client('test-server:50060')->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_same(null, $goAwayResponse, 'GOAWAY response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $goAwayStatus->code, 'GOAWAY status');
+grpc_lite_phpt_assert_same('HTTP/2 stream refused by GOAWAY', $goAwayStatus->details, 'GOAWAY details');
+
+$mainClient = $client();
+$streamRequest = new BenchRequest();
+$streamRequest->setMessageCount(3);
+$streamRequest->setPayloadBytes(10);
+$streamRequest->setServerDelayMs(10);
+$streamCall = $mainClient->BenchServerStream($streamRequest);
+foreach ($streamCall->responses() as $_reply) {
+    break;
+}
+[$response, $status] = $mainClient->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($response !== null, 'unary after abandoned stream response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'unary after abandoned stream status');
+$streamCall->cancel();
+
+$previousMaxMessages = ini_get('grpc_lite.server_streaming_read_ahead_max_messages');
+$previousMaxBytes = ini_get('grpc_lite.server_streaming_read_ahead_max_bytes');
+ini_set('grpc_lite.server_streaming_read_ahead_max_messages', '1');
+ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '262144');
+try {
+    $streamRequest = new BenchRequest();
+    $streamRequest->setMessageCount(2);
+    $streamRequest->setPayloadBytes(300000);
+    $streamCall = $mainClient->BenchServerStream($streamRequest);
+    foreach ($streamCall->responses() as $_reply) {
+        break;
+    }
+    [$response, $status] = $mainClient->BenchUnary(new BenchRequest())->wait();
+    grpc_lite_phpt_assert_true($response !== null, 'unrelated unary response');
+    grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'unrelated unary status');
+    foreach ($streamCall->responses() as $_reply) {
+    }
+    grpc_lite_phpt_assert_same(Grpc\STATUS_RESOURCE_EXHAUSTED, $streamCall->getStatus()->code, 'read-ahead limit status');
+    grpc_lite_phpt_assert_same('server streaming read-ahead queue limit exceeded', $streamCall->getStatus()->details, 'read-ahead limit details');
+} finally {
+    ini_set('grpc_lite.server_streaming_read_ahead_max_messages', $previousMaxMessages);
+    ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', $previousMaxBytes);
+}
+
+echo "OK\n";
+?>
+--EXPECT--
+OK

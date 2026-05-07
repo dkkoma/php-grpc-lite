@@ -182,7 +182,7 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 
 | テスト | 見るもの |
 |---|---|
-| `ext/grpc/tests/*.phpt` | C拡張surface、INI、object lifecycle、basic unary/server streaming、deadline status、TLS/mTLS baseline、protocol error、metadata/call credentialsのPHPT gate |
+| `ext/grpc/tests/*.phpt` | C拡張surface、INI、object lifecycle、basic unary/server streaming、deadline status、TLS/mTLS baseline、protocol error、metadata/call credentials、transport control semantics、resource limitsのPHPT gate |
 | `tests/Integration/DeadlineTest.php` | deadlineのelapsed/count/immediate timeoutなど、PHPT baselineより細かいclient-side挙動 |
 | `tests/Integration/CompressionTest.php` | server streaming compression、grpc-status併用、stream-local failure後のrecovery |
 | `tests/Integration/HttpValidationTest.php` | PHPT baselineにないcontent-type / grpc-status validation variants |
@@ -198,7 +198,8 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 ```bash
 docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc)'
 ./bench/phase2/check-native-phpt.sh
+./bench/phase2/check-native-phpt-coverage.sh
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
-`check-native-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051` / `:50052` / `:50053` / `:50054` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。
+`check-native-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw lifecycle fixture `:50055`〜`:50060` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-native-phpt-coverage.sh` は同じPHPT gateをgcov/lcov付きで実行し、`var/coverage/phpt-lcov/` にtraceとHTMLを出力します。

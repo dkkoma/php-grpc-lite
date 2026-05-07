@@ -48,10 +48,11 @@ Run tests in Docker:
 ```bash
 composer install
 ./bench/phase2/check-native-phpt.sh
+./bench/phase2/check-native-phpt-coverage.sh
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
-`check-native-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface and transport smoke cases. PHPUnit remains the broader integration/release compatibility suite.
+`check-native-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-native-phpt-coverage.sh` runs the same PHPT gate with gcov/lcov instrumentation and writes reports under `var/coverage/phpt-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
 
 Run static analysis for the C extension:
 

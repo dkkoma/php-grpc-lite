@@ -17,7 +17,7 @@ docker compose run --rm dev bash -lc '
     php -d extension=/workspace/ext/grpc/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
         || { echo "grpc extension failed to load from /workspace/ext/grpc/modules/grpc.so" >&2; exit 1; }
     php -r '\''
-        foreach ([50051, 50052, 50053, 50054] as $port) {
+        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060] as $port) {
             $connected = false;
             $lastError = "";
             for ($attempt = 1; $attempt <= 30; $attempt++) {
