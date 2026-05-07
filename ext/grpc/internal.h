@@ -504,7 +504,6 @@ struct persistent_connection_entry {
 };
 
 struct server_streaming_call_state {
-    h2_connection *connection;
     grpc_call call;
     zend_string *request;
     char *recv_buf;
