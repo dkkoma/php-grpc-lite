@@ -1875,6 +1875,7 @@ static void append_grpc_timeout_request_header(h2_request_headers *headers, zend
     char timeout_buf[32];
     zend_long value;
     char unit;
+    zend_string *value_str;
     if (timeout_us <= 0) {
         return;
     }
@@ -1898,7 +1899,14 @@ static void append_grpc_timeout_request_header(h2_request_headers *headers, zend
         unit = 'H';
     }
     snprintf(timeout_buf, sizeof(timeout_buf), "%ld%c", value, unit);
-    append_request_header(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, timeout_buf, strlen(timeout_buf));
+    value_str = zend_string_init(timeout_buf, strlen(timeout_buf), 0);
+    if (headers->value_strings != NULL && headers->value_count < headers->capacity) {
+        headers->value_strings[headers->value_count++] = value_str;
+    } else {
+        zend_string_release(value_str);
+        return;
+    }
+    append_request_header(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, ZSTR_VAL(value_str), ZSTR_LEN(value_str));
 }
 
 static bool is_valid_custom_request_header_name_char(unsigned char ch)
@@ -2012,14 +2020,12 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
 {
     zend_string *name_str = NULL;
     zend_string *value_str;
-    size_t custom_capacity;
 
     if (Z_TYPE_P(value) != IS_STRING) {
         zend_throw_exception(NULL, "gRPC request metadata value must be a string", 0);
         return -1;
     }
-    custom_capacity = headers->capacity >= 7 ? headers->capacity - 7 : 0;
-    if (headers->name_strings == NULL || headers->value_strings == NULL || headers->name_count >= custom_capacity || headers->value_count >= custom_capacity) {
+    if (headers->name_strings == NULL || headers->value_strings == NULL || headers->name_count >= headers->capacity || headers->value_count >= headers->capacity) {
         zend_throw_exception(NULL, "gRPC request metadata exceeds maximum count", 0);
         return -1;
     }
