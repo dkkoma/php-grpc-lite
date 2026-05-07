@@ -19,6 +19,7 @@ var/build-nghttp2-instrumented/
 var/instrumented-nghttp2/
 var/build-curl-nghttp2-instrumented/
 var/instrumented-curl-nghttp2/
+var/coverage/
 .phpbench/
 
 # Research scratch (cloned upstream sources for surveying)
@@ -30,6 +31,8 @@ _research/
 *.la
 *.so
 *.dep
+*.gcda
+*.gcno
 .libs/
 modules/
 build/

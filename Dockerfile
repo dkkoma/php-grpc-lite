@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libnghttp2-dev \
         protobuf-compiler \
         cppcheck \
+        lcov \
         valgrind \
     && rm -rf /var/lib/apt/lists/*
 
