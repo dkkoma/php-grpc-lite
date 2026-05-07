@@ -531,7 +531,7 @@ static zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
     object_properties_init(&obj->std, ce);
     ZVAL_UNDEF(&obj->channel);
     ZVAL_UNDEF(&obj->credentials);
-    ZVAL_UNDEF(&obj->stream);
+    ZVAL_UNDEF(&obj->server_streaming_resource);
     array_init(&obj->metadata);
     array_init(&obj->initial_metadata);
     array_init(&obj->trailing_metadata);
@@ -545,7 +545,7 @@ static void grpc_lite_call_free_object(zend_object *object)
     grpc_lite_call_obj *obj = grpc_lite_call_fetch(object);
     zval_ptr_dtor(&obj->channel);
     zval_ptr_dtor(&obj->credentials);
-    zval_ptr_dtor(&obj->stream);
+    zval_ptr_dtor(&obj->server_streaming_resource);
     zval_ptr_dtor(&obj->metadata);
     zval_ptr_dtor(&obj->initial_metadata);
     zval_ptr_dtor(&obj->trailing_metadata);

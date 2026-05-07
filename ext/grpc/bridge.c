@@ -316,7 +316,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     zend_string *key = NULL;
     zend_long timeout_us = grpc_lite_call_timeout_us(call);
 
-    if (call->stream_opened) {
+    if (call->server_streaming_opened) {
         return SUCCESS;
     }
     if (call->request_payload == NULL) {
@@ -330,7 +330,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     grpc_lite_append_user_agent(channel, &call->metadata);
     grpc_lite_channel_key(channel, &key);
 
-    zval_ptr_dtor(&call->stream);
+    zval_ptr_dtor(&call->server_streaming_resource);
     if (server_streaming_call_open_resource(
             ZSTR_VAL(key),
             ZSTR_LEN(key),
@@ -356,21 +356,21 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
             channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
             channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,
             channel->tls_verify_name != NULL ? ZSTR_LEN(channel->tls_verify_name) : 0,
-            &call->stream) != SUCCESS) {
+            &call->server_streaming_resource) != SUCCESS) {
         zend_string_release(key);
         return FAILURE;
     }
-    call->stream_opened = true;
+    call->server_streaming_opened = true;
     zend_string_release(key);
     return SUCCESS;
 }
 
 static int grpc_lite_server_streaming_next_for_call(grpc_lite_call_obj *call, zval *result)
 {
-    if (!call->stream_opened && grpc_lite_open_call_stream(call) != SUCCESS) {
+    if (!call->server_streaming_opened && grpc_lite_open_call_stream(call) != SUCCESS) {
         return FAILURE;
     }
-    return server_streaming_call_next_resource(&call->stream, result);
+    return server_streaming_call_next_resource(&call->server_streaming_resource, result);
 }
 
 static void grpc_lite_add_event_metadata(zval *event, zval *metadata)
@@ -497,11 +497,11 @@ PHP_METHOD(Call, startBatch)
     }
 
     if (wants_status) {
-        if (!call->unary_performed && !call->stream_opened) {
+        if (!call->unary_performed && !call->server_streaming_opened) {
             if (grpc_lite_perform_call_unary(call) != SUCCESS) {
                 RETURN_THROWS();
             }
-        } else if (call->stream_opened && !call->status_ready) {
+        } else if (call->server_streaming_opened && !call->status_ready) {
             zval result;
             do {
                 ZVAL_UNDEF(&result);
@@ -530,7 +530,7 @@ PHP_METHOD(Call, startBatch)
             } while (!call->status_ready);
         }
     } else if (wants_message && !call->unary_performed) {
-        if (call->stream_opened || !zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_STATUS_ON_CLIENT)) {
+        if (call->server_streaming_opened || !zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_STATUS_ON_CLIENT)) {
             zval result;
             ZVAL_UNDEF(&result);
             if (grpc_lite_server_streaming_next_for_call(call, &result) != SUCCESS) {
@@ -593,8 +593,8 @@ PHP_METHOD(Call, cancel)
         RETURN_THROWS();
     }
     call->cancelled = true;
-    if (call->stream_opened && Z_TYPE(call->stream) == IS_RESOURCE) {
-        server_streaming_call_cancel_resource(&call->stream);
+    if (call->server_streaming_opened && Z_TYPE(call->server_streaming_resource) == IS_RESOURCE) {
+        server_streaming_call_cancel_resource(&call->server_streaming_resource);
     }
 }
 
