@@ -127,7 +127,14 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
-        state->call.timed_out = true;
+        if (setup_failure != NULL) {
+            setup_failure->code = GRPC_STATUS_DEADLINE_EXCEEDED;
+            setup_failure->details = zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
+            free_request_headers(&request_headers);
+            destroy_server_streaming_call_state(state);
+            ZVAL_UNDEF(return_value);
+            return SUCCESS;
+        }
         free_request_headers(&request_headers);
         destroy_server_streaming_call_state(state);
         zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
@@ -144,6 +151,14 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     data_provider.read_callback = data_source_read_callback;
     state->call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (state->call.stream_id < 0) {
+        if (setup_failure != NULL) {
+            setup_failure->code = GRPC_STATUS_UNAVAILABLE;
+            setup_failure->details = zend_string_init("nghttp2_submit_request failed", sizeof("nghttp2_submit_request failed") - 1, 0);
+            free_request_headers(&request_headers);
+            destroy_server_streaming_call_state(state);
+            ZVAL_UNDEF(return_value);
+            return SUCCESS;
+        }
         free_request_headers(&request_headers);
         destroy_server_streaming_call_state(state);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
@@ -154,6 +169,14 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     if (rv != 0) {
         bool stream_timed_out = state->call.timed_out;
         mark_connection_dead(connection, rv);
+        if (setup_failure != NULL) {
+            setup_failure->code = stream_timed_out ? GRPC_STATUS_DEADLINE_EXCEEDED : GRPC_STATUS_UNAVAILABLE;
+            setup_failure->details = zend_string_init(stream_timed_out ? "HTTP/2 transport deadline exceeded" : "nghttp2_session_send failed", strlen(stream_timed_out ? "HTTP/2 transport deadline exceeded" : "nghttp2_session_send failed"), 0);
+            free_request_headers(&request_headers);
+            destroy_server_streaming_call_state(state);
+            ZVAL_UNDEF(return_value);
+            return SUCCESS;
+        }
         free_request_headers(&request_headers);
         destroy_server_streaming_call_state(state);
         if (stream_timed_out) {
