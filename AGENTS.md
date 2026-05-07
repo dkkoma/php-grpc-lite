@@ -7,7 +7,7 @@
 - `php-grpc-lite` は公式 `ext-grpc` のドロップイン代替を目指す、公式 `grpc/grpc` PHP wrapper + source-built `ext/grpc` HTTP/2 transport 拡張による gRPC クライアント実装。
 - Runtime transport は nghttp2 の 1 系統。libcurl fallback / transport selection option / 環境変数による transport 切替は持たない。
 - unary、server streaming、TLS、mTLS、Spanner emulator 経路まで実機検証済み。
-- 設計判断と進捗は `docs/SPEC.md`、実装の読み方は `docs/code-reading-guide.md`、HTTP/2/gRPCドメインモデルレビューは `docs/protocol-model-review-guide.md`、ベンチ結果は `docs/benchmarks/` を参照する。
+- 設計判断と進捗は `docs/SPEC.md`、実装の読み方は `docs/code-reading-guide.md`、HTTP/2/gRPCドメインモデルレビューは `docs/protocol-model-review-guide.md`、レビュー指摘履歴は `docs/reviews/`、ベンチ結果は `docs/benchmarks/` を参照する。
 
 ## 作業方針
 
@@ -25,6 +25,15 @@
 - gRPC framing、metadata、status、deadline、TLS/mTLS の挙動は実機テストで守る。表面的なベンチ改善のために互換性を削らない。
 - HTTP/2 transport / gRPC protocolに触る変更では、実装後にHTTP/2/gRPCドメインモデルレビューを必須ゲートとして実施する。レビューでは命名、責務分離、connection / stream / call / channel のscope、flow-control、metadata/status/deadline、RST_STREAM / GOAWAY / EOF lifecycle、production / bench boundaryを確認する。`docs/protocol-model-review-guide.md` は補助資料として参照し、Blocker / High / Medium / Low の指摘が `none` になるまで修正と再レビューを繰り返す。
 - client streaming / bidi streaming は現時点では後回し。触る場合は SPEC のスコープ更新から始める。
+
+## レビュー記録
+
+- サブエージェントへのレビュー依頼は英語でよい。
+- レビュー指摘は `docs/reviews/issues/` にMarkdownで残す。テンプレートは `docs/reviews/templates/review-issue.md` を使う。
+- issue本文は日本語を基本にし、HTTP/2 / gRPC / PHP extension の仕様語は英語のまま使う。
+- レビューエージェントを起動するときは、対象scope、review role、確認観点を明示し、指摘をissue形式で返すよう依頼する。
+- 修正時は同じissueに `Status`, `Fix summary`, `Fix commit`, `Verification` を追記する。
+- design docには現在と未来の設計だけを残し、過渡的なレビュー指摘や修正履歴は `docs/reviews/` に残す。
 
 ## 検証
 
