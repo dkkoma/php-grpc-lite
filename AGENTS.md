@@ -23,7 +23,7 @@
 - PHP は 8.4+ 前提。スタイルは既存の `declare(strict_types=1);`、PSR-4、型注釈、短い docblock に合わせる。
 - `Grpc\` API 互換性を壊さない。`google/gax` / `google/cloud-*` から呼ばれる surface は `docs/api-surface.md` を基準にする。
 - gRPC framing、metadata、status、deadline、TLS/mTLS の挙動は実機テストで守る。表面的なベンチ改善のために互換性を削らない。
-- HTTP/2 transport / gRPC protocolに触る変更では、`docs/protocol-model-review-guide.md` に沿って命名、責務分離、connection / stream / call / channel のscope、flow-control、metadata/status/deadline、RST_STREAM / GOAWAY / EOF lifecycleを確認する。
+- HTTP/2 transport / gRPC protocolに触る変更では、実装後にHTTP/2/gRPCドメインモデルレビューを必須ゲートとして実施する。レビューでは命名、責務分離、connection / stream / call / channel のscope、flow-control、metadata/status/deadline、RST_STREAM / GOAWAY / EOF lifecycle、production / bench boundaryを確認する。`docs/protocol-model-review-guide.md` は補助資料として参照し、Blocker / High / Medium / Low の指摘が `none` になるまで修正と再レビューを繰り返す。
 - client streaming / bidi streaming は現時点では後回し。触る場合は SPEC のスコープ更新から始める。
 
 ## 検証
