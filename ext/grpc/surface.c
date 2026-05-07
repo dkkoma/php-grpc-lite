@@ -551,7 +551,8 @@ static void grpc_lite_call_free_object(zend_object *object)
     zval_ptr_dtor(&obj->trailing_metadata);
     zval_ptr_dtor(&obj->status);
     if (obj->method != NULL) zend_string_release(obj->method);
-    if (obj->request != NULL) zend_string_release(obj->request);
+    if (obj->request_payload != NULL) zend_string_release(obj->request_payload);
+    if (obj->unary_response_payload != NULL) zend_string_release(obj->unary_response_payload);
     zend_object_std_dtor(&obj->std);
 }
 

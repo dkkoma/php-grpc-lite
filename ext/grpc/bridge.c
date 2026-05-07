@@ -353,11 +353,11 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     zval *initial_metadata;
     zval *trailing_metadata;
 
-    if (call->request == NULL) {
+    if (call->request_payload == NULL) {
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
     }
-    if (grpc_lite_build_request_payload(call->request, &framed) != SUCCESS) {
+    if (grpc_lite_build_request_payload(call->request_payload, &framed) != SUCCESS) {
         return FAILURE;
     }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
@@ -401,9 +401,9 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         call->initial_metadata_ready = true;
         call->status_ready = true;
         call->unary_performed = true;
-        if (call->request != NULL) {
-            zend_string_release(call->request);
-            call->request = NULL;
+        if (call->unary_response_payload != NULL) {
+            zend_string_release(call->unary_response_payload);
+            call->unary_response_payload = NULL;
         }
         zend_string_release(details);
         zend_string_release(framed);
@@ -438,14 +438,14 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
     }
     if (payload != NULL) {
-        if (call->request != NULL) {
-            zend_string_release(call->request);
+        if (call->unary_response_payload != NULL) {
+            zend_string_release(call->unary_response_payload);
         }
-        call->request = payload;
+        call->unary_response_payload = payload;
     } else {
-        if (call->request != NULL) {
-            zend_string_release(call->request);
-            call->request = NULL;
+        if (call->unary_response_payload != NULL) {
+            zend_string_release(call->unary_response_payload);
+            call->unary_response_payload = NULL;
         }
     }
     call->unary_performed = true;
@@ -466,7 +466,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     if (call->stream_opened) {
         return SUCCESS;
     }
-    if (call->request == NULL) {
+    if (call->request_payload == NULL) {
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
     }
@@ -486,8 +486,8 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
             channel->port,
             ZSTR_VAL(call->method),
             ZSTR_LEN(call->method),
-            ZSTR_VAL(call->request),
-            ZSTR_LEN(call->request),
+            ZSTR_VAL(call->request_payload),
+            ZSTR_LEN(call->request_payload),
             &call->metadata,
             timeout_us,
             credentials->type != GRPC_LITE_CREDENTIALS_INSECURE,
@@ -585,10 +585,14 @@ static int grpc_lite_store_send_batch(grpc_lite_call_obj *call, zval *ops)
             zend_throw_exception(NULL, "OP_SEND_MESSAGE expects a string message", 0);
             return FAILURE;
         }
-        if (call->request != NULL) {
-            zend_string_release(call->request);
+        if (call->request_payload != NULL) {
+            zend_string_release(call->request_payload);
         }
-        call->request = zend_string_copy(Z_STR_P(payload));
+        call->request_payload = zend_string_copy(Z_STR_P(payload));
+        if (call->unary_response_payload != NULL) {
+            zend_string_release(call->unary_response_payload);
+            call->unary_response_payload = NULL;
+        }
     }
     call->sent = true;
     return SUCCESS;
@@ -718,7 +722,7 @@ PHP_METHOD(Call, startBatch)
         grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
     }
     if (wants_message && call->unary_performed) {
-        grpc_lite_add_event_message(return_value, call->request);
+        grpc_lite_add_event_message(return_value, call->unary_response_payload);
     } else if (wants_message && !zend_hash_str_exists(Z_OBJPROP_P(return_value), "message", sizeof("message") - 1)) {
         grpc_lite_add_event_message(return_value, NULL);
     }

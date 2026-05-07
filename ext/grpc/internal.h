@@ -113,7 +113,8 @@ typedef struct {
     zend_string *method;
     zend_long deadline_us;
     zval credentials;
-    zend_string *request;
+    zend_string *request_payload;
+    zend_string *unary_response_payload;
     zval metadata;
     zval stream;
     zval initial_metadata;
