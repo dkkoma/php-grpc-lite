@@ -539,7 +539,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
 static size_t remaining_request_bytes(grpc_call *call);
 static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
-static void set_grpc_header(grpc_call *call, size_t payload_len);
+static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
@@ -550,10 +550,10 @@ static uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
-static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
-static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen);
-static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen);
-static zend_string *grpc_lite_decode_grpc_message(const uint8_t *value, size_t valuelen);
+static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
+static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
+static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
+static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen);
 static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
 static const char *validate_grpc_path(const char *path, size_t path_len);
 static size_t count_custom_header_values(zval *headers_zv);
@@ -561,16 +561,16 @@ static int init_request_headers(h2_request_headers *headers, size_t custom_value
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
-static int validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
-static int process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static int enqueue_response_payload(grpc_call *call, zend_string *payload);
 static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us);
 static int deliver_queued_response_payloads(grpc_call *call);
 static void free_queued_response_payloads(grpc_call *call);
-static void mark_response_metadata_as_trailing(grpc_call *call);
-static int add_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void free_metadata_entries(grpc_call *call);
-static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
+static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
+static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+static void grpc_protocol_free_response_metadata_entries(grpc_call *call);
+static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
 static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
 static void cleanup_grpc_call(grpc_call *call);

@@ -62,7 +62,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
 static size_t remaining_request_bytes(grpc_call *call);
 static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
-static void set_grpc_header(grpc_call *call, size_t payload_len);
+static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
@@ -73,9 +73,9 @@ static uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
-static int parse_grpc_status_value(const uint8_t *value, size_t valuelen);
-static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen);
-static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen);
+static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
+static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
+static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
 static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
 static const char *validate_grpc_path(const char *path, size_t path_len);
 static size_t count_custom_header_values(zval *headers_zv);
@@ -83,16 +83,16 @@ static int init_request_headers(h2_request_headers *headers, size_t custom_value
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
-static int validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
-static int process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static int enqueue_response_payload(grpc_call *call, zend_string *payload);
 static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us);
 static int deliver_queued_response_payloads(grpc_call *call);
 static void free_queued_response_payloads(grpc_call *call);
-static void mark_response_metadata_as_trailing(grpc_call *call);
-static int add_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void free_metadata_entries(grpc_call *call);
-static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
+static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
+static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+static void grpc_protocol_free_response_metadata_entries(grpc_call *call);
+static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
 static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
 static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
 static void cleanup_grpc_call(grpc_call *call);
@@ -1298,7 +1298,7 @@ static ssize_t data_source_read_callback(nghttp2_session *session, int32_t strea
     return (ssize_t) copied;
 }
 
-static void set_grpc_header(grpc_call *call, size_t payload_len)
+static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len)
 {
     call->grpc_header[0] = 0;
     call->grpc_header[1] = (uint8_t) ((payload_len >> 24) & 0xff);
@@ -1316,11 +1316,11 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
     if (stream_id == call->stream_id && len > 0) {
         call->data_recv_calls++;
         if (call->direct_response_payload && call->decode_response_incrementally && ((call->payload_callback_fci != NULL && call->payload_callback_fcc != NULL) || call->queue_response_payloads)) {
-            if (process_response_data_direct(session, call, data, len) != 0) {
+            if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
         } else {
-            if (validate_response_message_lengths(session, call, data, len) != 0) {
+            if (grpc_protocol_validate_response_message_lengths(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
             if (call->discard_response_body) {
@@ -1353,12 +1353,12 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
             call->invalid_grpc_status = true;
         }
         call->grpc_status_seen = true;
-        call->grpc_status = parse_grpc_status_value(value, valuelen);
+        call->grpc_status = grpc_protocol_parse_status_value(value, valuelen);
         if (call->grpc_status < 0) {
             call->invalid_grpc_status = true;
         }
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            mark_response_metadata_as_trailing(call);
+            grpc_protocol_mark_response_metadata_as_trailing(call);
         }
         trailing = true;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
@@ -1368,7 +1368,7 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
         if (call->grpc_message != NULL) {
             zend_string_release(call->grpc_message);
         }
-        call->grpc_message = grpc_lite_decode_grpc_message(value, valuelen);
+        call->grpc_message = grpc_protocol_decode_message(value, valuelen);
         trailing = true;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
@@ -1387,7 +1387,7 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
             zend_string_release(call->content_type);
         }
         call->content_type = zend_string_init((const char *) value, valuelen, 0);
-        if (!is_valid_grpc_content_type(value, valuelen)) {
+        if (!grpc_protocol_is_valid_content_type(value, valuelen)) {
             call->invalid_content_type = true;
             call->discard_response_body = true;
         }
@@ -1396,12 +1396,12 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
             zend_string_release(call->grpc_encoding);
         }
         call->grpc_encoding = zend_string_init((const char *) value, valuelen, 0);
-        if (!is_identity_grpc_encoding(value, valuelen)) {
+        if (!grpc_protocol_is_identity_encoding(value, valuelen)) {
             call->unsupported_response_encoding = true;
             call->discard_response_body = true;
         }
     }
-    if (add_metadata_entry(call, name, namelen, value, valuelen, trailing) != 0) {
+    if (grpc_protocol_add_response_metadata_entry(call, name, namelen, value, valuelen, trailing) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     return 0;
@@ -1495,7 +1495,7 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
 }
 #endif
 
-static int parse_grpc_status_value(const uint8_t *value, size_t valuelen)
+static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen)
 {
     int status = 0;
 
@@ -1513,7 +1513,7 @@ static int parse_grpc_status_value(const uint8_t *value, size_t valuelen)
     return status <= 16 ? status : -1;
 }
 
-static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen)
+static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen)
 {
     static const char prefix[] = "application/grpc";
     size_t prefix_len = sizeof(prefix) - 1;
@@ -1527,7 +1527,7 @@ static bool is_valid_grpc_content_type(const uint8_t *value, size_t valuelen)
     return (value[prefix_len] == '+' && valuelen > prefix_len + 1) || value[prefix_len] == ';';
 }
 
-static bool is_identity_grpc_encoding(const uint8_t *value, size_t valuelen)
+static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen)
 {
     return valuelen == sizeof("identity") - 1 && strncasecmp((const char *) value, "identity", sizeof("identity") - 1) == 0;
 }
@@ -1546,7 +1546,7 @@ static int grpc_lite_hex_value(unsigned char ch)
     return -1;
 }
 
-static zend_string *grpc_lite_decode_grpc_message(const uint8_t *value, size_t valuelen)
+static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen)
 {
     smart_str decoded = {0};
     size_t index = 0;
@@ -2066,7 +2066,7 @@ static void free_request_headers(h2_request_headers *headers)
     headers->value_count = 0;
 }
 
-static int validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
+static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
 
@@ -2151,7 +2151,7 @@ static int validate_response_message_lengths(nghttp2_session *session, grpc_call
     return 0;
 }
 
-static int process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
+static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
 
@@ -2388,7 +2388,7 @@ static void free_queued_response_payloads(grpc_call *call)
     call->response_queue_bytes = 0;
 }
 
-static int add_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
+static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
 {
     metadata_entry *entry;
     size_t entry_bytes = namelen + valuelen;
@@ -2429,7 +2429,7 @@ static int add_metadata_entry(grpc_call *call, const uint8_t *name, size_t namel
     return 0;
 }
 
-static void mark_response_metadata_as_trailing(grpc_call *call)
+static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call)
 {
     metadata_entry *entry;
     for (entry = call->metadata_head; entry != NULL; entry = entry->next) {
@@ -2437,7 +2437,7 @@ static void mark_response_metadata_as_trailing(grpc_call *call)
     }
 }
 
-static void free_metadata_entries(grpc_call *call)
+static void grpc_protocol_free_response_metadata_entries(grpc_call *call)
 {
     while (call->metadata_head != NULL) {
         metadata_entry *entry = call->metadata_head;
@@ -2489,7 +2489,7 @@ static void add_binary_metadata_values_to_map(zval *metadata, zend_string *key, 
     }
 }
 
-static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing)
+static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing)
 {
     zval metadata;
     metadata_entry *entry;
@@ -2519,7 +2519,7 @@ static void cleanup_grpc_call(grpc_call *call)
         call->response_payload = NULL;
     }
     free_queued_response_payloads(call);
-    free_metadata_entries(call);
+    grpc_protocol_free_response_metadata_entries(call);
     if (call->grpc_message != NULL) {
         zend_string_release(call->grpc_message);
         call->grpc_message = NULL;

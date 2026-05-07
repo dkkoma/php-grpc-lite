@@ -93,7 +93,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     state->call.decode_response_incrementally = true;
     state->call.direct_response_payload = true;
     state->call.queue_response_payloads = true;
-    set_grpc_header(&state->call, state->call.request_len);
+    grpc_protocol_set_message_header(&state->call, state->call.request_len);
 
     nghttp2_session_set_user_data(connection->session, &state->call);
     connection->busy = true;
@@ -178,8 +178,8 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     add_assoc_long(return_value, "connection_tls_verify_result", state->connection != NULL ? (zend_long) state->connection->tls_verify_result : 0);
     add_assoc_string(return_value, "connection_last_error_detail", state->connection != NULL ? state->connection->last_error_detail : call->last_io_error_detail);
     add_assoc_string(return_value, "connection_negotiated_protocol", state->connection != NULL ? state->connection->negotiated_protocol : "");
-    add_metadata_map_to_return(return_value, "initial_metadata", call, false);
-    add_metadata_map_to_return(return_value, "trailing_metadata", call, true);
+    grpc_protocol_add_metadata_map_to_return(return_value, "initial_metadata", call, false);
+    grpc_protocol_add_metadata_map_to_return(return_value, "trailing_metadata", call, true);
     zend_string_release(status_result.details);
 }
 
@@ -267,7 +267,7 @@ static int server_streaming_call_next_resource(zval *server_streaming_resource_z
         call->response_queue_bytes -= ZSTR_LEN(entry->payload);
         add_assoc_bool(return_value, "done", false);
         add_assoc_str(return_value, "payload", entry->payload);
-        add_metadata_map_to_return(return_value, "initial_metadata", call, false);
+        grpc_protocol_add_metadata_map_to_return(return_value, "initial_metadata", call, false);
         efree(entry);
         return SUCCESS;
     }

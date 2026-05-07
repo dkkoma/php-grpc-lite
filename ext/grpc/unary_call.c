@@ -41,7 +41,7 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
     call.request_len = request_len;
     call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     call.max_response_metadata_bytes = max_response_metadata_bytes;
-    set_grpc_header(&call, call.request_len);
+    grpc_protocol_set_message_header(&call, call.request_len);
     total_started = monotonic_us();
     call.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
     if (set_socket_timeout_us(connection->fd, timeout_us) != 0) {
@@ -196,8 +196,8 @@ build_unary_result:
     add_assoc_string(return_value, "connection_negotiated_protocol", connection->negotiated_protocol);
     add_assoc_long(return_value, "connection_last_goaway_error_code", connection->last_goaway_error_code);
     add_assoc_long(return_value, "connection_last_goaway_stream_id", connection->last_goaway_stream_id);
-    add_metadata_map_to_return(return_value, "initial_metadata", &call, false);
-    add_metadata_map_to_return(return_value, "trailing_metadata", &call, true);
+    grpc_protocol_add_metadata_map_to_return(return_value, "initial_metadata", &call, false);
+    grpc_protocol_add_metadata_map_to_return(return_value, "trailing_metadata", &call, true);
     zend_string_release(status_result.details);
     free_request_headers(&request_headers);
     cleanup_grpc_call(&call);

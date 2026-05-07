@@ -329,11 +329,11 @@ static int bench_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t f
             client->bench.awaiting_data_after_window_update_sent = false;
         }
         if (client->direct_response_payload && client->decode_response_incrementally && ((client->payload_callback_fci != NULL && client->payload_callback_fcc != NULL) || client->queue_response_payloads)) {
-            if (process_response_data_direct(session, client, data, len) != 0) {
+            if (grpc_protocol_process_response_data_direct(session, client, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
         } else if (!client->discard_response_body) {
-            if (validate_response_message_lengths(session, client, data, len) != 0) {
+            if (grpc_protocol_validate_response_message_lengths(session, client, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
             if (client->discard_response_body) {
@@ -386,7 +386,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
     }
     trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
-        client->grpc_status = parse_grpc_status_value(value, valuelen);
+        client->grpc_status = grpc_protocol_parse_status_value(value, valuelen);
         if (client->grpc_status < 0) {
             client->invalid_grpc_status = true;
         }
@@ -395,7 +395,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         if (client->grpc_message != NULL) {
             zend_string_release(client->grpc_message);
         }
-        client->grpc_message = grpc_lite_decode_grpc_message(value, valuelen);
+        client->grpc_message = grpc_protocol_decode_message(value, valuelen);
         trailing = true;
     } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
         if (client->bench.first_response_header_us == 0) {
@@ -439,7 +439,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         client->bench.server_stats_out_payload_compressed_bytes = header_value_to_long(value, valuelen);
 #endif
     }
-    if (add_metadata_entry(client, name, namelen, value, valuelen, trailing) != 0) {
+    if (grpc_protocol_add_response_metadata_entry(client, name, namelen, value, valuelen, trailing) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     return 0;
@@ -1490,7 +1490,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         }
     }
     if (split_grpc_frame) {
-        set_grpc_header(&client, request_len);
+        grpc_protocol_set_message_header(&client, request_len);
     }
 
     client.deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
