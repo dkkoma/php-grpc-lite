@@ -17,6 +17,7 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
     uint64_t initial_send_us = 0;
     uint64_t recv_loop_started = 0;
     uint64_t recv_loop_us = 0;
+    grpc_lite_status_result status_result;
     if (!connection_usable(connection)) {
         zend_throw_exception(NULL, "invalid grpc_lite connection", 0);
         return FAILURE;
@@ -135,8 +136,10 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
     recv_loop_us = monotonic_us() - recv_loop_started;
 build_unary_result:
     clear_connection_call_owner(connection, &client);
+    resolve_grpc_call_status(&client, false, &status_result);
 
     array_init(return_value);
+    add_status_result_to_return(return_value, &status_result);
     smart_str_0(&client.body);
     add_assoc_str(return_value, "body", client.body.s ? zend_string_copy(client.body.s) : zend_empty_string);
     add_assoc_long(return_value, "grpc_status", client.grpc_status);
@@ -195,6 +198,7 @@ build_unary_result:
     add_assoc_long(return_value, "channel_last_goaway_stream_id", connection->last_goaway_stream_id);
     add_metadata_map_to_return(return_value, "initial_metadata", &client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", &client, true);
+    zend_string_release(status_result.details);
     free_request_headers(&request_headers);
     cleanup_grpc_call(&client);
     return SUCCESS;

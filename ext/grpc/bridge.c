@@ -159,143 +159,21 @@ static int grpc_lite_extract_unary_payload(zval *result, zend_string **payload)
 
 static int grpc_lite_status_from_result(zval *result)
 {
-    zval *value;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "timed_out", sizeof("timed_out") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_DEADLINE_EXCEEDED;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "cancelled", sizeof("cancelled") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_CANCELLED;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_grpc_status", sizeof("invalid_grpc_status") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNKNOWN;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "grpc_status", sizeof("grpc_status") - 1);
-    if (value == NULL || Z_TYPE_P(value) != IS_LONG || Z_LVAL_P(value) < 0) {
-        value = zend_hash_str_find(Z_ARRVAL_P(result), "http_status", sizeof("http_status") - 1);
-        if (value != NULL && Z_TYPE_P(value) == IS_LONG && Z_LVAL_P(value) != 200) {
-            switch (Z_LVAL_P(value)) {
-                case 400: return GRPC_STATUS_INTERNAL;
-                case 401: return GRPC_STATUS_UNAUTHENTICATED;
-                case 403: return GRPC_STATUS_PERMISSION_DENIED;
-                case 404: return GRPC_STATUS_UNIMPLEMENTED;
-                case 429:
-                case 502:
-                case 503:
-                case 504:
-                    return GRPC_STATUS_UNAVAILABLE;
-                default:
-                    return Z_LVAL_P(value) < 0 ? GRPC_STATUS_UNAVAILABLE : GRPC_STATUS_UNKNOWN;
-            }
-        }
-    }
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_content_type", sizeof("invalid_content_type") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNKNOWN;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_grpc_status", sizeof("invalid_grpc_status") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNKNOWN;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "response_message_too_large", sizeof("response_message_too_large") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_RESOURCE_EXHAUSTED;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "metadata_too_large", sizeof("metadata_too_large") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_RESOURCE_EXHAUSTED;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "malformed_response_frame", sizeof("malformed_response_frame") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_INTERNAL;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "compressed_response_seen", sizeof("compressed_response_seen") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNIMPLEMENTED;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "unsupported_response_encoding", sizeof("unsupported_response_encoding") - 1);
-    if (value != NULL && zend_is_true(value)) return GRPC_STATUS_UNIMPLEMENTED;
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "grpc_status", sizeof("grpc_status") - 1);
-    if (value != NULL && Z_TYPE_P(value) == IS_LONG && Z_LVAL_P(value) >= 0) return (int) Z_LVAL_P(value);
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "stream_reset_seen", sizeof("stream_reset_seen") - 1);
-    if (value != NULL && zend_is_true(value)) {
-        zval *code = zend_hash_str_find(Z_ARRVAL_P(result), "stream_error_code", sizeof("stream_error_code") - 1);
-        zend_long stream_error_code = code != NULL && Z_TYPE_P(code) == IS_LONG ? Z_LVAL_P(code) : -1;
-        switch (stream_error_code) {
-            case NGHTTP2_CANCEL:
-                return GRPC_STATUS_CANCELLED;
-            case NGHTTP2_REFUSED_STREAM:
-                return GRPC_STATUS_UNAVAILABLE;
-            case NGHTTP2_ENHANCE_YOUR_CALM:
-                return GRPC_STATUS_RESOURCE_EXHAUSTED;
-            case NGHTTP2_INADEQUATE_SECURITY:
-                return GRPC_STATUS_PERMISSION_DENIED;
-            case NGHTTP2_NO_ERROR:
-            case NGHTTP2_PROTOCOL_ERROR:
-            case NGHTTP2_INTERNAL_ERROR:
-            case NGHTTP2_FLOW_CONTROL_ERROR:
-            case NGHTTP2_SETTINGS_TIMEOUT:
-            case NGHTTP2_STREAM_CLOSED:
-            case NGHTTP2_FRAME_SIZE_ERROR:
-            case NGHTTP2_COMPRESSION_ERROR:
-            case NGHTTP2_CONNECT_ERROR:
-                return GRPC_STATUS_INTERNAL;
-            default:
-                return GRPC_STATUS_UNKNOWN;
-        }
+    zval *value = zend_hash_str_find(Z_ARRVAL_P(result), "status_code", sizeof("status_code") - 1);
+    if (value != NULL && Z_TYPE_P(value) == IS_LONG) {
+        return (int) Z_LVAL_P(value);
     }
     return GRPC_STATUS_UNKNOWN;
 }
 
 static zend_string *grpc_lite_details_from_result(zval *result, int code)
 {
-    zval *message = zend_hash_str_find(Z_ARRVAL_P(result), "grpc_message", sizeof("grpc_message") - 1);
-    zval *value;
-    if (message != NULL && Z_TYPE_P(message) == IS_STRING && Z_STRLEN_P(message) > 0) {
-        return zend_string_copy(Z_STR_P(message));
+    zval *details = zend_hash_str_find(Z_ARRVAL_P(result), "status_details", sizeof("status_details") - 1);
+    (void) code;
+    if (details != NULL && Z_TYPE_P(details) == IS_STRING) {
+        return zend_string_copy(Z_STR_P(details));
     }
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "http_status", sizeof("http_status") - 1);
-    if (value != NULL && Z_TYPE_P(value) == IS_LONG && Z_LVAL_P(value) != 200) {
-        return strpprintf(0, "HTTP status %ld without grpc-status", Z_LVAL_P(value));
-    }
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_content_type", sizeof("invalid_content_type") - 1);
-    if (value != NULL && zend_is_true(value)) {
-        zval *content_type = zend_hash_str_find(Z_ARRVAL_P(result), "content_type", sizeof("content_type") - 1);
-        if (content_type != NULL && Z_TYPE_P(content_type) == IS_STRING && Z_STRLEN_P(content_type) > 0) {
-            return strpprintf(0, "invalid gRPC content-type: %s", Z_STRVAL_P(content_type));
-        }
-        return zend_string_init("invalid gRPC content-type", sizeof("invalid gRPC content-type") - 1, 0);
-    }
-    value = zend_hash_str_find(Z_ARRVAL_P(result), "invalid_grpc_status", sizeof("invalid_grpc_status") - 1);
-    if (value != NULL && zend_is_true(value)) {
-        return zend_string_init("invalid grpc-status trailer", sizeof("invalid grpc-status trailer") - 1, 0);
-    }
-    switch (code) {
-        case GRPC_STATUS_DEADLINE_EXCEEDED:
-            return zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
-        case GRPC_STATUS_RESOURCE_EXHAUSTED:
-            return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
-        case GRPC_STATUS_INTERNAL:
-            value = zend_hash_str_find(Z_ARRVAL_P(result), "malformed_response_frame", sizeof("malformed_response_frame") - 1);
-            if (value != NULL && zend_is_true(value)) {
-                return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
-            }
-            value = zend_hash_str_find(Z_ARRVAL_P(result), "stream_reset_seen", sizeof("stream_reset_seen") - 1);
-            if (value != NULL && zend_is_true(value)) {
-                zval *stream_error_code = zend_hash_str_find(Z_ARRVAL_P(result), "stream_error_code", sizeof("stream_error_code") - 1);
-                if (stream_error_code != NULL && Z_TYPE_P(stream_error_code) == IS_LONG) {
-                    return strpprintf(0, "HTTP/2 stream reset: %ld", Z_LVAL_P(stream_error_code));
-                }
-                return zend_string_init("HTTP/2 stream reset", sizeof("HTTP/2 stream reset") - 1, 0);
-            }
-            return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
-        case GRPC_STATUS_UNIMPLEMENTED:
-            value = zend_hash_str_find(Z_ARRVAL_P(result), "unsupported_response_encoding", sizeof("unsupported_response_encoding") - 1);
-            if (value != NULL && zend_is_true(value)) {
-                zval *encoding = zend_hash_str_find(Z_ARRVAL_P(result), "grpc_encoding", sizeof("grpc_encoding") - 1);
-                if (encoding != NULL && Z_TYPE_P(encoding) == IS_STRING && Z_STRLEN_P(encoding) > 0) {
-                    return strpprintf(0, "unsupported grpc-encoding: %s", Z_STRVAL_P(encoding));
-                }
-                return zend_string_init("unsupported grpc-encoding", sizeof("unsupported grpc-encoding") - 1, 0);
-            }
-            return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
-        case GRPC_STATUS_CANCELLED:
-            return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
-        default:
-            value = zend_hash_str_find(Z_ARRVAL_P(result), "stream_reset_seen", sizeof("stream_reset_seen") - 1);
-            if (value != NULL && zend_is_true(value)) {
-                zval *stream_error_code = zend_hash_str_find(Z_ARRVAL_P(result), "stream_error_code", sizeof("stream_error_code") - 1);
-                if (stream_error_code != NULL && Z_TYPE_P(stream_error_code) == IS_LONG) {
-                    return strpprintf(0, "HTTP/2 stream reset: %ld", Z_LVAL_P(stream_error_code));
-                }
-                return zend_string_init("HTTP/2 stream reset", sizeof("HTTP/2 stream reset") - 1, 0);
-            }
-            return zend_empty_string;
-    }
+    return zend_empty_string;
 }
 
 static void grpc_lite_make_status_object(zval *status, int code, zend_string *details, zval *metadata)

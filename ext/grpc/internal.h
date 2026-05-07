@@ -189,6 +189,11 @@ typedef struct metadata_entry {
 
 typedef struct _grpc_call grpc_call;
 
+typedef struct {
+    int code;
+    zend_string *details;
+} grpc_lite_status_result;
+
 typedef void (*grpc_call_payload_copy_observer)(grpc_call *client, uint64_t elapsed_us);
 typedef void (*grpc_call_message_ready_observer)(grpc_call *client, uint64_t ready_abs_us);
 typedef void (*grpc_call_payload_queued_observer)(grpc_call *client);
@@ -566,6 +571,8 @@ static void mark_response_metadata_as_trailing(grpc_call *client);
 static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
 static void free_metadata_entries(grpc_call *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
+static void resolve_grpc_call_status(grpc_call *client, bool cancelled, grpc_lite_status_result *result);
+static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
 static void cleanup_grpc_call(grpc_call *client);
 
 static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);

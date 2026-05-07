@@ -146,7 +146,10 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
 static void server_streaming_call_add_status(zval *return_value, server_streaming_call_state *stream)
 {
     grpc_call *client = &stream->client;
+    grpc_lite_status_result status_result;
+    resolve_grpc_call_status(client, stream->cancelled, &status_result);
     add_assoc_bool(return_value, "done", true);
+    add_status_result_to_return(return_value, &status_result);
     add_assoc_long(return_value, "grpc_status", client->grpc_status);
     add_assoc_str(return_value, "grpc_message", client->grpc_message != NULL ? zend_string_copy(client->grpc_message) : zend_empty_string);
     add_assoc_long(return_value, "http_status", client->http_status);
@@ -177,6 +180,7 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     add_assoc_string(return_value, "channel_negotiated_protocol", stream->connection != NULL ? stream->connection->negotiated_protocol : "");
     add_metadata_map_to_return(return_value, "initial_metadata", client, false);
     add_metadata_map_to_return(return_value, "trailing_metadata", client, true);
+    zend_string_release(status_result.details);
 }
 
 static int server_streaming_call_next_resource(zval *stream_zv, zval *return_value)

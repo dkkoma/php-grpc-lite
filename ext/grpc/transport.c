@@ -93,6 +93,8 @@ static void mark_response_metadata_as_trailing(grpc_call *client);
 static int add_metadata_entry(grpc_call *client, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
 static void free_metadata_entries(grpc_call *client);
 static void add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *client, bool trailing);
+static void resolve_grpc_call_status(grpc_call *client, bool cancelled, grpc_lite_status_result *result);
+static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
 static void cleanup_grpc_call(grpc_call *client);
 
 static void destroy_h2_connection(h2_connection *connection)
@@ -1564,6 +1566,118 @@ static zend_string *grpc_lite_decode_grpc_message(const uint8_t *value, size_t v
     }
     smart_str_0(&decoded);
     return decoded.s != NULL ? decoded.s : zend_string_copy(zend_empty_string);
+}
+
+static int grpc_lite_status_code_from_call(grpc_call *client, bool cancelled)
+{
+    if (client->timed_out) return GRPC_STATUS_DEADLINE_EXCEEDED;
+    if (cancelled) return GRPC_STATUS_CANCELLED;
+    if (client->invalid_grpc_status) return GRPC_STATUS_UNKNOWN;
+    if (client->grpc_status < 0 && client->http_status != 200) {
+        switch (client->http_status) {
+            case 400: return GRPC_STATUS_INTERNAL;
+            case 401: return GRPC_STATUS_UNAUTHENTICATED;
+            case 403: return GRPC_STATUS_PERMISSION_DENIED;
+            case 404: return GRPC_STATUS_UNIMPLEMENTED;
+            case 429:
+            case 502:
+            case 503:
+            case 504:
+                return GRPC_STATUS_UNAVAILABLE;
+            default:
+                return client->http_status < 0 ? GRPC_STATUS_UNAVAILABLE : GRPC_STATUS_UNKNOWN;
+        }
+    }
+    if (client->invalid_content_type) return GRPC_STATUS_UNKNOWN;
+    if (client->response_message_too_large || client->metadata_too_large) return GRPC_STATUS_RESOURCE_EXHAUSTED;
+    if (client->malformed_response_frame) return GRPC_STATUS_INTERNAL;
+    if (client->compressed_response_seen || client->unsupported_response_encoding) return GRPC_STATUS_UNIMPLEMENTED;
+    if (client->grpc_status >= 0) return client->grpc_status;
+    if (client->stream_reset_seen) {
+        switch (client->stream_error_code) {
+            case NGHTTP2_CANCEL:
+                return GRPC_STATUS_CANCELLED;
+            case NGHTTP2_REFUSED_STREAM:
+                return GRPC_STATUS_UNAVAILABLE;
+            case NGHTTP2_ENHANCE_YOUR_CALM:
+                return GRPC_STATUS_RESOURCE_EXHAUSTED;
+            case NGHTTP2_INADEQUATE_SECURITY:
+                return GRPC_STATUS_PERMISSION_DENIED;
+            case NGHTTP2_NO_ERROR:
+            case NGHTTP2_PROTOCOL_ERROR:
+            case NGHTTP2_INTERNAL_ERROR:
+            case NGHTTP2_FLOW_CONTROL_ERROR:
+            case NGHTTP2_SETTINGS_TIMEOUT:
+            case NGHTTP2_STREAM_CLOSED:
+            case NGHTTP2_FRAME_SIZE_ERROR:
+            case NGHTTP2_COMPRESSION_ERROR:
+            case NGHTTP2_CONNECT_ERROR:
+                return GRPC_STATUS_INTERNAL;
+            default:
+                return GRPC_STATUS_UNKNOWN;
+        }
+    }
+    return GRPC_STATUS_UNKNOWN;
+}
+
+static zend_string *grpc_lite_status_details_from_call(grpc_call *client, int code)
+{
+    if (client->grpc_message != NULL && ZSTR_LEN(client->grpc_message) > 0) {
+        return zend_string_copy(client->grpc_message);
+    }
+    if (client->http_status != 200) {
+        return strpprintf(0, "HTTP status %d without grpc-status", client->http_status);
+    }
+    if (client->invalid_content_type) {
+        if (client->content_type != NULL && ZSTR_LEN(client->content_type) > 0) {
+            return strpprintf(0, "invalid gRPC content-type: %s", ZSTR_VAL(client->content_type));
+        }
+        return zend_string_init("invalid gRPC content-type", sizeof("invalid gRPC content-type") - 1, 0);
+    }
+    if (client->invalid_grpc_status) {
+        return zend_string_init("invalid grpc-status trailer", sizeof("invalid grpc-status trailer") - 1, 0);
+    }
+    switch (code) {
+        case GRPC_STATUS_DEADLINE_EXCEEDED:
+            return zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
+        case GRPC_STATUS_RESOURCE_EXHAUSTED:
+            return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
+        case GRPC_STATUS_INTERNAL:
+            if (client->malformed_response_frame) {
+                return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
+            }
+            if (client->stream_reset_seen) {
+                return strpprintf(0, "HTTP/2 stream reset: %u", client->stream_error_code);
+            }
+            return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
+        case GRPC_STATUS_UNIMPLEMENTED:
+            if (client->unsupported_response_encoding) {
+                if (client->grpc_encoding != NULL && ZSTR_LEN(client->grpc_encoding) > 0) {
+                    return strpprintf(0, "unsupported grpc-encoding: %s", ZSTR_VAL(client->grpc_encoding));
+                }
+                return zend_string_init("unsupported grpc-encoding", sizeof("unsupported grpc-encoding") - 1, 0);
+            }
+            return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
+        case GRPC_STATUS_CANCELLED:
+            return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
+        default:
+            if (client->stream_reset_seen) {
+                return strpprintf(0, "HTTP/2 stream reset: %u", client->stream_error_code);
+            }
+            return zend_string_copy(zend_empty_string);
+    }
+}
+
+static void resolve_grpc_call_status(grpc_call *client, bool cancelled, grpc_lite_status_result *result)
+{
+    result->code = grpc_lite_status_code_from_call(client, cancelled);
+    result->details = grpc_lite_status_details_from_call(client, result->code);
+}
+
+static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status)
+{
+    add_assoc_long(return_value, "status_code", status->code);
+    add_assoc_str(return_value, "status_details", status->details != NULL ? zend_string_copy(status->details) : zend_empty_string);
 }
 
 static bool contains_nul_or_control(const char *value, size_t value_len)
