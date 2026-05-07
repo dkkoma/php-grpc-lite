@@ -130,23 +130,6 @@ static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, g
     return SUCCESS;
 }
 
-static int grpc_lite_build_request_payload(zend_string *payload, zend_string **framed)
-{
-    smart_str request = {0};
-    uint32_t len;
-    if (ZSTR_LEN(payload) > UINT32_MAX) {
-        zend_throw_exception(NULL, "gRPC request message exceeds 32-bit frame length", 0);
-        return FAILURE;
-    }
-    len = htonl((uint32_t) ZSTR_LEN(payload));
-    smart_str_appendc(&request, '\0');
-    smart_str_appendl(&request, (const char *) &len, 4);
-    smart_str_append(&request, payload);
-    smart_str_0(&request);
-    *framed = request.s != NULL ? request.s : zend_empty_string;
-    return SUCCESS;
-}
-
 static int grpc_lite_extract_unary_payload(zval *result, zend_string **payload)
 {
     zval *body_zv = zend_hash_str_find(Z_ARRVAL_P(result), "body", sizeof("body") - 1);
@@ -339,7 +322,6 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
     grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
     zend_string *key = NULL;
-    zend_string *framed = NULL;
     h2_connection *h2;
     bool persistent_reused = false;
     const char *error_message = NULL;
@@ -357,11 +339,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
     }
-    if (grpc_lite_build_request_payload(call->request_payload, &framed) != SUCCESS) {
-        return FAILURE;
-    }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
-        zend_string_release(framed);
         return FAILURE;
     }
     grpc_lite_append_timeout_metadata(&call->metadata, timeout_us);
@@ -406,13 +384,11 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
             call->unary_response_payload = NULL;
         }
         zend_string_release(details);
-        zend_string_release(framed);
         zend_string_release(key);
         return SUCCESS;
     }
     array_init(&result);
-    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(framed), ZSTR_LEN(framed), &call->metadata, timeout_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
-        zend_string_release(framed);
+    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, timeout_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
         zend_string_release(key);
         zval_ptr_dtor(&result);
         return FAILURE;
@@ -450,7 +426,6 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     }
     call->unary_performed = true;
     zend_string_release(details);
-    zend_string_release(framed);
     zend_string_release(key);
     zval_ptr_dtor(&result);
     return SUCCESS;

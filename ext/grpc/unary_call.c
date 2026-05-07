@@ -40,6 +40,7 @@ static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection,
     client.request_len = request_len;
     client.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     client.max_response_metadata_bytes = max_response_metadata_bytes;
+    set_grpc_header(&client, client.request_len);
     total_started = monotonic_us();
     client.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
     if (set_socket_timeout_us(connection->fd, timeout_us) != 0) {
