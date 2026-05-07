@@ -188,7 +188,7 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 | `tests/Integration/HttpValidationTest.php` | PHPT baselineにないcontent-type / grpc-status validation variants |
 | `tests/Integration/ErrorSemanticsTest.php` | trailers-only error statusとmetadata propagation |
 | `tests/Integration/MetadataCompatibilityTest.php` | duplicate binary metadata、large/many metadata、response metadata limit、server streaming duplicate metadata |
-| `tests/Integration/ControlSemanticsTest.php` | cancel、RST_STREAM、GOAWAY、abandoned stream、read-ahead boundなど複合lifecycle制御 |
+| `tests/Integration/ControlSemanticsTest.php` | cancel、GCでdropされたstream、channel close後のstatus保持などPHP object lifecycleをまたぐ制御 |
 | `tests/Integration/InterceptorTest.php` | PHP wrapper interceptor chain |
 | `tests/Integration/TlsTest.php` / `MtlsTest.php` | TLS server streaming、mTLS client certificate failure |
 | `tests/Integration/Spanner/*` | gax / Spanner emulator compatibility |
