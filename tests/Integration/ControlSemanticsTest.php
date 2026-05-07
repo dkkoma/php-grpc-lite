@@ -48,6 +48,41 @@ final class ControlSemanticsTest extends TestCase
         self::assertNotSame(\Grpc\STATUS_OK, $status->code);
     }
 
+    public function testUnaryServerSentRstStreamIsStreamLocal(): void
+    {
+        $client = $this->client('test-server:50058');
+
+        [$firstResponse, $firstStatus] = $client->BenchUnary(new BenchRequest())->wait();
+        [$secondResponse, $secondStatus] = $client->BenchUnary(new BenchRequest())->wait();
+
+        self::assertNull($firstResponse);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $firstStatus->code);
+        self::assertNotNull($secondResponse);
+        self::assertSame(\Grpc\STATUS_OK, $secondStatus->code, $secondStatus->details);
+    }
+
+    public function testServerStreamingServerSentRstStreamIsStreamLocal(): void
+    {
+        $client = $this->client('test-server:50059');
+
+        $firstCall = $client->BenchServerStream(new BenchRequest());
+        $firstCount = 0;
+        foreach ($firstCall->responses() as $_reply) {
+            $firstCount++;
+        }
+
+        $secondCall = $client->BenchServerStream(new BenchRequest());
+        $secondCount = 0;
+        foreach ($secondCall->responses() as $_reply) {
+            $secondCount++;
+        }
+
+        self::assertSame(0, $firstCount);
+        self::assertSame(\Grpc\STATUS_UNAVAILABLE, $firstCall->getStatus()->code);
+        self::assertSame(1, $secondCount);
+        self::assertSame(\Grpc\STATUS_OK, $secondCall->getStatus()->code, $secondCall->getStatus()->details);
+    }
+
     private function client(string $target = 'test-server:50051'): GreeterClient
     {
         return new GreeterClient($target, [

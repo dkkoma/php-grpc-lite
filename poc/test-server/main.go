@@ -478,6 +478,8 @@ func serveLifecycleH2C() {
 	go serveRawH2C(":50055", true, false)
 	go serveRawH2C(":50056", false, true)
 	go serveMidStreamFailureH2C(":50057")
+	go serveServerRstThenOKH2C(":50058")
+	go serveServerRstThenOKH2C(":50059")
 }
 
 func serveRawH2C(addr string, sendGoAway bool, firstConnectionEOF bool) {
@@ -632,6 +634,73 @@ func writeRawGrpcPartialAndClose(framer *http2.Framer, streamID uint32) {
 		EndHeaders:    true,
 	})
 	_ = framer.WriteData(streamID, false, []byte{0, 0, 0})
+}
+
+func serveServerRstThenOKH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c server RST_STREAM fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleServerRstThenOKH2C(conn)
+	}
+}
+
+func handleServerRstThenOKH2C(conn net.Conn) {
+	defer conn.Close()
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var completedStreams int
+	var currentStreamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			currentStreamID = f.Header().StreamID
+			if f.StreamEnded() {
+				writeRawRstThenOKResponse(framer, currentStreamID, completedStreams)
+				completedStreams++
+				currentStreamID = 0
+			}
+		case *http2.DataFrame:
+			if currentStreamID == 0 {
+				currentStreamID = f.Header().StreamID
+			}
+			if f.StreamEnded() {
+				writeRawRstThenOKResponse(framer, currentStreamID, completedStreams)
+				completedStreams++
+				currentStreamID = 0
+			}
+		}
+	}
+}
+
+func writeRawRstThenOKResponse(framer *http2.Framer, streamID uint32, completedStreams int) {
+	if completedStreams == 0 {
+		_ = framer.WriteRSTStream(streamID, http2.ErrCodeRefusedStream)
+		return
+	}
+	writeRawGrpcOK(framer, streamID, false)
 }
 
 func encodeHeaders(fields []hpack.HeaderField) []byte {
