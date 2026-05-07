@@ -184,7 +184,9 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         &persistent_reused,
         &error_message);
     if (h2 == NULL) {
-        int code = (timeout_us > 0 && timeout_us <= 1) ? GRPC_STATUS_DEADLINE_EXCEEDED : GRPC_STATUS_UNAVAILABLE;
+        bool deadline_exceeded = (deadline_abs_us > 0 && monotonic_us() >= deadline_abs_us)
+            || (error_message != NULL && strcmp(error_message, "HTTP/2 transport deadline exceeded") == 0);
+        int code = deadline_exceeded ? GRPC_STATUS_DEADLINE_EXCEEDED : GRPC_STATUS_UNAVAILABLE;
         zend_string *details = zend_string_init(error_message != NULL ? error_message : "failed to open persistent connection", strlen(error_message != NULL ? error_message : "failed to open persistent connection"), 0);
         zval_ptr_dtor(&call->initial_metadata);
         array_init(&call->initial_metadata);
@@ -203,7 +205,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zend_string_release(key);
         return SUCCESS;
     }
-    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, timeout_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, deadline_abs_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
         zend_string_release(key);
         return FAILURE;
     }

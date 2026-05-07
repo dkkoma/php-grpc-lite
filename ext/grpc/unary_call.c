@@ -1,12 +1,13 @@
 /* Unary gRPC client call execution over an HTTP/2 connection. Included by main.c. */
 
 #include "internal.h"
-static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *diagnostic_result, grpc_lite_unary_result *typed_result)
+static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *diagnostic_result, grpc_lite_unary_result *typed_result)
 {
     grpc_call call;
     nghttp2_data_provider data_provider;
-    h2_request_headers request_headers;
+    h2_request_headers request_headers = {0};
     int rv;
+    zend_long remaining_timeout_us;
     char recv_buf[16384];
     uint64_t total_started = 0;
     uint64_t setup_started = 0;
@@ -42,8 +43,13 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     call.max_response_metadata_bytes = max_response_metadata_bytes;
     grpc_protocol_set_message_header(&call, call.request_len);
     total_started = monotonic_us();
-    call.deadline_abs_us = timeout_us > 0 ? total_started + (uint64_t) timeout_us : 0;
-    if (set_socket_timeout_us(connection->fd, timeout_us) != 0) {
+    call.deadline_abs_us = deadline_abs_us;
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        call.timed_out = true;
+        goto build_unary_result;
+    }
+    if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
         mark_connection_dead(connection, errno);
         zend_throw_exception(NULL, "failed to set socket timeout", 0);
         return FAILURE;
@@ -64,7 +70,13 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
-    append_grpc_timeout_request_header(&request_headers, timeout_us);
+    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+    if (remaining_timeout_us < 0) {
+        call.timed_out = true;
+        clear_connection_call_owner(connection, &call);
+        goto build_unary_result;
+    }
+    append_grpc_timeout_request_header(&request_headers, remaining_timeout_us);
     if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);
@@ -215,7 +227,8 @@ build_unary_result:
 
 static int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value)
 {
-    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, timeout_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, return_value, NULL);
+    uint64_t deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
+    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, return_value, NULL);
 }
 
 static void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result)
@@ -230,8 +243,8 @@ static void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result)
     zval_ptr_dtor(&result->trailing_metadata);
 }
 
-static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result)
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result)
 {
     memset(result, 0, sizeof(*result));
-    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, timeout_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, NULL, result);
+    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, NULL, result);
 }
