@@ -2,6 +2,8 @@
 
 #include "internal.h"
 
+static void grpc_lite_mark_call_failed(grpc_lite_call_obj *call, int code, zend_string *details);
+
 static zend_long grpc_lite_call_timeout_us(grpc_lite_call_obj *call)
 {
     uint64_t now;
@@ -259,6 +261,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
     zend_string *key = NULL;
     zend_long timeout_us = grpc_lite_call_timeout_us(call);
+    grpc_lite_status_result setup_failure = {0};
 
     if (call->server_streaming_opened) {
         return SUCCESS;
@@ -299,11 +302,16 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
             channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
             channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,
             channel->tls_verify_name != NULL ? ZSTR_LEN(channel->tls_verify_name) : 0,
-            &call->server_streaming_resource) != SUCCESS) {
+            &call->server_streaming_resource,
+            &setup_failure) != SUCCESS) {
         zend_string_release(key);
         return FAILURE;
     }
     call->server_streaming_opened = true;
+    if (setup_failure.details != NULL) {
+        grpc_lite_mark_call_failed(call, setup_failure.code, setup_failure.details);
+        zend_string_release(setup_failure.details);
+    }
     zend_string_release(key);
     return SUCCESS;
 }
@@ -312,6 +320,19 @@ static int grpc_lite_server_streaming_next_for_call(grpc_lite_call_obj *call, gr
 {
     if (!call->server_streaming_opened && grpc_lite_open_call_stream(call) != SUCCESS) {
         return FAILURE;
+    }
+    if (call->status_ready) {
+        zval *code_zv;
+        zval *details_zv;
+        memset(result, 0, sizeof(*result));
+        result->done = true;
+        code_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "code", sizeof("code") - 1, 0, NULL);
+        details_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "details", sizeof("details") - 1, 0, NULL);
+        result->status.code = (code_zv != NULL && Z_TYPE_P(code_zv) == IS_LONG) ? (int) Z_LVAL_P(code_zv) : GRPC_STATUS_UNKNOWN;
+        result->status.details = (details_zv != NULL && Z_TYPE_P(details_zv) == IS_STRING) ? zend_string_copy(Z_STR_P(details_zv)) : zend_string_copy(zend_empty_string);
+        grpc_lite_copy_metadata(&result->initial_metadata, &call->initial_metadata);
+        grpc_lite_copy_metadata(&result->trailing_metadata, &call->trailing_metadata);
+        return SUCCESS;
     }
     return server_streaming_call_next_resource(&call->server_streaming_resource, result);
 }
@@ -360,6 +381,18 @@ static void grpc_lite_mark_call_cancelled(grpc_lite_call_obj *call)
     call->initial_metadata_ready = true;
     call->status_ready = true;
     call->unary_performed = true;
+}
+
+static void grpc_lite_mark_call_failed(grpc_lite_call_obj *call, int code, zend_string *details)
+{
+    zval_ptr_dtor(&call->initial_metadata);
+    array_init(&call->initial_metadata);
+    zval_ptr_dtor(&call->trailing_metadata);
+    array_init(&call->trailing_metadata);
+    zval_ptr_dtor(&call->status);
+    grpc_lite_make_status_object(&call->status, code, details, &call->trailing_metadata);
+    call->initial_metadata_ready = true;
+    call->status_ready = true;
 }
 
 static int grpc_lite_store_send_batch(grpc_lite_call_obj *call, zval *ops)
@@ -427,6 +460,19 @@ PHP_METHOD(Call, startBatch)
 
     if (call->cancelled) {
         grpc_lite_mark_call_cancelled(call);
+        if (wants_initial_metadata) {
+            grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
+        }
+        if (wants_message) {
+            grpc_lite_add_event_message(return_value, NULL);
+        }
+        if (wants_status) {
+            grpc_lite_add_event_status(return_value, &call->status);
+        }
+        return;
+    }
+
+    if (call->status_ready) {
         if (wants_initial_metadata) {
             grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
         }

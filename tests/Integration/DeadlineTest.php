@@ -59,4 +59,22 @@ final class DeadlineTest extends TestCase
         self::assertLessThan(10, $count);
         self::assertSame(\Grpc\STATUS_DEADLINE_EXCEEDED, $call->getStatus()->code);
     }
+
+    public function testServerStreamingImmediateDeadlineReturnsStatus(): void
+    {
+        $request = new BenchRequest();
+        $request->setMessageCount(1);
+
+        $call = $this->client->BenchServerStream($request, [], [
+            'timeout' => 1,
+        ]);
+
+        $count = 0;
+        foreach ($call->responses() as $_reply) {
+            $count++;
+        }
+
+        self::assertSame(0, $count);
+        self::assertSame(\Grpc\STATUS_DEADLINE_EXCEEDED, $call->getStatus()->code);
+    }
 }

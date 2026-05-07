@@ -20,7 +20,7 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
     }
     state->completed = true;
 }
-static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value)
+static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure)
 {
     h2_connection *connection;
     server_streaming_call_state *state;
@@ -55,6 +55,14 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
     connection = get_persistent_connection(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (connection == NULL) {
+        if (setup_failure != NULL) {
+            bool deadline_exceeded = (deadline_abs_us > 0 && monotonic_us() >= deadline_abs_us)
+                || (error_message != NULL && strcmp(error_message, "HTTP/2 transport deadline exceeded") == 0);
+            setup_failure->code = deadline_exceeded ? GRPC_STATUS_DEADLINE_EXCEEDED : GRPC_STATUS_UNAVAILABLE;
+            setup_failure->details = zend_string_init(error_message != NULL ? error_message : "failed to open persistent connection", strlen(error_message != NULL ? error_message : "failed to open persistent connection"), 0);
+            ZVAL_UNDEF(return_value);
+            return SUCCESS;
+        }
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent connection", 0);
         return FAILURE;
     }
@@ -64,12 +72,24 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     }
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
+        if (setup_failure != NULL) {
+            setup_failure->code = GRPC_STATUS_DEADLINE_EXCEEDED;
+            setup_failure->details = zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
+            ZVAL_UNDEF(return_value);
+            return SUCCESS;
+        }
         zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
         return FAILURE;
     }
     if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
         mark_connection_dead(connection, errno);
         discard_persistent_connection(key, key_len, connection);
+        if (setup_failure != NULL) {
+            setup_failure->code = GRPC_STATUS_UNAVAILABLE;
+            setup_failure->details = zend_string_init("failed to set socket timeout", sizeof("failed to set socket timeout") - 1, 0);
+            ZVAL_UNDEF(return_value);
+            return SUCCESS;
+        }
         zend_throw_exception(NULL, "failed to set socket timeout", 0);
         return FAILURE;
     }
