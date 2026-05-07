@@ -22,7 +22,7 @@ generated client / gax
 
 ## 読む順序
 
-HTTP/2/gRPCの状態機械や命名・責務境界をレビューする場合は、このガイドと併せて `docs/protocol-model-review-guide.md` を使います。
+HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレビューする場合は、このガイドと併せて `docs/protocol-model-review-guide.md` を使います。
 
 1. `tests/Integration/Fixtures/GreeterClient.php`
 2. `vendor/grpc/grpc/src/lib/BaseStub.php`
