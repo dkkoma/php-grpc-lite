@@ -22,12 +22,12 @@
 static void destroy_h2_connection(h2_connection *connection);
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
 static void detach_persistent_connection_by_ptr(h2_connection *connection);
-static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream);
+static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state);
 static bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
-static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream);
+static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state);
 static void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
-static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code);
-static void destroy_server_streaming_call_state(server_streaming_call_state *stream);
+static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
+static void destroy_server_streaming_call_state(server_streaming_call_state *state);
 static void server_streaming_call_state_dtor(zend_resource *rsrc);
 static int configure_callbacks(nghttp2_session_callbacks **callbacks);
 static void mark_connection_dead(h2_connection *connection, int error_code);
@@ -185,9 +185,9 @@ static void detach_persistent_connection_by_ptr(h2_connection *connection)
     }
 }
 
-static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *stream)
+static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state)
 {
-    return connection != NULL && stream != NULL && connection->active_call == &stream->call;
+    return connection != NULL && state != NULL && connection->active_call == &state->call;
 }
 
 static bool connection_owned_by_call(h2_connection *connection, grpc_call *call)
@@ -195,15 +195,15 @@ static bool connection_owned_by_call(h2_connection *connection, grpc_call *call)
     return connection != NULL && call != NULL && connection->active_call == call;
 }
 
-static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *stream)
+static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state)
 {
     h2_connection *connection;
 
-    if (stream == NULL || stream->connection == NULL) {
+    if (state == NULL || state->call.connection == NULL) {
         return;
     }
-    connection = stream->connection;
-    if (!connection_owned_by_server_streaming_call_state(connection, stream)) {
+    connection = state->call.connection;
+    if (!connection_owned_by_server_streaming_call_state(connection, state)) {
         return;
     }
 
@@ -212,8 +212,7 @@ static void clear_connection_server_streaming_call_state_owner(server_streaming_
     }
     connection->busy = false;
     connection->active_call = NULL;
-    stream->connection = NULL;
-    stream->call.connection = NULL;
+    state->call.connection = NULL;
     if (connection->detached_from_cache) {
         destroy_h2_connection(connection);
     }
@@ -228,42 +227,42 @@ static void clear_connection_call_owner(h2_connection *connection, grpc_call *ca
     connection->active_call = NULL;
 }
 
-static void cancel_active_server_streaming_call_state(server_streaming_call_state *stream, uint32_t error_code)
+static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code)
 {
     int rv;
 
-    if (stream == NULL || stream->completed || !connection_owned_by_server_streaming_call_state(stream->connection, stream) || !connection_usable(stream->connection) || stream->call.stream_id <= 0) {
+    if (state == NULL || state->completed || !connection_owned_by_server_streaming_call_state(state->call.connection, state) || !connection_usable(state->call.connection) || state->call.stream_id <= 0) {
         return;
     }
-    rv = nghttp2_submit_rst_stream(stream->connection->session, NGHTTP2_FLAG_NONE, stream->call.stream_id, error_code);
+    rv = nghttp2_submit_rst_stream(state->call.connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, error_code);
     if (rv != 0) {
-        mark_connection_dead(stream->connection, rv);
+        mark_connection_dead(state->call.connection, rv);
         return;
     }
-    rv = nghttp2_session_send(stream->connection->session);
+    rv = nghttp2_session_send(state->call.connection->session);
     if (rv != 0) {
-        mark_connection_dead(stream->connection, rv);
+        mark_connection_dead(state->call.connection, rv);
     }
 }
 
-static void destroy_server_streaming_call_state(server_streaming_call_state *stream)
+static void destroy_server_streaming_call_state(server_streaming_call_state *state)
 {
-    if (stream == NULL) {
+    if (state == NULL) {
         return;
     }
-    if (!stream->completed && !stream->call.stream_closed && connection_owned_by_server_streaming_call_state(stream->connection, stream) && connection_usable(stream->connection) && stream->call.stream_id > 0) {
-        retire_connection(stream->connection, "active stream resource destroyed before completion");
-        detach_persistent_connection_by_ptr(stream->connection);
+    if (!state->completed && !state->call.stream_closed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection) && state->call.stream_id > 0) {
+        retire_connection(state->call.connection, "active stream resource destroyed before completion");
+        detach_persistent_connection_by_ptr(state->call.connection);
     }
-    clear_connection_server_streaming_call_state_owner(stream);
-    if (stream->request != NULL) {
-        zend_string_release(stream->request);
+    clear_connection_server_streaming_call_state_owner(state);
+    if (state->request != NULL) {
+        zend_string_release(state->request);
     }
-    if (stream->recv_buf != NULL) {
-        efree(stream->recv_buf);
+    if (state->recv_buf != NULL) {
+        efree(state->recv_buf);
     }
-    cleanup_grpc_call(&stream->call);
-    efree(stream);
+    cleanup_grpc_call(&state->call);
+    efree(state);
 }
 
 static void server_streaming_call_state_dtor(zend_resource *rsrc)
@@ -1693,7 +1692,7 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
                 return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
             }
             if (call->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
+                return strpprintf(0, "HTTP/2 state reset: %u", call->stream_error_code);
             }
             return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
         case GRPC_STATUS_UNIMPLEMENTED:
@@ -1708,7 +1707,7 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
             return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
         default:
             if (call->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
+                return strpprintf(0, "HTTP/2 state reset: %u", call->stream_error_code);
             }
             return zend_string_copy(zend_empty_string);
     }
