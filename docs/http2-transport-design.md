@@ -116,7 +116,8 @@ Requirements:
 - Channel identityからC側persistent channel keyを作る。
 - HTTP/2 session/socketはC extensionのprocess-local / thread-local cacheに保持する。
 - PHP userlandではchannel resource/socket/sessionを保持しない。
-- error/cancel/途中終了時はC側persistent channelをdead扱いにし、次RPCで新規接続する。
+- socket/TLS/nghttp2 session errorやEOFなどのconnection failureはC側persistent connectionをdead扱いにし、次RPCで新規接続する。
+- message size超過、metadata size超過、unsupported compression、malformed gRPC frame、invalid content-type、明示cancelなどのstream-local failureは該当streamを閉じ、connectionがusableなら次RPCで再利用する。
 - server streamingはC stream resourceをPHP Generatorがpullし、messageごとにyieldする。
 - client receive stream / connection windowは8MiBをdefaultにし、large responseでHTTP/2 flow-controlによる送信停止とWINDOW_UPDATE往復を減らす。どちらも `grpc_lite.http2_stream_window_size` / `grpc_lite.http2_connection_window_size` INIで調整可能にする。
 - slow consumer時はPHPが次messageを要求するまで追加readとWINDOW_UPDATE送信を進めず、transport側でbackpressureをかける。
