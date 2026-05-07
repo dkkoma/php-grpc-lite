@@ -151,7 +151,7 @@ BENCH_TAG=release-hardening ./bench/phase2/check-native-release-hardening.sh
 - lifecycle stress smoke
 - Valgrind lifecycle smoke
 - long lifecycle stress
-- PHP-FPM request boundaryでのpersistent channel reuse確認
+- PHP-FPM request boundaryでのpersistent connection reuse確認
 
 ## Known limitation
 

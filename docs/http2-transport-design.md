@@ -115,7 +115,7 @@ Requirements:
 
 ## Channel Lifetime
 
-- Channel identityからC側persistent channel keyを作る。
+- Channel identityからC側persistent connection cache keyを作る。
 - HTTP/2 session/socketはC extensionのprocess-local / thread-local cacheに保持する。
 - PHP userlandではchannel resource/socket/sessionを保持しない。
 - socket/TLS/nghttp2 session errorやEOFなどのconnection failureはC側persistent connectionをdead扱いにし、次RPCで新規接続する。
@@ -152,13 +152,13 @@ HTTP/2 transport未対応機能、source-built grpc extension未ロード、tran
 
 ## Channel Lifecycle
 
-HTTP/2 transportはChannel lifetimeに対応するHTTP/2 sessionをC側のpersistent channelとして保持する。通常のRPCは同じsession上に新しいstreamを作る。Phase 2 MVPでは1 session内1 active streamを前提にし、concurrent stream schedulingはshared event loop段階へ残す。
+HTTP/2 transportはChannel lifetimeに対応するHTTP/2 sessionをC側のpersistent connection cacheに保持する。通常のRPCは同じsession上に新しいstreamを作る。Phase 2 MVPでは1 session内1 active streamを前提にし、concurrent stream schedulingはshared event loop段階へ残す。
 
-FPMではworker process内でrequestをまたいでpersistent channelを再利用する。ZTS / FrankenPHP workerではthread-local module globals上のcacheとして扱い、threadをまたいでsocket/sessionを共有しない。PHP userlandではchannelを保持しない。
+FPMではworker process内でrequestをまたいでpersistent connectionを再利用する。ZTS / FrankenPHP workerではthread-local module globals上のcacheとして扱い、threadをまたいでsocket/sessionを共有しない。PHP userlandではchannelを保持しない。
 
-connectionが壊れた場合、transport層では同じRPCを自動retryしない。send/recv errorやEOFはchannelをdead扱いにし、そのRPCはエラーとして返す。GOAWAYを受けたchannelはdraining扱いにし、新規RPCには使わない。次のRPC開始時に新しいchannel resourceを作る。
+connectionが壊れた場合、transport層では同じRPCを自動retryしない。send/recv errorやEOFはconnectionをdead扱いにし、そのRPCはエラーとして返す。GOAWAYを受けたconnectionはdraining扱いにし、新規RPCには使わない。次のRPC開始時に新しいHTTP/2 connectionを作る。
 
-stream-local failureはconnection failureと分ける。message size超過、metadata size超過、unsupported compression、malformed gRPC frame、invalid content-typeなどは該当streamへ `RST_STREAM` を送り、RPC statusへ変換する。nghttp2 session / socket がconnection errorになっていなければpersistent channelは再利用可能として扱う。
+stream-local failureはconnection failureと分ける。message size超過、metadata size超過、unsupported compression、malformed gRPC frame、invalid content-typeなどは該当streamへ `RST_STREAM` を送り、RPC statusへ変換する。nghttp2 session / socket がconnection errorになっていなければpersistent connectionは再利用可能として扱う。
 
 retry policyやidempotency判断はtransport lifecycleとは分離し、将来の明示機能として扱う。
 

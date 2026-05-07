@@ -26,9 +26,9 @@ HTTP/2 transportをdrop-in release defaultにする前に満たす条件:
 - server streamingがbatch drain後yieldではなく、messageごとにtransportからyieldできる。Phase 2 stream resourceでMVP検証済み。
 - slow consumer時にconsumer-speed limitedになり、代表条件でmemoryが増え続けない。Phase 2 stream resourceでpull型backpressureを検証済み。長時間stressはrelease hardeningで扱う。
 - `cancel()` がtransport-level `RST_STREAM(CANCEL)` として働く。Phase 2 stream resourceでMVP検証済み。
-- Channel lifetimeでHTTP/2 session/socketを再利用できる。unary simple経路はC側persistent channelでrequestまたぎ再利用する。production server streaming resourceも同じlifecycleへ載せる。
+- Channel lifetimeでHTTP/2 session/socketを再利用できる。unary simple経路はC側persistent connection cacheでrequestまたぎ再利用する。production server streaming resourceも同じlifecycleへ載せる。
 - RST_STREAM / missing trailers / metadata / status / deadlineの主要互換性をext-grpc比較とHTTP/2 compatibility gateで確認済み。metadata/status/compression/error semanticsの代表条件は検証済み。
-- HTTP/2 resource lifecycleが整理され、stream resource destructor、unary failure path、persistent channel busy状態の代表条件と100 iteration stressを検証済み。production packaging後のC extension memory checkerはrelease hardeningで扱う。
+- HTTP/2 resource lifecycleが整理され、stream resource destructor、unary failure path、persistent connection busy状態の代表条件と100 iteration stressを検証済み。production packaging後のC extension memory checkerはrelease hardeningで扱う。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 
 PHP userland codeはComposerで導入し、source-built grpc extensionはこのrepositoryの `ext/grpc/` をclone後にsource buildする。Composer install時にsource-built grpc extensionを自動buildしない。extension未導入環境で黙って別transportへfallbackして動かすのではなく、install/load段階で `extension_loaded('grpc')` を確認する。
