@@ -1,5 +1,8 @@
 # php-grpc-lite
 
+[![Native QA](https://github.com/dkkoma/php-grpc-lite/actions/workflows/native-qa.yml/badge.svg)](https://github.com/dkkoma/php-grpc-lite/actions/workflows/native-qa.yml)
+[![codecov](https://codecov.io/gh/dkkoma/php-grpc-lite/branch/main/graph/badge.svg)](https://codecov.io/gh/dkkoma/php-grpc-lite)
+
 `php-grpc-lite` is a source-built PHP extension aiming to be a drop-in replacement for official `ext-grpc` in selected client workloads.
 
 Current review status:
@@ -56,6 +59,8 @@ docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so
 ```
 
 `check-native-development-gate.sh` runs the normal local gate: C static analysis, C unit boundary tests, PHPT integration tests, and a short libFuzzer smoke. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-c-fuzz.sh` runs deterministic libFuzzer smoke for pure C protocol boundaries. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
+
+GitHub Actions runs the development gate and C coverage gate on push and pull request. Coverage is uploaded as a workflow artifact and to Codecov from `var/coverage/c-lcov/codecov.info`; configure `CODECOV_TOKEN` unless the Codecov repository setting allows tokenless public uploads.
 
 Run static analysis for the C extension:
 

@@ -98,6 +98,7 @@ docker compose run --rm dev bash -lc '
         --ignore-errors unused \
         >/tmp/grpc-coverage-remove-tests.log
     lcov --summary "$coverage_dir/ext-grpc.info" | tee "$coverage_dir/summary.txt"
+    sed "s#SF:/workspace/#SF:#" "$coverage_dir/ext-grpc.info" > "$coverage_dir/codecov.info"
     genhtml "$coverage_dir/ext-grpc.info" \
         --output-directory "$coverage_dir/html" \
         --title "php-grpc-lite PHPT C coverage" \

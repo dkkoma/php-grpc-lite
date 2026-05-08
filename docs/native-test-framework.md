@@ -22,6 +22,18 @@
 
 このgateは、静的解析、C unit、PHPT、短時間fuzz smokeを実行する。長時間stress、Valgrind、全Sanitizer matrixはrelease gate側に置く。
 
+GitHub Actions の `Native QA` workflow でも push / pull request ごとに同じ development gate を実行する。
+
+## Coverage gate
+
+CIでC coverageを確認する。
+
+```bash
+./tools/test/check-c-coverage.sh
+```
+
+このgateはgcov/lcov instrumentation付きでC unitとPHPTを実行し、`var/coverage/c-lcov/summary.txt`、`var/coverage/c-lcov/html/`、Codecov upload用の `var/coverage/c-lcov/codecov.info` を生成する。GitHub ActionsではHTML/lcov一式をartifactとして保存し、Codecovには `native-c` flagでuploadする。
+
 ## Release / QA gate
 
 release前、またはtransport/lifecycle/resource管理を変える変更では次を通す。

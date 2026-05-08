@@ -1,0 +1,85 @@
+name: Native QA
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: native-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  development-gate:
+    name: Development gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker services
+        run: docker compose build dev test-server
+
+      - name: Install Composer dependencies
+        run: docker compose run --rm dev composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run native development gate
+        env:
+          FUZZ_RUNS: "1000"
+        run: ./tools/test/check-native-development-gate.sh
+
+  c-coverage:
+    name: C coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker services
+        run: docker compose build dev test-server
+
+      - name: Install Composer dependencies
+        run: docker compose run --rm dev composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run C coverage
+        run: ./tools/test/check-c-coverage.sh
+
+      - name: Add coverage summary
+        if: always()
+        run: |
+          if [ -f var/coverage/c-lcov/summary.txt ]; then
+            {
+              echo "## C coverage"
+              echo
+              echo '```text'
+              cat var/coverage/c-lcov/summary.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c-coverage-lcov
+          path: var/coverage/c-lcov/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: var/coverage/c-lcov/codecov.info
+          flags: native-c
+          name: native-c-coverage
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
