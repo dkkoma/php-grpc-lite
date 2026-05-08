@@ -585,6 +585,7 @@ static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valu
 static int grpc_lite_hex_value(unsigned char ch);
 static size_t grpc_lite_format_timeout_us(char *buffer, size_t buffer_len, long timeout_us);
 static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen);
+static int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled);
 static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
 static const char *validate_grpc_path(const char *path, size_t path_len);
 static size_t count_custom_header_values(zval *headers_zv);

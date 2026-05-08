@@ -64,13 +64,20 @@ docker compose run --rm dev bash -lc '
 
     c_unit_dir="$coverage_dir/c-unit"
     mkdir -p "$c_unit_dir"
-    cc -std=c99 -Wall -Wextra -O0 -g --coverage \
-        -c /workspace/ext/grpc/tests/unit/test_protocol_core.c \
-        -o "$c_unit_dir/test_protocol_core.o"
-    cc --coverage \
-        "$c_unit_dir/test_protocol_core.o" \
-        -o "$c_unit_dir/test_protocol_core"
-    "$c_unit_dir/test_protocol_core" | tee "$coverage_dir/c-unit.log"
+    php_includes="$(php-config --includes)"
+    pkg_includes="$(pkg-config --cflags libnghttp2 openssl)"
+    : > "$coverage_dir/c-unit.log"
+    for test_source in /workspace/ext/grpc/tests/unit/test_*.c; do
+        test_name="$(basename "$test_source" .c)"
+        cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -O0 -g --coverage \
+            $php_includes $pkg_includes \
+            -c "$test_source" \
+            -o "$c_unit_dir/$test_name.o"
+        cc --coverage \
+            "$c_unit_dir/$test_name.o" \
+            -o "$c_unit_dir/$test_name"
+        "$c_unit_dir/$test_name" | tee -a "$coverage_dir/c-unit.log"
+    done
 
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \

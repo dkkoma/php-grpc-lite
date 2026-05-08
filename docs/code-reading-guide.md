@@ -182,7 +182,7 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 
 | テスト | 見るもの |
 |---|---|
-| `ext/grpc/tests/unit/*.c` | I/Oに依存しないgRPC protocol helperのC unit gate |
+| `ext/grpc/tests/unit/*.c` | I/Oに依存しないgRPC protocol helperとstatus taxonomyのC unit gate |
 | `ext/grpc/tests/*.phpt` | C拡張surface、INI、object lifecycle、basic unary/server streaming、deadline status、TLS/mTLS baseline、protocol error、metadata/call credentials、transport control semantics、resource limitsのPHPT gate |
 | `tests/Integration/DeadlineTest.php` | deadlineのelapsed/count/immediate timeoutなど、PHPT baselineより細かいclient-side挙動 |
 | `tests/Integration/CompressionTest.php` | server streaming compression、grpc-status併用、stream-local failure後のrecovery |
@@ -204,4 +204,4 @@ docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc)'
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
-`check-native-c-unit.sh` は pure protocol helperだけを直接検証します。`check-native-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw lifecycle fixture `:50055`〜`:50060` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-native-phpt-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/phpt-lcov/` にtraceとHTMLを出力します。
+`check-native-c-unit.sh` は pure protocol helperとstatus taxonomyだけを直接検証します。`check-native-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw lifecycle fixture `:50055`〜`:50060` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-native-phpt-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/phpt-lcov/` にtraceとHTMLを出力します。
