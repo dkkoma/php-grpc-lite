@@ -10,7 +10,7 @@ cd "$(dirname "$0")/../.."
 tag="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 
 echo "== native static analysis =="
-./bench/phase2/check-native-static-analysis.sh
+./tools/test/check-c-static-analysis.sh
 
 echo "== native lifecycle stress smoke =="
 BENCH_TAG="$tag-lifecycle-smoke" \
@@ -18,7 +18,7 @@ BENCH_TAG="$tag-lifecycle-smoke" \
     MESSAGE_COUNT="${MESSAGE_COUNT:-20}" \
     PAYLOAD_BYTES="${PAYLOAD_BYTES:-1024}" \
     MAX_FD_DELTA="${MAX_FD_DELTA:-1}" \
-    ./bench/phase2/check-native-lifecycle-stress.sh
+    ./tools/test/check-native-lifecycle-stress.sh
 
 echo "== native lifecycle memory checker =="
 VALGRIND=1 \
@@ -27,7 +27,7 @@ VALGRIND=1 \
     MESSAGE_COUNT="${MESSAGE_COUNT:-20}" \
     PAYLOAD_BYTES="${PAYLOAD_BYTES:-1024}" \
     MAX_FD_DELTA="${MAX_FD_DELTA:-1}" \
-    ./bench/phase2/check-native-lifecycle-stress.sh
+    ./tools/test/check-native-lifecycle-stress.sh
 
 echo "== native lifecycle long stress =="
 BENCH_TAG="$tag-lifecycle-long" \
@@ -35,9 +35,9 @@ BENCH_TAG="$tag-lifecycle-long" \
     MESSAGE_COUNT="${MESSAGE_COUNT:-20}" \
     PAYLOAD_BYTES="${PAYLOAD_BYTES:-1024}" \
     MAX_FD_DELTA="${MAX_FD_DELTA:-1}" \
-    ./bench/phase2/check-native-lifecycle-stress.sh
+    ./tools/test/check-native-lifecycle-stress.sh
 
 echo "== native FPM request-boundary lifecycle =="
 BENCH_TAG="$tag-fpm" \
     REQUESTS="${FPM_REQUESTS:-10}" \
-    ./bench/phase2/check-native-fpm-lifecycle.sh
+    ./tools/test/check-native-fpm-lifecycle.sh

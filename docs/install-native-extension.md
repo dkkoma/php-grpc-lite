@@ -136,13 +136,13 @@ php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), define
 このrepositoryのDocker環境では、HTTP/2 stream lifecycle smokeも確認できる。
 
 ```bash
-ITERATIONS=10 BENCH_TAG=install-smoke ./bench/phase2/check-native-lifecycle-stress.sh
+ITERATIONS=10 BENCH_TAG=install-smoke ./tools/test/check-native-lifecycle-stress.sh
 ```
 
 release hardeningに近い確認をまとめて実行する場合:
 
 ```bash
-BENCH_TAG=release-hardening ./bench/phase2/check-native-release-hardening.sh
+BENCH_TAG=release-hardening ./tools/test/check-native-release-hardening.sh
 ```
 
 このrunnerは以下を実行する。

@@ -9,7 +9,7 @@ cd "$(dirname "$0")/../.."
 docker compose run --rm dev bash -lc '
     set -euo pipefail
 
-    coverage_dir=/workspace/var/coverage/phpt-lcov
+    coverage_dir=/workspace/var/coverage/c-lcov
     rm -rf "$coverage_dir"
     mkdir -p "$coverage_dir/html"
 

@@ -38,11 +38,11 @@
 ## 検証
 
 - ホストの PHP ではなく Docker compose 内で実行する。
-- C拡張PHPT: `./bench/phase2/check-native-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051`〜`50054`、raw lifecycle fixture ports `50055`〜`50060` をpreflightで必須にする。
-- C拡張C unit: `./bench/phase2/check-native-c-unit.sh`。I/Oに依存しないprotocol helperだけを対象にする。
-- C拡張PHPT coverage: `./bench/phase2/check-native-phpt-coverage.sh`。C unitとPHPTを実行し、`var/coverage/phpt-lcov/` にlcov traceとHTMLを出力する。
+- C拡張PHPT: `./tools/test/check-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051`〜`50054`、raw lifecycle fixture ports `50055`〜`50060` をpreflightで必須にする。
+- C拡張C unit: `./tools/test/check-c-unit.sh`。I/Oに依存しないprotocol helperとstatus taxonomyを対象にする。
+- C拡張C coverage: `./tools/test/check-c-coverage.sh`。C unitとPHPTを実行し、`var/coverage/c-lcov/` にlcov traceとHTMLを出力する。
 - 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
-- C拡張静的解析: `./bench/phase2/check-native-static-analysis.sh`
+- C拡張静的解析: `./tools/test/check-c-static-analysis.sh`
 - 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`
 - ext-grpc 比較: `./bench/run.sh compare` または互換入口の `./bench/compare.sh`
 - grpc-php-rs 任意比較: `./bench/compare-rs.sh`。通常比較はあくまで php-grpc-lite vs 公式 ext-grpc とし、grpc-php-rs は明示依頼がある場合だけ使う。

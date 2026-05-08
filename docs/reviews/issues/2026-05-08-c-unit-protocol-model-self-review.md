@@ -9,8 +9,8 @@
 - `ext/grpc/transport.c`
 - `ext/grpc/tests/unit/*.c`
 - `ext/grpc/tests/*.phpt`
-- `bench/phase2/check-native-c-unit.sh`
-- `bench/phase2/check-native-phpt-coverage.sh`
+- `tools/test/check-c-unit.sh`
+- `tools/test/check-c-coverage.sh`
 - `README.md`
 - `docs/code-reading-guide.md`
 
@@ -34,9 +34,9 @@
 - Expected model: gRPC call lifecycle / status taxonomyの入力状態はproductionの `grpc_call` が単一のdomain modelとして所有し、test側で別モデルを作って乖離させない。
 - Why it matters: test doubleで `grpc_call` の一部を再定義すると、field名やpriority orderがproduction modelから乖離してもunitがgreenになりうる。private modelを直接使う方が、status taxonomyのownerを明確に保てる。
 - Recommended fix: 現状維持。C unit compile時のPHP header由来unused warningはrunner側で限定的に抑制し、production headerやCFLAGSへ漏らさない。
-- Fix summary: `check-native-c-unit.sh` と `check-native-phpt-coverage.sh` で `-Wno-unused-function -Wno-unused-variable` をC unit compileに限定して指定した。
+- Fix summary: `check-c-unit.sh` と `check-c-coverage.sh` で `-Wno-unused-function -Wno-unused-variable` をC unit compileに限定して指定した。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-c-unit.sh`; `./bench/phase2/check-native-phpt.sh`; `./bench/phase2/check-native-phpt-coverage.sh`; `./bench/phase2/check-native-static-analysis.sh`; `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
+- Verification: `./tools/test/check-c-unit.sh`; `./tools/test/check-phpt.sh`; `./tools/test/check-c-coverage.sh`; `./tools/test/check-c-static-analysis.sh`; `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
 - Notes: `protocol_core.c` はPHP runtimeに依存しないpure helper、`status_core.c` は `grpc_call` flags / HTTP status / HTTP/2 stream errorからfinal gRPC status codeを決めるtaxonomy ownerとして分離されている。transport I/O、TLS、nghttp2 event loop、PHP object lifecycleはC unit対象から除外されている。
 
 ## Review Result

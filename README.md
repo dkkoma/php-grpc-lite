@@ -47,18 +47,18 @@ Run tests in Docker:
 
 ```bash
 composer install
-./bench/phase2/check-native-c-unit.sh
-./bench/phase2/check-native-phpt.sh
-./bench/phase2/check-native-phpt-coverage.sh
+./tools/test/check-c-unit.sh
+./tools/test/check-phpt.sh
+./tools/test/check-c-coverage.sh
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
-`check-native-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-native-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-native-phpt-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/phpt-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
+`check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
 
 Run static analysis for the C extension:
 
 ```bash
-./bench/phase2/check-native-static-analysis.sh
+./tools/test/check-c-static-analysis.sh
 ```
 
 Build/load the source-built grpc extension in Docker:
