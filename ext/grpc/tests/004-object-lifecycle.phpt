@@ -74,8 +74,17 @@ grpc_lite_phpt_expect_throw(static fn () => new Grpc\Channel('test-server:50051'
     'grpc.max_metadata_size' => 1024,
     'grpc.absolute_max_metadata_size' => 512,
 ]));
+grpc_lite_phpt_expect_throw(static fn () => new Grpc\Channel('test-server:50051', [
+    'credentials' => Grpc\ChannelCredentials::createInsecure(),
+    'grpc.default_authority' => 'bad/authority',
+]), 'authority');
+grpc_lite_phpt_expect_throw(static fn () => new Grpc\Channel('test-server:50051', [
+    'credentials' => Grpc\ChannelCredentials::createSsl(),
+    'grpc.ssl_target_name_override' => 'bad/name',
+]), 'TLS verify name');
 grpc_lite_phpt_expect_throw(static fn () => new Grpc\Call($channel, '/bad method/Name', Grpc\Timeval::infFuture()));
 grpc_lite_phpt_expect_throw(static fn () => (new ReflectionClass(Grpc\Call::class))->newInstanceWithoutConstructor()->getPeer());
+grpc_lite_phpt_expect_throw(static fn () => (new ReflectionClass(Grpc\Call::class))->newInstanceWithoutConstructor()->startBatch([]));
 
 $failed = (new ReflectionClass(Grpc\Channel::class))->newInstanceWithoutConstructor();
 try {
@@ -99,6 +108,25 @@ grpc_lite_phpt_expect_throw(static fn () => (new ReflectionClass(Grpc\Channel::c
 grpc_lite_phpt_expect_throw(static fn () => (new ReflectionClass(Grpc\Channel::class))->newInstanceWithoutConstructor()->close());
 $call->setCredentials(Grpc\CallCredentials::createFromPlugin(static fn (): array => []));
 grpc_lite_phpt_assert_same('test-server:50051', $call->getPeer(), 'call peer');
+grpc_lite_phpt_expect_throw(static fn () => $call->startBatch([
+    Grpc\OP_SEND_MESSAGE => 'not-array',
+]), 'OP_SEND_MESSAGE');
+grpc_lite_phpt_expect_throw(static fn () => $call->startBatch([
+    Grpc\OP_SEND_MESSAGE => ['message' => 123],
+]), 'OP_SEND_MESSAGE');
+
+$noMessageCall = new Grpc\Call($channel, '/helloworld.Greeter/SayHello', Grpc\Timeval::infFuture());
+grpc_lite_phpt_expect_throw(static fn () => $noMessageCall->startBatch([
+    Grpc\OP_RECV_STATUS_ON_CLIENT => true,
+]), 'request message');
+
+$badCredentialsCall = new Grpc\Call($channel, '/helloworld.Greeter/SayHello', Grpc\Timeval::infFuture());
+$badCredentialsCall->setCredentials(Grpc\CallCredentials::createFromPlugin(static fn (): string => 'not metadata'));
+grpc_lite_phpt_expect_throw(static fn () => $badCredentialsCall->startBatch([
+    Grpc\OP_SEND_MESSAGE => ['message' => ''],
+    Grpc\OP_RECV_STATUS_ON_CLIENT => true,
+]), 'must return an array');
+
 $call->cancel();
 $cancelledEvent = $call->startBatch([
     Grpc\OP_RECV_INITIAL_METADATA => true,

@@ -1670,57 +1670,6 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
 }
 #endif
 
-static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen)
-{
-    int status = 0;
-
-    if (valuelen == 0 || valuelen > 2 || (valuelen > 1 && value[0] == '0')) {
-        return -1;
-    }
-
-    for (size_t i = 0; i < valuelen; i++) {
-        if (value[i] < '0' || value[i] > '9') {
-            return -1;
-        }
-        status = (status * 10) + (value[i] - '0');
-    }
-
-    return status <= 16 ? status : -1;
-}
-
-static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen)
-{
-    static const char prefix[] = "application/grpc";
-    size_t prefix_len = sizeof(prefix) - 1;
-
-    if (valuelen < prefix_len || strncasecmp((const char *) value, prefix, prefix_len) != 0) {
-        return false;
-    }
-    if (valuelen == prefix_len) {
-        return true;
-    }
-    return (value[prefix_len] == '+' && valuelen > prefix_len + 1) || value[prefix_len] == ';';
-}
-
-static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen)
-{
-    return valuelen == sizeof("identity") - 1 && strncasecmp((const char *) value, "identity", sizeof("identity") - 1) == 0;
-}
-
-static int grpc_lite_hex_value(unsigned char ch)
-{
-    if (ch >= '0' && ch <= '9') {
-        return ch - '0';
-    }
-    if (ch >= 'A' && ch <= 'F') {
-        return ch - 'A' + 10;
-    }
-    if (ch >= 'a' && ch <= 'f') {
-        return ch - 'a' + 10;
-    }
-    return -1;
-}
-
 static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen)
 {
     smart_str decoded = {0};
@@ -2010,41 +1959,16 @@ static void append_request_header(h2_request_headers *headers, const char *name,
     };
 }
 
-static zend_long grpc_lite_ceil_div_timeout(zend_long value, zend_long unit)
-{
-    return value / unit + (value % unit != 0 ? 1 : 0);
-}
-
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us)
 {
     char timeout_buf[32];
-    zend_long value;
-    char unit;
+    size_t timeout_len;
     zend_string *value_str;
-    if (timeout_us <= 0) {
+    timeout_len = grpc_lite_format_timeout_us(timeout_buf, sizeof(timeout_buf), (long) timeout_us);
+    if (timeout_len == 0) {
         return;
     }
-    if (timeout_us <= 99999999L) {
-        value = timeout_us;
-        unit = 'u';
-    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000L) <= 99999999L) {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 1000L);
-        unit = 'm';
-    } else if (grpc_lite_ceil_div_timeout(timeout_us, 1000000L) <= 99999999L) {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 1000000L);
-        unit = 'S';
-    } else if (grpc_lite_ceil_div_timeout(timeout_us, 60000000L) <= 99999999L) {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 60000000L);
-        unit = 'M';
-    } else {
-        value = grpc_lite_ceil_div_timeout(timeout_us, 3600000000L);
-        if (value > 99999999L) {
-            value = 99999999L;
-        }
-        unit = 'H';
-    }
-    snprintf(timeout_buf, sizeof(timeout_buf), "%ld%c", value, unit);
-    value_str = zend_string_init(timeout_buf, strlen(timeout_buf), 0);
+    value_str = zend_string_init(timeout_buf, timeout_len, 0);
     if (headers->value_strings != NULL && headers->value_count < headers->capacity) {
         headers->value_strings[headers->value_count++] = value_str;
     } else {

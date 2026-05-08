@@ -60,7 +60,17 @@ docker compose run --rm dev bash -lc '
     }
 
     cleanup_phpt_artifacts
-    lcov --zerocounters --directory /workspace/ext/grpc >/tmp/grpc-coverage-zero.log
+    lcov --zerocounters --directory /workspace >/tmp/grpc-coverage-zero.log
+
+    c_unit_dir="$coverage_dir/c-unit"
+    mkdir -p "$c_unit_dir"
+    cc -std=c99 -Wall -Wextra -O0 -g --coverage \
+        -c /workspace/ext/grpc/tests/unit/test_protocol_core.c \
+        -o "$c_unit_dir/test_protocol_core.o"
+    cc --coverage \
+        "$c_unit_dir/test_protocol_core.o" \
+        -o "$c_unit_dir/test_protocol_core"
+    "$c_unit_dir/test_protocol_core" | tee "$coverage_dir/c-unit.log"
 
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
@@ -68,14 +78,18 @@ docker compose run --rm dev bash -lc '
         /workspace/ext/grpc/tests | tee "$coverage_dir/phpt.log"
 
     lcov --capture \
-        --directory /workspace/ext/grpc \
+        --directory /workspace \
         --output-file "$coverage_dir/raw.info" \
         --ignore-errors inconsistent \
         >/tmp/grpc-coverage-capture.log
     lcov --extract "$coverage_dir/raw.info" "/workspace/ext/grpc/*" \
-        --output-file "$coverage_dir/ext-grpc.info" \
+        --output-file "$coverage_dir/ext-grpc-extracted.info" \
         --ignore-errors unused \
         >/tmp/grpc-coverage-extract.log
+    lcov --remove "$coverage_dir/ext-grpc-extracted.info" "/workspace/ext/grpc/tests/*" \
+        --output-file "$coverage_dir/ext-grpc.info" \
+        --ignore-errors unused \
+        >/tmp/grpc-coverage-remove-tests.log
     lcov --summary "$coverage_dir/ext-grpc.info" | tee "$coverage_dir/summary.txt"
     genhtml "$coverage_dir/ext-grpc.info" \
         --output-directory "$coverage_dir/html" \

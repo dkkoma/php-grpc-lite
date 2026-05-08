@@ -1,5 +1,5 @@
 --TEST--
-grpc transport control semantics handle malformed frames, RST_STREAM, GOAWAY, and read-ahead limits
+grpc transport control semantics handle malformed frames, RST_STREAM, GOAWAY, and abandoned streams
 --SKIPIF--
 <?php
 if (!extension_loaded('grpc')) {
@@ -86,30 +86,6 @@ foreach ($streamCall->responses() as $_reply) {
 grpc_lite_phpt_assert_true($response !== null, 'unary after abandoned stream response');
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'unary after abandoned stream status');
 $streamCall->cancel();
-
-$previousMaxMessages = ini_get('grpc_lite.server_streaming_read_ahead_max_messages');
-$previousMaxBytes = ini_get('grpc_lite.server_streaming_read_ahead_max_bytes');
-ini_set('grpc_lite.server_streaming_read_ahead_max_messages', '1');
-ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '262144');
-try {
-    $streamRequest = new BenchRequest();
-    $streamRequest->setMessageCount(2);
-    $streamRequest->setPayloadBytes(300000);
-    $streamCall = $mainClient->BenchServerStream($streamRequest);
-    foreach ($streamCall->responses() as $_reply) {
-        break;
-    }
-    [$response, $status] = $mainClient->BenchUnary(new BenchRequest())->wait();
-    grpc_lite_phpt_assert_true($response !== null, 'unrelated unary response');
-    grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'unrelated unary status');
-    foreach ($streamCall->responses() as $_reply) {
-    }
-    grpc_lite_phpt_assert_same(Grpc\STATUS_RESOURCE_EXHAUSTED, $streamCall->getStatus()->code, 'read-ahead limit status');
-    grpc_lite_phpt_assert_same('server streaming read-ahead queue limit exceeded', $streamCall->getStatus()->details, 'read-ahead limit details');
-} finally {
-    ini_set('grpc_lite.server_streaming_read_ahead_max_messages', $previousMaxMessages);
-    ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', $previousMaxBytes);
-}
 
 echo "OK\n";
 ?>

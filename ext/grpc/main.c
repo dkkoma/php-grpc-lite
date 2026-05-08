@@ -16,6 +16,7 @@ PHP_INI_BEGIN()
 PHP_INI_END()
 
 #include "surface.c"
+#include "protocol_core.c"
 #include "transport.c"
 #include "unary_call.c"
 #include "server_streaming_call.c"
