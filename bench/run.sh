@@ -86,18 +86,18 @@ run_ext() {
 
     if [[ "$bench_path" == "" ]]; then
         docker compose run --rm dev-ext-grpc bench/phpbench-with-artifacts.sh \
-            --workdir=bench-comparison \
+            --workdir=. \
             --log="$log_path" \
             --json="${log_path%.log}.json" \
             --tsv="${log_path%.log}.tsv" \
             -- vendor/bin/phpbench run --report=aggregate
     else
         docker compose run --rm dev-ext-grpc bench/phpbench-with-artifacts.sh \
-            --workdir=bench-comparison \
+            --workdir=. \
             --log="$log_path" \
             --json="${log_path%.log}.json" \
             --tsv="${log_path%.log}.tsv" \
-            -- vendor/bin/phpbench run "../$bench_path" --report=aggregate
+            -- vendor/bin/phpbench run "$bench_path" --report=aggregate
     fi
 }
 

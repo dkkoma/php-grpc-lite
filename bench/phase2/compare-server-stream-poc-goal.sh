@@ -158,7 +158,7 @@ for case_spec in "${cases[@]}"; do
     echo "== $case_name: streams=$streams message_count=$message_count payload_bytes=$payload_bytes =="
 
     run_streaming_diagnostic "$case_name" dev php-grpc-lite "$streams" "$message_count" "$payload_bytes" vendor/autoload.php
-    run_streaming_diagnostic "$case_name" dev-ext-grpc ext-grpc "$streams" "$message_count" "$payload_bytes" bench-comparison/vendor/autoload.php
+    run_streaming_diagnostic "$case_name" dev-ext-grpc ext-grpc "$streams" "$message_count" "$payload_bytes" vendor/autoload.php
 
     run_poc "$case_name" poc-direct "$streams" "$message_count" "$payload_bytes" "$window_size" "$recv_buffer_size" --direct-response-payload
     run_poc "$case_name" poc-compact64 "$streams" "$message_count" "$payload_bytes" "$window_size" "$recv_buffer_size" --compact-response-buffer --response-compact-threshold=65536

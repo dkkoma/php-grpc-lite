@@ -53,7 +53,7 @@ for repeat in $(seq 1 "$repeats"); do
     docker compose run --rm dev-ext-grpc php tools/phase2/streaming-diagnostic.php \
         --suite=streaming-diagnostic \
         --implementation=ext-grpc \
-        --autoload=bench-comparison/vendor/autoload.php \
+        --autoload=vendor/autoload.php \
         --output="$ext_json" \
         --streams="$streams" \
         --message-count="$message_count" \

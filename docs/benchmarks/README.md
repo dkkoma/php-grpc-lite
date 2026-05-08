@@ -90,7 +90,7 @@ suite 固有の引数は suite 名の後ろに渡せる。
 | `compare` | Phase 2 軸と Spanner shape を一通り ext-grpc と短時間比較 | preliminary な傾向確認 |
 | `decision` | 最適化判断に使う長めの比較 | p99 / large streaming / metadata / Spanner shape の外れ値影響を下げる |
 
-単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `bench-comparison/vendor/autoload.php` を使う。
+単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `vendor/autoload.php` を使う。
 
 Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。schema は `docs/benchmarks/schemas/phase2-result-v1.md` を参照する。探索結果は `bench/baselines/regression.json` に混ぜない。
 

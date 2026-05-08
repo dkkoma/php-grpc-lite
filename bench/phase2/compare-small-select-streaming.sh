@@ -180,7 +180,7 @@ for case_spec in "${cases[@]}"; do
     append_result "$case_name" php-grpc-lite "native-$native_response_mode" "$streams" "$message_count" "$payload_bytes" "$native_file"
 
     run_streaming_diagnostic "$case_name" dev-ext-grpc ext-grpc c-core \
-        "$streams" "$message_count" "$payload_bytes" bench-comparison/vendor/autoload.php
+        "$streams" "$message_count" "$payload_bytes" vendor/autoload.php
 
     if [[ "$include_poc" == "1" ]]; then
         run_poc "$case_name" poc-compact64 "$streams" "$message_count" "$payload_bytes" \

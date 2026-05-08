@@ -63,7 +63,7 @@ ext_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-ext-grpc.json"
 docker compose run --rm dev-ext-grpc php tools/phase2/unary-shape.php \
     --suite=spanner-dml-unary-shape \
     --implementation=ext-grpc \
-    --autoload=bench-comparison/vendor/autoload.php \
+    --autoload=vendor/autoload.php \
     --output="$ext_json" \
     --duration="$duration" \
     --warmup-calls="$warmup_calls" \

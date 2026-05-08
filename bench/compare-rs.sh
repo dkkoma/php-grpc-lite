@@ -33,11 +33,11 @@ run_section "php-grpc-lite (us)" "php-grpc-lite" \
 
 run_section "official ext-grpc" "ext-grpc" \
     docker compose run --rm dev-ext-grpc \
-        bash -c 'cd bench-comparison && vendor/bin/phpbench run --report=aggregate'
+        bash -c 'vendor/bin/phpbench run --report=aggregate'
 
 run_section "grpc-php-rs" "grpc-php-rs" \
     docker compose run --rm dev-grpc-rs \
-        bash -c 'cd bench-comparison && vendor/bin/phpbench run --report=aggregate'
+        bash -c 'vendor/bin/phpbench run --report=aggregate'
 
 echo
 echo "Saved logs: $output_dir/compare-rs-$timestamp-*.log"

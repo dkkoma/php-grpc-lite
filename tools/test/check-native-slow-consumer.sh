@@ -87,7 +87,7 @@ run_ext() {
     docker compose run --rm dev-ext-grpc php tools/phase2/slow-consumer-surface.php \
         --output="$file" \
         --implementation=ext-grpc \
-        --autoload=bench-comparison/vendor/autoload.php \
+        --autoload=vendor/autoload.php \
         --streams="$streams" \
         --message-count="$message_count" \
         --payload-bytes="$payload_bytes" \

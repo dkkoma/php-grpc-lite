@@ -31,7 +31,7 @@ C 化の優先度は **想定ユーザのワークロード形** に依存する
 - `bench/UnaryLatencyBench`, `UnaryDelayBench`, `UnaryPayloadBench`(Go test-server 経由)
 - `bench/ServerStreamingBench`(count / payload / pacing 軸)
 - `bench/compare.sh`(php-grpc-lite vs ext-grpc の両側計測)
-- `Dockerfile.ext-grpc` + `bench-comparison/`(ext-grpc 比較環境)
+- `Dockerfile.ext-grpc` + root `vendor/` の `grpc/grpc` wrapper(ext-grpc 比較環境)
 - `poc/test-server`(`BenchUnary` / `BenchServerStream`、payload bytes / message count / server delay 制御可)
 
 新規追加は **これらの拡張** + **新軸の追加** の形で。重複させない。

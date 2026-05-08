@@ -43,7 +43,7 @@ autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
 
 if [[ "$implementation" == "ext-grpc" ]]; then
     container_service="${BENCH_CONTAINER_SERVICE:-dev-ext-grpc}"
-    autoload_path="${BENCH_AUTOLOAD:-bench-comparison/vendor/autoload.php}"
+    autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
 fi
 
 mkdir -p "$output_dir"
