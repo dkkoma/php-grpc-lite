@@ -21,14 +21,47 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker services
-        run: docker compose build dev test-server
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          tags: php-grpc-lite-dev:latest
+          load: true
+          cache-from: type=gha,scope=dev
+          cache-to: type=gha,scope=dev,mode=max
+
+      - name: Build test-server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./poc
+          file: ./poc/test-server/Dockerfile
+          tags: php-grpc-lite-test-server:latest
+          load: true
+          cache-from: type=gha,scope=test-server
+          cache-to: type=gha,scope=test-server,mode=max
+
+      - name: Build sanitizer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sanitizer
+          tags: php-grpc-lite-dev-sanitizer:latest
+          load: true
+          build-args: |
+            SANITIZER=address-undefined
+          cache-from: type=gha,scope=dev-sanitizer-address-undefined
+          cache-to: type=gha,scope=dev-sanitizer-address-undefined,mode=max
 
       - name: Install Composer dependencies
         run: docker compose run --rm dev composer install --no-interaction --prefer-dist --no-progress
 
       - name: Run native development gate
         env:
+          COMPOSE_RUN_BUILD: "0"
           FUZZ_RUNS: "1000"
         run: ./tools/test/check-native-development-gate.sh
 
@@ -44,8 +77,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker services
-        run: docker compose build dev test-server
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          tags: php-grpc-lite-dev:latest
+          load: true
+          cache-from: type=gha,scope=dev
+          cache-to: type=gha,scope=dev,mode=max
+
+      - name: Build test-server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./poc
+          file: ./poc/test-server/Dockerfile
+          tags: php-grpc-lite-test-server:latest
+          load: true
+          cache-from: type=gha,scope=test-server
+          cache-to: type=gha,scope=test-server,mode=max
 
       - name: Install Composer dependencies
         run: docker compose run --rm dev composer install --no-interaction --prefer-dist --no-progress

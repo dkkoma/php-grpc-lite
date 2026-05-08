@@ -7,7 +7,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-docker compose run --build --rm \
+run_args=(run --rm)
+if [[ "${COMPOSE_RUN_BUILD:-1}" != "0" ]]; then
+    run_args+=(--build)
+fi
+
+docker compose "${run_args[@]}" \
     -e FUZZ_RUNS="${FUZZ_RUNS:-20000}" \
     -e FUZZ_MAX_LEN="${FUZZ_MAX_LEN:-256}" \
     dev-sanitizer bash -lc '
