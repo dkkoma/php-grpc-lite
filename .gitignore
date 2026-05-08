@@ -20,6 +20,7 @@ var/instrumented-nghttp2/
 var/build-curl-nghttp2-instrumented/
 var/instrumented-curl-nghttp2/
 var/coverage/
+var/fuzz/
 .phpbench/
 
 # Research scratch (cloned upstream sources for surveying)

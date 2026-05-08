@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
 #
-# Build the grpc extension with GCC ASan/UBSan and run focused C unit tests
-# plus PHPT integration tests under the sanitizer runtime.
+# Build the grpc extension with a Clang sanitizer. ASan/UBSan and TSan run the
+# full PHPT extension suite. MSan runs the C core unit suite only because the
+# Debian OpenSSL/nghttp2 dependencies are not built with MSan instrumentation.
 #
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-docker compose run --build --rm dev-sanitizer bash -lc '
+kind="${SANITIZER_KIND:-address-undefined}"
+case "$kind" in
+    address-undefined) service=dev-sanitizer; run_phpt=1 ;;
+    memory) service=dev-msan; run_phpt=0 ;;
+    thread) service=dev-tsan; run_phpt=1 ;;
+    *)
+        echo "unsupported SANITIZER_KIND=$kind" >&2
+        exit 2
+        ;;
+esac
+
+docker compose run --build --rm \
+    -e SANITIZER_KIND="$kind" \
+    -e RUN_SANITIZER_PHPT="$run_phpt" \
+    "$service" bash -lc '
     set -euo pipefail
 
     cd /workspace
@@ -18,8 +33,26 @@ docker compose run --build --rm dev-sanitizer bash -lc '
     test -x "$phpize_bin" || { echo "sanitizer phpize is not available in the dev-sanitizer image" >&2; exit 127; }
     test -x "$php_config_bin" || { echo "sanitizer php-config is not available in the dev-sanitizer image" >&2; exit 127; }
 
-    export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:halt_on_error=1:abort_on_error=1:allocator_may_return_null=1:verify_asan_link_order=0}"
-    export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}"
+    case "$SANITIZER_KIND" in
+        address-undefined)
+            sanitizer_flags="-fsanitize=address,undefined"
+            export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:halt_on_error=1:abort_on_error=1:allocator_may_return_null=1:verify_asan_link_order=0}"
+            export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}"
+            ;;
+        memory)
+            sanitizer_flags="-fsanitize=memory -fsanitize-memory-track-origins=2"
+            export MSAN_OPTIONS="${MSAN_OPTIONS:-halt_on_error=1:abort_on_error=1:poison_in_dtor=1:track_origins=2}"
+            ;;
+        thread)
+            sanitizer_flags="-fsanitize=thread"
+            export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1:abort_on_error=1:report_signal_unsafe=0}"
+            ;;
+        *)
+            echo "unsupported SANITIZER_KIND=$SANITIZER_KIND" >&2
+            exit 2
+            ;;
+    esac
+
     export USE_ZEND_ALLOC=0
     export ZEND_DONT_UNLOAD_MODULES=1
     php_sanitized=("$php_bin" -n)
@@ -32,22 +65,26 @@ docker compose run --build --rm dev-sanitizer bash -lc '
 
     for test_source in /workspace/ext/grpc/tests/unit/test_*.c; do
         test_name="$(basename "$test_source" .c)"
-        cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable \
-            -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
+        clang -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable \
+            -O1 -g -fno-omit-frame-pointer $sanitizer_flags \
             $php_includes $pkg_includes \
             -o "$unit_dir/$test_name" \
             "$test_source" \
-            -fsanitize=address,undefined
+            $sanitizer_flags
         "$unit_dir/$test_name"
     done
+
+    if [[ "${RUN_SANITIZER_PHPT:-1}" != "1" ]]; then
+        exit 0
+    fi
 
     cd /workspace/ext/grpc
     make clean >/tmp/grpc-sanitizer-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     "$phpize_bin" >/tmp/grpc-sanitizer-phpize.log
-    CC=cc \
-    CFLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined" \
-    LDFLAGS="-fsanitize=address,undefined" \
+    CC=clang \
+    CFLAGS="-O1 -g -fno-omit-frame-pointer $sanitizer_flags" \
+    LDFLAGS="$sanitizer_flags" \
         ./configure --enable-grpc --with-php-config="$php_config_bin" >/tmp/grpc-sanitizer-configure.log
     make -j$(nproc) >/tmp/grpc-sanitizer-make.log
 

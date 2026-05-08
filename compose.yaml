@@ -15,7 +15,41 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.sanitizer
+      args:
+        SANITIZER: address-undefined
     image: php-grpc-lite-dev-sanitizer
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      - test-server
+      - spanner-emulator
+
+  dev-msan:
+    build:
+      context: .
+      dockerfile: Dockerfile.sanitizer
+      args:
+        SANITIZER: memory
+    image: php-grpc-lite-dev-msan
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      - test-server
+      - spanner-emulator
+
+  dev-tsan:
+    build:
+      context: .
+      dockerfile: Dockerfile.sanitizer
+      args:
+        SANITIZER: thread
+    image: php-grpc-lite-dev-tsan
     volumes:
       - .:/workspace
     working_dir: /workspace

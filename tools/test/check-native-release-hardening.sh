@@ -12,9 +12,22 @@ tag="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 echo "== native static analysis =="
 ./tools/test/check-c-static-analysis.sh
 
+echo "== native C unit boundary tests =="
+./tools/test/check-c-unit.sh
+
+echo "== native C protocol fuzz smoke =="
+FUZZ_RUNS="${RELEASE_FUZZ_RUNS:-50000}" \
+    ./tools/test/check-c-fuzz.sh
+
 if [[ "${SKIP_SANITIZER:-0}" != "1" ]]; then
-    echo "== native sanitizer =="
+    echo "== native ASan/UBSan =="
     ./tools/test/check-c-sanitizer.sh
+
+    echo "== native MSan C core =="
+    ./tools/test/check-c-msan.sh
+
+    echo "== native TSan =="
+    ./tools/test/check-c-tsan.sh
 fi
 
 echo "== native lifecycle stress smoke =="

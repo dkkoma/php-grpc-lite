@@ -9,6 +9,8 @@ cd "$(dirname "$0")/../.."
 docker compose run --rm dev bash -lc '
     set -euo pipefail
     cd /workspace/ext/grpc
+    make clean >/tmp/grpc-phpt-clean.log 2>&1 || true
+    rm -rf .libs modules *.lo *.o *.dep
     phpize >/tmp/grpc-phpize.log
     ./configure --enable-grpc >/tmp/grpc-configure.log
     make -j$(nproc) >/tmp/grpc-make.log

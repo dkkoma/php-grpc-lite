@@ -1,5 +1,7 @@
 FROM php:8.4-cli-trixie
 
+ARG SANITIZER=address-undefined
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         autoconf \
@@ -18,38 +20,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev \
         libxml2-dev \
         zlib1g-dev \
+        clang \
+        libclang-rt-19-dev \
+        lld \
+        llvm \
     && rm -rf /var/lib/apt/lists/*
 
 RUN docker-php-source extract \
     && cd /usr/src/php \
-    && ./configure \
+    && case "$SANITIZER" in \
+        address-undefined) \
+            sanitizer_configure="--enable-address-sanitizer --enable-undefined-sanitizer"; \
+            sanitizer_flags="-fsanitize=address,undefined"; \
+            php_extensions="--with-mhash --with-pic --enable-mbstring --enable-mysqlnd --with-password-argon2 --with-sodium=shared --with-pdo-sqlite=/usr --with-sqlite3=/usr --with-curl --with-iconv --with-openssl --with-readline --with-zlib --with-pear" ;; \
+        memory) \
+            sanitizer_configure="--enable-memory-sanitizer"; \
+            sanitizer_flags="-fsanitize=memory"; \
+            php_extensions="--disable-all --enable-cli --with-pic --without-pcre-jit --without-pear" ;; \
+        thread) \
+            sanitizer_configure=""; \
+            sanitizer_flags="-fsanitize=thread"; \
+            php_extensions="--with-mhash --with-pic --enable-mbstring --enable-mysqlnd --with-password-argon2 --with-sodium=shared --with-pdo-sqlite=/usr --with-sqlite3=/usr --with-curl --with-iconv --with-openssl --with-readline --with-zlib --with-pear"; \
+            sed -i 's/!__has_feature(memory_sanitizer)/!__has_feature(memory_sanitizer) \&\& !__has_feature(thread_sanitizer)/' Zend/zend_portability.h ;; \
+        *) echo "unsupported SANITIZER=$SANITIZER" >&2; exit 2 ;; \
+    esac \
+    && CC=clang \
+       CFLAGS="-O1 -g -fno-omit-frame-pointer $sanitizer_flags" \
+       LDFLAGS="$sanitizer_flags" \
+       ./configure \
         --prefix=/opt/php-sanitizer \
         --sysconfdir=/opt/php-sanitizer/etc \
         --with-config-file-path=/opt/php-sanitizer/etc \
         --with-config-file-scan-dir=/opt/php-sanitizer/etc/conf.d \
         --enable-option-checking=fatal \
         --enable-debug \
-        --enable-address-sanitizer \
-        --enable-undefined-sanitizer \
+        $sanitizer_configure \
         --disable-cgi \
         --disable-fpm \
         --disable-phpdbg \
         --disable-opcache-jit \
         --without-pcre-jit \
-        --with-mhash \
-        --with-pic \
-        --enable-mbstring \
-        --enable-mysqlnd \
-        --with-password-argon2 \
-        --with-sodium=shared \
-        --with-pdo-sqlite=/usr \
-        --with-sqlite3=/usr \
-        --with-curl \
-        --with-iconv \
-        --with-openssl \
-        --with-readline \
-        --with-zlib \
-        --with-pear \
+        $php_extensions \
     && make -j"$(nproc)" \
     && make install \
     && mkdir -p /opt/php-sanitizer/etc/conf.d
