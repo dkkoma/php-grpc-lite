@@ -11,6 +11,20 @@ services:
       - test-server
       - spanner-emulator
 
+  dev-sanitizer:
+    build:
+      context: .
+      dockerfile: Dockerfile.sanitizer
+    image: php-grpc-lite-dev-sanitizer
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      - test-server
+      - spanner-emulator
+
   fpm-lifecycle:
     build:
       context: .

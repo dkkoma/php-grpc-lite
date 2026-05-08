@@ -148,10 +148,21 @@ BENCH_TAG=release-hardening ./tools/test/check-native-release-hardening.sh
 このrunnerは以下を実行する。
 
 - C extension static analysis (`cppcheck`)
+- Sanitizer C unit / PHPT (`ASan/UBSan`)
 - lifecycle stress smoke
-- Valgrind lifecycle smoke
+- Valgrind lifecycle smoke (`USE_ZEND_ALLOC=0`, `ZEND_DONT_UNLOAD_MODULES=1`)
 - long lifecycle stress
 - PHP-FPM request boundaryでのpersistent connection reuse確認
+
+Sanitizer gateを単独で実行する場合:
+
+```bash
+./tools/test/check-c-sanitizer.sh
+```
+
+このrunnerは専用の sanitizer PHP image (`dev-sanitizer`) 上でGCC ASan/UBSan付きのC unitとPHPTを実行する。Leak検出はValgrind側に寄せるため、ASan leak detectorは無効化する。
+
+release hardeningでSanitizerを一時的に外す場合だけ、`SKIP_SANITIZER=1` を指定する。
 
 ## Known limitation
 

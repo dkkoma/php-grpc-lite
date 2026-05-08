@@ -12,6 +12,11 @@ tag="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 echo "== native static analysis =="
 ./tools/test/check-c-static-analysis.sh
 
+if [[ "${SKIP_SANITIZER:-0}" != "1" ]]; then
+    echo "== native sanitizer =="
+    ./tools/test/check-c-sanitizer.sh
+fi
+
 echo "== native lifecycle stress smoke =="
 BENCH_TAG="$tag-lifecycle-smoke" \
     ITERATIONS="${SMOKE_ITERATIONS:-100}" \
@@ -21,13 +26,12 @@ BENCH_TAG="$tag-lifecycle-smoke" \
     ./tools/test/check-native-lifecycle-stress.sh
 
 echo "== native lifecycle memory checker =="
-VALGRIND=1 \
-    BENCH_TAG="$tag-valgrind" \
+BENCH_TAG="$tag-valgrind" \
     ITERATIONS="${VALGRIND_ITERATIONS:-5}" \
     MESSAGE_COUNT="${MESSAGE_COUNT:-20}" \
     PAYLOAD_BYTES="${PAYLOAD_BYTES:-1024}" \
     MAX_FD_DELTA="${MAX_FD_DELTA:-1}" \
-    ./tools/test/check-native-lifecycle-stress.sh
+    ./tools/test/check-c-valgrind.sh
 
 echo "== native lifecycle long stress =="
 BENCH_TAG="$tag-lifecycle-long" \

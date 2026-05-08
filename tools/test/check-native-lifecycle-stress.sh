@@ -28,15 +28,24 @@ tool_args="tools/phase2/native-lifecycle-stress.php --output='$json' --iteration
 if [[ "$valgrind" == "1" ]]; then
     docker compose run --rm dev sh -lc "
         cd /workspace/ext/grpc &&
+        make clean >/tmp/grpc-lifecycle-clean.log 2>&1 || true &&
+        rm -rf .libs modules *.lo *.o *.dep &&
+        phpize >/tmp/grpc-lifecycle-phpize.log &&
+        ./configure --enable-grpc >/tmp/grpc-lifecycle-configure.log &&
         make -j2 >/tmp/grpc-make.log &&
         cd /workspace &&
         command -v valgrind >/dev/null || { echo 'valgrind is not installed in the dev image' >&2; exit 127; } &&
-        valgrind --leak-check=full --show-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=99 --log-file='$valgrind_log' php $php_args $tool_args
+        USE_ZEND_ALLOC=0 ZEND_DONT_UNLOAD_MODULES=1 \
+        valgrind --leak-check=full --show-leak-kinds=definite,indirect,possible --errors-for-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=99 --log-file='$valgrind_log' php $php_args $tool_args
     "
     echo "Valgrind log: $valgrind_log"
 else
     docker compose run --rm dev sh -lc "
         cd /workspace/ext/grpc &&
+        make clean >/tmp/grpc-lifecycle-clean.log 2>&1 || true &&
+        rm -rf .libs modules *.lo *.o *.dep &&
+        phpize >/tmp/grpc-lifecycle-phpize.log &&
+        ./configure --enable-grpc >/tmp/grpc-lifecycle-configure.log &&
         make -j2 >/tmp/grpc-make.log &&
         cd /workspace &&
         php $php_args $tool_args

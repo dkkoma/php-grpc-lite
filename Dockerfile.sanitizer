@@ -1,0 +1,59 @@
+FROM php:8.4-cli-trixie
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        autoconf \
+        bison \
+        re2c \
+        pkg-config \
+        git \
+        unzip \
+        libargon2-dev \
+        libcurl4-openssl-dev \
+        libnghttp2-dev \
+        libonig-dev \
+        libreadline-dev \
+        libsodium-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        libxml2-dev \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN docker-php-source extract \
+    && cd /usr/src/php \
+    && ./configure \
+        --prefix=/opt/php-sanitizer \
+        --sysconfdir=/opt/php-sanitizer/etc \
+        --with-config-file-path=/opt/php-sanitizer/etc \
+        --with-config-file-scan-dir=/opt/php-sanitizer/etc/conf.d \
+        --enable-option-checking=fatal \
+        --enable-debug \
+        --enable-address-sanitizer \
+        --enable-undefined-sanitizer \
+        --disable-cgi \
+        --disable-fpm \
+        --disable-phpdbg \
+        --disable-opcache-jit \
+        --without-pcre-jit \
+        --with-mhash \
+        --with-pic \
+        --enable-mbstring \
+        --enable-mysqlnd \
+        --with-password-argon2 \
+        --with-sodium=shared \
+        --with-pdo-sqlite=/usr \
+        --with-sqlite3=/usr \
+        --with-curl \
+        --with-iconv \
+        --with-openssl \
+        --with-readline \
+        --with-zlib \
+        --with-pear \
+    && make -j"$(nproc)" \
+    && make install \
+    && mkdir -p /opt/php-sanitizer/etc/conf.d
+
+WORKDIR /workspace
+
+CMD ["bash"]
