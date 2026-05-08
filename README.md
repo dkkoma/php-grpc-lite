@@ -17,16 +17,20 @@ Current review status:
 
 ## Performance snapshot
 
-Latest major local benchmark: 2026-05-05, Docker compose on OrbStack, Go gRPC test server, `php-grpc-lite` HTTP/2 transport vs official `ext-grpc`. These numbers are workload guidance, not a portability guarantee; rerun the benchmark suite on release hardware for final decisions. Full data: `docs/benchmarks/native-major-2026-05-05.md`.
+Latest major local benchmarks: 2026-05-05 / 2026-05-06, Docker compose on OrbStack, Go gRPC test server, `php-grpc-lite` HTTP/2 transport vs official `ext-grpc`. These numbers are workload guidance, not a portability guarantee; rerun the benchmark suite on release hardware for final decisions. Full data: `docs/benchmarks/native-major-2026-05-05.md` and `docs/benchmarks/native-hardening-2026-05-06.md`.
 
 | case | php-grpc-lite throughput | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc throughput | ext-grpc p50 | ext-grpc p99 | result |
 |---|---:|---:|---:|---:|---:|---:|---|
 | unary 100B | 29,403 calls/s | 28.1μs | 67.8μs | 16,289 calls/s | 56.6μs | 103.6μs | php-grpc-lite faster |
 | unary 100KiB | 5,504 calls/s | 77.9μs | 2,243.1μs | 5,458 calls/s | 106.7μs | 1,491.2μs | p50 comparable/faster; p99 slower |
+| Spanner DML insert shape | 26,545 calls/s | 31.9μs | 72.5μs | 15,852 calls/s | 58.3μs | 105.8μs | php-grpc-lite faster |
+| Spanner commit shape | 26,836 calls/s | 31.8μs | 70.1μs | 15,539 calls/s | 60.6μs | 107.1μs | php-grpc-lite faster |
+| Spanner small SELECT 1x1KiB | 12,442 msg/s | 58.0μs | 552.7μs | 6,159 msg/s | 115.3μs | 899.3μs | php-grpc-lite faster |
+| Spanner small SELECT 1x10KiB | 9,941 msg/s | 63.4μs | 760.9μs | 5,654 msg/s | 116.6μs | 988.8μs | php-grpc-lite faster |
 | server streaming 100x100B | 648,945 msg/s | 135.8μs | 538.8μs | 286,357 msg/s | 334.1μs | 796.8μs | php-grpc-lite faster |
 | server streaming 100x10KiB | 78,123 msg/s | 1,111.2μs | 2,255.9μs | 71,098 msg/s | 1,452.6μs | 1,974.3μs | p50/throughput faster; p99 slower |
 
-Spanner-like small shapes are also favorable to `php-grpc-lite`: 10-column DML unary shapes measured around 26k calls/s with 31–32μs p50, while official `ext-grpc` was around 15–16k calls/s with 58–61μs p50. Large bulk streaming remains the main case that should be measured against the actual workload before choosing this extension.
+Large bulk streaming remains the main case that should be measured against the actual workload before choosing this extension.
 
 ## Install
 
