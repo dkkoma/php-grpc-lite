@@ -48,7 +48,7 @@ pie install dkkoma/php-grpc-lite
 
 Then enable `extension=grpc` if PIE did not enable it automatically.
 
-`unzip` lets PIE use the Packagist/GitHub dist archive. Without `unzip`, PIE may fall back to a source download path that requires `git`.
+PIE uses Composer's default package download path. For this package, Composer prefers the Packagist/GitHub dist zip for the stable release. Ensure a zip extractor is available: `unzip` is the recommended Debian/Ubuntu package; PHP `ext-zip` or `7z` can also satisfy Composer. Without any zip extractor, Composer falls back to source download and may require `git`.
 
 Applications that use generated stubs or gax clients should also install the official PHP wrapper dependency with Composer:
 

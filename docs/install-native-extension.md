@@ -22,7 +22,7 @@
 - `pkg-config`
 - `libnghttp2`
 - OpenSSL development headers
-- `unzip` for PIE dist archive extraction
+- zip extractor for PIE/Composer dist archive extraction. Debian/Ubuntuでは `unzip` を推奨する。
 
 Debian系の例:
 
@@ -44,7 +44,7 @@ PIEでextensionをinstallする。
 pie install dkkoma/php-grpc-lite
 ```
 
-`unzip` がある場合、PIEはPackagist/GitHubのdist zipを展開できる。`unzip` がない環境ではsource downloadへfallbackし、`git` が必要になる場合がある。
+PIEはComposerの通常download経路を使う。安定版ではPackagist/GitHubのdist zipが優先されるため、zip展開手段が必要になる。Debian/Ubuntuでは `unzip` を推奨するが、Composer上はPHP `ext-zip` や `7z` でもよい。zip展開手段がない環境ではsource downloadへfallbackし、`git` が必要になる場合がある。
 
 PIEが自動で有効化しない環境では、install先に合わせて `extension=grpc` をPHP設定へ追加する。
 
