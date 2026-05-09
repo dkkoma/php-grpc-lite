@@ -11,7 +11,7 @@ Current review status:
 - HTTP/2 transport is provided by this repository's source-build extension in `ext/grpc/`.
 - The source-built grpc extension builds a PHP module named `grpc` and produces `grpc.so`.
 - Official `ext-grpc` and this source-built grpc extension must not be loaded at the same time.
-- Default runtime transport is the built-in nghttp2 HTTP/2 backend. An optional FrankenPHP grpc-go backend can be selected with `grpc_lite.backend` when the `FrankenGrpc\*` extension surface is available.
+- Default backend selection is `grpc_lite.backend=auto`: normal PHP runtimes use the built-in nghttp2 HTTP/2 backend, while FrankenPHP runtimes with the `FrankenGrpc\*` extension surface can delegate to grpc-go.
 - Release readiness is still gated by C extension memory/lifecycle QA.
 - Unary and server streaming are the current compatibility scope. Client streaming and bidirectional streaming are not implemented yet.
 
@@ -102,7 +102,7 @@ composer install
 docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
 ```
 
-`check-native-development-gate.sh` runs the normal local gate: C static analysis, C unit boundary tests, PHPT integration tests, and a short libFuzzer smoke. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-c-fuzz.sh` runs deterministic libFuzzer smoke for pure C protocol boundaries. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
+`check-native-development-gate.sh` runs the normal local gate: C static analysis, C unit boundary tests, PHPT integration tests, and a short libFuzzer smoke. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-franken-go-backend.sh` smoke-tests the optional FrankenPHP grpc-go backend in the `dev-franken-grpc-go` compose service, whose image fetches `github.com/dkkoma/frankenphp-grpc-go-client` from GitHub by ref. `check-c-fuzz.sh` runs deterministic libFuzzer smoke for pure C protocol boundaries. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
 
 GitHub Actions runs the development gate and C coverage gate on push and pull request. Coverage is uploaded as a workflow artifact and to Codecov from `var/coverage/c-lcov/codecov.info`; configure `CODECOV_TOKEN` unless the Codecov repository setting allows tokenless public uploads.
 

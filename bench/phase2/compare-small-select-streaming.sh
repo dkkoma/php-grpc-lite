@@ -8,7 +8,8 @@
 # This runner compares:
 #   1. php-grpc-lite HTTP/2 transport
 #   2. official ext-grpc
-#   3. HTTP/2 transport PoC variants when INCLUDE_POC=1
+#   3. FrankenPHP grpc-go backend when INCLUDE_FRANKEN=1
+#   4. HTTP/2 transport PoC variants when INCLUDE_POC=1
 #
 set -euo pipefail
 
@@ -18,6 +19,7 @@ timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 native_response_mode="${NATIVE_RESPONSE_MODE:-stream}"
 include_poc="${INCLUDE_POC:-0}"
+include_franken="${INCLUDE_FRANKEN:-0}"
 warmup_streams="${WARMUP_STREAMS:-3}"
 mkdir -p "$output_dir"
 
@@ -166,6 +168,28 @@ run_poc() {
     append_poc_result "$case_name" "$variant" "$streams" "$message_count" "$payload_bytes" "$file"
 }
 
+run_franken_streaming_diagnostic() {
+    local case_name="$1"
+    local streams="$2"
+    local message_count="$3"
+    local payload_bytes="$4"
+
+    local file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-franken-go.json"
+
+    docker compose run --rm dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/phase2/streaming-diagnostic.php \
+        --suite=small-select-streaming \
+        --implementation=php-grpc-lite \
+        --transport=franken-go \
+        --autoload=vendor/autoload.php \
+        --output="$file" \
+        --streams="$streams" \
+        --warmup-streams="$warmup_streams" \
+        --message-count="$message_count" \
+        --payload-bytes="$payload_bytes" \
+        --native-response-mode="$native_response_mode"
+    append_result "$case_name" php-grpc-lite franken-go "$streams" "$message_count" "$payload_bytes" "$file"
+}
+
 printf "case\timplementation\tvariant\tstreams\tmessages_per_stream\tpayload_bytes\tp50_us\tp99_us\tmessages_per_second\tserver_last_p50_us\tserver_last_p99_us\tclient_residual_p50_us\tclient_residual_p99_us\tjson\n" > "$summary_tsv"
 
 for case_spec in "${cases[@]}"; do
@@ -178,6 +202,10 @@ for case_spec in "${cases[@]}"; do
     docker compose run --rm dev sh -lc \
         "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=small-select-streaming --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_file' --streams=$streams --warmup-streams=$warmup_streams --message-count=$message_count --payload-bytes=$payload_bytes --native-response-mode=$native_response_mode"
     append_result "$case_name" php-grpc-lite "native-$native_response_mode" "$streams" "$message_count" "$payload_bytes" "$native_file"
+
+    if [[ "$include_franken" == "1" ]]; then
+        run_franken_streaming_diagnostic "$case_name" "$streams" "$message_count" "$payload_bytes"
+    fi
 
     run_streaming_diagnostic "$case_name" dev-ext-grpc ext-grpc c-core \
         "$streams" "$message_count" "$payload_bytes" vendor/autoload.php

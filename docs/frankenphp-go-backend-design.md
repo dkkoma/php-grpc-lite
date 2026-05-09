@@ -2,9 +2,9 @@
 
 ## Goal
 
-`php-grpc-lite` keeps the public `Grpc\` surface compatible with the official PHP gRPC package while allowing the transport implementation to be selected at runtime.
+`php-grpc-lite` keeps the public `Grpc\` surface compatible with the official PHP gRPC package while allowing the transport implementation to be selected at channel construction time.
 
-The default backend remains the built-in HTTP/2 transport in `ext/grpc`. When running in FrankenPHP, an optional backend can delegate RPC execution to a FrankenPHP extension backed by `grpc-go`.
+The global default is `grpc_lite.backend=auto`. In normal PHP runtimes this resolves to the built-in HTTP/2 transport in `ext/grpc`. In FrankenPHP runtimes that load the `FrankenGrpc\*` extension surface, `auto` resolves to the optional grpc-go backend.
 
 ## Backend selection
 
@@ -109,3 +109,14 @@ Payloads are serialized protobuf message bytes, not gRPC 5-byte framed messages.
 - Client streaming and bidirectional streaming remain out of scope.
 - TLS/mTLS option mapping depends on the FrankenPHP grpc-go extension contract and must be verified before `auto` is recommended for production TLS workloads.
 - Backend fallback is not performed after channel construction. A selected backend failure is reported as that backend's failure.
+
+## Verification
+
+The repository provides a CI-reproducible smoke environment that builds FrankenPHP with `github.com/dkkoma/frankenphp-grpc-go-client` from GitHub, not from a sibling checkout.
+
+```bash
+docker compose build dev-franken-grpc-go
+docker compose run --rm dev-franken-grpc-go tools/test/check-franken-go-backend.sh
+```
+
+The default fetched ref is `main`; override with `FRANKEN_GRPC_GO_CLIENT_REF=<ref>` when needed.

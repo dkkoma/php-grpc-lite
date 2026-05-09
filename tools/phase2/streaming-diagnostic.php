@@ -68,9 +68,9 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     } elseif ($arg === '--native-transport') {
         $nativeTransport = true;
     } elseif ($arg === '--transport') {
-        ++$argIndex;
+        $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
-        continue;
+        $transport = substr($arg, strlen('--transport='));
     } elseif ($arg === '--native-response-mode') {
         $nativeResponseMode = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--native-response-mode=')) {
@@ -92,6 +92,9 @@ requireAutoload($autoload);
 $clientOptions = [
     'php_grpc_lite.native_response_mode' => $nativeResponseMode,
 ];
+if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
+    $clientOptions['grpc_lite.backend'] = 'franken-go';
+}
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
 for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {

@@ -65,9 +65,9 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     } elseif (str_starts_with($arg, '--max-calls=')) {
         $maxCalls = (int) substr($arg, strlen('--max-calls='));
     } elseif ($arg === '--transport') {
-        ++$argIndex;
+        $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
-        continue;
+        $transport = substr($arg, strlen('--transport='));
     } elseif ($arg === '--diagnostic-rpc') {
         $diagnosticRpc = true;
     } else {
@@ -86,7 +86,11 @@ if (!is_file($autoload)) {
 }
 require $autoload;
 
-$client = UnaryBenchHelper::client($target);
+$clientOptions = [];
+if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
+    $clientOptions['grpc_lite.backend'] = 'franken-go';
+}
+$client = UnaryBenchHelper::client($target, $clientOptions);
 $measurements = [];
 
 foreach ($cases as $case) {

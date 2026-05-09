@@ -12,6 +12,7 @@ output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 duration="${DURATION:-1}"
 warmup_calls="${WARMUP_CALLS:-3}"
 max_calls="${MAX_CALLS:-0}"
+include_franken="${INCLUDE_FRANKEN:-0}"
 mkdir -p "$output_dir"
 
 summary_tsv="$output_dir/phase2-spanner-dml-unary-shape-$timestamp.tsv"
@@ -58,6 +59,20 @@ native_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-native.json"
 docker compose run --rm dev sh -lc \
     "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/unary-shape.php --suite=spanner-dml-unary-shape --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_json' --duration='$duration' --warmup-calls='$warmup_calls' --max-calls='$max_calls'"
 append_results php-grpc-lite native "$native_json"
+
+if [[ "$include_franken" == "1" ]]; then
+    franken_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-franken-go.json"
+    docker compose run --rm dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/phase2/unary-shape.php \
+        --suite=spanner-dml-unary-shape \
+        --implementation=php-grpc-lite \
+        --transport=franken-go \
+        --autoload=vendor/autoload.php \
+        --output="$franken_json" \
+        --duration="$duration" \
+        --warmup-calls="$warmup_calls" \
+        --max-calls="$max_calls"
+    append_results php-grpc-lite franken-go "$franken_json"
+fi
 
 ext_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-ext-grpc.json"
 docker compose run --rm dev-ext-grpc php tools/phase2/unary-shape.php \
