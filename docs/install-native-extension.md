@@ -22,11 +22,12 @@
 - `pkg-config`
 - `libnghttp2`
 - OpenSSL development headers
+- `unzip` for PIE dist archive extraction
 
 Debian系の例:
 
 ```bash
-sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev
+sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev unzip
 ```
 
 ## Install with PIE
@@ -34,7 +35,7 @@ sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl
 依存ライブラリを先に入れる。
 
 ```bash
-sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev
+sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev unzip
 ```
 
 PIEでextensionをinstallする。
@@ -42,6 +43,8 @@ PIEでextensionをinstallする。
 ```bash
 pie install dkkoma/php-grpc-lite
 ```
+
+`unzip` がある場合、PIEはPackagist/GitHubのdist zipを展開できる。`unzip` がない環境ではsource downloadへfallbackし、`git` が必要になる場合がある。
 
 PIEが自動で有効化しない環境では、install先に合わせて `extension=grpc` をPHP設定へ追加する。
 

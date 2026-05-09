@@ -34,6 +34,12 @@ Large bulk streaming remains the main case that should be measured against the a
 
 ## Install
 
+Install build dependencies first. Debian/Ubuntu example:
+
+```bash
+sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev unzip
+```
+
 Install the extension with PIE:
 
 ```bash
@@ -41,6 +47,8 @@ pie install dkkoma/php-grpc-lite
 ```
 
 Then enable `extension=grpc` if PIE did not enable it automatically.
+
+`unzip` lets PIE use the Packagist/GitHub dist archive. Without `unzip`, PIE may fall back to a source download path that requires `git`.
 
 Applications that use generated stubs or gax clients should also install the official PHP wrapper dependency with Composer:
 
