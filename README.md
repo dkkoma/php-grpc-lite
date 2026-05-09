@@ -11,7 +11,7 @@ Current review status:
 - HTTP/2 transport is provided by this repository's source-build extension in `ext/grpc/`.
 - The source-built grpc extension builds a PHP module named `grpc` and produces `grpc.so`.
 - Official `ext-grpc` and this source-built grpc extension must not be loaded at the same time.
-- Runtime transport is nghttp2 only. There is no libcurl fallback and no transport selection option.
+- Default runtime transport is the built-in nghttp2 HTTP/2 backend. An optional FrankenPHP grpc-go backend can be selected with `grpc_lite.backend` when the `FrankenGrpc\*` extension surface is available.
 - Release readiness is still gated by C extension memory/lifecycle QA.
 - Unary and server streaming are the current compatibility scope. Client streaming and bidirectional streaming are not implemented yet.
 
@@ -68,6 +68,25 @@ sudo make install
 ```
 
 Full install notes, verification commands, rollback notes, and large-streaming guidance are in `docs/install-native-extension.md`.
+
+## Backend Selection
+
+The default backend is selected by `grpc_lite.backend=auto`. `auto` uses the FrankenPHP grpc-go backend only when an internal `FrankenGrpc\Channel` class is loaded; otherwise it uses the built-in HTTP/2 backend.
+
+```ini
+grpc_lite.backend=auto
+```
+
+Per-channel override:
+
+```php
+$channel = new Grpc\Channel($endpoint, [
+    'credentials' => Grpc\ChannelCredentials::createInsecure(),
+    'grpc_lite.backend' => 'http2', // auto | http2 | franken-go
+]);
+```
+
+The FrankenPHP backend contract and integration notes are in `docs/frankenphp-go-backend-design.md`.
 
 ## Development
 

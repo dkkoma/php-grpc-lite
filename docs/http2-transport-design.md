@@ -140,7 +140,7 @@ Public `Grpc\` APIは維持する。
 - `getStatus()`
 - `cancel()`
 
-transportはnghttp2の1系統とする。libcurl fallback / transport selection option / environment based switching は持たない。
+通常環境のdefault transportはnghttp2のHTTP/2 backendとする。libcurl fallback は持たない。FrankenPHP環境では `grpc_lite.backend` により、`FrankenGrpc\*` extension surfaceへdelegationするgrpc-go backendを選択できる。backend selectionの詳細は `docs/frankenphp-go-backend-design.md` に集約する。
 
 ```php
 new GreeterClient('test-server:50051', [
