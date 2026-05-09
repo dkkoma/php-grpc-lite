@@ -37,13 +37,13 @@ Large bulk streaming remains the main case that should be measured against the a
 Install build dependencies first. Debian/Ubuntu example:
 
 ```bash
-sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev unzip
+sudo apt-get install -y php-dev build-essential libnghttp2-dev libssl-dev unzip
 ```
 
 Install the extension with PIE:
 
 ```bash
-pie install dkkoma/php-grpc-lite
+pie install dkkoma/php-grpc-lite --auto-install-build-tools --auto-install-system-dependencies
 ```
 
 Then enable `extension=grpc` if PIE did not enable it automatically.

@@ -19,7 +19,6 @@
 - PHP 8.4+
 - PHP development headers / `phpize`
 - C compiler and make
-- `pkg-config`
 - `libnghttp2`
 - OpenSSL development headers
 - zip extractor for PIE/Composer dist archive extraction. Debian/Ubuntuでは `unzip` を推奨する。
@@ -27,7 +26,7 @@
 Debian系の例:
 
 ```bash
-sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev unzip
+sudo apt-get install -y php-dev build-essential libnghttp2-dev libssl-dev unzip
 ```
 
 ## Install with PIE
@@ -35,13 +34,13 @@ sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl
 依存ライブラリを先に入れる。
 
 ```bash
-sudo apt-get install -y php-dev build-essential pkg-config libnghttp2-dev libssl-dev unzip
+sudo apt-get install -y php-dev build-essential libnghttp2-dev libssl-dev unzip
 ```
 
 PIEでextensionをinstallする。
 
 ```bash
-pie install dkkoma/php-grpc-lite
+pie install dkkoma/php-grpc-lite --auto-install-build-tools --auto-install-system-dependencies
 ```
 
 PIEはComposerの通常download経路を使う。安定版ではPackagist/GitHubのdist zipが優先されるため、zip展開手段が必要になる。Debian/Ubuntuでは `unzip` を推奨するが、Composer上はPHP `ext-zip` や `7z` でもよい。zip展開手段がない環境ではsource downloadへfallbackし、`git` が必要になる場合がある。
