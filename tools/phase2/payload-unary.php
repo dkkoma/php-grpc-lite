@@ -26,6 +26,7 @@ $serverCachedPayload = false;
 $curlTraceOutput = null;
 $curlTraceCalls = 0;
 $returnTransferFastPath = false;
+$transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -71,6 +72,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $serverCachedPayload = true;
     } elseif ($arg === '--return-transfer-fast-path') {
         $returnTransferFastPath = true;
+    } elseif ($arg === '--transport') {
+        $transport = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--transport=')) {
+        $transport = substr($arg, strlen('--transport='));
     } elseif ($arg === '--curl-trace-output') {
         $curlTraceOutput = $args[++$argIndex] ?? null;
     } elseif (str_starts_with($arg, '--curl-trace-output=')) {
@@ -109,7 +114,11 @@ if ($curlTraceOutput !== null && $curlTraceOutput !== '') {
     fwrite($curlTraceHandle, "# curl debug trace; timing is relative to call option creation; latency is diagnostic only\n");
 }
 
-$client = UnaryBenchHelper::client($target);
+$clientOptions = [];
+if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
+    $clientOptions['grpc_lite.backend'] = 'franken-go';
+}
+$client = UnaryBenchHelper::client($target, $clientOptions);
 $measurements = [];
 foreach ($payloadSizes as $payloadBytes) {
     $request = UnaryBenchHelper::request($payloadBytes);
@@ -183,6 +192,7 @@ foreach ($payloadSizes as $payloadBytes) {
         'return_transfer_fast_path' => $returnTransferFastPath,
         'curl_trace_output' => $curlTraceOutput,
         'curl_trace_calls' => $curlTraceCalls,
+        'transport' => $transport,
     ], $metrics);
 }
 

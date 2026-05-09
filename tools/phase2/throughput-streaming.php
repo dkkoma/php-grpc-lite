@@ -24,6 +24,7 @@ $messageCount = 1000;
 $payloadBytes = 100;
 $serverDelayMs = 0;
 $warmupStreams = 1;
+$transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -67,6 +68,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $warmupStreams = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--warmup-streams=')) {
         $warmupStreams = (int) substr($arg, strlen('--warmup-streams='));
+    } elseif ($arg === '--transport') {
+        $transport = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--transport=')) {
+        $transport = substr($arg, strlen('--transport='));
     } else {
         usage("unexpected argument: $arg");
     }
@@ -81,7 +86,11 @@ if ($durationSec <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $serverDelay
 
 requireAutoload($autoload);
 
-$client = StreamingBenchHelper::client($target);
+$clientOptions = [];
+if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
+    $clientOptions['grpc_lite.backend'] = 'franken-go';
+}
+$client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes, $serverDelayMs);
 for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {
     StreamingBenchHelper::drain($client, $request);
@@ -124,6 +133,7 @@ $document = ResultContract::document($suite, $implementation, [
         'payload_bytes' => $payloadBytes,
         'server_delay_ms' => $serverDelayMs,
         'concurrency' => 1,
+        'transport' => $transport,
     ], $metrics),
 ]);
 

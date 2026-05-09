@@ -22,6 +22,7 @@ $autoload = 'vendor/autoload.php';
 $streams = 10;
 $messageCount = 100;
 $payloadSizes = [0, 100, 1024, 10 * 1024];
+$transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -57,6 +58,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $payloadSizes = parseIntList($args[++$argIndex] ?? '');
     } elseif (str_starts_with($arg, '--payload-sizes=')) {
         $payloadSizes = parseIntList(substr($arg, strlen('--payload-sizes=')));
+    } elseif ($arg === '--transport') {
+        $transport = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--transport=')) {
+        $transport = substr($arg, strlen('--transport='));
     } else {
         usage("unexpected argument: $arg");
     }
@@ -71,7 +76,11 @@ if ($streams <= 0 || $messageCount <= 0 || $payloadSizes === []) {
 
 requireAutoload($autoload);
 
-$client = StreamingBenchHelper::client($target);
+$clientOptions = [];
+if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
+    $clientOptions['grpc_lite.backend'] = 'franken-go';
+}
+$client = StreamingBenchHelper::client($target, $clientOptions);
 $measurements = [];
 foreach ($payloadSizes as $payloadBytes) {
     $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
@@ -102,6 +111,7 @@ foreach ($payloadSizes as $payloadBytes) {
         'streams' => $streams,
         'message_count' => $messageCount,
         'payload_bytes' => $payloadBytes,
+        'transport' => $transport,
     ], $metrics);
 }
 
