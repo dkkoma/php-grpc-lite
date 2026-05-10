@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
@@ -525,10 +526,22 @@ struct persistent_connection_entry {
 struct server_streaming_call_state {
     grpc_call call;
     zend_string *request;
+    zend_string *path;
+    zval metadata;
     char *recv_buf;
     size_t recv_buf_len;
+    uint64_t start_unix_nanos;
+    uint64_t total_started_us;
+    uint64_t setup_us;
+    uint64_t submit_us;
+    uint64_t initial_send_us;
+    uint64_t recv_loop_us;
+    uint64_t delivered_messages;
+    uint64_t delivered_payload_bytes;
     bool completed;
     bool cancelled;
+    bool persistent_reused;
+    bool telemetry_emitted;
 };
 
 
@@ -630,6 +643,9 @@ static int server_streaming_call_next_resource_diagnostic(zval *server_streaming
 #endif
 static int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv);
 static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key);
+static void grpc_lite_telemetry_emit_unary(const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status, uint64_t start_unix_nanos, uint64_t total_us, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused);
+static void grpc_lite_telemetry_emit_server_streaming(server_streaming_call_state *state, grpc_lite_status_result *status);
+static void grpc_lite_telemetry_clear_handler(void);
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_connections;
@@ -640,6 +656,9 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     zend_long server_streaming_read_ahead_max_messages;
     zend_long server_streaming_read_ahead_max_bytes;
     char *backend;
+    bool telemetry_enabled;
+    char *telemetry_detail_level;
+    zval telemetry_handler;
 ZEND_END_MODULE_GLOBALS(grpc_lite)
 
 ZEND_EXTERN_MODULE_GLOBALS(grpc_lite)

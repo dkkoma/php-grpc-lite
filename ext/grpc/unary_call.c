@@ -80,6 +80,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     int rv;
     zend_long remaining_timeout_us;
     char recv_buf[16384];
+    uint64_t start_unix_nanos = 0;
     uint64_t total_started = 0;
     uint64_t setup_started = 0;
     uint64_t setup_us = 0;
@@ -109,6 +110,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     call.max_response_metadata_bytes = max_response_metadata_bytes;
     grpc_protocol_set_message_header(&call, call.request_len);
+    start_unix_nanos = unix_time_nanos();
     total_started = monotonic_us();
     call.deadline_abs_us = deadline_abs_us;
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
@@ -236,6 +238,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
 	        grpc_lite_unary_add_diagnostic_result(diagnostic_result, &call, connection, &status_result, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
 	    }
 	#endif
+    grpc_lite_telemetry_emit_unary(path, path_len, headers_zv, &call, connection, &status_result, start_unix_nanos, total_started > 0 ? monotonic_us() - total_started : 0, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
 	    clear_connection_call_owner(connection, &call);
 	    zend_string_release(status_result.details);
 	    free_request_headers(&request_headers);

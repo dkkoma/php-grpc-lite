@@ -17,11 +17,17 @@ grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_connection_window
 grpc_lite_phpt_assert_same('32', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'read-ahead messages ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'read-ahead bytes ini');
 grpc_lite_phpt_assert_same('auto', ini_get('grpc_lite.backend'), 'backend ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.telemetry_enabled'), 'telemetry enabled ini');
+grpc_lite_phpt_assert_same('rpc', ini_get('grpc_lite.telemetry_detail_level'), 'telemetry detail level ini');
 
 grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_messages', '4') !== false, 'read-ahead messages can be changed at runtime');
 grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '262144') !== false, 'read-ahead bytes can be changed at runtime');
+grpc_lite_phpt_assert_true(ini_set('grpc_lite.telemetry_enabled', '1') !== false, 'telemetry enabled can be changed at runtime');
+grpc_lite_phpt_assert_true(ini_set('grpc_lite.telemetry_detail_level', 'phase') !== false, 'telemetry detail level can be changed at runtime');
 grpc_lite_phpt_assert_same('4', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'changed read-ahead messages ini');
 grpc_lite_phpt_assert_same('262144', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'changed read-ahead bytes ini');
+grpc_lite_phpt_assert_same('1', ini_get('grpc_lite.telemetry_enabled'), 'changed telemetry enabled ini');
+grpc_lite_phpt_assert_same('phase', ini_get('grpc_lite.telemetry_detail_level'), 'changed telemetry detail level ini');
 grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_messages', '-1') !== false, 'invalid read-ahead messages ini accepted then clamped');
 grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '-1') !== false, 'invalid read-ahead bytes ini accepted then clamped');
 grpc_lite_phpt_assert_same('-1', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'invalid read-ahead messages ini stored');

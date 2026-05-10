@@ -31,6 +31,11 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     char error_detail[256] = {0};
     uint64_t deadline_abs_us = 0;
     zend_long remaining_timeout_us = 0;
+    uint64_t start_unix_nanos = unix_time_nanos();
+    uint64_t total_started_us = monotonic_us();
+    uint64_t setup_started_us = 0;
+    uint64_t submit_started_us = 0;
+    uint64_t initial_send_started_us = 0;
     int rv;
 
     error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
@@ -53,6 +58,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         return FAILURE;
     }
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
+    setup_started_us = monotonic_us();
     connection = get_persistent_connection(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (connection == NULL) {
         if (setup_failure != NULL) {
@@ -92,8 +98,14 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
 
     state = ecalloc(1, sizeof(server_streaming_call_state));
     state->request = zend_string_init(request, request_len, 0);
+    state->path = zend_string_init(path, path_len, 0);
+    ZVAL_COPY(&state->metadata, headers_zv);
     state->recv_buf_len = 65536;
     state->recv_buf = emalloc(state->recv_buf_len);
+    state->start_unix_nanos = start_unix_nanos;
+    state->total_started_us = total_started_us;
+    state->setup_us = monotonic_us() - setup_started_us;
+    state->persistent_reused = persistent_reused;
 
     memset(&state->call, 0, sizeof(state->call));
     state->call.connection = connection;
@@ -144,7 +156,9 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
     data_provider.source.ptr = &state->call;
+    submit_started_us = monotonic_us();
     state->call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
+    state->submit_us = monotonic_us() - submit_started_us;
     if (state->call.stream_id < 0) {
         if (setup_failure != NULL) {
             setup_failure->code = GRPC_STATUS_UNAVAILABLE;
@@ -175,7 +189,9 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         return FAILURE;
     }
 
+    initial_send_started_us = monotonic_us();
     rv = send_pending_h2_frames(connection, &state->call);
+    state->initial_send_us = monotonic_us() - initial_send_started_us;
     if (rv != 0) {
         bool stream_timed_out = state->call.timed_out;
         mark_connection_dead(connection, rv);
@@ -250,6 +266,7 @@ static void server_streaming_call_fill_status_result(grpc_lite_streaming_next_re
     grpc_lite_status_result status_result;
 
     resolve_grpc_call_status(&state->call, state->cancelled, &status_result);
+    grpc_lite_telemetry_emit_server_streaming(state, &status_result);
     result->done = true;
     result->status.code = status_result.code;
     result->status.details = zend_string_copy(status_result.details);
@@ -266,6 +283,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
 {
     server_streaming_call_state *state;
     grpc_call *call;
+    uint64_t recv_loop_started_us;
 
     state = (server_streaming_call_state *) zend_fetch_resource(Z_RES_P(server_streaming_resource_zv), "grpc_lite_server_streaming_call_state", le_server_streaming_call_state);
     if (state == NULL) {
@@ -280,6 +298,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     }
 #endif
 
+    recv_loop_started_us = monotonic_us();
     while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large && !call->response_queue_limit_exceeded) {
         int rv;
         ssize_t nread;
@@ -334,6 +353,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             }
         }
     }
+    state->recv_loop_us += monotonic_us() - recv_loop_started_us;
 
     if (call->response_message_too_large || call->compressed_response_seen || call->malformed_response_frame || call->invalid_content_type || call->unsupported_response_encoding || call->metadata_too_large || call->response_queue_limit_exceeded) {
         server_streaming_call_terminate_with_cancel(state);
@@ -350,6 +370,8 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
         }
         call->response_queue_count--;
         call->response_queue_bytes -= ZSTR_LEN(entry->payload);
+        state->delivered_messages++;
+        state->delivered_payload_bytes += ZSTR_LEN(entry->payload);
         if (typed_result != NULL) {
             typed_result->done = false;
             typed_result->payload = entry->payload;

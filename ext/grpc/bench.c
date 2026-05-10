@@ -2354,6 +2354,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_channel_close, 0, 1, _
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry grpc_lite_functions[] = {
+    PHP_FE(grpc_lite_set_telemetry_handler, arginfo_grpc_lite_set_telemetry_handler)
     PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
     PHP_FE(grpc_lite_server_streaming_open, arginfo_grpc_lite_server_streaming_open)
     PHP_FE(grpc_lite_server_streaming_next, arginfo_grpc_lite_server_streaming_next)

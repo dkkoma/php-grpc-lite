@@ -332,9 +332,19 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *sta
         }
     }
     clear_connection_server_streaming_call_state_owner(state);
+    if (!state->telemetry_emitted && state->path != NULL) {
+        grpc_lite_status_result status_result;
+        resolve_grpc_call_status(&state->call, state->cancelled, &status_result);
+        grpc_lite_telemetry_emit_server_streaming(state, &status_result);
+        zend_string_release(status_result.details);
+    }
     if (state->request != NULL) {
         zend_string_release(state->request);
     }
+    if (state->path != NULL) {
+        zend_string_release(state->path);
+    }
+    zval_ptr_dtor(&state->metadata);
     if (state->recv_buf != NULL) {
         efree(state->recv_buf);
     }
