@@ -16,6 +16,17 @@ include_franken="${INCLUDE_FRANKEN:-0}"
 mkdir -p "$output_dir"
 
 summary_tsv="$output_dir/phase2-spanner-dml-unary-shape-$timestamp.tsv"
+docker_env=()
+for env_name in \
+    BENCH_OTEL_EXPORTER \
+    BENCH_OTEL_EXPORTER_OTLP_ENDPOINT \
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
+    OTEL_EXPORTER_OTLP_ENDPOINT
+do
+    if [[ -n "${!env_name:-}" ]]; then
+        docker_env+=(-e "$env_name=${!env_name}")
+    fi
+done
 
 metric() {
     local file="$1"
@@ -56,13 +67,13 @@ append_results() {
 printf "case\timplementation\tvariant\trequest_bytes\tresponse_bytes\tcalls\tcalls_per_second\tp50_us\tp99_us\tjson\n" > "$summary_tsv"
 
 native_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-native.json"
-docker compose run --rm dev sh -lc \
+docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev sh -lc \
     "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/unary-shape.php --suite=spanner-dml-unary-shape --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_json' --duration='$duration' --warmup-calls='$warmup_calls' --max-calls='$max_calls'"
 append_results php-grpc-lite native "$native_json"
 
 if [[ "$include_franken" == "1" ]]; then
     franken_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-franken-go.json"
-    docker compose run --rm dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/phase2/unary-shape.php \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/phase2/unary-shape.php \
         --suite=spanner-dml-unary-shape \
         --implementation=php-grpc-lite \
         --transport=franken-go \
@@ -75,7 +86,7 @@ if [[ "$include_franken" == "1" ]]; then
 fi
 
 ext_json="$output_dir/phase2-spanner-dml-unary-shape-$timestamp-ext-grpc.json"
-docker compose run --rm dev-ext-grpc php tools/phase2/unary-shape.php \
+docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev-ext-grpc php tools/phase2/unary-shape.php \
     --suite=spanner-dml-unary-shape \
     --implementation=ext-grpc \
     --autoload=vendor/autoload.php \

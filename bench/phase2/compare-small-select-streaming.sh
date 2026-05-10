@@ -24,9 +24,20 @@ warmup_streams="${WARMUP_STREAMS:-3}"
 mkdir -p "$output_dir"
 
 summary_tsv="$output_dir/phase2-small-select-streaming-$timestamp.tsv"
+docker_env=()
+for env_name in \
+    BENCH_OTEL_EXPORTER \
+    BENCH_OTEL_EXPORTER_OTLP_ENDPOINT \
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
+    OTEL_EXPORTER_OTLP_ENDPOINT
+do
+    if [[ -n "${!env_name:-}" ]]; then
+        docker_env+=(-e "$env_name=${!env_name}")
+    fi
+done
 
 if [[ "$include_poc" == "1" ]]; then
-    docker compose run --rm dev sh -lc 'cd ext/grpc && phpize >/tmp/grpc-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-configure.log && make -j$(nproc) >/tmp/grpc-make.log'
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev sh -lc 'cd ext/grpc && phpize >/tmp/grpc-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-configure.log && make -j$(nproc) >/tmp/grpc-make.log'
 fi
 
 declare -a cases=(
@@ -139,7 +150,7 @@ run_streaming_diagnostic() {
 
     local file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-$variant.json"
 
-    docker compose run --rm "$service" php tools/phase2/streaming-diagnostic.php \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$service" php tools/phase2/streaming-diagnostic.php \
         --suite=small-select-streaming \
         --implementation="$implementation" \
         --autoload="$autoload" \
@@ -162,7 +173,7 @@ run_poc() {
 
     local file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-$variant.json"
 
-    docker compose run --rm dev sh -lc \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev sh -lc \
         "php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/ext/grpc/bench.php --rpc=server-stream --iterations=$streams --message-count=$message_count --response-bytes=$payload_bytes --split-grpc-frame --no-copy --poll-loop --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield --recv-stream-window-size=8388608 --recv-connection-window-size=8388608 --recv-buffer-size=32768 $* " \
         > "$file"
     append_poc_result "$case_name" "$variant" "$streams" "$message_count" "$payload_bytes" "$file"
@@ -176,7 +187,7 @@ run_franken_streaming_diagnostic() {
 
     local file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-franken-go.json"
 
-    docker compose run --rm dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/phase2/streaming-diagnostic.php \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/phase2/streaming-diagnostic.php \
         --suite=small-select-streaming \
         --implementation=php-grpc-lite \
         --transport=franken-go \
@@ -199,7 +210,7 @@ for case_spec in "${cases[@]}"; do
     echo "== $case_name: streams=$streams message_count=$message_count payload_bytes=$payload_bytes =="
 
     native_file="$output_dir/phase2-small-select-streaming-$timestamp-$case_name-native-$native_response_mode.json"
-    docker compose run --rm dev sh -lc \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev sh -lc \
         "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/phase2/streaming-diagnostic.php --suite=small-select-streaming --implementation=php-grpc-lite --autoload=vendor/autoload.php --output='$native_file' --streams=$streams --warmup-streams=$warmup_streams --message-count=$message_count --payload-bytes=$payload_bytes --native-response-mode=$native_response_mode"
     append_result "$case_name" php-grpc-lite "native-$native_response_mode" "$streams" "$message_count" "$payload_bytes" "$native_file"
 
