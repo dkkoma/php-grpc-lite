@@ -6,7 +6,7 @@
 - `ext/grpc/tests/helpers.inc`
 - `tests/Integration/*.php`
 - `tests/Integration/Spanner/*.php`
-- `bench/phase2/check-native-phpt.sh`
+- `bench/check-native-phpt.sh`
 - `docs/code-reading-guide.md`
 - `docs/reviews/issues/2026-05-08-phpt-phpunit-boundary-dewey.md`
 - `docs/reviews/issues/2026-05-08-phpt-phpunit-boundary-self-review.md`
@@ -33,7 +33,7 @@
 - Recommended fix: Remove the exact PHPUnit duplicates already represented in `022-error-and-http-validation.phpt` and keep only PHPUnit cases that add distinct value, such as server-streaming compression variants, recovery after stream-local failures, grpc-status leading-zero validation, and multi-RPC compatibility behavior.
 - Fix summary: direct baseline duplicateを追加削減し、`CompressionTest.php` / `HttpValidationTest.php` / `MetadataCompatibilityTest.php` はPHPT baselineにないvariant、recovery、limit、server-streaming互換に絞った。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`; `docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc) >/tmp/grpc-make.log && cd /workspace && php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit'`; manual comparison of `022-error-and-http-validation.phpt` with current `CompressionTest.php` / `HttpValidationTest.php`
+- Verification: `./bench/check-native-phpt.sh`; `docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc) >/tmp/grpc-make.log && cd /workspace && php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit'`; manual comparison of `022-error-and-http-validation.phpt` with current `CompressionTest.php` / `HttpValidationTest.php`
 - Notes: This does not apply to PHPUnit cases that intentionally exercise multi-call recovery, Spanner/wrapper behavior, or larger compatibility matrices.
 
 ### REVIEW-20260508-DEWEY-PHPT-PHPUNIT-002: Test documentation still references removed PHPUnit slices

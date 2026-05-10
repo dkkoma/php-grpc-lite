@@ -42,7 +42,7 @@ BENCH_REQUEST_PAYLOAD_SIZES=1048576 \
 BENCH_MAX_CALLS=1000 \
 BENCH_POC_ITERATIONS=1000 \
 BENCH_POC_POLL_LOOP=1 \
-./bench/phase2/compare-request-upload-transports.sh
+./bench/compare-request-upload-transports.sh
 ```
 
 ## 結果

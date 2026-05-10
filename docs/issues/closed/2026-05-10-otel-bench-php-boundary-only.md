@@ -37,12 +37,12 @@ C拡張内部telemetry recordをactive spanへ付与する設計は、`random_by
 
 ## Verification
 
-- `docker compose run --rm dev sh -lc 'for f in tools/phase2/*.php; do php -l "$f" || exit 1; done'`
+- `docker compose run --rm dev sh -lc 'for f in tools/benchmark/*.php; do php -l "$f" || exit 1; done'`
 - `./tools/test/check-phpt.sh`
 - `./tools/test/check-c-static-analysis.sh`
 - `./tools/test/check-c-unit.sh`
-- `BENCH_TAG=otel-php-boundary-dml-20260510-140115 BENCH_OTEL_RUN_ID=otel-php-boundary-dml-20260510-140115 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces DURATION=30 WARMUP_CALLS=10 MAX_CALLS=1000 BENCH_OTEL_SUMMARY_LIMIT=20000 ./bench/phase2/compare-spanner-dml-unary-shape.sh`
-- `BENCH_TAG=otel-php-boundary-small-select-20260510-140059 BENCH_OTEL_RUN_ID=otel-php-boundary-small-select-20260510-140059 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces WARMUP_STREAMS=10 INCLUDE_FRANKEN=0 INCLUDE_POC=0 BENCH_OTEL_SUMMARY_LIMIT=20000 ./bench/phase2/compare-small-select-streaming.sh`
+- `BENCH_TAG=otel-php-boundary-dml-20260510-140115 BENCH_OTEL_RUN_ID=otel-php-boundary-dml-20260510-140115 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces DURATION=30 WARMUP_CALLS=10 MAX_CALLS=1000 BENCH_OTEL_SUMMARY_LIMIT=20000 ./bench/compare-spanner-dml-unary-shape.sh`
+- `BENCH_TAG=otel-php-boundary-small-select-20260510-140059 BENCH_OTEL_RUN_ID=otel-php-boundary-small-select-20260510-140059 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces WARMUP_STREAMS=10 INCLUDE_FRANKEN=0 INCLUDE_POC=0 BENCH_OTEL_SUMMARY_LIMIT=20000 ./bench/compare-small-select-streaming.sh`
 
 ## Results
 

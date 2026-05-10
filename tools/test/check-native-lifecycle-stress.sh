@@ -16,7 +16,7 @@ valgrind_log="var/bench-results/native-lifecycle-stress-${BENCH_TAG:-$(date +%Y%
 mkdir -p "$(dirname "$valgrind_log")"
 
 php_args="-d extension=/workspace/ext/grpc/modules/grpc.so"
-tool_args="tools/phase2/native-lifecycle-stress.php --iterations=$iterations --message-count=$message_count --payload-bytes=$payload_bytes --sleep-us=$sleep_us"
+tool_args="tools/benchmark/native-lifecycle-stress.php --iterations=$iterations --message-count=$message_count --payload-bytes=$payload_bytes --sleep-us=$sleep_us"
 
 if [[ "$valgrind" == "1" ]]; then
     docker compose run --rm dev sh -lc "

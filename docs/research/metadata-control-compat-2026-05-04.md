@@ -8,7 +8,7 @@ reserved / fixed headers injection と key/value validation の実測記録。
 ## Command
 
 ```sh
-BENCH_TAG=metadata-control-validation-20260504 ./bench/phase2/compare-metadata-control-compat.sh
+BENCH_TAG=metadata-control-validation-20260504 ./bench/compare-metadata-control-compat.sh
 ```
 
 Saved JSON:

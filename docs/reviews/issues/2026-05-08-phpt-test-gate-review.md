@@ -4,7 +4,7 @@
 
 - `ext/grpc/tests/*.phpt`
 - `ext/grpc/tests/helpers.inc`
-- `bench/phase2/check-native-phpt.sh`
+- `bench/check-native-phpt.sh`
 - `AGENTS.md`
 - `README.md`
 - `docs/code-reading-guide.md`
@@ -27,14 +27,14 @@
 - Severity: `High`
 - Status: `Fixed`
 - Reviewer role: `C/PHP extension PHPT test reviewer`, `CI/test architecture reviewer for PHP C extension`
-- Finding: `bench/phase2/check-native-phpt.sh` が `sh -lc` の内側で `set -euo pipefail` を使っている。Debian `/bin/sh` は通常 `dash` であり、`pipefail` はportableではない。
-- Evidence: `bench/phase2/check-native-phpt.sh`
+- Finding: `bench/check-native-phpt.sh` が `sh -lc` の内側で `set -euo pipefail` を使っている。Debian `/bin/sh` は通常 `dash` であり、`pipefail` はportableではない。
+- Evidence: `bench/check-native-phpt.sh`
 - Expected model: PHPT check commandは、宣言済みDocker dev imageで決定的に動く。
 - Why it matters: CI/local verificationがbuild/test前にshell optionで失敗し、PHPT gateとして使えなくなる。
 - Recommended fix: container内の実行shellを `bash -lc` にするか、`pipefail` を外す。
 - Fix summary: `docker compose run --rm dev bash -lc` に変更した。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 - Notes: 11 PHPTすべてpass。
 
 ### REVIEW-20260508-PHPT-002: PHPT helper makes all tests depend on Composer vendor files
@@ -43,13 +43,13 @@
 - Status: `Fixed`
 - Reviewer role: `C/PHP extension PHPT test reviewer`, `CI/test architecture reviewer for PHP C extension`
 - Finding: `helpers.inc` が無条件に `vendor/autoload.php` をrequireしており、load / INI / Timevalなどのextension-only PHPTまでfresh checkoutのComposer未実行状態で失敗する。
-- Evidence: `ext/grpc/tests/helpers.inc`, `bench/phase2/check-native-phpt.sh`
+- Evidence: `ext/grpc/tests/helpers.inc`, `bench/check-native-phpt.sh`
 - Expected model: C拡張surface PHPTは最小依存で動き、Composer fixtureが必要なintegration PHPTだけがautoload前提を持つ。
 - Why it matters: CIの最初のPHPT gateが、C拡張を検証する前にvendor欠落で失敗する。
 - Recommended fix: extension-only helperとintegration helperを分ける、またはautoload requireを必要なPHPTだけに遅延する。runner/docsではComposer前提を明示する。
 - Fix summary: `helpers.inc` のautoload requireを `grpc_lite_phpt_require_autoload()` へ遅延し、integration PHPTの `SKIPIF` でautoload存在確認を行う。runnerは `vendor/autoload.php` をpreflightで必須化した。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 - Notes: extension-only PHPTはautoloadなしでも構文上独立した。
 
 ### REVIEW-20260508-PHPT-003: Network-dependent PHPT tests can be silently skipped in the main gate
@@ -58,13 +58,13 @@
 - Status: `Fixed`
 - Reviewer role: `CI/test architecture reviewer for PHP C extension`
 - Finding: unary / server streaming / metadata / deadline / TLS PHPT は `test-server` が到達不能だとskipする一方、main runnerは全PHPTを1つのgateとして扱う。
-- Evidence: `ext/grpc/tests/010-unary.phpt`, `ext/grpc/tests/011-server-streaming.phpt`, `ext/grpc/tests/020-request-metadata-control.phpt`, `ext/grpc/tests/021-deadline.phpt`, `ext/grpc/tests/030-tls.phpt`, `bench/phase2/check-native-phpt.sh`
+- Evidence: `ext/grpc/tests/010-unary.phpt`, `ext/grpc/tests/011-server-streaming.phpt`, `ext/grpc/tests/020-request-metadata-control.phpt`, `ext/grpc/tests/021-deadline.phpt`, `ext/grpc/tests/030-tls.phpt`, `bench/check-native-phpt.sh`
 - Expected model: main PHPT gateで必要なserviceがない場合は、silent skipではなくpreflight failureにする。
 - Why it matters: CIがgreenでも、transport系PHPTがskipされてcoverageが落ちる可能性がある。
 - Recommended fix: smoke/integration directoryを分けるか、required-service modeでrunnerがrun-tests前に到達性を確認する。
 - Fix summary: `check-native-phpt.sh` で `test-server:50051/50052/50053/50054` のpreflightを追加し、runner経由ではservice欠落をfailureにする。PHPT単体実行時のために各PHPTのskipは残す。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 - Notes: runnerでは11 PHPTすべてpass、skip 0。
 
 ### REVIEW-20260508-PHPT-004: Server streaming PHPT uses tight wall-clock timing thresholds
@@ -79,7 +79,7 @@
 - Recommended fix: PHPTはmessage order/statusのsmokeにし、incremental pacingはPHPUnit/benchへ残す。
 - Fix summary: PHPTからwall-clock timing assertionを削除し、server streamingのmessage listとstatus検証に絞った。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 - Notes: PHPUnit側のincremental yield testは残している。
 
 ### REVIEW-20260508-PHPT-005: TLS PHPT skip checks only one certificate fixture
@@ -94,7 +94,7 @@
 - Recommended fix: `server.crt`, `client.crt`, `client.key` をすべて確認する。
 - Fix summary: `SKIPIF` で3つのcert fixtureを確認するようにした。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 
 ### REVIEW-20260508-PHPT-006: Exception helper can hide wrong failure class for surface tests
 
@@ -108,7 +108,7 @@
 - Recommended fix: helperに期待class引数を追加し、分かる箇所で使う。
 - Fix summary: `grpc_lite_phpt_expect_throw()` に `$expectedClass` を追加し、clone禁止の検証で `Error::class` をassertした。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 
 ### REVIEW-20260508-PHPT-007: PHPT failure artifacts are not ignored or isolated
 
@@ -116,13 +116,13 @@
 - Status: `Fixed`
 - Reviewer role: `CI/test architecture reviewer for PHP C extension`
 - Finding: PHPTをin-place実行すると、失敗時に `.out`, `.diff`, `.exp`, `.log`, generated `.php`, `.sh` が `ext/grpc/tests/` に残る。
-- Evidence: `bench/phase2/check-native-phpt.sh`, `.gitignore`
+- Evidence: `bench/check-native-phpt.sh`, `.gitignore`
 - Expected model: test artifactはignoredにするか、runnerが掃除する。
 - Why it matters: 失敗後のworktreeが汚れ、review diffがノイズになる。
 - Recommended fix: `ext/grpc/tests/` 配下のPHPT artifact ignore patternを追加し、runnerで成功時に掃除する。
 - Fix summary: `.gitignore` にPHPT artifact patternを追加し、runnerの前後でartifactを削除するようにした。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 
 ### REVIEW-20260508-PHPT-008: Docs do not clearly separate PHPT and PHPUnit responsibilities
 
@@ -150,7 +150,7 @@
 - Recommended fix: protocol error/HTTP validation/compressionを1 PHPT、metadata/call-credentialsを1 PHPTとして追加する。
 - Fix summary: `022-error-and-http-validation.phpt` と `023-metadata-and-call-credentials.phpt` を追加した。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 
 ### REVIEW-20260508-PHPT-010: PHPT service preflight has no readiness retry
 
@@ -158,13 +158,13 @@
 - Status: `Fixed`
 - Reviewer role: `CI/test architecture reviewer for PHP C extension`
 - Finding: `check-native-phpt.sh` は Go test-server ports `50051` / `50052` / `50053` / `50054` をpreflightで必須化したが、各portを1回だけ `fsockopen(..., 1.0)` で確認している。`docker compose run` の `depends_on` はservice起動順だけを保証し、test-server readinessは保証しない。
-- Evidence: `bench/phase2/check-native-phpt.sh`, `compose.yaml`
+- Evidence: `bench/check-native-phpt.sh`, `compose.yaml`
 - Expected model: CIの最初のPHPT gateは、required serviceが起動中の短いraceでflaky failureにならない。service欠落はfailure、起動待ちはbounded retryで吸収する。
 - Why it matters: GitHub Actionsなどでimage build直後にPHPT runnerを起動すると、test-serverがまだlistenしていない瞬間にpreflightが失敗し、実装と無関係なCI failureになる可能性がある。
 - Recommended fix: runner側で各portに対して短いretry/backoff付きwait loopを入れる、または `test-server` にhealthcheckを追加してCIがhealthyを待ってからPHPTを実行する。
 - Fix summary: `check-native-phpt.sh` のservice preflightを各port最大30回、100ms間隔のbounded retryにした。service欠落はfailureのまま、起動直後の短いreadiness raceだけ吸収する。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`
+- Verification: `./bench/check-native-phpt.sh`
 
 ## Review Result
 

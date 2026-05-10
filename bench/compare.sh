@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Run the same Phase 2 suite against php-grpc-lite and official ext-grpc.
+# Run the same benchmark suite against php-grpc-lite and official ext-grpc.
 #
 # Usage:
-#   ./bench/phase2/compare.sh throughput-unary
+#   ./bench/compare.sh throughput-unary
 #
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 
 suite="${1:-throughput-unary}"
 if [[ $# -gt 0 ]]; then
@@ -20,18 +20,18 @@ export BENCH_OTEL_RUN_ID="${BENCH_OTEL_RUN_ID:-$timestamp}"
 
 echo
 echo "==========================================="
-echo "  PHASE2 COMPARE: $suite"
+echo "  BENCHMARK COMPARE: $suite"
 echo "  TAG: $BENCH_TAG"
 echo "  OTEL run id: $BENCH_OTEL_RUN_ID"
 echo "==========================================="
 
-BENCH_IMPLEMENTATION=php-grpc-lite ./bench/phase2/run.sh "$suite" "$@"
-BENCH_IMPLEMENTATION=ext-grpc ./bench/phase2/run.sh "$suite" "$@"
+BENCH_IMPLEMENTATION=php-grpc-lite ./bench/run.sh "$suite" "$@"
+BENCH_IMPLEMENTATION=ext-grpc ./bench/run.sh "$suite" "$@"
 
 echo
 echo "Combined OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
 docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
-    tools/phase2/otelop-summary.php \
+    tools/benchmark/otelop-summary.php \
     --run-id="$BENCH_OTEL_RUN_ID" \
     --suite="$suite" \
     --limit="${BENCH_OTEL_SUMMARY_LIMIT:-100000}"

@@ -19,7 +19,7 @@ server streaming large response pathのPoCゴール候補として、以下がex
 比較入口を追加した。
 
 ```bash
-BENCH_TAG=20260503-poc-goal-server-stream bench/phase2/compare-server-stream-poc-goal.sh
+BENCH_TAG=20260503-poc-goal-server-stream bench/compare-server-stream-poc-goal.sh
 ```
 
 出力:
@@ -32,7 +32,7 @@ BENCH_TAG=20260503-poc-goal-server-stream bench/phase2/compare-server-stream-poc
 - RPC: `BenchServerStream`
 - decode/yield込み
 - PoC共通: `--poll-loop --no-copy --flush-after-mem-recv --incremental-decode --response-callback-mode=decode-yield`
-- ext-grpc / php-grpc-lite: `tools/phase2/streaming-diagnostic.php`
+- ext-grpc / php-grpc-lite: `tools/benchmark/streaming-diagnostic.php`
 
 ## 全パターン比較
 

@@ -28,7 +28,7 @@ BENCH_OTEL_EXPORTER=otlp-http \
 BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
 DURATION=30 WARMUP_CALLS=10 MAX_CALLS=1000 \
 BENCH_OTEL_SUMMARY_LIMIT=20000 \
-./bench/phase2/compare-spanner-dml-unary-shape.sh
+./bench/compare-spanner-dml-unary-shape.sh
 ```
 
 OTEL summary:
@@ -58,7 +58,7 @@ BENCH_OTEL_EXPORTER=otlp-http \
 BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
 WARMUP_STREAMS=10 INCLUDE_FRANKEN=0 INCLUDE_POC=0 \
 BENCH_OTEL_SUMMARY_LIMIT=20000 \
-./bench/phase2/compare-small-select-streaming.sh
+./bench/compare-small-select-streaming.sh
 ```
 
 OTEL summary:

@@ -6,9 +6,9 @@ require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
-use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
 array_shift($args);
@@ -209,7 +209,7 @@ function diagnosticUnit(string $name): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite [--calls=50] [--diagnostic-rpc]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite [--calls=50] [--diagnostic-rpc]\n");
     exit(2);
 }
 

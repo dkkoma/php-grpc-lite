@@ -1,6 +1,6 @@
 # Benchmark Guide
 
-このディレクトリはベンチ結果の記録を置く。現在のベンチ実行入口は `bench/phase2/` 配下の専用runnerに集約している。
+このディレクトリはベンチ結果の記録を置く。現在のベンチ実行入口は `bench/` 配下の専用runnerに集約している。
 
 旧ベンチrunner、aggregate parse、regression baseline運用は廃止済み。CIでも使っていないため、通常の性能確認には使わない。
 
@@ -9,17 +9,17 @@
 通常の継続比較は **php-grpc-lite vs 公式 ext-grpc** に固定する。ベンチ結果の一次ソースは `otelop` にexportしたOTEL spanで、JSON/TSV保存やregression baselineは使わない。
 
 ```bash
-./bench/phase2/compare-spanner-dml-unary-shape.sh
-./bench/phase2/compare-small-select-streaming.sh
-./bench/phase2/compare.sh throughput-unary --duration=3
-./bench/phase2/compare.sh rtt-unary --calls=20
+./bench/compare-spanner-dml-unary-shape.sh
+./bench/compare-small-select-streaming.sh
+./bench/compare.sh throughput-unary --duration=3
+./bench/compare.sh rtt-unary --calls=20
 ```
 
 `BENCH_TAG` または `BENCH_OTEL_RUN_ID` でrun idを固定できる。runnerはcompose内の `otelop` を起動し、デフォルトで `http://otelop:4318/v1/traces` へOTLP/HTTP exportする。
 
 ```bash
-BENCH_OTEL_RUN_ID=local-dml ./bench/phase2/compare-spanner-dml-unary-shape.sh
-BENCH_OTEL_RUN_ID=local-small-select ./bench/phase2/compare-small-select-streaming.sh
+BENCH_OTEL_RUN_ID=local-dml ./bench/compare-spanner-dml-unary-shape.sh
+BENCH_OTEL_RUN_ID=local-small-select ./bench/compare-small-select-streaming.sh
 ```
 
 ## Runner
@@ -27,8 +27,8 @@ BENCH_OTEL_RUN_ID=local-small-select ./bench/phase2/compare-small-select-streami
 単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `vendor/autoload.php` を使う。実行後は同じrun idのspanを `otelop-summary.php` で集計する。
 
 ```bash
-./bench/phase2/run.sh throughput-unary --duration=5 --payload-bytes=100
-BENCH_IMPLEMENTATION=ext-grpc ./bench/phase2/run.sh throughput-unary --duration=5 --payload-bytes=100
+./bench/run.sh throughput-unary --duration=5 --payload-bytes=100
+BENCH_IMPLEMENTATION=ext-grpc ./bench/run.sh throughput-unary --duration=5 --payload-bytes=100
 ```
 
 ## OTEL export
@@ -37,10 +37,10 @@ BENCH_IMPLEMENTATION=ext-grpc ./bench/phase2/run.sh throughput-unary --duration=
 
 ```bash
 BENCH_OTEL_RUN_ID=local-otel \
-./bench/phase2/compare-spanner-dml-unary-shape.sh
+./bench/compare-spanner-dml-unary-shape.sh
 
 docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
-  tools/phase2/otelop-summary.php \
+  tools/benchmark/otelop-summary.php \
   --run-id=local-otel \
   --suite=spanner-dml-unary-shape
 ```
@@ -70,5 +70,5 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 
 ## 記録済みの比較
 
-- [Phase 2 preliminary comparison 2026-04-28](./phase2-preliminary-comparison-2026-04-28.md)
-- [Phase 2 decision comparison 2026-04-29](./phase2-decision-comparison-2026-04-29.md)
+- [Benchmark preliminary comparison 2026-04-28](./benchmark-preliminary-comparison-2026-04-28.md)
+- [Benchmark decision comparison 2026-04-29](./benchmark-decision-comparison-2026-04-29.md)

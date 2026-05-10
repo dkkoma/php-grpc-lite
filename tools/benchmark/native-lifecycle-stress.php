@@ -6,7 +6,7 @@ require __DIR__ . '/StreamingBenchHelper.php';
 use Grpc\ChannelCredentials;
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
-use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 
 $args = $argv;
 array_shift($args);
@@ -254,6 +254,6 @@ function nullableDelta(?int $current, ?int $base): ?int
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/native-lifecycle-stress.php [--iterations=100] [--message-count=20] [--payload-bytes=1024] [--sleep-us=50000]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/native-lifecycle-stress.php [--iterations=100] [--message-count=20] [--payload-bytes=1024] [--sleep-us=50000]\n");
     exit(2);
 }

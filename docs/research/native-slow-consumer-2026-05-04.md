@@ -9,7 +9,7 @@ server streaming native stream resourceが、consumerが遅い条件で無制限
 ## Runner
 
 ```bash
-STREAMS=5 MESSAGE_COUNT=100 PAYLOAD_BYTES=102400 SLEEP_US=1000 BENCH_TAG=20260504-slow-consumer-100x100k-rss bench/phase2/check-native-slow-consumer.sh
+STREAMS=5 MESSAGE_COUNT=100 PAYLOAD_BYTES=102400 SLEEP_US=1000 BENCH_TAG=20260504-slow-consumer-100x100k-rss bench/check-native-slow-consumer.sh
 ```
 
 summary: `var/bench-results/phase2-slow-consumer-surface-20260504-slow-consumer-100x100k-rss.tsv`
@@ -37,7 +37,7 @@ summary: `var/bench-results/phase2-slow-consumer-surface-20260504-slow-consumer-
 ## Smoke
 
 ```bash
-STREAMS=2 MESSAGE_COUNT=5 PAYLOAD_BYTES=1024 SLEEP_US=1000 BENCH_TAG=20260504-slow-consumer-smoke3 bench/phase2/check-native-slow-consumer.sh
+STREAMS=2 MESSAGE_COUNT=5 PAYLOAD_BYTES=1024 SLEEP_US=1000 BENCH_TAG=20260504-slow-consumer-smoke3 bench/check-native-slow-consumer.sh
 ```
 
 summary: `var/bench-results/phase2-slow-consumer-surface-20260504-slow-consumer-smoke3.tsv`

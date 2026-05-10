@@ -193,6 +193,6 @@ function percentile(array $sortedValues, float $percentile): float
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/otelop-summary.php --run-id=<BENCH_OTEL_RUN_ID> [--suite=spanner-dml-unary-shape] [--endpoint=http://otelop:4319/graphql] [--limit=100000]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/otelop-summary.php --run-id=<BENCH_OTEL_RUN_ID> [--suite=spanner-dml-unary-shape] [--endpoint=http://otelop:4319/graphql] [--limit=100000]\n");
     exit(2);
 }

@@ -35,7 +35,7 @@ PoC best 条件:
 
 比較対象:
 
-- `ext-grpc`: `tools/phase2/streaming-diagnostic.php`
+- `ext-grpc`: `tools/benchmark/streaming-diagnostic.php`
 - `php-grpc-lite`: 同上
 
 ## 結果

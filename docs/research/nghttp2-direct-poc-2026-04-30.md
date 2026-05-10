@@ -98,7 +98,7 @@ blocking `send()` / `recv()` の単純ループを外すため、copy 経路で 
 
 100KB でも total p99 は upload done p99 より response header / server InPayload p99 に寄る。512KB 以上では upload done p99 も増えるが、total p99 の主成分は引き続き response header / server InPayload 側にある。2MB では upload done p99 が 1.7ms まで伸びるため client送信側の比率も上がるが、それでも response header p99 4.27msとの差が残る。
 
-同じ Go test-server / server stats 条件で ext-grpc も 100KB / 512KB / 1MB / 2MB を各 3 run 測った。実行入口は `bench/phase2/run.sh request-unary-diagnostic`、各 run は warmup 10 calls 後に最大 1000 calls。
+同じ Go test-server / server stats 条件で ext-grpc も 100KB / 512KB / 1MB / 2MB を各 3 run 測った。実行入口は `bench/run.sh request-unary-diagnostic`、各 run は warmup 10 calls 後に最大 1000 calls。
 
 | request | calls/s median | p50 median | p99 median | p99 range | server InPayload p99 median | server OutHeader p99 median |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -118,7 +118,7 @@ PoC の request size sweep と並べると、512KB 以上では ext-grpc の ser
 
 ただし `client_upload_complete_us` は client が最後の DATA を socket buffer に書き終えた時刻であり、server が受信完了した時刻ではない。PoC の upload done p99 が小さくても server InPayload p99 が大きいのは矛盾ではなく、kernel buffer 以降の送出、HTTP/2 flow control、server側受信処理、Docker scheduler を含む区間が残っていることを示す。
 
-flow-control / scheduler 側をさらに見るため、PoC に call 単位の `WINDOW_UPDATE`、remote window、flow-control pause、write syscall 最大時間、tail sample を追加した。再実行用の入口は `bench/phase2/nghttp2-poc-flow-sweep.sh`。下表は `split + no-copy + server stats`、各 1000 calls の単発 run。
+flow-control / scheduler 側をさらに見るため、PoC に call 単位の `WINDOW_UPDATE`、remote window、flow-control pause、write syscall 最大時間、tail sample を追加した。再実行用の入口は `bench/nghttp2-poc-flow-sweep.sh`。下表は `split + no-copy + server stats`、各 1000 calls の単発 run。
 
 | request | p50 | p99 | upload p99 | response header p99 | server InPayload p99 | first WINDOW_UPDATE p99 | last WINDOW_UPDATE p99 | WINDOW_UPDATE p99 | flow pause p99 | max write syscall p99 |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -131,7 +131,7 @@ flow-control / scheduler 側をさらに見るため、PoC に call 単位の `W
 
 したがって、現時点で見えている問題を「client側でremote windowが0になり、DATA readがPAUSEしている」とは言い切れない。より正確には、kernel buffer へ早く書き終わった後、server側HTTP/2 read loopがrequest全体をgRPC payloadとして引き上げるまで、またはhandler後にresponse headerを返すまでの区間でtailが出ている。HTTP/2 flow-controlは関与しているが、nghttp2 client API上の単純なwindow枯渇待ちではなく、gRPC-Go transport、Docker network、OS scheduler、Go scheduler を含む境界として扱うべき。
 
-同じ test-server container を `--force-recreate` してから、php-grpc-lite / ext-grpc / nghttp2 PoC を続けて測る入口として `bench/phase2/compare-request-upload-transports.sh` を追加した。この比較は server 条件を揃え、client実装差とserver側tailの混入を分けるためのもの。下表は `BENCH_TAG=same-server-upload-20260501` の単発 run。
+同じ test-server container を `--force-recreate` してから、php-grpc-lite / ext-grpc / nghttp2 PoC を続けて測る入口として `bench/compare-request-upload-transports.sh` を追加した。この比較は server 条件を揃え、client実装差とserver側tailの混入を分けるためのもの。下表は `BENCH_TAG=same-server-upload-20260501` の単発 run。
 
 | impl | request | calls/s | p50 | p99 | server InPayload p99 | server OutHeader p99 |
 |---|---:|---:|---:|---:|---:|---:|

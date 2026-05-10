@@ -82,14 +82,14 @@ ext-grpc and franken-go also get the same outer measurement/rpc spans, but witho
 
 ## Verification
 
-- `docker compose run --rm dev sh -lc 'for f in tools/phase2/BenchTelemetry.php tools/phase2/unary-shape.php tools/phase2/streaming-diagnostic.php tools/phase2/otelop-summary.php; do php -l "$f" || exit 1; done'`
+- `docker compose run --rm dev sh -lc 'for f in tools/benchmark/BenchTelemetry.php tools/benchmark/unary-shape.php tools/benchmark/streaming-diagnostic.php tools/benchmark/otelop-summary.php; do php -l "$f" || exit 1; done'`
 - `docker compose up -d --force-recreate otelop`
-- `BENCH_OTEL_RUN_ID=otel-unified-smoke-20260510-111017 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces DURATION=0.05 WARMUP_CALLS=1 MAX_CALLS=5 ./bench/phase2/compare-spanner-dml-unary-shape.sh`
-- `docker compose run --rm -e BENCH_OTEL_RUN_ID=otel-unified-smoke-20260510-111017 dev php tools/phase2/otelop-summary.php --run-id=otel-unified-smoke-20260510-111017 --suite=spanner-dml-unary-shape --limit=100000`
-- `BENCH_OTEL_RUN_ID=otel-unified-stream-smoke-20260510-111318 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces WARMUP_STREAMS=1 INCLUDE_FRANKEN=0 INCLUDE_POC=0 ./bench/phase2/compare-small-select-streaming.sh`
-- `docker compose run --rm -e BENCH_OTEL_RUN_ID=otel-unified-stream-smoke-20260510-111318 dev php tools/phase2/otelop-summary.php --run-id=otel-unified-stream-smoke-20260510-111318 --suite=small-select-streaming --limit=20000`
-- `BENCH_OTEL_RUN_ID=otel-phase2-general-smoke-20260510-111652 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces ./bench/phase2/run.sh throughput-unary --duration=0.05 --warmup-calls=1`
-- `docker compose run --rm -e BENCH_OTEL_RUN_ID=otel-phase2-general-smoke-20260510-111652 dev php tools/phase2/otelop-summary.php --run-id=otel-phase2-general-smoke-20260510-111652 --suite=throughput-unary --limit=20000`
+- `BENCH_OTEL_RUN_ID=otel-unified-smoke-20260510-111017 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces DURATION=0.05 WARMUP_CALLS=1 MAX_CALLS=5 ./bench/compare-spanner-dml-unary-shape.sh`
+- `docker compose run --rm -e BENCH_OTEL_RUN_ID=otel-unified-smoke-20260510-111017 dev php tools/benchmark/otelop-summary.php --run-id=otel-unified-smoke-20260510-111017 --suite=spanner-dml-unary-shape --limit=100000`
+- `BENCH_OTEL_RUN_ID=otel-unified-stream-smoke-20260510-111318 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces WARMUP_STREAMS=1 INCLUDE_FRANKEN=0 INCLUDE_POC=0 ./bench/compare-small-select-streaming.sh`
+- `docker compose run --rm -e BENCH_OTEL_RUN_ID=otel-unified-stream-smoke-20260510-111318 dev php tools/benchmark/otelop-summary.php --run-id=otel-unified-stream-smoke-20260510-111318 --suite=small-select-streaming --limit=20000`
+- `BENCH_OTEL_RUN_ID=otel-phase2-general-smoke-20260510-111652 BENCH_OTEL_EXPORTER=otlp-http BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces ./bench/run.sh throughput-unary --duration=0.05 --warmup-calls=1`
+- `docker compose run --rm -e BENCH_OTEL_RUN_ID=otel-phase2-general-smoke-20260510-111652 dev php tools/benchmark/otelop-summary.php --run-id=otel-phase2-general-smoke-20260510-111652 --suite=throughput-unary --limit=20000`
 
 Confirmed:
 

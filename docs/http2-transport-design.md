@@ -4,7 +4,7 @@
 
 公式 `ext-grpc` のdrop-in surfaceを保ちながら、HTTP/2 transportをC extension内で直接制御する。
 
-目的はext-grpcの完全再実装ではなく、Phase 2で確認した性能上の本筋改善をproduction extensionへ移すこと。
+目的はext-grpcの完全再実装ではなく、探索ベンチで確認した性能上の本筋改善をproduction extensionへ移すこと。
 
 ## Architecture
 
@@ -194,7 +194,7 @@ HTTP/2 transportで通す必要があるもの:
 - max receive message length
 - compression unsupported explicit error
 
-互換性・制御系は `docs/compatibility-control-checklist.md` に沿って追加する。Phase 2ではHTTP/2 surfaceでTLS/mTLS、metadata/status/compression/error semanticsの代表条件を検証済み。実装進捗や検証途中の制限は `docs/research/` に残し、このdesign docには最終設計として満たすべき形だけを書く。
+互換性・制御系は `docs/compatibility-control-checklist.md` に沿って追加する。HTTP/2 surfaceではTLS/mTLS、metadata/status/compression/error semanticsの代表条件を検証済み。実装進捗や検証途中の制限は `docs/research/` に残し、このdesign docには最終設計として満たすべき形だけを書く。
 
 ## Benchmark Requirements
 

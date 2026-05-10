@@ -42,7 +42,7 @@ $client = new ExampleGrpcClient(
 
 ## Benchmark OTEL export
 
-Phase 2 ベンチは任意で `otelop` へOTLP/HTTP exportできる。計測境界はphp-grpc-lite、公式 ext-grpc、franken-goで共通のPHP runner外側境界に揃える。
+Benchmark ベンチは任意で `otelop` へOTLP/HTTP exportできる。計測境界はphp-grpc-lite、公式 ext-grpc、franken-goで共通のPHP runner外側境界に揃える。
 
 - RPC開始直前に `hrtime(true)` を取る。
 - RPC完了直後に `hrtime(true)` を取る。
@@ -59,10 +59,10 @@ docker compose up -d otelop
 BENCH_OTEL_EXPORTER=otlp-http \
 BENCH_OTEL_RUN_ID=local-otel \
 BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
-./bench/phase2/compare-spanner-dml-unary-shape.sh
+./bench/compare-spanner-dml-unary-shape.sh
 
 docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
-  tools/phase2/otelop-summary.php \
+  tools/benchmark/otelop-summary.php \
   --run-id=local-otel \
   --suite=spanner-dml-unary-shape
 ```

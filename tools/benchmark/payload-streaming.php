@@ -6,10 +6,10 @@ require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
-use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
 array_shift($args);
@@ -136,7 +136,7 @@ function parseIntList(string $value): array
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/payload-streaming.php --suite=payload-streaming --implementation=php-grpc-lite [--streams=10] [--message-count=100] [--payload-sizes=0,100,1024,10240]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/payload-streaming.php --suite=payload-streaming --implementation=php-grpc-lite [--streams=10] [--message-count=100] [--payload-sizes=0,100,1024,10240]\n");
     exit(2);
 }
 

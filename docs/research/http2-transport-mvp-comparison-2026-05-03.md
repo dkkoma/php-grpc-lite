@@ -13,7 +13,7 @@ Phase 2 のチェックポイントとして、以下の三者を同じGo test-s
 ## 再実行方法
 
 ```bash
-BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-libcurl-ext.sh
+BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/compare-native-mvp-vs-libcurl-ext.sh
 ```
 
 出力:

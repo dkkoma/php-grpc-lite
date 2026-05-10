@@ -12,7 +12,7 @@ output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 requests="${REQUESTS:-10}"
 mkdir -p "$output_dir"
 
-json="$output_dir/phase2-native-fpm-lifecycle-$timestamp.json"
+json="$output_dir/benchmark-native-fpm-lifecycle-$timestamp.json"
 
 docker compose run --rm dev sh -lc "
     cd /workspace/ext/grpc &&
@@ -27,7 +27,7 @@ docker compose run --rm dev sh -lc "
     cd /workspace
     responses=''
     for i in \$(seq 1 $requests); do
-        response=\$(SCRIPT_FILENAME=/workspace/tools/phase2/native-fpm-lifecycle-request.php \
+        response=\$(SCRIPT_FILENAME=/workspace/tools/benchmark/native-fpm-lifecycle-request.php \
             REQUEST_METHOD=GET \
             cgi-fcgi -bind -connect fpm-lifecycle:9000)
         body=\$(printf '%s' \"\$response\" | awk 'BEGIN{body=0} body{print} /^\\r?$/{body=1}')

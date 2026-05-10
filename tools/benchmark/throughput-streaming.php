@@ -3,23 +3,26 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
 array_shift($args);
 
-$suite = 'throughput-unary';
+$suite = 'throughput-streaming';
 $implementation = 'php-grpc-lite';
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $durationSec = 3.0;
+$messageCount = 1000;
 $payloadBytes = 100;
 $serverDelayMs = 0;
-$warmupCalls = 10;
+$warmupStreams = 1;
 $transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
@@ -44,6 +47,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $durationSec = (float) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--duration=')) {
         $durationSec = (float) substr($arg, strlen('--duration='));
+    } elseif ($arg === '--message-count') {
+        $messageCount = (int) ($args[++$argIndex] ?? 0);
+    } elseif (str_starts_with($arg, '--message-count=')) {
+        $messageCount = (int) substr($arg, strlen('--message-count='));
     } elseif ($arg === '--payload-bytes') {
         $payloadBytes = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--payload-bytes=')) {
@@ -52,10 +59,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $serverDelayMs = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--server-delay-ms=')) {
         $serverDelayMs = (int) substr($arg, strlen('--server-delay-ms='));
-    } elseif ($arg === '--warmup-calls') {
-        $warmupCalls = (int) ($args[++$argIndex] ?? -1);
-    } elseif (str_starts_with($arg, '--warmup-calls=')) {
-        $warmupCalls = (int) substr($arg, strlen('--warmup-calls='));
+    } elseif ($arg === '--warmup-streams') {
+        $warmupStreams = (int) ($args[++$argIndex] ?? -1);
+    } elseif (str_starts_with($arg, '--warmup-streams=')) {
+        $warmupStreams = (int) substr($arg, strlen('--warmup-streams='));
     } elseif ($arg === '--transport') {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
@@ -68,8 +75,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
 if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
     usage('suite, implementation, target, and autoload are required');
 }
-if ($durationSec <= 0 || $payloadBytes < 0 || $serverDelayMs < 0 || $warmupCalls < 0) {
-    usage('duration, payload-bytes, server-delay-ms, and warmup-calls must be non-negative');
+if ($durationSec <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $serverDelayMs < 0 || $warmupStreams < 0) {
+    usage('duration, message-count, payload-bytes, server-delay-ms, and warmup-streams must be valid');
 }
 
 requireAutoload($autoload);
@@ -80,79 +87,64 @@ $clientOptions = [];
 if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
     $clientOptions['grpc_lite.backend'] = 'franken-go';
 }
-$client = UnaryBenchHelper::client($target, $clientOptions);
-$request = UnaryBenchHelper::request($payloadBytes, $serverDelayMs);
-$benchTelemetry->setContext('throughput_unary', [
+$client = StreamingBenchHelper::client($target, $clientOptions);
+$request = StreamingBenchHelper::request($messageCount, $payloadBytes, $serverDelayMs);
+$benchTelemetry->setContext('throughput_streaming', [
     'benchmark.target' => $target,
     'benchmark.duration_sec' => $durationSec,
+    'benchmark.message_count' => $messageCount,
     'benchmark.payload_bytes' => $payloadBytes,
     'benchmark.server_delay_ms' => $serverDelayMs,
-    'benchmark.warmup_calls' => $warmupCalls,
+    'benchmark.warmup_streams' => $warmupStreams,
     'benchmark.transport' => $transport,
 ]);
-for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
-    UnaryBenchHelper::call($client, $request);
+for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {
+    StreamingBenchHelper::drain($client, $request);
 }
 
-$latenciesNs = [];
+$streamLatenciesNs = [];
 $deadlineNs = (int) round($durationSec * 1_000_000_000);
-$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $benchTelemetry, &$latenciesNs): int {
+$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $benchTelemetry, &$streamLatenciesNs): int {
     $startedNs = hrtime(true);
-    $calls = 0;
+    $messages = 0;
 
     do {
-        $callStartNs = hrtime(true);
-        UnaryBenchHelper::call($client, $request);
-        $callEndNs = hrtime(true);
-        $benchTelemetry->recordRpcSpan('BenchUnary', $callStartNs, $callEndNs, [
+        $streamStartNs = hrtime(true);
+        $messages += StreamingBenchHelper::drain($client, $request);
+        $streamEndNs = hrtime(true);
+        $benchTelemetry->recordRpcSpan('BenchServerStream', $streamStartNs, $streamEndNs, [
             'rpc.service' => 'helloworld.Greeter',
-            'rpc.method' => 'BenchUnary',
+            'rpc.method' => 'BenchServerStream',
             'benchmark.phase' => 'measurement',
         ]);
-        $latenciesNs[] = $callEndNs - $callStartNs;
-        $calls++;
+        $streamLatenciesNs[] = $streamEndNs - $streamStartNs;
     } while (hrtime(true) - $startedNs < $deadlineNs);
 
-    return $calls;
+    return $messages;
 });
 
-$calls = $sample['result'];
+$messages = $sample['result'];
+$streams = count($streamLatenciesNs);
 $metrics = $sample['metrics'];
 $elapsedSec = $metrics['wall_time_ns_total']['value'] / 1_000_000_000;
-$percentiles = UnaryBenchHelper::percentiles($latenciesNs);
-$metrics['calls_total'] = [
-    'value' => $calls,
-    'unit' => 'calls',
-];
-$metrics['calls_per_second'] = [
-    'value' => $calls / $elapsedSec,
-    'unit' => 'calls/s',
-];
-$metrics['wall_time_ns_per_call'] = [
-    'value' => $metrics['wall_time_ns_total']['value'] / $calls,
-    'unit' => 'ns/call',
-];
-$metrics['diagnostic_cpu_total_us_per_call'] = [
-    'value' => $metrics['diagnostic_cpu_total_us_total']['value'] / $calls,
-    'unit' => 'us/call',
-];
+$percentiles = UnaryBenchHelper::percentiles($streamLatenciesNs);
+$metrics['streams_total'] = ['value' => $streams, 'unit' => 'streams'];
+$metrics['messages_total'] = ['value' => $messages, 'unit' => 'messages'];
+$metrics['streams_per_second'] = ['value' => $streams / $elapsedSec, 'unit' => 'streams/s'];
+$metrics['messages_per_second'] = ['value' => $messages / $elapsedSec, 'unit' => 'messages/s'];
+$metrics['wall_time_ns_per_message'] = ['value' => $metrics['wall_time_ns_total']['value'] / $messages, 'unit' => 'ns/message'];
 foreach ($percentiles as $name => $value) {
-    $metrics['latency_' . $name . '_ns'] = [
-        'value' => $value,
-        'unit' => 'ns',
-    ];
+    $metrics['stream_latency_' . $name . '_ns'] = ['value' => $value, 'unit' => 'ns'];
 }
 
 
 echo "OTEL spans exported.\n";
 
+
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(
-        STDERR,
-        "Usage: php tools/phase2/throughput-unary.php --suite=throughput-unary --implementation=php-grpc-lite [--target=test-server:50051] [--duration=3] [--payload-bytes=100] [--server-delay-ms=0]\n",
-    );
+    fwrite(STDERR, "Usage: php tools/benchmark/throughput-streaming.php --suite=throughput-streaming --implementation=php-grpc-lite [--duration=3] [--message-count=1000] [--payload-bytes=100]\n");
     exit(2);
 }
 

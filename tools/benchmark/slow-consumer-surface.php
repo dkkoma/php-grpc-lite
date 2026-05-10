@@ -5,9 +5,9 @@ require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
-use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
 array_shift($args);
@@ -158,6 +158,6 @@ printf(
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/slow-consumer-surface.php [--implementation=php-grpc-lite|ext-grpc] [--sleep-us=1000]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/slow-consumer-surface.php [--implementation=php-grpc-lite|ext-grpc] [--sleep-us=1000]\n");
     exit(2);
 }

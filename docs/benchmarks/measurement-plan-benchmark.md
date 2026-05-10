@@ -254,7 +254,7 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 | baseline | regression baseline は Phase 1 と同じく php-grpc-lite 自身の回帰検知用。Phase 2 の探索結果を baseline に混ぜない |
 | script boundary | PHPBench で自然に表せるものは `bench/run.sh` 系、sustained / p99 / diagnostic CPU 集計のような独立 runner が自然なものは専用 CLI に分ける |
 
-この contract は `docs/benchmarks/schemas/phase2-result-v1.md` に固定する。実行入口は通常比較の `bench/run.sh` ではなく `bench/phase2/run.sh` に分離する。
+この contract は `docs/benchmarks/schemas/phase2-result-v1.md` に固定する。実行入口は通常比較の `bench/run.sh` ではなく `bench/run.sh` に分離する。
 
 ### 7.2 コミット単位の候補
 
@@ -277,7 +277,7 @@ PHPBench は標準で `mem_peak` を出すが、bench iteration 末の値。**it
 | 条件 | 見直す内容 |
 |---|---|
 | PHPBench の aggregate から必要な p99 / throughput / diagnostic CPU が自然に取れない | 専用 runner を主にし、PHPBench は latency smoke に限定する |
-| `bench/run.sh` の分岐が suite orchestration 以上の責務を持ち始める | `bench/phase2/*.sh` または PHP CLI runner に分離する |
+| `bench/run.sh` の分岐が suite orchestration 以上の責務を持ち始める | `bench/*.sh` または PHP CLI runner に分離する |
 | JSON schema が PHPBench 抽出結果と sustained runner で乖離する | Phase 2 用 result schema を別に定義し、変換 layer を作る |
 | Toxiproxy / load generator / test-server 初期化が通常比較に影響する | Phase 2 専用 compose profile または専用 script に隔離する |
 | 1 suite が長時間化して regression baseline 運用に混ざる | exploratory suite と regression suite を明確に分ける |

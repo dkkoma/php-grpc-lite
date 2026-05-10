@@ -6,7 +6,7 @@
 - `ext/grpc/tests/helpers.inc`
 - `tests/Integration/*.php`
 - `tests/Integration/Spanner/*.php`
-- `bench/phase2/check-native-phpt.sh`
+- `bench/check-native-phpt.sh`
 - `AGENTS.md`
 - `README.md`
 - `docs/code-reading-guide.md`
@@ -56,7 +56,7 @@
 - Recommended fix: PHPTと同一責務のPHPUnitを削除し、PHPUnitに残すケースはPHPTで扱わない追加variantだけにする。
 - Fix summary: 直接重複するPHPUnit 7ファイルを削除し、TLS/mTLS/HTTP validation/compression/metadata compatibilityの重複メソッドを削除した。PHPUnitは79 testsから36 testsへ減った。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`; `docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc) >/tmp/grpc-make.log && cd /workspace && php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit'`
+- Verification: `./bench/check-native-phpt.sh`; `docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc) >/tmp/grpc-make.log && cd /workspace && php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit'`
 - Notes: PHPUnit側に残したdeadline、compression、metadata compatibilityはPHPT baselineとは別のedge/integration責務として扱う。
 
 ## Review Result

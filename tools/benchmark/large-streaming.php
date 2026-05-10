@@ -5,9 +5,9 @@ require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 
 $args = $argv;
 array_shift($args);
@@ -106,7 +106,7 @@ function parseIntList(string $value): array
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/large-streaming.php --suite=large-streaming --implementation=php-grpc-lite [--message-counts=10000,100000] [--payload-bytes=100]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/large-streaming.php --suite=large-streaming --implementation=php-grpc-lite [--message-counts=10000,100000] [--payload-bytes=100]\n");
     exit(2);
 }
 

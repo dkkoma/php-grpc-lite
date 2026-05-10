@@ -16,8 +16,8 @@ php-grpc-lite の large request / small response 経路について、PHP userla
 再現用入口:
 
 ```bash
-./bench/phase2/build-instrumented-libcurl.sh
-./bench/phase2/run-instrumented-libcurl-upload.sh
+./bench/build-instrumented-libcurl.sh
+./bench/run-instrumented-libcurl-upload.sh
 ```
 
 ## 計測条件

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace PhpGrpcLite\Tools\Phase2;
+namespace PhpGrpcLite\Tools\Benchmark;
 
 final class ResourceSampler
 {

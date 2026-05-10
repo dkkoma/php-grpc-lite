@@ -10,7 +10,7 @@ transport性能比較ではなく、small SELECT benchmarkのpayload/message-cou
 
 ```bash
 docker compose run --rm -e PHP_GRPC_LITE_TRANSPORT=curl dev \
-  php tools/phase2/spanner-streaming-shape.php \
+  php tools/benchmark/spanner-streaming-shape.php \
   --output=var/bench-results/spanner-streaming-shape-20260503-dml.json
 ```
 
@@ -95,4 +95,4 @@ BeginTransaction -> ExecuteSql(DML) -> Commit
 - small SELECT benchmarkは1 messageケースだけに絞る方針でよい。
 - `1x100b` / `1x1k` / `1x4k` / `1x10k` は、Spanner emulator観測から見てもmessage countではなくpayload size軸として扱う。
 - 複数message分割、chunked value、long streamはSpanner small SELECT軸に混ぜず、many-small / large streaming / chunking専用の別ケースで測る。
-- DML flowの個別RPC shapeは `bench/phase2/compare-spanner-dml-unary-shape.sh` で、synthetic unary request/response shapeとして比較できる。
+- DML flowの個別RPC shapeは `bench/compare-spanner-dml-unary-shape.sh` で、synthetic unary request/response shapeとして比較できる。

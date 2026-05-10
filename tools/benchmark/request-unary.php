@@ -5,24 +5,24 @@ require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
 array_shift($args);
 
-$suite = 'payload-unary';
+$suite = 'request-unary';
 $implementation = 'php-grpc-lite';
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $durationSec = 1.0;
-$payloadSizes = [0, 100, 1024, 10 * 1024, 100 * 1024];
+$requestPayloadSizes = [0, 100, 1024, 10 * 1024, 100 * 1024];
 $warmupCalls = 3;
 $maxCalls = 0;
 $diagnosticRpc = false;
-$serverCachedPayload = false;
-$returnTransferFastPath = false;
+$uploadReadCallback = false;
+$nativeTransport = true;
 $transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
@@ -47,10 +47,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $durationSec = (float) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--duration=')) {
         $durationSec = (float) substr($arg, strlen('--duration='));
-    } elseif ($arg === '--payload-sizes') {
-        $payloadSizes = parseIntList($args[++$argIndex] ?? '');
-    } elseif (str_starts_with($arg, '--payload-sizes=')) {
-        $payloadSizes = parseIntList(substr($arg, strlen('--payload-sizes=')));
+    } elseif ($arg === '--request-payload-sizes') {
+        $requestPayloadSizes = parseIntList($args[++$argIndex] ?? '');
+    } elseif (str_starts_with($arg, '--request-payload-sizes=')) {
+        $requestPayloadSizes = parseIntList(substr($arg, strlen('--request-payload-sizes=')));
     } elseif ($arg === '--warmup-calls') {
         $warmupCalls = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--warmup-calls=')) {
@@ -61,14 +61,14 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $maxCalls = (int) substr($arg, strlen('--max-calls='));
     } elseif ($arg === '--diagnostic-rpc') {
         $diagnosticRpc = true;
-    } elseif ($arg === '--server-cached-payload') {
-        $serverCachedPayload = true;
-    } elseif ($arg === '--return-transfer-fast-path') {
-        $returnTransferFastPath = true;
+    } elseif ($arg === '--upload-read-callback') {
+        $uploadReadCallback = true;
+    } elseif ($arg === '--native-transport') {
+        $nativeTransport = true;
     } elseif ($arg === '--transport') {
-        $transport = $args[++$argIndex] ?? '';
+        ++$argIndex;
     } elseif (str_starts_with($arg, '--transport=')) {
-        $transport = substr($arg, strlen('--transport='));
+        continue;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -77,28 +77,25 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
 if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
     usage('suite, implementation, target, and autoload are required');
 }
-if ($durationSec <= 0 || $payloadSizes === [] || $warmupCalls < 0 || $maxCalls < 0) {
+if ($durationSec <= 0 || $requestPayloadSizes === [] || $warmupCalls < 0 || $maxCalls < 0) {
     usage('duration, payload-sizes, warmup-calls, and max-calls must be valid');
 }
 requireAutoload($autoload);
 $benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementation);
 register_shutdown_function([$benchTelemetry, 'shutdown']);
 
-$clientOptions = [];
-if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
-    $clientOptions['grpc_lite.backend'] = 'franken-go';
-}
-$client = UnaryBenchHelper::client($target, $clientOptions);
-foreach ($payloadSizes as $payloadBytes) {
-    $request = UnaryBenchHelper::request($payloadBytes);
-    $benchTelemetry->setContext("payload_unary_{$payloadBytes}b", [
+$client = UnaryBenchHelper::client($target);
+foreach ($requestPayloadSizes as $requestPayloadBytes) {
+    $requestPayload = $requestPayloadBytes > 0 ? str_repeat("\0", $requestPayloadBytes) : '';
+    $request = UnaryBenchHelper::request(0, 0, $requestPayload);
+    $benchTelemetry->setContext("request_unary_{$requestPayloadBytes}b", [
         'benchmark.target' => $target,
         'benchmark.duration_sec' => $durationSec,
-        'benchmark.payload_bytes' => $payloadBytes,
+        'benchmark.request_payload_bytes' => $requestPayloadBytes,
+        'benchmark.response_payload_bytes' => 0,
         'benchmark.warmup_calls' => $warmupCalls,
         'benchmark.max_calls' => $maxCalls,
-        'benchmark.server_cached_payload' => $serverCachedPayload,
-        'benchmark.return_transfer_fast_path' => $returnTransferFastPath,
+        'benchmark.upload_read_callback' => $uploadReadCallback,
         'benchmark.transport' => $transport,
     ]);
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
@@ -108,7 +105,7 @@ foreach ($payloadSizes as $payloadBytes) {
     $latenciesNs = [];
     $diagnosticSeries = [];
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $serverCachedPayload, $returnTransferFastPath, $payloadBytes, $benchTelemetry, &$latenciesNs, &$diagnosticSeries): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $requestPayloadBytes, $uploadReadCallback, $benchTelemetry, &$latenciesNs, &$diagnosticSeries): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
@@ -118,14 +115,14 @@ foreach ($payloadSizes as $payloadBytes) {
                 $options = [];
                 if ($implementation === 'php-grpc-lite') {
                     $options['php_grpc_lite.diagnostics'] = $diagnostics;
-                    if ($returnTransferFastPath) {
-                        $options['php_grpc_lite.return_transfer_fast_path'] = true;
+                    if ($uploadReadCallback) {
+                        $options['php_grpc_lite.upload_read_callback'] = true;
                     }
                 }
                 $details = UnaryBenchHelper::callDetailed(
                     $client,
                     $request,
-                    diagnosticMetadata($serverCachedPayload),
+                    diagnosticMetadata(),
                     $options,
                 );
                 if ($implementation === 'php-grpc-lite') {
@@ -194,16 +191,12 @@ function collectDiagnostics(\stdClass $diagnostics, array &$series): void
  * @param resource $handle
  * @return callable(int, string, int): void
  */
-function diagnosticMetadata(bool $serverCachedPayload): array
+function diagnosticMetadata(): array
 {
-    $metadata = [
+    return [
         'x-bench-server-timing' => ['1'],
         'x-bench-server-stats' => ['1'],
     ];
-    if ($serverCachedPayload) {
-        $metadata['x-bench-server-cached-payload'] = ['1'];
-    }
-    return $metadata;
 }
 
 /**
@@ -216,6 +209,7 @@ function collectServerTiming(array $trailers, array &$series): void
         'x-bench-server-handler-ns' => 'server_handler_ns',
         'x-bench-server-payload-alloc-ns' => 'server_payload_alloc_ns',
         'x-bench-server-payload-bytes' => 'server_payload_bytes',
+        'x-bench-server-request-payload-bytes' => 'server_request_payload_bytes',
         'x-bench-server-stats-handler-start-ns' => 'server_stats_handler_start_ns',
         'x-bench-server-stats-handler-end-ns' => 'server_stats_handler_end_ns',
         'x-bench-server-stats-in-payload-ns' => 'server_stats_in_payload_ns',
@@ -274,7 +268,7 @@ function diagnosticUnit(string $name): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/payload-unary.php --suite=payload-unary --implementation=php-grpc-lite [--duration=1] [--payload-sizes=0,100,1024,10240,102400] [--warmup-calls=3] [--max-calls=0] [--diagnostic-rpc] [--server-cached-payload] [--return-transfer-fast-path]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/request-unary.php --suite=request-unary --implementation=php-grpc-lite [--duration=1] [--request-payload-sizes=0,100,1024,10240,102400,1048576] [--warmup-calls=3] [--max-calls=0] [--diagnostic-rpc] [--upload-read-callback]\n");
     exit(2);
 }
 

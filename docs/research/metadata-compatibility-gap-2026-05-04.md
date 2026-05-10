@@ -57,7 +57,7 @@
 実行コマンド:
 
 ```sh
-BENCH_TAG=metadata-compat-20260504-final ./bench/phase2/compare-metadata-compat.sh
+BENCH_TAG=metadata-compat-20260504-final ./bench/compare-metadata-compat.sh
 ```
 
 保存先:

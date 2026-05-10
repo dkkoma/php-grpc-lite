@@ -6,9 +6,9 @@ require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
-use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
 array_shift($args);
@@ -82,9 +82,9 @@ register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $proxyCases = [
     ['name' => 'direct', 'target' => $directTarget, 'downstream_latency_ms' => 0, 'proxy' => null],
-    ['name' => 'downstream_1ms', 'target' => 'toxiproxy:51051', 'downstream_latency_ms' => 1, 'proxy' => ['name' => 'phase2-rtt-unary-1ms', 'listen' => '0.0.0.0:51051']],
-    ['name' => 'downstream_3ms', 'target' => 'toxiproxy:51053', 'downstream_latency_ms' => 3, 'proxy' => ['name' => 'phase2-rtt-unary-3ms', 'listen' => '0.0.0.0:51053']],
-    ['name' => 'downstream_5ms', 'target' => 'toxiproxy:51055', 'downstream_latency_ms' => 5, 'proxy' => ['name' => 'phase2-rtt-unary-5ms', 'listen' => '0.0.0.0:51055']],
+    ['name' => 'downstream_1ms', 'target' => 'toxiproxy:51051', 'downstream_latency_ms' => 1, 'proxy' => ['name' => 'benchmark-rtt-unary-1ms', 'listen' => '0.0.0.0:51051']],
+    ['name' => 'downstream_3ms', 'target' => 'toxiproxy:51053', 'downstream_latency_ms' => 3, 'proxy' => ['name' => 'benchmark-rtt-unary-3ms', 'listen' => '0.0.0.0:51053']],
+    ['name' => 'downstream_5ms', 'target' => 'toxiproxy:51055', 'downstream_latency_ms' => 5, 'proxy' => ['name' => 'benchmark-rtt-unary-5ms', 'listen' => '0.0.0.0:51055']],
 ];
 
 foreach ($proxyCases as $proxyCase) {
@@ -301,7 +301,7 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(
         STDERR,
-        "Usage: php tools/phase2/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite [--calls=20] [--payload-bytes=100] [--diagnostic-rpc]\n",
+        "Usage: php tools/benchmark/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite [--calls=20] [--payload-bytes=100] [--diagnostic-rpc]\n",
     );
     exit(2);
 }

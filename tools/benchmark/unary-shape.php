@@ -5,9 +5,9 @@ require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
-use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
+use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
 array_shift($args);
@@ -167,7 +167,7 @@ echo "OTEL spans exported.\n";
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/unary-shape.php --suite=unary-shape --implementation=php-grpc-lite [--duration=1] [--warmup-calls=3] [--max-calls=0]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/unary-shape.php --suite=unary-shape --implementation=php-grpc-lite [--duration=1] [--warmup-calls=3] [--max-calls=0]\n");
     exit(2);
 }
 
