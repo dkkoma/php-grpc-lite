@@ -25,10 +25,9 @@
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
-        "ext-ddtrace": "Attach grpc-lite telemetry records to the active Datadog span",
         "ext-protobuf": "Use the protobuf C extension for faster serialization",
         "grpc/grpc": "Install the official PHP wrapper package in applications that use generated stubs or gax clients",
-        "open-telemetry/api": "Inject the active application trace context and attach grpc-lite telemetry to the active span"
+        "open-telemetry/api": "Inject the active application trace context into gRPC metadata"
     },
     "autoload": {
         "psr-4": {

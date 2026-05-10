@@ -146,16 +146,21 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $s
             collectTrailerSeries($call->getTrailingMetadata(), $series);
             return $count;
         };
-        if ($benchTelemetry !== null) {
-            $count = $benchTelemetry->measureRpc('BenchServerStream', [
+        $statusCode = 1;
+        try {
+            $count = $callRunner();
+        } catch (\Throwable $throwable) {
+            $statusCode = 2;
+            throw $throwable;
+        } finally {
+            $callEndNs = hrtime(true);
+            $benchTelemetry?->recordRpcSpan('BenchServerStream', $streamStartNs, $callEndNs, [
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchServerStream',
                 'benchmark.phase' => 'measurement',
-            ], $callRunner);
-        } else {
-            $count = $callRunner();
+            ], $statusCode);
         }
-        $streamLatenciesNs[] = hrtime(true) - $streamStartNs;
+        $streamLatenciesNs[] = $callEndNs - $streamStartNs;
         $messages += $count;
     }
 

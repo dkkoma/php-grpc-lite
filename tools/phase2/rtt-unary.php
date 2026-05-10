@@ -211,14 +211,20 @@ function runMode(
             $startedNs = hrtime(true);
             if ($diagnosticRpc) {
                 $diagnostics = new \stdClass();
-                UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement'], [
+                UnaryBenchHelper::call($client, $request, [
                     'php_grpc_lite.diagnostics' => $diagnostics,
                 ]);
                 collectDiagnostics($diagnostics, $diagnosticSeries);
             } else {
-                UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
+                UnaryBenchHelper::call($client, $request);
             }
-            $latenciesNs[] = hrtime(true) - $startedNs;
+            $callEndNs = hrtime(true);
+            $benchTelemetry?->recordRpcSpan('BenchUnary', $startedNs, $callEndNs, [
+                'rpc.service' => 'helloworld.Greeter',
+                'rpc.method' => 'BenchUnary',
+                'benchmark.phase' => 'measurement',
+            ]);
+            $latenciesNs[] = $callEndNs - $startedNs;
             unset($client);
         }
 

@@ -93,9 +93,6 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
         $groups[$key]['shape'] = $shape;
         $groups[$key]['implementation'] = $keyParts[3];
         $groups[$key]['durations_us'][] = ((float) ($span['durationMs'] ?? 0.0)) * 1000.0;
-        if (isset($attributes['grpc_lite.duration_us'])) {
-            $groups[$key]['internal_duration_us'][] = (float) $attributes['grpc_lite.duration_us'];
-        }
     }
 
     $total = (int) ($connection['total'] ?? 0);
@@ -106,7 +103,7 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
 
 ksort($groups);
 printf(
-    "%-28s %-24s %-18s %-14s %8s %12s %12s %12s %12s %12s\n",
+    "%-28s %-24s %-18s %-14s %8s %12s %12s %12s\n",
     'suite',
     'measurement',
     'shape',
@@ -115,17 +112,13 @@ printf(
     'span_p50_us',
     'span_p99_us',
     'span_max_us',
-    'internal_p50',
-    'internal_p99',
 );
-printf("%'-153s\n", '');
+printf("%'-125s\n", '');
 foreach ($groups as $group) {
     $durations = $group['durations_us'];
-    $internal = $group['internal_duration_us'] ?? [];
     $spanPercentiles = percentiles($durations);
-    $internalPercentiles = $internal !== [] ? percentiles($internal) : null;
     printf(
-        "%-28s %-24s %-18s %-14s %8d %12.1f %12.1f %12.1f %12s %12s\n",
+        "%-28s %-24s %-18s %-14s %8d %12.1f %12.1f %12.1f\n",
         $group['suite'],
         $group['measurement'],
         $group['shape'],
@@ -134,8 +127,6 @@ foreach ($groups as $group) {
         $spanPercentiles['p50'],
         $spanPercentiles['p99'],
         $spanPercentiles['max'],
-        $internalPercentiles === null ? '-' : sprintf('%.1f', $internalPercentiles['p50']),
-        $internalPercentiles === null ? '-' : sprintf('%.1f', $internalPercentiles['p99']),
     );
 }
 

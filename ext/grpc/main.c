@@ -14,15 +14,13 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("grpc_lite.http2_connection_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_connection_window_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.server_streaming_read_ahead_max_messages", "32", PHP_INI_ALL, OnUpdateLong, server_streaming_read_ahead_max_messages, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.server_streaming_read_ahead_max_bytes", "8388608", PHP_INI_ALL, OnUpdateLong, server_streaming_read_ahead_max_bytes, zend_grpc_lite_globals, grpc_lite_globals)
-    STD_PHP_INI_BOOLEAN("grpc_lite.telemetry_enabled", "0", PHP_INI_ALL, OnUpdateBool, telemetry_enabled, zend_grpc_lite_globals, grpc_lite_globals)
-    STD_PHP_INI_ENTRY("grpc_lite.telemetry_detail_level", "rpc", PHP_INI_ALL, OnUpdateString, telemetry_detail_level, zend_grpc_lite_globals, grpc_lite_globals)
 PHP_INI_END()
 
 #include "surface.c"
 #include "protocol_core.c"
 #include "status_core.c"
 #include "transport.c"
-#include "telemetry.c"
+#include "diagnostic.c"
 #include "unary_call.c"
 #include "server_streaming_call.c"
 #include "bridge.c"
@@ -30,7 +28,6 @@ PHP_INI_END()
 #include "bench.c"
 #else
 static const zend_function_entry grpc_lite_functions[] = {
-    PHP_FE(grpc_lite_set_telemetry_handler, arginfo_grpc_lite_set_telemetry_handler)
     PHP_FE_END
 };
 #endif
@@ -48,9 +45,6 @@ PHP_GINIT_FUNCTION(grpc_lite)
     grpc_lite_globals->server_streaming_read_ahead_max_messages = 32;
     grpc_lite_globals->server_streaming_read_ahead_max_bytes = 8 * 1024 * 1024;
     grpc_lite_globals->backend = NULL;
-    grpc_lite_globals->telemetry_enabled = false;
-    grpc_lite_globals->telemetry_detail_level = NULL;
-    ZVAL_UNDEF(&grpc_lite_globals->telemetry_handler);
 }
 
 PHP_GSHUTDOWN_FUNCTION(grpc_lite)
@@ -174,7 +168,6 @@ PHP_MSHUTDOWN_FUNCTION(grpc_lite)
 
 PHP_RSHUTDOWN_FUNCTION(grpc_lite)
 {
-    grpc_lite_telemetry_clear_handler();
     return SUCCESS;
 }
 
@@ -187,8 +180,6 @@ PHP_MINFO_FUNCTION(grpc_lite)
     php_info_print_table_row(2, "grpc_lite.http2_connection_window_size", INI_STR("grpc_lite.http2_connection_window_size"));
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_messages", INI_STR("grpc_lite.server_streaming_read_ahead_max_messages"));
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_bytes", INI_STR("grpc_lite.server_streaming_read_ahead_max_bytes"));
-    php_info_print_table_row(2, "grpc_lite.telemetry_enabled", INI_STR("grpc_lite.telemetry_enabled"));
-    php_info_print_table_row(2, "grpc_lite.telemetry_detail_level", INI_STR("grpc_lite.telemetry_detail_level"));
     php_info_print_table_end();
 }
 

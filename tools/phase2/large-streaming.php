@@ -79,7 +79,17 @@ foreach ($messageCounts as $messageCount) {
         'benchmark.message_count' => $messageCount,
         'benchmark.payload_bytes' => $payloadBytes,
     ]);
-    $sample = ResourceSampler::measure(static fn (): int => StreamingBenchHelper::drainWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']));
+    $sample = ResourceSampler::measure(static function () use ($benchTelemetry, $client, $request): int {
+        $streamStartNs = hrtime(true);
+        $messages = StreamingBenchHelper::drain($client, $request);
+        $streamEndNs = hrtime(true);
+        $benchTelemetry?->recordRpcSpan('BenchServerStream', $streamStartNs, $streamEndNs, [
+            'rpc.service' => 'helloworld.Greeter',
+            'rpc.method' => 'BenchServerStream',
+            'benchmark.phase' => 'measurement',
+        ]);
+        return $messages;
+    });
     $metrics = $sample['metrics'];
     $metrics['messages_total'] = ['value' => $sample['result'], 'unit' => 'messages'];
     $metrics['messages_per_second'] = ['value' => $sample['result'] / ($metrics['wall_time_ns_total']['value'] / 1_000_000_000), 'unit' => 'messages/s'];

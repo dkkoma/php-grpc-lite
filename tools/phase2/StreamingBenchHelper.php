@@ -44,22 +44,4 @@ final class StreamingBenchHelper
         return $count;
     }
 
-    /** @param array<string, int|float|string|bool|null> $attributes */
-    public static function drainWithTelemetry(
-        ?BenchTelemetry $telemetry,
-        GreeterClient $client,
-        BenchRequest $request,
-        array $attributes = [],
-        int $sleepUs = 0,
-    ): int {
-        $runner = static fn (): int => self::drain($client, $request, $sleepUs);
-        if ($telemetry === null) {
-            return $runner();
-        }
-
-        return $telemetry->measureRpc('BenchServerStream', [
-            'rpc.service' => 'helloworld.Greeter',
-            'rpc.method' => 'BenchServerStream',
-        ] + $attributes, $runner);
-    }
 }

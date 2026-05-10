@@ -138,16 +138,21 @@ foreach ($cases as $case) {
                 }
                 UnaryBenchHelper::call($client, $request);
             };
-            if ($benchTelemetry !== null) {
-                $benchTelemetry->measureRpc('BenchUnary', [
+            $statusCode = 1;
+            try {
+                $callRunner();
+            } catch (\Throwable $throwable) {
+                $statusCode = 2;
+                throw $throwable;
+            } finally {
+                $callEndNs = hrtime(true);
+                $benchTelemetry?->recordRpcSpan('BenchUnary', $callStartNs, $callEndNs, [
                     'rpc.service' => 'helloworld.Greeter',
                     'rpc.method' => 'BenchUnary',
                     'benchmark.phase' => 'measurement',
-                ], $callRunner);
-            } else {
-                $callRunner();
+                ], $statusCode);
             }
-            $latenciesNs[] = hrtime(true) - $callStartNs;
+            $latenciesNs[] = $callEndNs - $callStartNs;
             $calls++;
         } while (hrtime(true) - $startedNs < $deadlineNs && ($maxCalls === 0 || $calls < $maxCalls));
         return $calls;

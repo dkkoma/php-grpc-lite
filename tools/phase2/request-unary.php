@@ -161,11 +161,9 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
                     $curlTraceWritten++;
                     $options['php_grpc_lite.curl_trace'] = curlTraceCallback($curlTraceHandle, $requestPayloadBytes, $curlTraceWritten);
                 }
-                $details = UnaryBenchHelper::callDetailedWithTelemetry(
-                    $benchTelemetry,
+                $details = UnaryBenchHelper::callDetailed(
                     $client,
                     $request,
-                    ['benchmark.phase' => 'measurement'],
                     diagnosticMetadata(),
                     $options,
                 );
@@ -174,9 +172,15 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
                 }
                 collectServerTiming($details['trailing_metadata'], $diagnosticSeries);
             } else {
-                UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
+                UnaryBenchHelper::call($client, $request);
             }
-            $latenciesNs[] = hrtime(true) - $callStartNs;
+            $callEndNs = hrtime(true);
+            $benchTelemetry?->recordRpcSpan('BenchUnary', $callStartNs, $callEndNs, [
+                'rpc.service' => 'helloworld.Greeter',
+                'rpc.method' => 'BenchUnary',
+                'benchmark.phase' => 'measurement',
+            ]);
+            $latenciesNs[] = $callEndNs - $callStartNs;
             $calls++;
         } while (hrtime(true) - $startedNs < $deadlineNs && ($maxCalls === 0 || $calls < $maxCalls));
         return $calls;

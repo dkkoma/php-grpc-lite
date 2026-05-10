@@ -96,7 +96,7 @@ Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。
 
 Phase 2 の primary metric は wall time、throughput、tail latency、memory とする。JSON に入る `diagnostic_cpu_*` は参考値であり、合否や優先度判断の主指標にはしない。
 
-Phase 2 runner は任意で `otelop` へOTLP/HTTP exportできる。通常の結果JSONは従来通り保存しつつ、C拡張のtelemetry recordを1 RPC = 1 spanとしてUIで見る用途に使う。
+Phase 2 runner は任意で `otelop` へOTLP/HTTP exportできる。通常の結果JSONは従来通り保存しつつ、PHP runner側の共通RPC境界を1 RPC = 1 spanとしてUIで見る用途に使う。
 
 ```bash
 docker compose up -d otelop

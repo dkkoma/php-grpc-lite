@@ -5,7 +5,7 @@
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status_result, uint64_t start_unix_nanos, uint64_t total_started, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused)
 {
-    grpc_lite_telemetry_add_unary_diagnostic_result(diagnostic_result, path, path_len, metadata, call, connection, status_result, start_unix_nanos, monotonic_us() - total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
+    grpc_lite_diagnostic_add_unary_result(diagnostic_result, path, path_len, metadata, call, connection, status_result, start_unix_nanos, monotonic_us() - total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
     add_status_result_to_return(diagnostic_result, status_result);
     add_assoc_str(diagnostic_result, "body", call->body.s ? zend_string_copy(call->body.s) : zend_empty_string);
     add_assoc_str(diagnostic_result, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
@@ -219,8 +219,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
 	    if (diagnostic_result != NULL) {
 	        grpc_lite_unary_add_diagnostic_result(diagnostic_result, path, path_len, headers_zv, &call, connection, &status_result, start_unix_nanos, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
 	    }
-	#endif
-    grpc_lite_telemetry_emit_unary(path, path_len, headers_zv, &call, connection, &status_result, start_unix_nanos, total_started > 0 ? monotonic_us() - total_started : 0, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
+#endif
 	    clear_connection_call_owner(connection, &call);
 	    zend_string_release(status_result.details);
 	    free_request_headers(&request_headers);

@@ -102,8 +102,14 @@ foreach ($payloadSizes as $payloadBytes) {
         $messages = 0;
         for ($stream = 0; $stream < $streams; $stream++) {
             $streamStartNs = hrtime(true);
-            $messages += StreamingBenchHelper::drainWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
-            $streamLatenciesNs[] = hrtime(true) - $streamStartNs;
+            $messages += StreamingBenchHelper::drain($client, $request);
+            $streamEndNs = hrtime(true);
+            $benchTelemetry?->recordRpcSpan('BenchServerStream', $streamStartNs, $streamEndNs, [
+                'rpc.service' => 'helloworld.Greeter',
+                'rpc.method' => 'BenchServerStream',
+                'benchmark.phase' => 'measurement',
+            ]);
+            $streamLatenciesNs[] = $streamEndNs - $streamStartNs;
         }
         return $messages;
     });

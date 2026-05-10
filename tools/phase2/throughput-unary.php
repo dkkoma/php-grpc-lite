@@ -114,8 +114,14 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $d
 
     do {
         $callStartNs = hrtime(true);
-        UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
-        $latenciesNs[] = hrtime(true) - $callStartNs;
+        UnaryBenchHelper::call($client, $request);
+        $callEndNs = hrtime(true);
+        $benchTelemetry?->recordRpcSpan('BenchUnary', $callStartNs, $callEndNs, [
+            'rpc.service' => 'helloworld.Greeter',
+            'rpc.method' => 'BenchUnary',
+            'benchmark.phase' => 'measurement',
+        ]);
+        $latenciesNs[] = $callEndNs - $callStartNs;
         $calls++;
     } while (hrtime(true) - $startedNs < $deadlineNs);
 

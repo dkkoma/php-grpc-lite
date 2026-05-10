@@ -224,7 +224,7 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     grpc_call *call = &state->call;
     grpc_lite_status_result status_result;
     resolve_grpc_call_status(call, state->cancelled, &status_result);
-    grpc_lite_telemetry_add_server_streaming_diagnostic_status(return_value, state, &status_result);
+    grpc_lite_diagnostic_add_server_streaming_status(return_value, state, &status_result);
     add_assoc_bool(return_value, "done", true);
     add_status_result_to_return(return_value, &status_result);
     add_assoc_str(return_value, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
@@ -258,7 +258,6 @@ static void server_streaming_call_fill_status_result(grpc_lite_streaming_next_re
     grpc_lite_status_result status_result;
 
     resolve_grpc_call_status(&state->call, state->cancelled, &status_result);
-    grpc_lite_telemetry_emit_server_streaming(state, &status_result);
     result->done = true;
     result->status.code = status_result.code;
     result->status.details = zend_string_copy(status_result.details);

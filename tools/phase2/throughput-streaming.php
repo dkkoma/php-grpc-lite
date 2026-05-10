@@ -119,8 +119,14 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $d
 
     do {
         $streamStartNs = hrtime(true);
-        $messages += StreamingBenchHelper::drainWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
-        $streamLatenciesNs[] = hrtime(true) - $streamStartNs;
+        $messages += StreamingBenchHelper::drain($client, $request);
+        $streamEndNs = hrtime(true);
+        $benchTelemetry?->recordRpcSpan('BenchServerStream', $streamStartNs, $streamEndNs, [
+            'rpc.service' => 'helloworld.Greeter',
+            'rpc.method' => 'BenchServerStream',
+            'benchmark.phase' => 'measurement',
+        ]);
+        $streamLatenciesNs[] = $streamEndNs - $streamStartNs;
     } while (hrtime(true) - $startedNs < $deadlineNs);
 
     return $messages;

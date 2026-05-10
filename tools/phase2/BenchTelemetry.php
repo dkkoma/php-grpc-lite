@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace PhpGrpcLite\Tools\Phase2;
 
-use GrpcLite\Telemetry\Telemetry;
-
 final class BenchTelemetry
 {
     /** @var array<string, int|float|string|bool|null> */
@@ -12,9 +10,6 @@ final class BenchTelemetry
 
     /** @var list<array<string, mixed>> */
     private array $spans = [];
-
-    /** @var list<int> */
-    private array $activeSpanStack = [];
 
     private readonly string $runId;
 
@@ -38,19 +33,11 @@ final class BenchTelemetry
             return null;
         }
 
-        $recorder = new self(self::normalizeEndpoint($endpoint), $suite, $implementation);
-        if (function_exists('grpc_lite_set_telemetry_handler')) {
-            Telemetry::setHandler([$recorder, 'recordInternalTelemetry']);
-        }
-
-        return $recorder;
+        return new self(self::normalizeEndpoint($endpoint), $suite, $implementation);
     }
 
     public function shutdown(): void
     {
-        if (function_exists('grpc_lite_set_telemetry_handler')) {
-            Telemetry::setHandler(null);
-        }
         $this->export();
     }
 
@@ -66,77 +53,25 @@ final class BenchTelemetry
     }
 
     /**
-     * @template T
      * @param array<string, int|float|string|bool|null> $attributes
-     * @param callable(): T $callback
-     * @return T
      */
-    public function measureRpc(string $name, array $attributes, callable $callback): mixed
+    public function recordRpcSpan(string $name, int $startNs, int $endNs, array $attributes = [], int $statusCode = 1): void
     {
-        $spanIndex = $this->startSpan($name, ['rpc.system' => 'grpc'] + $attributes);
-        try {
-            $result = $callback();
-            $this->finishSpan($spanIndex, 1);
-            return $result;
-        } catch (\Throwable $throwable) {
-            $this->finishSpan($spanIndex, 2, [
-                'exception.type' => $throwable::class,
-                'exception.message' => $throwable->getMessage(),
-            ]);
-            throw $throwable;
-        }
-    }
-
-    /** @param array<string, mixed> $record */
-    public function recordInternalTelemetry(array $record): void
-    {
-        $spanIndex = $this->activeSpanStack[array_key_last($this->activeSpanStack)] ?? null;
-        if ($spanIndex === null || !isset($this->spans[$spanIndex])) {
+        if ($endNs < $startNs) {
             return;
         }
 
-        foreach (self::recordAttributes($record) as $key => $value) {
-            $this->spans[$spanIndex]['attributes'][$key] = $value;
-        }
-        $this->spans[$spanIndex]['status_code'] = ((int) ($record['grpc_status_code'] ?? 0)) === 0 ? 1 : 2;
-    }
-
-    /** @param array<string, int|float|string|bool|null> $attributes */
-    private function startSpan(string $name, array $attributes): int
-    {
-        $now = hrtime(true);
-        $index = count($this->spans);
+        $startUnixNanos = self::unixTimeNanosFromMonotonic($startNs);
         $this->spans[] = [
             'trace_id' => bin2hex(random_bytes(16)),
             'span_id' => bin2hex(random_bytes(8)),
             'name' => $name,
             'kind' => 3,
-            'start_unix_nanos' => self::unixTimeNanos(),
-            'start_monotonic_ns' => $now,
-            'end_unix_nanos' => null,
-            'attributes' => self::cleanAttributes($this->context + $attributes),
-            'status_code' => 1,
+            'start_unix_nanos' => $startUnixNanos,
+            'end_unix_nanos' => (string) (((int) $startUnixNanos) + ($endNs - $startNs)),
+            'attributes' => self::cleanAttributes($this->context + ['rpc.system' => 'grpc'] + $attributes),
+            'status_code' => $statusCode,
         ];
-        $this->activeSpanStack[] = $index;
-
-        return $index;
-    }
-
-    /** @param array<string, int|float|string|bool|null> $attributes */
-    private function finishSpan(int $spanIndex, int $statusCode, array $attributes = []): void
-    {
-        $span = &$this->spans[$spanIndex];
-        $elapsedNs = hrtime(true) - (int) $span['start_monotonic_ns'];
-        $span['end_unix_nanos'] = (string) (((int) $span['start_unix_nanos']) + $elapsedNs);
-        $span['status_code'] = $statusCode;
-        foreach (self::cleanAttributes($attributes) as $key => $value) {
-            $span['attributes'][$key] = $value;
-        }
-
-        $stackKey = array_search($spanIndex, $this->activeSpanStack, true);
-        if ($stackKey !== false) {
-            array_splice($this->activeSpanStack, (int) $stackKey, 1);
-        }
     }
 
     private function export(): void
@@ -175,9 +110,6 @@ final class BenchTelemetry
     {
         $otelSpans = [];
         foreach ($spans as $span) {
-            if ($span['end_unix_nanos'] === null) {
-                continue;
-            }
             $otelSpans[] = [
                 'traceId' => $span['trace_id'],
                 'spanId' => $span['span_id'],
@@ -202,39 +134,6 @@ final class BenchTelemetry
                 ]],
             ]],
         ];
-    }
-
-    /** @param array<string, mixed> $record */
-    private static function recordAttributes(array $record): array
-    {
-        $attributes = [
-            'rpc.service' => (string) ($record['rpc_service'] ?? ''),
-            'rpc.method' => (string) ($record['rpc_method'] ?? ''),
-            'network.protocol.name' => (string) ($record['network_protocol_name'] ?? 'http'),
-            'network.protocol.version' => (string) ($record['network_protocol_version'] ?? '2'),
-            'grpc.status_code' => (int) ($record['grpc_status_code'] ?? 0),
-            'http.response.status_code' => (int) ($record['http_status_code'] ?? 0),
-            'grpc_lite.backend' => (string) ($record['backend'] ?? 'http2'),
-            'grpc_lite.duration_us' => (int) ($record['duration_us'] ?? 0),
-        ];
-
-        foreach (($record['timings'] ?? []) as $key => $value) {
-            $attributes['grpc_lite.' . $key] = (int) $value;
-        }
-        foreach (($record['sizes'] ?? []) as $key => $value) {
-            $attributes['grpc_lite.' . $key] = (int) $value;
-        }
-        foreach (($record['http2'] ?? []) as $key => $value) {
-            $attributes['grpc_lite.' . $key] = is_bool($value) ? $value : (int) $value;
-        }
-        foreach (($record['connection'] ?? []) as $key => $value) {
-            $attributes['grpc_lite.connection_' . $key] = (bool) $value;
-        }
-        if (isset($record['message_count'])) {
-            $attributes['grpc_lite.message_count'] = (int) $record['message_count'];
-        }
-
-        return $attributes;
     }
 
     /** @param array<string, mixed> $attributes */
@@ -275,8 +174,11 @@ final class BenchTelemetry
         };
     }
 
-    private static function unixTimeNanos(): string
+    private static function unixTimeNanosFromMonotonic(int $monotonicNs): string
     {
-        return (string) ((int) (microtime(true) * 1_000_000_000));
+        $nowUnixNs = (int) (microtime(true) * 1_000_000_000);
+        $nowMonotonicNs = hrtime(true);
+
+        return (string) ($nowUnixNs - ($nowMonotonicNs - $monotonicNs));
     }
 }

@@ -101,14 +101,18 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
                 $diagnostics = new \stdClass();
                 $options['php_grpc_lite.diagnostics'] = $diagnostics;
             }
-            $details = UnaryBenchHelper::callDetailedWithTelemetry(
-                $benchTelemetry,
+            $details = UnaryBenchHelper::callDetailed(
                 $client,
                 $request,
-                ['benchmark.phase' => 'measurement'],
                 $metadata,
                 $options,
             );
+            $callEndNs = hrtime(true);
+            $benchTelemetry?->recordRpcSpan('BenchUnary', $startedNs, $callEndNs, [
+                'rpc.service' => 'helloworld.Greeter',
+                'rpc.method' => 'BenchUnary',
+                'benchmark.phase' => 'measurement',
+            ]);
             $initialCount = countPrefix($details['metadata'], 'x-bench-initial-');
             $trailingCount = countPrefix($details['trailing_metadata'], 'x-bench-trailing-');
             if ($initialCount !== $responseKeys || $trailingCount !== $responseKeys) {
@@ -117,7 +121,7 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
             if (isset($diagnostics)) {
                 collectDiagnostics($diagnostics, $diagnosticSeries);
             }
-            $latenciesNs[] = hrtime(true) - $startedNs;
+            $latenciesNs[] = $callEndNs - $startedNs;
         }
 
         return $calls;
