@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
+require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
+use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -85,6 +87,10 @@ if (!is_file($autoload)) {
     throw new RuntimeException("autoload file not found: $autoload");
 }
 require $autoload;
+$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
+if ($benchTelemetry !== null) {
+    register_shutdown_function([$benchTelemetry, 'shutdown']);
+}
 
 $clientOptions = [];
 if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
@@ -96,6 +102,15 @@ $measurements = [];
 foreach ($cases as $case) {
     $requestPayload = $case['request_bytes'] > 0 ? str_repeat("\0", $case['request_bytes']) : '';
     $request = UnaryBenchHelper::request($case['response_bytes'], 0, $requestPayload);
+    $benchTelemetry?->setContext($case['name'], [
+        'benchmark.target' => $target,
+        'benchmark.duration_sec' => $durationSec,
+        'benchmark.request_bytes' => $case['request_bytes'],
+        'benchmark.response_bytes' => $case['response_bytes'],
+        'benchmark.warmup_calls' => $warmupCalls,
+        'benchmark.max_calls' => $maxCalls,
+        'benchmark.transport' => $transport,
+    ]);
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
         UnaryBenchHelper::call($client, $request);
     }

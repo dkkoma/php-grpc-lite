@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
+require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
+use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
@@ -88,6 +90,10 @@ if ($streams <= 0 || $warmupStreams < 0 || $messageCount <= 0 || $payloadBytes <
 }
 
 requireAutoload($autoload);
+$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
+if ($benchTelemetry !== null) {
+    register_shutdown_function([$benchTelemetry, 'shutdown']);
+}
 
 $clientOptions = [
     'php_grpc_lite.native_response_mode' => $nativeResponseMode,
@@ -97,6 +103,15 @@ if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
 }
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
+$benchTelemetry?->setContext('streaming_diagnostic', [
+    'benchmark.target' => $target,
+    'benchmark.streams' => $streams,
+    'benchmark.warmup_streams' => $warmupStreams,
+    'benchmark.message_count' => $messageCount,
+    'benchmark.payload_bytes' => $payloadBytes,
+    'benchmark.native_response_mode' => $nativeResponseMode,
+    'benchmark.transport' => $transport,
+]);
 for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {
     StreamingBenchHelper::drain($client, $request);
 }

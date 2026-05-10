@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
+require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 
+use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
@@ -63,11 +65,20 @@ if ($messageCounts === [] || $payloadBytes < 0) {
 }
 
 requireAutoload($autoload);
+$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
+if ($benchTelemetry !== null) {
+    register_shutdown_function([$benchTelemetry, 'shutdown']);
+}
 
 $client = StreamingBenchHelper::client($target);
 $measurements = [];
 foreach ($messageCounts as $messageCount) {
     $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
+    $benchTelemetry?->setContext("large_streaming_count_$messageCount", [
+        'benchmark.target' => $target,
+        'benchmark.message_count' => $messageCount,
+        'benchmark.payload_bytes' => $payloadBytes,
+    ]);
     $sample = ResourceSampler::measure(static fn (): int => StreamingBenchHelper::drain($client, $request));
     $metrics = $sample['metrics'];
     $metrics['messages_total'] = ['value' => $sample['result'], 'unit' => 'messages'];

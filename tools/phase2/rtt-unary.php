@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
+require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
+use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -85,6 +87,10 @@ if ($payloadBytes < 0 || $serverDelayMs < 0 || $calls <= 0 || $warmupCalls < 0) 
 }
 
 requireAutoload($autoload);
+$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
+if ($benchTelemetry !== null) {
+    register_shutdown_function([$benchTelemetry, 'shutdown']);
+}
 
 $proxyCases = [
     ['name' => 'direct', 'target' => $directTarget, 'downstream_latency_ms' => 0, 'proxy' => null],
@@ -110,6 +116,13 @@ $measurements = [];
 foreach ($proxyCases as $proxyCase) {
     $request = UnaryBenchHelper::request($payloadBytes, $serverDelayMs);
     $warmClient = UnaryBenchHelper::client($proxyCase['target']);
+    $benchTelemetry?->setContext('rtt_unary_warm_' . $proxyCase['name'], [
+        'benchmark.mode' => 'warm',
+        'benchmark.target' => $proxyCase['target'],
+        'benchmark.payload_bytes' => $payloadBytes,
+        'benchmark.server_delay_ms' => $serverDelayMs,
+        'benchmark.toxiproxy_downstream_latency_ms' => $proxyCase['downstream_latency_ms'],
+    ]);
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
         UnaryBenchHelper::call($warmClient, $request);
     }
@@ -125,6 +138,7 @@ foreach ($proxyCases as $proxyCase) {
         $payloadBytes,
         $serverDelayMs,
         $diagnosticRpc && $implementation === 'php-grpc-lite',
+        $benchTelemetry,
     );
 
     $measurements[] = runMode(
@@ -138,6 +152,7 @@ foreach ($proxyCases as $proxyCase) {
         $payloadBytes,
         $serverDelayMs,
         $diagnosticRpc && $implementation === 'php-grpc-lite',
+        $benchTelemetry,
     );
 }
 
@@ -179,9 +194,17 @@ function runMode(
     int $payloadBytes,
     int $serverDelayMs,
     bool $diagnosticRpc,
+    ?BenchTelemetry $benchTelemetry,
 ): array {
     $latenciesNs = [];
     $diagnosticSeries = [];
+    $benchTelemetry?->setContext($name, [
+        'benchmark.mode' => $mode,
+        'benchmark.target' => $target,
+        'benchmark.payload_bytes' => $payloadBytes,
+        'benchmark.server_delay_ms' => $serverDelayMs,
+        'benchmark.toxiproxy_downstream_latency_ms' => $proxyCase['downstream_latency_ms'],
+    ]);
     $sample = ResourceSampler::measure(static function () use ($clientFactory, $request, $calls, $diagnosticRpc, &$latenciesNs, &$diagnosticSeries): int {
         for ($call = 0; $call < $calls; $call++) {
             $client = $clientFactory();

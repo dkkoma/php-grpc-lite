@@ -114,4 +114,16 @@ Telemetry::setHandler(new DdTraceHandler());
 
 ## Local development with otelop
 
-otelopへ送る場合もC拡張はOTLPを直接送らない。PHP側でOpenTelemetry SDK exporterを設定し、`OpenTelemetryHandler` から active span へevent/attributeを追加する。OTLP endpointはSDK設定で `http://otelop:4318` または `http://localhost:4318` を指定する。
+otelopへ送る場合もproduction pathではC拡張はOTLPを直接送らない。PHP側でOpenTelemetry SDK exporterを設定し、`OpenTelemetryHandler` から active span へevent/attributeを追加する。OTLP endpointはSDK設定で `http://otelop:4318` または `http://localhost:4318` を指定する。
+
+Phase 2 ベンチだけは、アプリケーションspanが存在しない状態でも可視化できるように `tools/phase2/BenchTelemetry.php` のOTLP/HTTP exporterを使う。これはベンチ専用の薄いbridgeで、C拡張のtelemetry recordを1 RPC = 1 spanとして `otelop` のOTLP/HTTP receiverへ送る。RPC結果に影響させないためexport errorは握りつぶす。
+
+```bash
+docker compose up -d otelop
+
+BENCH_OTEL_EXPORTER=otlp-http \
+BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
+./bench/phase2/run.sh payload-unary-diagnostic --duration=0.2 --max-calls=5 --payload-sizes=100
+```
+
+ブラウザでは `http://localhost:4319` を開く。spanには `benchmark.suite`、`benchmark.implementation`、`benchmark.measurement`、payload size、stream count、transport、`grpc_lite.*` のtiming / size / HTTP/2 / connection属性が入る。

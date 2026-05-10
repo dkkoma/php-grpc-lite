@@ -58,6 +58,18 @@ run_phase2_php() {
     if [[ "$implementation" == "php-grpc-lite" ]]; then
         php_args=(-d extension=/workspace/ext/grpc/modules/grpc.so)
     fi
+    local docker_env=()
+    local env_name
+    for env_name in \
+        BENCH_OTEL_EXPORTER \
+        BENCH_OTEL_EXPORTER_OTLP_ENDPOINT \
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
+        OTEL_EXPORTER_OTLP_ENDPOINT
+    do
+        if [[ -n "${!env_name:-}" ]]; then
+            docker_env+=(-e "$env_name=${!env_name}")
+        fi
+    done
 
     echo
     echo "==========================================="
@@ -65,7 +77,7 @@ run_phase2_php() {
     echo "  JSON: $output_path"
     echo "==========================================="
 
-    docker compose run --rm "$container_service" php ${php_args+"${php_args[@]}"} "$@" \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$container_service" php ${php_args+"${php_args[@]}"} "$@" \
         --suite="$suite" \
         --implementation="$implementation" \
         --autoload="$autoload_path" \

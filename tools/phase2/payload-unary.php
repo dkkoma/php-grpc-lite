@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
+require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
+use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -100,6 +102,10 @@ if ($curlTraceCalls < 0) {
 }
 
 requireAutoload($autoload);
+$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
+if ($benchTelemetry !== null) {
+    register_shutdown_function([$benchTelemetry, 'shutdown']);
+}
 
 $curlTraceHandle = null;
 if ($curlTraceOutput !== null && $curlTraceOutput !== '') {
@@ -122,6 +128,16 @@ $client = UnaryBenchHelper::client($target, $clientOptions);
 $measurements = [];
 foreach ($payloadSizes as $payloadBytes) {
     $request = UnaryBenchHelper::request($payloadBytes);
+    $benchTelemetry?->setContext("payload_unary_{$payloadBytes}b", [
+        'benchmark.target' => $target,
+        'benchmark.duration_sec' => $durationSec,
+        'benchmark.payload_bytes' => $payloadBytes,
+        'benchmark.warmup_calls' => $warmupCalls,
+        'benchmark.max_calls' => $maxCalls,
+        'benchmark.server_cached_payload' => $serverCachedPayload,
+        'benchmark.return_transfer_fast_path' => $returnTransferFastPath,
+        'benchmark.transport' => $transport,
+    ]);
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
         UnaryBenchHelper::call($client, $request);
     }

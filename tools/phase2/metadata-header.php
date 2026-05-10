@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
+require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
+use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -69,6 +71,10 @@ if ($calls <= 0) {
 }
 
 requireAutoload($autoload);
+$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
+if ($benchTelemetry !== null) {
+    register_shutdown_function([$benchTelemetry, 'shutdown']);
+}
 
 $client = UnaryBenchHelper::client($target);
 $request = new BenchRequest();
@@ -76,6 +82,15 @@ $measurements = [];
 
 foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     $metadata = buildMetadata($requestKeys, $responseKeys, $valueBytes);
+    $measurementName = sprintf('metadata_header_req_%d_resp_%d_value_%db', $requestKeys, $responseKeys, $valueBytes);
+    $benchTelemetry?->setContext($measurementName, [
+        'benchmark.target' => $target,
+        'benchmark.calls' => $calls,
+        'benchmark.request_keys' => $requestKeys,
+        'benchmark.response_initial_keys' => $responseKeys,
+        'benchmark.response_trailing_keys' => $responseKeys,
+        'benchmark.value_bytes' => $valueBytes,
+    ]);
     $latenciesNs = [];
     $diagnosticSeries = [];
     $sample = ResourceSampler::measure(static function () use ($client, $request, $metadata, $calls, $responseKeys, $diagnosticRpc, $implementation, &$latenciesNs, &$diagnosticSeries): int {
@@ -118,7 +133,7 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     }
 
     $measurements[] = ResultContract::measurement(
-        sprintf('metadata_header_req_%d_resp_%d_value_%db', $requestKeys, $responseKeys, $valueBytes),
+        $measurementName,
         'metadata-header',
         'BenchUnary',
         [

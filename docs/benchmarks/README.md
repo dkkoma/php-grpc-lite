@@ -96,6 +96,18 @@ Phase 2 runner は PHPBench aggregate JSON と別 contract の JSON を出す。
 
 Phase 2 の primary metric は wall time、throughput、tail latency、memory とする。JSON に入る `diagnostic_cpu_*` は参考値であり、合否や優先度判断の主指標にはしない。
 
+Phase 2 runner は任意で `otelop` へOTLP/HTTP exportできる。通常の結果JSONは従来通り保存しつつ、C拡張のtelemetry recordを1 RPC = 1 spanとしてUIで見る用途に使う。
+
+```bash
+docker compose up -d otelop
+
+BENCH_OTEL_EXPORTER=otlp-http \
+BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
+./bench/phase2/run.sh payload-unary-diagnostic --duration=0.2 --max-calls=5 --payload-sizes=100
+```
+
+UIは `http://localhost:4319`。OTLP/HTTP endpointはcompose内から `http://otelop:4318/v1/traces`、ホストから直接送る場合は `http://localhost:4318/v1/traces` を使う。
+
 `throughput-unary` は単一 PHP process / concurrency=1 で `BenchUnary` を duration 中に回し続け、calls/sec と p50/p95/p99 を保存する。
 
 `rtt-unary` は `toxiproxy` service を起動し、direct と downstream latency 1 / 3 / 5 ms の unary を測る。`rtt-unary-diagnostic` は同じ条件で php-grpc-lite の curl timing を保存する。これは同一ホスト上での探索用近似であり、実ネットワーク RTT の完全再現ではない。
