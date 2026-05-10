@@ -646,6 +646,10 @@ static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **k
 static void grpc_lite_telemetry_emit_unary(const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status, uint64_t start_unix_nanos, uint64_t total_us, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused);
 static void grpc_lite_telemetry_emit_server_streaming(server_streaming_call_state *state, grpc_lite_status_result *status);
 static void grpc_lite_telemetry_clear_handler(void);
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+static void grpc_lite_telemetry_add_unary_diagnostic_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status, uint64_t start_unix_nanos, uint64_t total_us, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused);
+static void grpc_lite_telemetry_add_server_streaming_diagnostic_status(zval *diagnostic_result, server_streaming_call_state *state, grpc_lite_status_result *status);
+#endif
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_connections;

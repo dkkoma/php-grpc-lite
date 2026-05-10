@@ -101,7 +101,7 @@ Telemetry::setHandler(new DdTraceHandler());
 
 ## Bench diagnostics migration
 
-既存のbench/diagnostic計測は最終的に telemetry record を primary source にする。ベンチ用JSON/TSVは移行期間だけ、recordから抽出した互換出力として扱う。
+既存のbench/diagnostic計測は telemetry record を primary source にする。ベンチ用JSON/TSVは `telemetry` にrecord全体を含め、既存集計スクリプト向けのflat keyはそのrecordから互換展開する。
 
 | 既存計測 | telemetry表現 | 方針 |
 |---|---|---|

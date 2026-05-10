@@ -224,13 +224,10 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     grpc_call *call = &state->call;
     grpc_lite_status_result status_result;
     resolve_grpc_call_status(call, state->cancelled, &status_result);
+    grpc_lite_telemetry_add_server_streaming_diagnostic_status(return_value, state, &status_result);
     add_assoc_bool(return_value, "done", true);
     add_status_result_to_return(return_value, &status_result);
-    add_assoc_long(return_value, "grpc_status", call->grpc_status);
     add_assoc_str(return_value, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
-    add_assoc_long(return_value, "http_status", call->http_status);
-    add_assoc_long(return_value, "stream_error_code", call->stream_error_code);
-    add_assoc_bool(return_value, "stream_reset_seen", call->stream_reset_seen);
     add_assoc_bool(return_value, "stream_refused_seen", call->stream_refused_seen);
     add_assoc_bool(return_value, "invalid_grpc_status", call->invalid_grpc_status);
     add_assoc_str(return_value, "content_type", call->content_type != NULL ? zend_string_copy(call->content_type) : zend_empty_string);
@@ -244,11 +241,6 @@ static void server_streaming_call_add_status(zval *return_value, server_streamin
     add_assoc_long(return_value, "max_receive_message_length", call->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) call->max_receive_message_bytes);
     add_assoc_bool(return_value, "timed_out", call->timed_out);
     add_assoc_bool(return_value, "cancelled", state->cancelled);
-    add_assoc_long(return_value, "body_bytes", 0);
-    add_assoc_long(return_value, "bytes_sent", call->bytes_sent);
-    add_assoc_long(return_value, "bytes_received", call->bytes_received);
-    add_assoc_bool(return_value, "connection_dead", state->call.connection != NULL ? state->call.connection->dead : false);
-    add_assoc_bool(return_value, "connection_draining", state->call.connection != NULL ? state->call.connection->draining : false);
     add_assoc_long(return_value, "connection_last_error", state->call.connection != NULL ? state->call.connection->last_error : 0);
     add_assoc_long(return_value, "connection_last_io_errno", state->call.connection != NULL ? state->call.connection->last_io_errno : call->last_io_errno);
     add_assoc_long(return_value, "connection_last_ssl_error", state->call.connection != NULL ? state->call.connection->last_ssl_error : call->last_ssl_error);
