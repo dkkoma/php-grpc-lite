@@ -101,7 +101,9 @@ Telemetry::setHandler(new DdTraceHandler());
 
 ## Bench diagnostics migration
 
-既存のbench/diagnostic計測は telemetry record を primary source にする。ベンチ用JSON/TSVは `telemetry` にrecord全体を含め、既存集計スクリプト向けのflat keyはそのrecordから互換展開する。
+ベンチ計測の一次ソースはOpenTelemetry spanに寄せる。php-grpc-lite、公式 ext-grpc、franken-go はすべてPHP runner側の共通RPC spanでwall timeを測る。php-grpc-liteだけはC拡張のtelemetry recordをactive RPC spanへ追加属性として付与する。
+
+既存のJSON/TSVは移行期間の互換出力として残せるが、性能判断の主出力はOTEL backendからのquery結果にする。Spanner shape系では `tools/phase2/otelop-summary.php` が `benchmark.run_id` でspanを抽出し、suite / measurement / shape / implementation別にp50/p99を集計する。
 
 | 既存計測 | telemetry表現 | 方針 |
 |---|---|---|
@@ -116,14 +118,20 @@ Telemetry::setHandler(new DdTraceHandler());
 
 otelopへ送る場合もproduction pathではC拡張はOTLPを直接送らない。PHP側でOpenTelemetry SDK exporterを設定し、`OpenTelemetryHandler` から active span へevent/attributeを追加する。OTLP endpointはSDK設定で `http://otelop:4318` または `http://localhost:4318` を指定する。
 
-Phase 2 ベンチだけは、アプリケーションspanが存在しない状態でも可視化できるように `tools/phase2/BenchTelemetry.php` のOTLP/HTTP exporterを使う。これはベンチ専用の薄いbridgeで、C拡張のtelemetry recordを1 RPC = 1 spanとして `otelop` のOTLP/HTTP receiverへ送る。RPC結果に影響させないためexport errorは握りつぶす。
+Phase 2 ベンチだけは、アプリケーションspanが存在しない状態でも比較できるように `tools/phase2/BenchTelemetry.php` のspan recorderを使う。これは全実装共通のRPC spanを記録し、測定終了後にまとめて `otelop` のOTLP/HTTP receiverへ送る。php-grpc-lite内部recordはactive RPC spanへ追加されるため、export overheadはRPC span durationに含まれない。
 
 ```bash
 docker compose up -d otelop
 
 BENCH_OTEL_EXPORTER=otlp-http \
+BENCH_OTEL_RUN_ID=local-otel \
 BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
-./bench/phase2/run.sh payload-unary-diagnostic --duration=0.2 --max-calls=5 --payload-sizes=100
+./bench/phase2/compare-spanner-dml-unary-shape.sh
+
+docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
+  tools/phase2/otelop-summary.php \
+  --run-id=local-otel \
+  --suite=spanner-dml-unary-shape
 ```
 
 ブラウザでは `http://localhost:4319` を開く。spanには `benchmark.suite`、`benchmark.implementation`、`benchmark.measurement`、payload size、stream count、transport、`grpc_lite.*` のtiming / size / HTTP/2 / connection属性が入る。

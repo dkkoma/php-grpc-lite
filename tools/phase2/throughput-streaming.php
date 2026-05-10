@@ -113,13 +113,13 @@ for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {
 
 $streamLatenciesNs = [];
 $deadlineNs = (int) round($durationSec * 1_000_000_000);
-$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, &$streamLatenciesNs): int {
+$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $benchTelemetry, &$streamLatenciesNs): int {
     $startedNs = hrtime(true);
     $messages = 0;
 
     do {
         $streamStartNs = hrtime(true);
-        $messages += StreamingBenchHelper::drain($client, $request);
+        $messages += StreamingBenchHelper::drainWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
         $streamLatenciesNs[] = hrtime(true) - $streamStartNs;
     } while (hrtime(true) - $startedNs < $deadlineNs);
 

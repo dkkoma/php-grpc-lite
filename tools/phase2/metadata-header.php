@@ -93,7 +93,7 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     ]);
     $latenciesNs = [];
     $diagnosticSeries = [];
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $metadata, $calls, $responseKeys, $diagnosticRpc, $implementation, &$latenciesNs, &$diagnosticSeries): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $metadata, $calls, $responseKeys, $diagnosticRpc, $implementation, $benchTelemetry, &$latenciesNs, &$diagnosticSeries): int {
         for ($callIndex = 0; $callIndex < $calls; $callIndex++) {
             $startedNs = hrtime(true);
             $options = [];
@@ -101,13 +101,16 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
                 $diagnostics = new \stdClass();
                 $options['php_grpc_lite.diagnostics'] = $diagnostics;
             }
-            $call = $client->BenchUnary($request, $metadata, $options);
-            [, $status] = $call->wait();
-            if ($status->code !== \Grpc\STATUS_OK) {
-                throw new \RuntimeException("BenchUnary failed: {$status->details}");
-            }
-            $initialCount = countPrefix($call->getMetadata(), 'x-bench-initial-');
-            $trailingCount = countPrefix($call->getTrailingMetadata(), 'x-bench-trailing-');
+            $details = UnaryBenchHelper::callDetailedWithTelemetry(
+                $benchTelemetry,
+                $client,
+                $request,
+                ['benchmark.phase' => 'measurement'],
+                $metadata,
+                $options,
+            );
+            $initialCount = countPrefix($details['metadata'], 'x-bench-initial-');
+            $trailingCount = countPrefix($details['trailing_metadata'], 'x-bench-trailing-');
             if ($initialCount !== $responseKeys || $trailingCount !== $responseKeys) {
                 throw new \RuntimeException("expected $responseKeys response metadata pairs, got $initialCount/$trailingCount");
             }

@@ -118,23 +118,34 @@ foreach ($cases as $case) {
     $latenciesNs = [];
     $diagnosticSeries = [];
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, &$latenciesNs, &$diagnosticSeries): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $benchTelemetry, &$latenciesNs, &$diagnosticSeries): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
             $callStartNs = hrtime(true);
-            if ($diagnosticRpc) {
-                $diagnostics = new \stdClass();
-                $options = [];
-                if ($implementation === 'php-grpc-lite') {
-                    $options['php_grpc_lite.diagnostics'] = $diagnostics;
+            $callRunner = static function () use ($client, $request, $diagnosticRpc, $implementation, &$diagnosticSeries): void {
+                if ($diagnosticRpc) {
+                    $diagnostics = new \stdClass();
+                    $options = [];
+                    if ($implementation === 'php-grpc-lite') {
+                        $options['php_grpc_lite.diagnostics'] = $diagnostics;
+                    }
+                    UnaryBenchHelper::call($client, $request, $options);
+                    if ($implementation === 'php-grpc-lite') {
+                        collectDiagnostics($diagnostics, $diagnosticSeries);
+                    }
+                    return;
                 }
-                UnaryBenchHelper::call($client, $request, $options);
-                if ($implementation === 'php-grpc-lite') {
-                    collectDiagnostics($diagnostics, $diagnosticSeries);
-                }
-            } else {
                 UnaryBenchHelper::call($client, $request);
+            };
+            if ($benchTelemetry !== null) {
+                $benchTelemetry->measureRpc('BenchUnary', [
+                    'rpc.service' => 'helloworld.Greeter',
+                    'rpc.method' => 'BenchUnary',
+                    'benchmark.phase' => 'measurement',
+                ], $callRunner);
+            } else {
+                $callRunner();
             }
             $latenciesNs[] = hrtime(true) - $callStartNs;
             $calls++;

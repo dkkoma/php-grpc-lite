@@ -16,10 +16,12 @@ include_franken="${INCLUDE_FRANKEN:-0}"
 mkdir -p "$output_dir"
 
 summary_tsv="$output_dir/phase2-spanner-dml-unary-shape-$timestamp.tsv"
+export BENCH_OTEL_RUN_ID="${BENCH_OTEL_RUN_ID:-$timestamp}"
 docker_env=()
 for env_name in \
     BENCH_OTEL_EXPORTER \
     BENCH_OTEL_EXPORTER_OTLP_ENDPOINT \
+    BENCH_OTEL_RUN_ID \
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
     OTEL_EXPORTER_OTLP_ENDPOINT
 do
@@ -99,3 +101,13 @@ append_results ext-grpc c-core "$ext_json"
 echo
 echo "Summary TSV: $summary_tsv"
 column -t -s $'\t' "$summary_tsv" || cat "$summary_tsv"
+
+if [[ -n "${BENCH_OTEL_EXPORTER:-}" ]]; then
+    echo
+    echo "OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
+    docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
+        tools/phase2/otelop-summary.php \
+        --run-id="$BENCH_OTEL_RUN_ID" \
+        --suite=spanner-dml-unary-shape \
+        --limit="${BENCH_OTEL_SUMMARY_LIMIT:-20000}"
+fi

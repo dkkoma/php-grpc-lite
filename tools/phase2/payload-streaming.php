@@ -98,11 +98,11 @@ foreach ($payloadSizes as $payloadBytes) {
         'benchmark.transport' => $transport,
     ]);
     $streamLatenciesNs = [];
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $streams, &$streamLatenciesNs): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $streams, $benchTelemetry, &$streamLatenciesNs): int {
         $messages = 0;
         for ($stream = 0; $stream < $streams; $stream++) {
             $streamStartNs = hrtime(true);
-            $messages += StreamingBenchHelper::drain($client, $request);
+            $messages += StreamingBenchHelper::drainWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
             $streamLatenciesNs[] = hrtime(true) - $streamStartNs;
         }
         return $messages;

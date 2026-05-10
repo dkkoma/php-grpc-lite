@@ -36,6 +36,20 @@ final class UnaryBenchHelper
     }
 
     /**
+     * @param array<string, int|float|string|bool|null> $attributes
+     * @param array<string, mixed> $options
+     */
+    public static function callWithTelemetry(
+        ?BenchTelemetry $telemetry,
+        GreeterClient $client,
+        BenchRequest $request,
+        array $attributes = [],
+        array $options = [],
+    ): void {
+        self::callDetailedWithTelemetry($telemetry, $client, $request, $attributes, [], $options);
+    }
+
+    /**
      * @param array<string, string|list<string>> $metadata
      * @param array<string, mixed> $options
      * @return array{metadata: array<string, list<string>>, trailing_metadata: array<string, list<string>>}
@@ -56,6 +70,31 @@ final class UnaryBenchHelper
             'metadata' => $call->getMetadata(),
             'trailing_metadata' => $call->getTrailingMetadata(),
         ];
+    }
+
+    /**
+     * @param array<string, int|float|string|bool|null> $attributes
+     * @param array<string, string|list<string>> $metadata
+     * @param array<string, mixed> $options
+     * @return array{metadata: array<string, list<string>>, trailing_metadata: array<string, list<string>>}
+     */
+    public static function callDetailedWithTelemetry(
+        ?BenchTelemetry $telemetry,
+        GreeterClient $client,
+        BenchRequest $request,
+        array $attributes = [],
+        array $metadata = [],
+        array $options = [],
+    ): array {
+        $runner = static fn (): array => self::callDetailed($client, $request, $metadata, $options);
+        if ($telemetry === null) {
+            return $runner();
+        }
+
+        return $telemetry->measureRpc('BenchUnary', [
+            'rpc.service' => 'helloworld.Greeter',
+            'rpc.method' => 'BenchUnary',
+        ] + $attributes, $runner);
     }
 
     /**

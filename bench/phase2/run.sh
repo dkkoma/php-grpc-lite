@@ -63,6 +63,7 @@ run_phase2_php() {
     for env_name in \
         BENCH_OTEL_EXPORTER \
         BENCH_OTEL_EXPORTER_OTLP_ENDPOINT \
+        BENCH_OTEL_RUN_ID \
         OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
         OTEL_EXPORTER_OTLP_ENDPOINT
     do

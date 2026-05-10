@@ -146,7 +146,7 @@ foreach ($payloadSizes as $payloadBytes) {
     $diagnosticSeries = [];
     $curlTraceWritten = 0;
     $deadlineNs = (int) round($durationSec * 1_000_000_000);
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $serverCachedPayload, $returnTransferFastPath, $payloadBytes, $curlTraceHandle, $curlTraceCalls, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $maxCalls, $diagnosticRpc, $implementation, $serverCachedPayload, $returnTransferFastPath, $payloadBytes, $curlTraceHandle, $curlTraceCalls, $benchTelemetry, &$latenciesNs, &$diagnosticSeries, &$curlTraceWritten): int {
         $startedNs = hrtime(true);
         $calls = 0;
         do {
@@ -164,9 +164,11 @@ foreach ($payloadSizes as $payloadBytes) {
                     $curlTraceWritten++;
                     $options['php_grpc_lite.curl_trace'] = curlTraceCallback($curlTraceHandle, $payloadBytes, $curlTraceWritten);
                 }
-                $details = UnaryBenchHelper::callDetailed(
+                $details = UnaryBenchHelper::callDetailedWithTelemetry(
+                    $benchTelemetry,
                     $client,
                     $request,
+                    ['benchmark.phase' => 'measurement'],
                     diagnosticMetadata($serverCachedPayload),
                     $options,
                 );
@@ -175,7 +177,7 @@ foreach ($payloadSizes as $payloadBytes) {
                 }
                 collectServerTiming($details['trailing_metadata'], $diagnosticSeries);
             } else {
-                UnaryBenchHelper::call($client, $request);
+                UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
             }
             $latenciesNs[] = hrtime(true) - $callStartNs;
             $calls++;

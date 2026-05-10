@@ -126,24 +126,36 @@ $series = [
     'server_stats_out_payload_wire_bytes' => [],
 ];
 
-$sample = ResourceSampler::measure(static function () use ($client, $request, $streams, &$streamLatenciesNs, &$series): int {
+$sample = ResourceSampler::measure(static function () use ($client, $request, $streams, $benchTelemetry, &$streamLatenciesNs, &$series): int {
     $messages = 0;
     for ($stream = 0; $stream < $streams; $stream++) {
         $streamStartNs = hrtime(true);
-        $call = $client->BenchServerStream($request, ['x-bench-server-stats' => ['1']]);
-        $count = 0;
-        foreach ($call->responses() as $_reply) {
-            $count++;
-        }
-        $status = $call->getStatus();
-        if ($status->code !== \Grpc\STATUS_OK) {
-            throw new \RuntimeException("unexpected grpc status: {$status->code}");
-        }
-        if ($count !== $request->getMessageCount()) {
-            throw new \RuntimeException("expected {$request->getMessageCount()} messages, got $count");
+        $callRunner = static function () use ($client, $request, &$series): int {
+            $call = $client->BenchServerStream($request, ['x-bench-server-stats' => ['1']]);
+            $count = 0;
+            foreach ($call->responses() as $_reply) {
+                $count++;
+            }
+            $status = $call->getStatus();
+            if ($status->code !== \Grpc\STATUS_OK) {
+                throw new \RuntimeException("unexpected grpc status: {$status->code}");
+            }
+            if ($count !== $request->getMessageCount()) {
+                throw new \RuntimeException("expected {$request->getMessageCount()} messages, got $count");
+            }
+            collectTrailerSeries($call->getTrailingMetadata(), $series);
+            return $count;
+        };
+        if ($benchTelemetry !== null) {
+            $count = $benchTelemetry->measureRpc('BenchServerStream', [
+                'rpc.service' => 'helloworld.Greeter',
+                'rpc.method' => 'BenchServerStream',
+                'benchmark.phase' => 'measurement',
+            ], $callRunner);
+        } else {
+            $count = $callRunner();
         }
         $streamLatenciesNs[] = hrtime(true) - $streamStartNs;
-        collectTrailerSeries($call->getTrailingMetadata(), $series);
         $messages += $count;
     }
 

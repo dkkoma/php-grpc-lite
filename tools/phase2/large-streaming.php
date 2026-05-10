@@ -79,7 +79,7 @@ foreach ($messageCounts as $messageCount) {
         'benchmark.message_count' => $messageCount,
         'benchmark.payload_bytes' => $payloadBytes,
     ]);
-    $sample = ResourceSampler::measure(static fn (): int => StreamingBenchHelper::drain($client, $request));
+    $sample = ResourceSampler::measure(static fn (): int => StreamingBenchHelper::drainWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']));
     $metrics = $sample['metrics'];
     $metrics['messages_total'] = ['value' => $sample['result'], 'unit' => 'messages'];
     $metrics['messages_per_second'] = ['value' => $sample['result'] / ($metrics['wall_time_ns_total']['value'] / 1_000_000_000), 'unit' => 'messages/s'];

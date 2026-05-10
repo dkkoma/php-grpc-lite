@@ -108,13 +108,13 @@ for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
 
 $latenciesNs = [];
 $deadlineNs = (int) round($durationSec * 1_000_000_000);
-$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, &$latenciesNs): int {
+$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $benchTelemetry, &$latenciesNs): int {
     $startedNs = hrtime(true);
     $calls = 0;
 
     do {
         $callStartNs = hrtime(true);
-        UnaryBenchHelper::call($client, $request);
+        UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
         $latenciesNs[] = hrtime(true) - $callStartNs;
         $calls++;
     } while (hrtime(true) - $startedNs < $deadlineNs);

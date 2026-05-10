@@ -93,6 +93,8 @@ services:
   # http://otelop:4318/v1/traces
   otelop:
     image: ghcr.io/mashiro/otelop:latest
+    environment:
+      OTELOP_TRACE_CAP: ${OTELOP_TRACE_CAP:-20000}
     ports:
       - "4317:4317"
       - "4318:4318"

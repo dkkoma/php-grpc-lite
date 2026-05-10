@@ -205,18 +205,18 @@ function runMode(
         'benchmark.server_delay_ms' => $serverDelayMs,
         'benchmark.toxiproxy_downstream_latency_ms' => $proxyCase['downstream_latency_ms'],
     ]);
-    $sample = ResourceSampler::measure(static function () use ($clientFactory, $request, $calls, $diagnosticRpc, &$latenciesNs, &$diagnosticSeries): int {
+    $sample = ResourceSampler::measure(static function () use ($clientFactory, $request, $calls, $diagnosticRpc, $benchTelemetry, &$latenciesNs, &$diagnosticSeries): int {
         for ($call = 0; $call < $calls; $call++) {
             $client = $clientFactory();
             $startedNs = hrtime(true);
             if ($diagnosticRpc) {
                 $diagnostics = new \stdClass();
-                UnaryBenchHelper::call($client, $request, [
+                UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement'], [
                     'php_grpc_lite.diagnostics' => $diagnostics,
                 ]);
                 collectDiagnostics($diagnostics, $diagnosticSeries);
             } else {
-                UnaryBenchHelper::call($client, $request);
+                UnaryBenchHelper::callWithTelemetry($benchTelemetry, $client, $request, ['benchmark.phase' => 'measurement']);
             }
             $latenciesNs[] = hrtime(true) - $startedNs;
             unset($client);
