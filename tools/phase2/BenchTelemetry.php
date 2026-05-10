@@ -36,6 +36,17 @@ final class BenchTelemetry
         return new self(self::normalizeEndpoint($endpoint), $suite, $implementation);
     }
 
+
+    public static function requiredFromEnvironment(string $suite, string $implementation): self
+    {
+        $telemetry = self::fromEnvironment($suite, $implementation);
+        if ($telemetry === null) {
+            throw new \RuntimeException('OTEL endpoint is required. Set BENCH_OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.');
+        }
+
+        return $telemetry;
+    }
+
     public function shutdown(): void
     {
         $this->export();

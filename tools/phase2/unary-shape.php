@@ -1,14 +1,14 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/ResultContract.php';
+require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
+use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
 
 $args = $argv;
@@ -16,7 +16,6 @@ array_shift($args);
 
 $suite = 'unary-shape';
 $implementation = 'php-grpc-lite';
-$output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $durationSec = 1.0;
@@ -42,10 +41,6 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $implementation = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--implementation=')) {
         $implementation = substr($arg, strlen('--implementation='));
-    } elseif ($arg === '--output') {
-        $output = $args[++$argIndex] ?? null;
-    } elseif (str_starts_with($arg, '--output=')) {
-        $output = substr($arg, strlen('--output='));
     } elseif ($arg === '--target') {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
@@ -77,8 +72,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
-    usage('suite, implementation, target, autoload, and output are required');
+if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
+    usage('suite, implementation, target, and autoload are required');
 }
 if ($durationSec <= 0 || $warmupCalls < 0 || $maxCalls < 0) {
     usage('duration, warmup-calls, and max-calls must be valid');
@@ -87,10 +82,8 @@ if (!is_file($autoload)) {
     throw new RuntimeException("autoload file not found: $autoload");
 }
 require $autoload;
-$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
-if ($benchTelemetry !== null) {
-    register_shutdown_function([$benchTelemetry, 'shutdown']);
-}
+$benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementation);
+register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $clientOptions = [];
 if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
@@ -102,7 +95,7 @@ $measurements = [];
 foreach ($cases as $case) {
     $requestPayload = $case['request_bytes'] > 0 ? str_repeat("\0", $case['request_bytes']) : '';
     $request = UnaryBenchHelper::request($case['response_bytes'], 0, $requestPayload);
-    $benchTelemetry?->setContext($case['name'], [
+    $benchTelemetry->setContext($case['name'], [
         'benchmark.target' => $target,
         'benchmark.duration_sec' => $durationSec,
         'benchmark.request_bytes' => $case['request_bytes'],
@@ -146,7 +139,7 @@ foreach ($cases as $case) {
                 throw $throwable;
             } finally {
                 $callEndNs = hrtime(true);
-                $benchTelemetry?->recordRpcSpan('BenchUnary', $callStartNs, $callEndNs, [
+                $benchTelemetry->recordRpcSpan('BenchUnary', $callStartNs, $callEndNs, [
                     'rpc.service' => 'helloworld.Greeter',
                     'rpc.method' => 'BenchUnary',
                     'benchmark.phase' => 'measurement',
@@ -171,7 +164,7 @@ foreach ($cases as $case) {
         $metrics[$name] = $metric;
     }
 
-    $measurements[] = ResultContract::measurement($case['name'], 'unary-shape', 'BenchUnary', [
+    $measurements[] = BenchMeasurement::make($case['name'], 'unary-shape', 'BenchUnary', [
         'target' => $target,
         'duration_sec' => $durationSec,
         'request_bytes' => $case['request_bytes'],
@@ -183,32 +176,12 @@ foreach ($cases as $case) {
     ], $metrics);
 }
 
-$dir = dirname($output);
-if (!is_dir($dir)) {
-    mkdir($dir, 0777, true);
-}
-file_put_contents($output, ResultContract::encode(ResultContract::document($suite, $implementation, $measurements)));
-
-printf("%-18s %10s %10s %10s %12s %12s %12s\n", 'case', 'req_b', 'resp_b', 'calls', 'calls/s', 'p50', 'p99');
-printf("%'-90s\n", '');
-foreach ($measurements as $measurement) {
-    printf(
-        "%-18s %10d %10d %10d %12.1f %11.1fμs %11.1fμs\n",
-        $measurement['name'],
-        $measurement['attributes']->request_bytes,
-        $measurement['attributes']->response_bytes,
-        $measurement['metrics']['calls_total']['value'],
-        $measurement['metrics']['calls_per_second']['value'],
-        $measurement['metrics']['latency_p50_ns']['value'] / 1_000,
-        $measurement['metrics']['latency_p99_ns']['value'] / 1_000,
-    );
-}
-echo "JSON: $output\n";
+echo "OTEL spans exported.\n";
 
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/unary-shape.php --suite=unary-shape --implementation=php-grpc-lite --output=var/bench-results/result.json [--duration=1] [--warmup-calls=3] [--max-calls=0]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/unary-shape.php --suite=unary-shape --implementation=php-grpc-lite [--duration=1] [--warmup-calls=3] [--max-calls=0]\n");
     exit(2);
 }
 

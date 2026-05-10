@@ -16,17 +16,22 @@ fi
 
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 export BENCH_TAG="$timestamp"
+export BENCH_OTEL_RUN_ID="${BENCH_OTEL_RUN_ID:-$timestamp}"
 
 echo
 echo "==========================================="
 echo "  PHASE2 COMPARE: $suite"
 echo "  TAG: $BENCH_TAG"
+echo "  OTEL run id: $BENCH_OTEL_RUN_ID"
 echo "==========================================="
 
 BENCH_IMPLEMENTATION=php-grpc-lite ./bench/phase2/run.sh "$suite" "$@"
 BENCH_IMPLEMENTATION=ext-grpc ./bench/phase2/run.sh "$suite" "$@"
 
 echo
-echo "Saved JSON:"
-echo "  ${BENCH_OUTPUT_DIR:-var/bench-results}/phase2-$suite-$BENCH_TAG-php-grpc-lite.json"
-echo "  ${BENCH_OUTPUT_DIR:-var/bench-results}/phase2-$suite-$BENCH_TAG-ext-grpc.json"
+echo "Combined OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
+docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
+    tools/phase2/otelop-summary.php \
+    --run-id="$BENCH_OTEL_RUN_ID" \
+    --suite="$suite" \
+    --limit="${BENCH_OTEL_SUMMARY_LIMIT:-100000}"

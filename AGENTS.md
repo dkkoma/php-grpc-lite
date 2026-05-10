@@ -54,7 +54,7 @@
 
 - Spanner emulator は実機検証には有用だが、ベンチ指標としては内部状態の揺れが大きい。安定した性能観測は Go test-server の制御可能な RPC を優先する。
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
-- ベンチ実行ログと結果JSON/TSV、OTEL summary用spanは `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` / `BENCH_OTEL_RUN_ID` で保存名と保存先を固定する。
+- ベンチ計測結果はOTEL spanを一次ソースにする。`bench/phase2/` runnerは `otelop` へexportし、`tools/phase2/otelop-summary.php` で集計する。必要に応じて `BENCH_TAG` / `BENCH_OTEL_RUN_ID` でrun idを固定する。JSON/TSVのベンチ結果保存や旧baseline運用は使わない。
 - 旧baseline運用は廃止済み。性能回帰を見る場合は `bench/phase2/` の代表ケースを同条件で再実行して比較する。
 
 ## サブエージェントの利用と作業の継続について

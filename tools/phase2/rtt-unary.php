@@ -1,15 +1,15 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/ResultContract.php';
+require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
+use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
 
 $args = $argv;
@@ -17,7 +17,6 @@ array_shift($args);
 
 $suite = 'rtt-unary';
 $implementation = 'php-grpc-lite';
-$output = null;
 $directTarget = 'test-server:50051';
 $toxiproxyAdmin = 'http://toxiproxy:8474';
 $autoload = 'vendor/autoload.php';
@@ -37,10 +36,6 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $implementation = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--implementation=')) {
         $implementation = substr($arg, strlen('--implementation='));
-    } elseif ($arg === '--output') {
-        $output = $args[++$argIndex] ?? null;
-    } elseif (str_starts_with($arg, '--output=')) {
-        $output = substr($arg, strlen('--output='));
     } elseif ($arg === '--direct-target') {
         $directTarget = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--direct-target=')) {
@@ -79,18 +74,13 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
 if ($suite === '' || $implementation === '' || $directTarget === '' || $toxiproxyAdmin === '' || $autoload === '') {
     usage('suite, implementation, direct-target, toxiproxy-admin, and autoload are required');
 }
-if ($output === null || $output === '') {
-    usage('output is required');
-}
 if ($payloadBytes < 0 || $serverDelayMs < 0 || $calls <= 0 || $warmupCalls < 0) {
     usage('payload-bytes, server-delay-ms, calls, and warmup-calls must be valid');
 }
 
 requireAutoload($autoload);
-$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
-if ($benchTelemetry !== null) {
-    register_shutdown_function([$benchTelemetry, 'shutdown']);
-}
+$benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementation);
+register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $proxyCases = [
     ['name' => 'direct', 'target' => $directTarget, 'downstream_latency_ms' => 0, 'proxy' => null],
@@ -116,7 +106,7 @@ $measurements = [];
 foreach ($proxyCases as $proxyCase) {
     $request = UnaryBenchHelper::request($payloadBytes, $serverDelayMs);
     $warmClient = UnaryBenchHelper::client($proxyCase['target']);
-    $benchTelemetry?->setContext('rtt_unary_warm_' . $proxyCase['name'], [
+    $benchTelemetry->setContext('rtt_unary_warm_' . $proxyCase['name'], [
         'benchmark.mode' => 'warm',
         'benchmark.target' => $proxyCase['target'],
         'benchmark.payload_bytes' => $payloadBytes,
@@ -156,28 +146,8 @@ foreach ($proxyCases as $proxyCase) {
     );
 }
 
-$document = ResultContract::document($suite, $implementation, $measurements);
-$encoded = ResultContract::encode($document);
-$dir = dirname($output);
-if (!is_dir($dir)) {
-    mkdir($dir, 0777, true);
-}
-file_put_contents($output, $encoded);
 
-printf("%-28s %8s %8s %12s %12s %12s\n", 'scenario', 'mode', 'latency', 'p50', 'p95', 'p99');
-printf("%'-86s\n", '');
-foreach ($measurements as $measurement) {
-    printf(
-        "%-28s %8s %7dms %11.1fμs %11.1fμs %11.1fμs\n",
-        $measurement['name'],
-        $measurement['attributes']->mode,
-        $measurement['attributes']->toxiproxy_downstream_latency_ms,
-        $measurement['metrics']['latency_p50_ns']['value'] / 1_000,
-        $measurement['metrics']['latency_p95_ns']['value'] / 1_000,
-        $measurement['metrics']['latency_p99_ns']['value'] / 1_000,
-    );
-}
-echo "JSON: $output\n";
+echo "OTEL spans exported.\n";
 
 /**
  * @param array{name: string, target: string, downstream_latency_ms: int, proxy: mixed} $proxyCase
@@ -198,7 +168,7 @@ function runMode(
 ): array {
     $latenciesNs = [];
     $diagnosticSeries = [];
-    $benchTelemetry?->setContext($name, [
+    $benchTelemetry->setContext($name, [
         'benchmark.mode' => $mode,
         'benchmark.target' => $target,
         'benchmark.payload_bytes' => $payloadBytes,
@@ -219,7 +189,7 @@ function runMode(
                 UnaryBenchHelper::call($client, $request);
             }
             $callEndNs = hrtime(true);
-            $benchTelemetry?->recordRpcSpan('BenchUnary', $startedNs, $callEndNs, [
+            $benchTelemetry->recordRpcSpan('BenchUnary', $startedNs, $callEndNs, [
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchUnary',
                 'benchmark.phase' => 'measurement',
@@ -252,7 +222,7 @@ function runMode(
         ];
     }
 
-    return ResultContract::measurement(
+    return BenchMeasurement::make(
         $name,
         'rtt',
         'BenchUnary',
@@ -371,7 +341,7 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(
         STDERR,
-        "Usage: php tools/phase2/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=20] [--payload-bytes=100] [--diagnostic-rpc]\n",
+        "Usage: php tools/phase2/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite [--calls=20] [--payload-bytes=100] [--diagnostic-rpc]\n",
     );
     exit(2);
 }

@@ -1,15 +1,15 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/ResultContract.php';
+require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
+use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
 
 $args = $argv;
@@ -17,7 +17,6 @@ array_shift($args);
 
 $suite = 'metadata-header';
 $implementation = 'php-grpc-lite';
-$output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $calls = 50;
@@ -40,10 +39,6 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $implementation = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--implementation=')) {
         $implementation = substr($arg, strlen('--implementation='));
-    } elseif ($arg === '--output') {
-        $output = $args[++$argIndex] ?? null;
-    } elseif (str_starts_with($arg, '--output=')) {
-        $output = substr($arg, strlen('--output='));
     } elseif ($arg === '--target') {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
@@ -63,18 +58,16 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
-    usage('suite, implementation, target, autoload, and output are required');
+if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
+    usage('suite, implementation, target, and autoload are required');
 }
 if ($calls <= 0) {
     usage('calls must be greater than zero');
 }
 
 requireAutoload($autoload);
-$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
-if ($benchTelemetry !== null) {
-    register_shutdown_function([$benchTelemetry, 'shutdown']);
-}
+$benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementation);
+register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $client = UnaryBenchHelper::client($target);
 $request = new BenchRequest();
@@ -83,7 +76,7 @@ $measurements = [];
 foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     $metadata = buildMetadata($requestKeys, $responseKeys, $valueBytes);
     $measurementName = sprintf('metadata_header_req_%d_resp_%d_value_%db', $requestKeys, $responseKeys, $valueBytes);
-    $benchTelemetry?->setContext($measurementName, [
+    $benchTelemetry->setContext($measurementName, [
         'benchmark.target' => $target,
         'benchmark.calls' => $calls,
         'benchmark.request_keys' => $requestKeys,
@@ -108,7 +101,7 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
                 $options,
             );
             $callEndNs = hrtime(true);
-            $benchTelemetry?->recordRpcSpan('BenchUnary', $startedNs, $callEndNs, [
+            $benchTelemetry->recordRpcSpan('BenchUnary', $startedNs, $callEndNs, [
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchUnary',
                 'benchmark.phase' => 'measurement',
@@ -139,7 +132,7 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
         $metrics[$name] = $metric;
     }
 
-    $measurements[] = ResultContract::measurement(
+    $measurements[] = BenchMeasurement::make(
         $measurementName,
         'metadata-header',
         'BenchUnary',
@@ -156,15 +149,8 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     );
 }
 
-$document = ResultContract::document($suite, $implementation, $measurements);
-writeDocument($output, $document);
 
-printf("%-38s %10s %12s %12s\n", 'scenario', 'calls', 'p50', 'p99');
-printf("%'-78s\n", '');
-foreach ($measurements as $measurement) {
-    printf("%-38s %10d %11.1fμs %11.1fμs\n", $measurement['name'], $measurement['metrics']['calls_total']['value'], $measurement['metrics']['latency_p50_ns']['value'] / 1_000, $measurement['metrics']['latency_p99_ns']['value'] / 1_000);
-}
-echo "JSON: $output\n";
+echo "OTEL spans exported.\n";
 
 /** @return array<string, list<string>> */
 function buildMetadata(int $requestKeys, int $responseKeys, int $valueBytes): array
@@ -249,19 +235,11 @@ function diagnosticUnit(string $name): string
     return 'value';
 }
 
-function writeDocument(string $output, array $document): void
-{
-    $dir = dirname($output);
-    if (!is_dir($dir)) {
-        mkdir($dir, 0777, true);
-    }
-    file_put_contents($output, ResultContract::encode($document));
-}
 
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite --output=var/bench-results/result.json [--calls=50] [--diagnostic-rpc]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite [--calls=50] [--diagnostic-rpc]\n");
     exit(2);
 }
 

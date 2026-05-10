@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 #
-# Phase 2 exploratory benchmark entrypoint.
-#
-# Dedicated benchmark runner for controlled RPC scenarios.
-# Legacy benchmark entrypoints have been removed.
+# Phase 2 OTEL benchmark entrypoint.
 #
 # Usage:
-#   ./bench/phase2/run.sh contract-smoke
-#   ./bench/phase2/run.sh cpu-memory-smoke
 #   ./bench/phase2/run.sh throughput-unary
 #   ./bench/phase2/run.sh rtt-unary
 #   ./bench/phase2/run.sh rtt-unary-diagnostic
@@ -19,41 +14,38 @@
 #   ./bench/phase2/run.sh payload-unary-diagnostic-cached
 #   ./bench/phase2/run.sh payload-unary-return-transfer-fast-path
 #   ./bench/phase2/run.sh request-unary-diagnostic
-#   ./bench/phase2/run.sh payload-breakdown
 #   ./bench/phase2/run.sh payload-streaming
 #   ./bench/phase2/run.sh metadata-header
 #   ./bench/phase2/run.sh metadata-header-diagnostic
-#   ./bench/phase2/run.sh metadata-compat
-#   ./bench/phase2/run.sh metadata-control-compat
 #
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-suite="${1:-contract-smoke}"
+suite="${1:-throughput-unary}"
 if [[ $# -gt 0 ]]; then
     shift
 fi
 extra_args=("$@")
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
-output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
 implementation="${BENCH_IMPLEMENTATION:-php-grpc-lite}"
 container_service="${BENCH_CONTAINER_SERVICE:-dev}"
 autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
+export BENCH_OTEL_RUN_ID="${BENCH_OTEL_RUN_ID:-$timestamp}"
+export BENCH_OTEL_EXPORTER="${BENCH_OTEL_EXPORTER:-otlp-http}"
+export BENCH_OTEL_EXPORTER_OTLP_ENDPOINT="${BENCH_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otelop:4318/v1/traces}"
 
 if [[ "$implementation" == "ext-grpc" ]]; then
     container_service="${BENCH_CONTAINER_SERVICE:-dev-ext-grpc}"
     autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
 fi
 
-mkdir -p "$output_dir"
+docker compose up -d otelop
 
 run_phase2_php() {
     local label="$1"
-    local output_name="$2"
-    shift 2
+    shift
 
-    local output_path="$output_dir/$output_name"
     local php_args=()
     if [[ "$implementation" == "php-grpc-lite" ]]; then
         php_args=(-d extension=/workspace/ext/grpc/modules/grpc.so)
@@ -75,152 +67,75 @@ run_phase2_php() {
     echo
     echo "==========================================="
     echo "  RUN: $label"
-    echo "  JSON: $output_path"
+    echo "  OTEL run id: $BENCH_OTEL_RUN_ID"
     echo "==========================================="
 
     docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$container_service" php ${php_args+"${php_args[@]}"} "$@" \
         --suite="$suite" \
         --implementation="$implementation" \
         --autoload="$autoload_path" \
-        --output="$output_path" \
         "${extra_args[@]+"${extra_args[@]}"}"
 }
 
 case "$suite" in
-    contract-smoke)
-        run_phase2_php \
-            "Phase 2 result contract smoke" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/contract-smoke.php
-        ;;
-    cpu-memory-smoke)
-        run_phase2_php \
-            "Phase 2 CPU / memory sampling smoke" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/cpu-memory-smoke.php
-        ;;
     throughput-unary)
-        run_phase2_php \
-            "Phase 2 unary throughput" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/throughput-unary.php
+        run_phase2_php "Phase 2 unary throughput" tools/phase2/throughput-unary.php
         ;;
     rtt-unary)
         docker compose up -d toxiproxy
-        run_phase2_php \
-            "Phase 2 RTT unary" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/rtt-unary.php
+        run_phase2_php "Phase 2 RTT unary" tools/phase2/rtt-unary.php
         ;;
     rtt-unary-diagnostic)
         docker compose up -d toxiproxy
-        run_phase2_php \
-            "Phase 2 RTT unary RPC diagnostic" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/rtt-unary.php \
-            --diagnostic-rpc
+        run_phase2_php "Phase 2 RTT unary RPC diagnostic" tools/phase2/rtt-unary.php --diagnostic-rpc
         ;;
     throughput-streaming)
-        run_phase2_php \
-            "Phase 2 streaming throughput" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/throughput-streaming.php
+        run_phase2_php "Phase 2 streaming throughput" tools/phase2/throughput-streaming.php
         ;;
     large-streaming)
-        run_phase2_php \
-            "Phase 2 large streaming" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/large-streaming.php
+        run_phase2_php "Phase 2 large streaming" tools/phase2/large-streaming.php
         ;;
     streaming-diagnostic)
-        run_phase2_php \
-            "Phase 2 streaming RPC diagnostic" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/streaming-diagnostic.php
+        run_phase2_php "Phase 2 streaming RPC diagnostic" tools/phase2/streaming-diagnostic.php
         ;;
     payload-unary)
-        run_phase2_php \
-            "Phase 2 unary payload sweep" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/payload-unary.php
+        run_phase2_php "Phase 2 unary payload sweep" tools/phase2/payload-unary.php
         ;;
     payload-unary-diagnostic)
-        run_phase2_php \
-            "Phase 2 unary payload RPC diagnostic" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/payload-unary.php \
-            --diagnostic-rpc
+        run_phase2_php "Phase 2 unary payload RPC diagnostic" tools/phase2/payload-unary.php --diagnostic-rpc
         ;;
     payload-unary-diagnostic-cached)
-        run_phase2_php \
-            "Phase 2 unary payload RPC diagnostic with cached server payload" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/payload-unary.php \
-            --diagnostic-rpc \
-            --server-cached-payload
+        run_phase2_php "Phase 2 unary payload RPC diagnostic with cached server payload" tools/phase2/payload-unary.php --diagnostic-rpc --server-cached-payload
         ;;
     payload-unary-return-transfer-fast-path)
-        run_phase2_php \
-            "Phase 2 unary payload RPC diagnostic with return-transfer fast path" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/payload-unary.php \
-            --diagnostic-rpc \
-            --server-cached-payload \
-            --return-transfer-fast-path
+        run_phase2_php "Phase 2 unary payload RPC diagnostic with return-transfer fast path" tools/phase2/payload-unary.php --diagnostic-rpc --server-cached-payload --return-transfer-fast-path
         ;;
     request-unary-diagnostic)
-        run_phase2_php \
-            "Phase 2 large request / small response RPC diagnostic" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/request-unary.php \
-            --diagnostic-rpc
-        ;;
-    payload-breakdown)
-        run_phase2_php \
-            "Phase 2 payload hot-path breakdown" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/payload-breakdown.php
+        run_phase2_php "Phase 2 large request / small response RPC diagnostic" tools/phase2/request-unary.php --diagnostic-rpc
         ;;
     payload-streaming)
-        run_phase2_php \
-            "Phase 2 streaming payload sweep" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/payload-streaming.php
+        run_phase2_php "Phase 2 streaming payload sweep" tools/phase2/payload-streaming.php
         ;;
     metadata-header)
-        run_phase2_php \
-            "Phase 2 metadata/header sweep" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/metadata-header.php
+        run_phase2_php "Phase 2 metadata/header sweep" tools/phase2/metadata-header.php
         ;;
     metadata-header-diagnostic)
-        run_phase2_php \
-            "Phase 2 metadata/header RPC diagnostic" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/metadata-header.php \
-            --diagnostic-rpc
-        ;;
-    metadata-compat)
-        run_phase2_php \
-            "Phase 2 metadata compatibility observation" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/metadata-compat.php
-        ;;
-    metadata-control-compat)
-        run_phase2_php \
-            "Phase 2 metadata control compatibility observation" \
-            "phase2-$suite-$timestamp-$implementation.json" \
-            tools/phase2/metadata-control-compat.php
+        run_phase2_php "Phase 2 metadata/header RPC diagnostic" tools/phase2/metadata-header.php --diagnostic-rpc
         ;;
     *)
-        cat >&2 <<EOF
+        cat >&2 <<USAGE
 Unknown Phase 2 suite: $suite
 
-Usage: ./bench/phase2/run.sh [contract-smoke|cpu-memory-smoke|throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-breakdown|payload-streaming|metadata-header|metadata-header-diagnostic|metadata-compat|metadata-control-compat]
-EOF
+Usage: ./bench/phase2/run.sh [throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-streaming|metadata-header|metadata-header-diagnostic]
+USAGE
         exit 2
         ;;
 esac
 
 echo
-echo "Saved JSON: $output_dir/phase2-$suite-$timestamp-$implementation.json"
+echo "OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
+docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
+    tools/phase2/otelop-summary.php \
+    --run-id="$BENCH_OTEL_RUN_ID" \
+    --suite="$suite" \
+    --limit="${BENCH_OTEL_SUMMARY_LIMIT:-100000}"

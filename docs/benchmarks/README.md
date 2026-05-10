@@ -6,7 +6,7 @@
 
 ## 通常の比較線
 
-通常の継続比較は **php-grpc-lite vs 公式 ext-grpc** に固定する。代表的な比較は以下を使う。
+通常の継続比較は **php-grpc-lite vs 公式 ext-grpc** に固定する。ベンチ結果の一次ソースは `otelop` にexportしたOTEL spanで、JSON/TSV保存やregression baselineは使わない。
 
 ```bash
 ./bench/phase2/compare-spanner-dml-unary-shape.sh
@@ -15,46 +15,28 @@
 ./bench/phase2/compare.sh rtt-unary --calls=20
 ```
 
-結果は `var/bench-results/` に保存する。保存名は `BENCH_TAG` と `BENCH_OUTPUT_DIR` で固定できる。
+`BENCH_TAG` または `BENCH_OTEL_RUN_ID` でrun idを固定できる。runnerはcompose内の `otelop` を起動し、デフォルトで `http://otelop:4318/v1/traces` へOTLP/HTTP exportする。
 
 ```bash
-BENCH_TAG=local-dml ./bench/phase2/compare-spanner-dml-unary-shape.sh
-BENCH_OUTPUT_DIR=/tmp/php-grpc-lite-bench ./bench/phase2/compare-small-select-streaming.sh
+BENCH_OTEL_RUN_ID=local-dml ./bench/phase2/compare-spanner-dml-unary-shape.sh
+BENCH_OTEL_RUN_ID=local-small-select ./bench/phase2/compare-small-select-streaming.sh
 ```
 
 ## Runner
 
-単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `vendor/autoload.php` を使う。
+単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `vendor/autoload.php` を使う。実行後は同じrun idのspanを `otelop-summary.php` で集計する。
 
 ```bash
 ./bench/phase2/run.sh throughput-unary --duration=5 --payload-bytes=100
 BENCH_IMPLEMENTATION=ext-grpc ./bench/phase2/run.sh throughput-unary --duration=5 --payload-bytes=100
 ```
 
-複数suiteをまとめる場合は preset 入口を使う。
-
-```bash
-./bench/phase2/preset.sh smoke
-./bench/phase2/preset.sh compare
-./bench/phase2/preset.sh decision
-```
-
-| preset | 用途 | 性質 |
-|---|---|---|
-| `smoke` | runner contract と代表比較の高速確認 | 短時間。壊れていないかを見る |
-| `compare` | 主要軸とSpanner shapeを一通り ext-grpc と短時間比較 | preliminary な傾向確認 |
-| `decision` | 最適化判断に使う長めの比較 | p99 / large streaming / metadata / Spanner shape の外れ値影響を下げる |
-
 ## OTEL export
 
-ベンチrunnerは任意で `otelop` へOTLP/HTTP exportできる。PHP runner側の共通RPC境界を 1 RPC = 1 span として記録し、php-grpc-lite / ext-grpc を同じ境界で比較する。
+ベンチrunnerはPHP runner側の共通RPC境界を 1 RPC = 1 span として記録し、php-grpc-lite / ext-grpc を同じ境界で比較する。UIは `http://localhost:4319`。OTLP/HTTP endpointはcompose内から `http://otelop:4318/v1/traces`、ホストから直接送る場合は `http://localhost:4318/v1/traces` を使う。
 
 ```bash
-docker compose up -d otelop
-
-BENCH_OTEL_EXPORTER=otlp-http \
 BENCH_OTEL_RUN_ID=local-otel \
-BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
 ./bench/phase2/compare-spanner-dml-unary-shape.sh
 
 docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
@@ -62,8 +44,6 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
   --run-id=local-otel \
   --suite=spanner-dml-unary-shape
 ```
-
-UIは `http://localhost:4319`。OTLP/HTTP endpointはcompose内から `http://otelop:4318/v1/traces`、ホストから直接送る場合は `http://localhost:4318/v1/traces` を使う。
 
 ## 代表ケース
 

@@ -1,19 +1,18 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/ResultContract.php';
+require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 
 use Grpc\ChannelCredentials;
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
-use PhpGrpcLite\Tools\Phase2\ResultContract;
+use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
 
 $args = $argv;
 array_shift($args);
 
-$output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $iterations = 100;
@@ -23,11 +22,7 @@ $sleepUs = 0;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
-    if ($arg === '--output') {
-        $output = $args[++$argIndex] ?? null;
-    } elseif (str_starts_with($arg, '--output=')) {
-        $output = substr($arg, strlen('--output='));
-    } elseif ($arg === '--target') {
+    if ($arg === '--target') {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
         $target = substr($arg, strlen('--target='));
@@ -56,8 +51,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($output === null || $output === '' || $iterations <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $sleepUs < 0) {
-    usage('output, iterations, message-count, payload-bytes, and sleep-us must be valid');
+if ($iterations <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $sleepUs < 0) {
+    usage('iterations, message-count, payload-bytes, and sleep-us must be valid');
 }
 if (!(extension_loaded('grpc'))) {
     throw new \RuntimeException('grpc extension is required');
@@ -141,12 +136,6 @@ $measurements[] = runScenario('stream_unset_repeat', $iterations, static functio
     probeUnary($client);
 });
 
-$document = ResultContract::document('native-lifecycle-stress', 'php-grpc-lite', $measurements);
-$dir = dirname($output);
-if (!is_dir($dir)) {
-    mkdir($dir, 0777, true);
-}
-file_put_contents($output, ResultContract::encode($document));
 
 foreach ($measurements as $measurement) {
     $metrics = $measurement['metrics'];
@@ -161,7 +150,7 @@ foreach ($measurements as $measurement) {
         $metrics['fd_count_delta']['value'] ?? 'n/a',
     );
 }
-echo "JSON: $output\n";
+echo "OTEL spans exported.\n";
 
 /** @return array<string, mixed> */
 function runScenario(string $name, int $iterations, callable $callback): array
@@ -205,7 +194,7 @@ function runScenario(string $name, int $iterations, callable $callback): array
     $rssEnd = rssKiB();
     $fdEnd = fdCount();
 
-    return ResultContract::measurement($name, 'native-lifecycle', 'BenchServerStream', [
+    return BenchMeasurement::make($name, 'native-lifecycle', 'BenchServerStream', [
         'target' => 'test-server:50051',
         'transport' => 'native',
     ], [
@@ -268,6 +257,6 @@ function nullableDelta(?int $current, ?int $base): ?int
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/native-lifecycle-stress.php --output=var/bench-results/result.json [--iterations=100] [--message-count=20] [--payload-bytes=1024] [--sleep-us=50000]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/native-lifecycle-stress.php [--iterations=100] [--message-count=20] [--payload-bytes=1024] [--sleep-us=50000]\n");
     exit(2);
 }

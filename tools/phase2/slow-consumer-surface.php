@@ -1,12 +1,10 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/ResultContract.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -14,7 +12,6 @@ use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
 $args = $argv;
 array_shift($args);
 
-$output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $streams = 10;
@@ -27,11 +24,7 @@ $transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
-    if ($arg === '--output') {
-        $output = $args[++$argIndex] ?? null;
-    } elseif (str_starts_with($arg, '--output=')) {
-        $output = substr($arg, strlen('--output='));
-    } elseif ($arg === '--target') {
+    if ($arg === '--target') {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
         $target = substr($arg, strlen('--target='));
@@ -72,8 +65,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($output === null || $output === '' || $streams <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $sleepUs < 0) {
-    usage('output, streams, message-count, payload-bytes, and sleep-us must be valid');
+if ($streams <= 0 || $messageCount <= 0 || $payloadBytes < 0 || $sleepUs < 0) {
+    usage('streams, message-count, payload-bytes, and sleep-us must be valid');
 }
 if (!is_file($autoload)) {
     throw new \RuntimeException("autoload file not found: $autoload");
@@ -150,24 +143,6 @@ foreach (UnaryBenchHelper::percentiles($firstYieldOffsets) as $name => $value) {
     $metrics['first_yield_offset_' . $name . '_ns'] = ['value' => $value, 'unit' => 'ns'];
 }
 
-$document = ResultContract::document('slow-consumer-surface', $implementation, [
-    ResultContract::measurement('slow_consumer_surface', 'slow-consumer', 'BenchServerStream', [
-        'target' => $target,
-        'transport' => $transport,
-        'native_response_mode' => $nativeResponseMode,
-        'streams' => $streams,
-        'message_count' => $messageCount,
-        'payload_bytes' => $payloadBytes,
-        'sleep_us' => $sleepUs,
-        'note' => 'slow consumer surface check: memory peak and wall time show the consumer-speed/backpressure tradeoff',
-    ], $metrics),
-]);
-
-$dir = dirname($output);
-if (!is_dir($dir)) {
-    mkdir($dir, 0777, true);
-}
-file_put_contents($output, ResultContract::encode($document));
 printf(
     "implementation=%s transport=%s streams=%d messages=%d first-yield-p50=%.1fμs stream-p99=%.1fμs peak-delta=%.1fKiB wall=%.1fms\n",
     $implementation,
@@ -183,6 +158,6 @@ printf(
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/slow-consumer-surface.php --output=var/bench-results/result.json [--implementation=php-grpc-lite|ext-grpc] [--sleep-us=1000]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/slow-consumer-surface.php [--implementation=php-grpc-lite|ext-grpc] [--sleep-us=1000]\n");
     exit(2);
 }

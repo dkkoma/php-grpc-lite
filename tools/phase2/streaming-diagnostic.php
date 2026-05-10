@@ -1,15 +1,15 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/ResultContract.php';
+require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
+use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
-use PhpGrpcLite\Tools\Phase2\ResultContract;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
 
@@ -18,7 +18,6 @@ array_shift($args);
 
 $suite = 'streaming-diagnostic';
 $implementation = 'php-grpc-lite';
-$output = null;
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $streams = 1000;
@@ -39,10 +38,6 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $implementation = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--implementation=')) {
         $implementation = substr($arg, strlen('--implementation='));
-    } elseif ($arg === '--output') {
-        $output = $args[++$argIndex] ?? null;
-    } elseif (str_starts_with($arg, '--output=')) {
-        $output = substr($arg, strlen('--output='));
     } elseif ($arg === '--target') {
         $target = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--target=')) {
@@ -82,18 +77,16 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     }
 }
 
-if ($suite === '' || $implementation === '' || $target === '' || $autoload === '' || $output === null || $output === '') {
-    usage('suite, implementation, target, autoload, and output are required');
+if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
+    usage('suite, implementation, target, and autoload are required');
 }
 if ($streams <= 0 || $warmupStreams < 0 || $messageCount <= 0 || $payloadBytes < 0) {
     usage('streams, warmup-streams, message-count, and payload-bytes must be valid');
 }
 
 requireAutoload($autoload);
-$benchTelemetry = BenchTelemetry::fromEnvironment($suite, $implementation);
-if ($benchTelemetry !== null) {
-    register_shutdown_function([$benchTelemetry, 'shutdown']);
-}
+$benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementation);
+register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $clientOptions = [
     'php_grpc_lite.native_response_mode' => $nativeResponseMode,
@@ -103,7 +96,7 @@ if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
 }
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
-$benchTelemetry?->setContext('streaming_diagnostic', [
+$benchTelemetry->setContext('streaming_diagnostic', [
     'benchmark.target' => $target,
     'benchmark.streams' => $streams,
     'benchmark.warmup_streams' => $warmupStreams,
@@ -154,7 +147,7 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $s
             throw $throwable;
         } finally {
             $callEndNs = hrtime(true);
-            $benchTelemetry?->recordRpcSpan('BenchServerStream', $streamStartNs, $callEndNs, [
+            $benchTelemetry->recordRpcSpan('BenchServerStream', $streamStartNs, $callEndNs, [
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchServerStream',
                 'benchmark.phase' => 'measurement',
@@ -183,7 +176,7 @@ foreach (summarizeSeries($series) as $name => $summary) {
     }
 }
 
-$measurement = ResultContract::measurement('streaming_diagnostic', 'streaming-diagnostic', 'BenchServerStream', [
+$measurement = BenchMeasurement::make('streaming_diagnostic', 'streaming-diagnostic', 'BenchServerStream', [
     'target' => $target,
     'streams' => $streams,
     'warmup_streams' => $warmupStreams,
@@ -194,13 +187,8 @@ $measurement = ResultContract::measurement('streaming_diagnostic', 'streaming-di
     'transport' => $transport,
 ], $metrics);
 
-$document = ResultContract::document($suite, $implementation, [$measurement]);
-writeDocument($output, $document);
 
-printf("%-24s %12s %12s %12s %12s\n", 'scenario', 'messages', 'msg/s', 'p50 stream', 'p99 stream');
-printf("%'-76s\n", '');
-printf("%-24s %12d %12.1f %11.1fμs %11.1fμs\n", $measurement['name'], $messages, $metrics['messages_per_second']['value'], $metrics['stream_latency_p50_ns']['value'] / 1_000, $metrics['stream_latency_p99_ns']['value'] / 1_000);
-echo "JSON: $output\n";
+echo "OTEL spans exported.\n";
 
 /** @param array<string, list<string>> $trailers */
 function collectTrailerSeries(array $trailers, array &$series): void
@@ -229,19 +217,11 @@ function summarizeSeries(array $series): array
     return $summaries;
 }
 
-function writeDocument(string $output, array $document): void
-{
-    $dir = dirname($output);
-    if (!is_dir($dir)) {
-        mkdir($dir, 0777, true);
-    }
-    file_put_contents($output, ResultContract::encode($document));
-}
 
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite --output=var/bench-results/result.json [--streams=1000] [--warmup-streams=3] [--message-count=10] [--payload-bytes=102400]\n");
+    fwrite(STDERR, "Usage: php tools/phase2/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite [--streams=1000] [--warmup-streams=3] [--message-count=10] [--payload-bytes=102400]\n");
     exit(2);
 }
 
