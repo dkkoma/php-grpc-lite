@@ -1,13 +1,11 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
@@ -80,7 +78,6 @@ if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
     $clientOptions['grpc_lite.backend'] = 'franken-go';
 }
 $client = StreamingBenchHelper::client($target, $clientOptions);
-$measurements = [];
 foreach ($payloadSizes as $payloadBytes) {
     $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
     $benchTelemetry->setContext("payload_streaming_{$payloadBytes}b", [
@@ -117,14 +114,6 @@ foreach ($payloadSizes as $payloadBytes) {
     foreach (UnaryBenchHelper::percentiles($streamLatenciesNs) as $name => $value) {
         $metrics['stream_latency_' . $name . '_ns'] = ['value' => $value, 'unit' => 'ns'];
     }
-
-    $measurements[] = BenchMeasurement::make("payload_streaming_{$payloadBytes}b", 'payload-streaming', 'BenchServerStream', [
-        'target' => $target,
-        'streams' => $streams,
-        'message_count' => $messageCount,
-        'payload_bytes' => $payloadBytes,
-        'transport' => $transport,
-    ], $metrics);
 }
 
 

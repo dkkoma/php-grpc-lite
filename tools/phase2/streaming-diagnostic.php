@@ -1,13 +1,11 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
@@ -175,17 +173,6 @@ foreach (summarizeSeries($series) as $name => $summary) {
         $metrics[$name . '_' . $percentile] = ['value' => $value, 'unit' => str_ends_with($name, '_count') ? 'count' : 'ns'];
     }
 }
-
-$measurement = BenchMeasurement::make('streaming_diagnostic', 'streaming-diagnostic', 'BenchServerStream', [
-    'target' => $target,
-    'streams' => $streams,
-    'warmup_streams' => $warmupStreams,
-    'message_count' => $messageCount,
-    'payload_bytes' => $payloadBytes,
-    'native_transport' => $nativeTransport,
-    'native_response_mode' => $nativeResponseMode,
-    'transport' => $transport,
-], $metrics);
 
 
 echo "OTEL spans exported.\n";

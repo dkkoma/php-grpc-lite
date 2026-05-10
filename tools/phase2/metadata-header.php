@@ -1,13 +1,11 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -71,7 +69,6 @@ register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $client = UnaryBenchHelper::client($target);
 $request = new BenchRequest();
-$measurements = [];
 
 foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
     $metadata = buildMetadata($requestKeys, $responseKeys, $valueBytes);
@@ -120,33 +117,6 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
         return $calls;
     });
 
-    $metrics = $sample['metrics'];
-    $elapsedSec = $metrics['wall_time_ns_total']['value'] / 1_000_000_000;
-    $metrics['calls_total'] = ['value' => $sample['result'], 'unit' => 'calls'];
-    $metrics['calls_per_second'] = ['value' => $sample['result'] / $elapsedSec, 'unit' => 'calls/s'];
-    $metrics['wall_time_ns_per_call'] = ['value' => $metrics['wall_time_ns_total']['value'] / $sample['result'], 'unit' => 'ns/call'];
-    foreach (UnaryBenchHelper::percentiles($latenciesNs) as $name => $value) {
-        $metrics['latency_' . $name . '_ns'] = ['value' => $value, 'unit' => 'ns'];
-    }
-    foreach (summarizeDiagnostics($diagnosticSeries) as $name => $metric) {
-        $metrics[$name] = $metric;
-    }
-
-    $measurements[] = BenchMeasurement::make(
-        $measurementName,
-        'metadata-header',
-        'BenchUnary',
-        [
-            'target' => $target,
-            'calls' => $calls,
-            'request_keys' => $requestKeys,
-            'response_initial_keys' => $responseKeys,
-            'response_trailing_keys' => $responseKeys,
-            'value_bytes' => $valueBytes,
-            'diagnostic_rpc' => $diagnosticRpc && $implementation === 'php-grpc-lite',
-        ],
-        $metrics,
-    );
 }
 
 

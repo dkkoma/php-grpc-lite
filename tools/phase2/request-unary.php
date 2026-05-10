@@ -1,12 +1,10 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -87,7 +85,6 @@ $benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementatio
 register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $client = UnaryBenchHelper::client($target);
-$measurements = [];
 foreach ($requestPayloadSizes as $requestPayloadBytes) {
     $requestPayload = $requestPayloadBytes > 0 ? str_repeat("\0", $requestPayloadBytes) : '';
     $request = UnaryBenchHelper::request(0, 0, $requestPayload);
@@ -159,20 +156,6 @@ foreach ($requestPayloadSizes as $requestPayloadBytes) {
     foreach (summarizeDiagnostics($diagnosticSeries) as $name => $metric) {
         $metrics[$name] = $metric;
     }
-
-    $measurements[] = BenchMeasurement::make("request_unary_{$requestPayloadBytes}b", 'request-unary', 'BenchUnary', [
-        'target' => $target,
-        'duration_sec' => $durationSec,
-        'request_payload_bytes' => $requestPayloadBytes,
-        'response_payload_bytes' => 0,
-        'warmup_calls' => $warmupCalls,
-        'max_calls' => $maxCalls,
-        'diagnostic_rpc' => $diagnosticRpc,
-        'client_internal_diagnostics' => $diagnosticRpc && $implementation === 'php-grpc-lite',
-        'upload_read_callback' => $uploadReadCallback && $implementation === 'php-grpc-lite',
-        'native_transport' => $nativeTransport,
-        'transport' => $transport,
-    ], $metrics);
 }
 
 echo "OTEL spans exported.\n";

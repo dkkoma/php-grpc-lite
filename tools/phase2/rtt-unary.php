@@ -1,13 +1,11 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -102,7 +100,6 @@ foreach ($proxyCases as $proxyCase) {
     );
 }
 
-$measurements = [];
 foreach ($proxyCases as $proxyCase) {
     $request = UnaryBenchHelper::request($payloadBytes, $serverDelayMs);
     $warmClient = UnaryBenchHelper::client($proxyCase['target']);
@@ -117,7 +114,7 @@ foreach ($proxyCases as $proxyCase) {
         UnaryBenchHelper::call($warmClient, $request);
     }
 
-    $measurements[] = runMode(
+    runMode(
         'rtt_unary_warm_' . $proxyCase['name'],
         'warm',
         $proxyCase['target'],
@@ -131,7 +128,7 @@ foreach ($proxyCases as $proxyCase) {
         $benchTelemetry,
     );
 
-    $measurements[] = runMode(
+    runMode(
         'rtt_unary_cold_' . $proxyCase['name'],
         'cold',
         $proxyCase['target'],
@@ -165,7 +162,7 @@ function runMode(
     int $serverDelayMs,
     bool $diagnosticRpc,
     ?BenchTelemetry $benchTelemetry,
-): array {
+): void {
     $latenciesNs = [];
     $diagnosticSeries = [];
     $benchTelemetry->setContext($name, [
@@ -201,43 +198,6 @@ function runMode(
         return $calls;
     });
 
-    $metrics = $sample['metrics'];
-    $percentiles = UnaryBenchHelper::percentiles($latenciesNs);
-    $metrics['calls_total'] = [
-        'value' => $calls,
-        'unit' => 'calls',
-    ];
-    $metrics['wall_time_ns_per_call'] = [
-        'value' => $metrics['wall_time_ns_total']['value'] / $calls,
-        'unit' => 'ns/call',
-    ];
-    $metrics['diagnostic_cpu_total_us_per_call'] = [
-        'value' => $metrics['diagnostic_cpu_total_us_total']['value'] / $calls,
-        'unit' => 'us/call',
-    ];
-    foreach ($percentiles as $percentile => $value) {
-        $metrics['latency_' . $percentile . '_ns'] = [
-            'value' => $value,
-            'unit' => 'ns',
-        ];
-    }
-
-    return BenchMeasurement::make(
-        $name,
-        'rtt',
-        'BenchUnary',
-        [
-            'mode' => $mode,
-            'target' => $target,
-            'calls' => $calls,
-            'payload_bytes' => $payloadBytes,
-            'server_delay_ms' => $serverDelayMs,
-            'toxiproxy_downstream_latency_ms' => $proxyCase['downstream_latency_ms'],
-            'latency_model' => $proxyCase['proxy'] === null ? 'direct' : 'toxiproxy downstream latency only',
-            'diagnostic_rpc' => $diagnosticRpc,
-        ],
-        $metrics + summarizeDiagnostics($diagnosticSeries),
-    );
 }
 
 /**

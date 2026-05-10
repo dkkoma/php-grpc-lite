@@ -1,12 +1,10 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
@@ -64,7 +62,6 @@ $benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementatio
 register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $client = StreamingBenchHelper::client($target);
-$measurements = [];
 foreach ($messageCounts as $messageCount) {
     $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
     $benchTelemetry->setContext("large_streaming_count_$messageCount", [
@@ -87,12 +84,6 @@ foreach ($messageCounts as $messageCount) {
     $metrics['messages_total'] = ['value' => $sample['result'], 'unit' => 'messages'];
     $metrics['messages_per_second'] = ['value' => $sample['result'] / ($metrics['wall_time_ns_total']['value'] / 1_000_000_000), 'unit' => 'messages/s'];
     $metrics['wall_time_ns_per_message'] = ['value' => $metrics['wall_time_ns_total']['value'] / $sample['result'], 'unit' => 'ns/message'];
-
-    $measurements[] = BenchMeasurement::make("large_streaming_count_$messageCount", 'large-streaming', 'BenchServerStream', [
-        'target' => $target,
-        'message_count' => $messageCount,
-        'payload_bytes' => $payloadBytes,
-    ], $metrics);
 }
 
 

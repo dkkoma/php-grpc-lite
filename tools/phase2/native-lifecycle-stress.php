@@ -1,13 +1,11 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 
 use Grpc\ChannelCredentials;
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\StreamingBenchHelper;
 
 $args = $argv;
@@ -194,10 +192,9 @@ function runScenario(string $name, int $iterations, callable $callback): array
     $rssEnd = rssKiB();
     $fdEnd = fdCount();
 
-    return BenchMeasurement::make($name, 'native-lifecycle', 'BenchServerStream', [
-        'target' => 'test-server:50051',
-        'transport' => 'native',
-    ], [
+    return [
+        'name' => $name,
+        'metrics' => [
         'iterations_total' => ['value' => $iterations, 'unit' => 'iterations'],
         'failures_total' => ['value' => $failures, 'unit' => 'failures'],
         'wall_time_ns_total' => ['value' => $elapsedNs, 'unit' => 'ns'],
@@ -217,7 +214,7 @@ function runScenario(string $name, int $iterations, callable $callback): array
         'fd_count_end' => ['value' => $fdEnd, 'unit' => 'fds'],
         'fd_count_max' => ['value' => $fdMax, 'unit' => 'fds'],
         'fd_count_delta' => ['value' => nullableDelta($fdEnd, $fdStart), 'unit' => 'fds'],
-    ]);
+    ]];
 }
 
 function probeUnary(GreeterClient $client): void

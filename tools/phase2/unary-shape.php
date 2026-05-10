@@ -1,12 +1,10 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/BenchMeasurement.php';
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
-use PhpGrpcLite\Tools\Phase2\BenchMeasurement;
 use PhpGrpcLite\Tools\Phase2\BenchTelemetry;
 use PhpGrpcLite\Tools\Phase2\ResourceSampler;
 use PhpGrpcLite\Tools\Phase2\UnaryBenchHelper;
@@ -90,7 +88,6 @@ if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
     $clientOptions['grpc_lite.backend'] = 'franken-go';
 }
 $client = UnaryBenchHelper::client($target, $clientOptions);
-$measurements = [];
 
 foreach ($cases as $case) {
     $requestPayload = $case['request_bytes'] > 0 ? str_repeat("\0", $case['request_bytes']) : '';
@@ -163,17 +160,6 @@ foreach ($cases as $case) {
     foreach (summarizeDiagnostics($diagnosticSeries) as $name => $metric) {
         $metrics[$name] = $metric;
     }
-
-    $measurements[] = BenchMeasurement::make($case['name'], 'unary-shape', 'BenchUnary', [
-        'target' => $target,
-        'duration_sec' => $durationSec,
-        'request_bytes' => $case['request_bytes'],
-        'response_bytes' => $case['response_bytes'],
-        'warmup_calls' => $warmupCalls,
-        'max_calls' => $maxCalls,
-        'transport' => $transport,
-        'diagnostic_rpc' => $diagnosticRpc,
-    ], $metrics);
 }
 
 echo "OTEL spans exported.\n";

@@ -32,3 +32,9 @@ Phase 2 runnerはOTEL span exportに対応したが、JSON/TSV互換出力、Res
 - `BENCH_TAG=otel-only-compare-final-20260510-162733 ./bench/phase2/compare.sh throughput-unary --duration=0.01 --warmup-calls=1 --payload-bytes=10`
 - `BENCH_TAG=otel-only-spanner-smoke-20260510-162511 DURATION=0.01 WARMUP_CALLS=1 MAX_CALLS=2 ./bench/phase2/compare-spanner-dml-unary-shape.sh`
 - OTEL summary confirmed php-grpc-lite / ext-grpc spans from otelop without JSON/TSV result files.
+
+## Follow-up Self Review
+
+- 2026-05-10: PR自己レビューで、JSON/TSV削除後も `BenchMeasurement` と一部runner内の保存用measurement assemblyが残っていることを確認した。
+- 対応: `BenchMeasurement` を削除し、OTEL summaryに使われないmeasurement object生成を削除した。lifecycle stressはQAログ表示に必要な最小配列だけをローカルに残す。
+- 追加検証: `BENCH_TAG=otel-only-cleanup-smoke-20260510-205945 ./bench/phase2/run.sh throughput-unary --duration=0.01 --warmup-calls=1 --payload-bytes=10`
