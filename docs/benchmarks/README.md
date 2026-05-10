@@ -9,8 +9,8 @@
 通常の継続比較は **php-grpc-lite vs 公式 ext-grpc** に固定する。ベンチ結果の一次ソースは `otelop` にexportしたOTEL spanで、JSON/TSV保存やregression baselineは使わない。
 
 ```bash
-./bench/compare-spanner-dml-unary-shape.sh
-./bench/compare-small-select-streaming.sh
+./bench/compare.sh spanner-dml-unary-shape
+./bench/compare.sh small-select-streaming
 ./bench/compare.sh throughput-unary --duration=3
 ./bench/compare.sh rtt-unary --calls=20
 ```
@@ -18,8 +18,8 @@
 `BENCH_TAG` または `BENCH_OTEL_RUN_ID` でrun idを固定できる。runnerはcompose内の `otelop` を起動し、デフォルトで `http://otelop:4318/v1/traces` へOTLP/HTTP exportする。
 
 ```bash
-BENCH_OTEL_RUN_ID=local-dml ./bench/compare-spanner-dml-unary-shape.sh
-BENCH_OTEL_RUN_ID=local-small-select ./bench/compare-small-select-streaming.sh
+BENCH_OTEL_RUN_ID=local-dml ./bench/compare.sh spanner-dml-unary-shape
+BENCH_OTEL_RUN_ID=local-small-select ./bench/compare.sh small-select-streaming
 ```
 
 ## Runner
@@ -37,7 +37,7 @@ BENCH_IMPLEMENTATION=ext-grpc ./bench/run.sh throughput-unary --duration=5 --pay
 
 ```bash
 BENCH_OTEL_RUN_ID=local-otel \
-./bench/compare-spanner-dml-unary-shape.sh
+./bench/compare.sh spanner-dml-unary-shape
 
 docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
   tools/benchmark/otelop-summary.php \
@@ -49,8 +49,8 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 
 | script / suite | 用途 |
 |---|---|
-| `compare-spanner-dml-unary-shape.sh` | Spanner DML flow の BeginTransaction / ExecuteSql DML / Commit に近い small unary shape |
-| `compare-small-select-streaming.sh` | Spanner `ExecuteStreamingSql` が 1 `PartialResultSet` で返る small SELECT 近似 |
+| `spanner-dml-unary-shape` | Spanner DML flow の BeginTransaction / ExecuteSql DML / Commit に近い small unary shape |
+| `small-select-streaming` | Spanner `ExecuteStreamingSql` が 1 `PartialResultSet` で返る small SELECT 近似 |
 | `throughput-unary` | 単一 PHP process / concurrency=1 の sustained unary throughput と tail latency |
 | `rtt-unary` | direct と downstream latency 1 / 3 / 5 ms の unary RTT |
 | `throughput-streaming` | server streaming message/sec と stream latency |
@@ -59,7 +59,7 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 | `payload-streaming` | streaming payload size 別の messages/sec と stream latency |
 | `metadata-header` | request / initial / trailing metadata 数別の unary latency |
 
-`*-diagnostic` suite は実装内部の切り分け用で、通常比較の一次指標にはしない。traceやserver statsを有効にしたrunのlatencyは参考値として扱う。
+`compare-spanner-dml-unary-shape.sh` と `compare-small-select-streaming.sh` は franken-go backend を含めて確認する場合の補助入口。通常比較は `compare.sh <suite>` を使う。
 
 ## ベンチ文書を書く基準
 

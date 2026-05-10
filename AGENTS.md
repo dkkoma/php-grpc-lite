@@ -46,7 +46,7 @@
 - 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
 - C拡張静的解析: `./tools/test/check-c-static-analysis.sh`
 - 単独ベンチ: `./bench/run.sh <suite>`
-- ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner代表形状は `./bench/compare-spanner-dml-unary-shape.sh` / `./bench/compare-small-select-streaming.sh`
+- ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner代表形状も `spanner-dml-unary-shape` / `small-select-streaming` として通常suiteに含める。franken-go backend を含める場合だけ `./bench/compare-spanner-dml-unary-shape.sh` / `./bench/compare-small-select-streaming.sh` を使う。
 - grpc-php-rs 比較入口は廃止済み。必要になった場合だけ新しい専用runnerとして再作成する。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。
 

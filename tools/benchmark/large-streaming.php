@@ -76,7 +76,6 @@ foreach ($messageCounts as $messageCount) {
         $benchTelemetry->recordRpcSpan('BenchServerStream', $streamStartNs, $streamEndNs, [
             'rpc.service' => 'helloworld.Greeter',
             'rpc.method' => 'BenchServerStream',
-            'benchmark.phase' => 'measurement',
         ]);
         return $messages;
     });

@@ -56,18 +56,18 @@ for case_spec in "${cases[@]}"; do
     echo
     echo "== $case_name: php-grpc-lite native =="
     docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev sh -lc \
-        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/benchmark/streaming-diagnostic.php --implementation=php-grpc-lite ${common_args[*]}"
+        "php -d extension=/workspace/ext/grpc/modules/grpc.so tools/benchmark/small-select-streaming.php --implementation=php-grpc-lite ${common_args[*]}"
 
     if [[ "$include_franken" == "1" ]]; then
         echo "== $case_name: php-grpc-lite franken-go =="
-        docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/benchmark/streaming-diagnostic.php \
+        docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev-franken-grpc-go tools/frankenphp-grpc-lite-run.sh tools/benchmark/small-select-streaming.php \
             --implementation=php-grpc-lite \
             --transport=franken-go \
             "${common_args[@]}"
     fi
 
     echo "== $case_name: ext-grpc =="
-    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev-ext-grpc php tools/benchmark/streaming-diagnostic.php \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" dev-ext-grpc php tools/benchmark/small-select-streaming.php \
         --implementation=ext-grpc \
         "${common_args[@]}"
 done

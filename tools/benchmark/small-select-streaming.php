@@ -14,16 +14,15 @@ use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 $args = $argv;
 array_shift($args);
 
-$suite = 'streaming-diagnostic';
+$suite = 'small-select-streaming';
 $implementation = 'php-grpc-lite';
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $streams = 1000;
 $warmupStreams = 3;
-$messageCount = 10;
-$payloadBytes = 100 * 1024;
-$nativeTransport = true;
-$nativeResponseMode = 'direct';
+$messageCount = 1;
+$payloadBytes = 1024;
+$nativeResponseMode = 'stream';
 $transport = 'native';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
@@ -60,8 +59,6 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $payloadBytes = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--payload-bytes=')) {
         $payloadBytes = (int) substr($arg, strlen('--payload-bytes='));
-    } elseif ($arg === '--native-transport') {
-        $nativeTransport = true;
     } elseif ($arg === '--transport') {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
@@ -94,7 +91,7 @@ if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
 }
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes);
-$benchTelemetry->setContext('streaming_diagnostic', [
+$benchTelemetry->setContext('small_select_streaming', [
     'benchmark.target' => $target,
     'benchmark.streams' => $streams,
     'benchmark.warmup_streams' => $warmupStreams,
@@ -148,7 +145,6 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $s
             $benchTelemetry->recordRpcSpan('BenchServerStream', $streamStartNs, $callEndNs, [
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchServerStream',
-                'benchmark.phase' => 'measurement',
             ], $statusCode);
         }
         $streamLatenciesNs[] = $callEndNs - $streamStartNs;
@@ -208,7 +204,7 @@ function summarizeSeries(array $series): array
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/streaming-diagnostic.php --suite=streaming-diagnostic --implementation=php-grpc-lite [--streams=1000] [--warmup-streams=3] [--message-count=10] [--payload-bytes=102400]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/small-select-streaming.php --suite=small-select-streaming --implementation=php-grpc-lite [--streams=1000] [--warmup-streams=3] [--message-count=1] [--payload-bytes=1024]\n");
     exit(2);
 }
 

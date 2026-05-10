@@ -107,7 +107,6 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $d
         $benchTelemetry->recordRpcSpan('BenchUnary', $callStartNs, $callEndNs, [
             'rpc.service' => 'helloworld.Greeter',
             'rpc.method' => 'BenchUnary',
-            'benchmark.phase' => 'measurement',
         ]);
         $latenciesNs[] = $callEndNs - $callStartNs;
         $calls++;

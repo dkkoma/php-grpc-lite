@@ -5,18 +5,13 @@
 # Usage:
 #   ./bench/run.sh throughput-unary
 #   ./bench/run.sh rtt-unary
-#   ./bench/run.sh rtt-unary-diagnostic
 #   ./bench/run.sh throughput-streaming
 #   ./bench/run.sh large-streaming
-#   ./bench/run.sh streaming-diagnostic
 #   ./bench/run.sh payload-unary
-#   ./bench/run.sh payload-unary-diagnostic
-#   ./bench/run.sh payload-unary-diagnostic-cached
-#   ./bench/run.sh payload-unary-return-transfer-fast-path
-#   ./bench/run.sh request-unary-diagnostic
 #   ./bench/run.sh payload-streaming
 #   ./bench/run.sh metadata-header
-#   ./bench/run.sh metadata-header-diagnostic
+#   ./bench/run.sh spanner-dml-unary-shape
+#   ./bench/run.sh small-select-streaming
 #
 set -euo pipefail
 
@@ -89,33 +84,14 @@ case "$suite" in
         docker compose up -d toxiproxy
         run_benchmark_php "Benchmark RTT unary" tools/benchmark/rtt-unary.php
         ;;
-    rtt-unary-diagnostic)
-        docker compose up -d toxiproxy
-        run_benchmark_php "Benchmark RTT unary RPC diagnostic" tools/benchmark/rtt-unary.php --diagnostic-rpc
-        ;;
     throughput-streaming)
         run_benchmark_php "Benchmark streaming throughput" tools/benchmark/throughput-streaming.php
         ;;
     large-streaming)
         run_benchmark_php "Benchmark large streaming" tools/benchmark/large-streaming.php
         ;;
-    streaming-diagnostic)
-        run_benchmark_php "Benchmark streaming RPC diagnostic" tools/benchmark/streaming-diagnostic.php
-        ;;
     payload-unary)
         run_benchmark_php "Benchmark unary payload sweep" tools/benchmark/payload-unary.php
-        ;;
-    payload-unary-diagnostic)
-        run_benchmark_php "Benchmark unary payload RPC diagnostic" tools/benchmark/payload-unary.php --diagnostic-rpc
-        ;;
-    payload-unary-diagnostic-cached)
-        run_benchmark_php "Benchmark unary payload RPC diagnostic with cached server payload" tools/benchmark/payload-unary.php --diagnostic-rpc --server-cached-payload
-        ;;
-    payload-unary-return-transfer-fast-path)
-        run_benchmark_php "Benchmark unary payload RPC diagnostic with return-transfer fast path" tools/benchmark/payload-unary.php --diagnostic-rpc --server-cached-payload --return-transfer-fast-path
-        ;;
-    request-unary-diagnostic)
-        run_benchmark_php "Benchmark large request / small response RPC diagnostic" tools/benchmark/request-unary.php --diagnostic-rpc
         ;;
     payload-streaming)
         run_benchmark_php "Benchmark streaming payload sweep" tools/benchmark/payload-streaming.php
@@ -123,14 +99,20 @@ case "$suite" in
     metadata-header)
         run_benchmark_php "Benchmark metadata/header sweep" tools/benchmark/metadata-header.php
         ;;
-    metadata-header-diagnostic)
-        run_benchmark_php "Benchmark metadata/header RPC diagnostic" tools/benchmark/metadata-header.php --diagnostic-rpc
+    spanner-dml-unary-shape)
+        run_benchmark_php "Benchmark Spanner DML unary shape" tools/benchmark/unary-shape.php
+        ;;
+    small-select-streaming)
+        run_benchmark_php "Benchmark small SELECT streaming 1x100B" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=100 --native-response-mode=stream
+        run_benchmark_php "Benchmark small SELECT streaming 1x1KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=1024 --native-response-mode=stream
+        run_benchmark_php "Benchmark small SELECT streaming 1x4KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=4096 --native-response-mode=stream
+        run_benchmark_php "Benchmark small SELECT streaming 1x10KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=10240 --native-response-mode=stream
         ;;
     *)
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|rtt-unary-diagnostic|throughput-streaming|large-streaming|streaming-diagnostic|payload-unary|payload-unary-diagnostic|payload-unary-diagnostic-cached|payload-unary-return-transfer-fast-path|request-unary-diagnostic|payload-streaming|metadata-header|metadata-header-diagnostic]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-dml-unary-shape|small-select-streaming]
 USAGE
         exit 2
         ;;

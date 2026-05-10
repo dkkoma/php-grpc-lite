@@ -97,7 +97,6 @@ foreach ($payloadSizes as $payloadBytes) {
             $benchTelemetry->recordRpcSpan('BenchServerStream', $streamStartNs, $streamEndNs, [
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchServerStream',
-                'benchmark.phase' => 'measurement',
             ]);
             $streamLatenciesNs[] = $streamEndNs - $streamStartNs;
         }
