@@ -70,3 +70,17 @@
 - Active benchmark tool namespace is `PhpGrpcLite\Tools\Benchmark`; no active `PhpGrpcLite\Tools\Phase2` namespace was found.
 - Active `bench/`, `tools/benchmark/`, `tools/test/`, `AGENTS.md`, `docs/benchmarks/README.md`, `docs/opentelemetry-instrumentation.md`, and `docs/release-qa-checklist.md` did not expose phase-based runner names or commands.
 - `phase2` references in `docs/issues/closed/2026-05-10-remove-phase2-benchmark-structure.md` are historical issue context for the rename and were not treated as findings.
+
+## Re-review 2026-05-10
+
+- Blocker: `none`
+- High: `none`
+- Medium: `none`
+- Low: `none`
+- Previous Low findings: `REVIEW-20260510-BENCH-STRUCTURE-001` and `REVIEW-20260510-BENCH-STRUCTURE-002` are closed.
+- Checked branch/worktree: `feature/opentelemetry-bench` with clean worktree before re-review.
+- Checked phase naming: scoped `rg` found no active `phase2`, `Phase 2`, `Phase2`, `PHASE2`, `PhpGrpcLite\Tools\Phase2`, or phase2 path/namespace references outside this historical review issue.
+- Checked current benchmark entrypoints: `bench/run.sh`, `bench/compare.sh`, `bench/compare-spanner-dml-unary-shape.sh`, and `bench/compare-small-select-streaming.sh` expose current `tools/benchmark/` paths and OTEL summary flow.
+- Checked old result infrastructure: no active `var/bench-results`, `BENCH_OUTPUT_DIR`, benchmark JSON/TSV persistence, PHPBench, old baseline runner, ResultContract/contract smoke, aggregate parse, or dead benchmark result helper remained exposed as current.
+- Checked lifecycle/stress artifacts: FPM lifecycle JSON and lifecycle Valgrind log now use `var/test-results`, `TEST_OUTPUT_DIR`, neutral `native-*` names, and `Test artifact` / `Valgrind log` wording rather than benchmark result persistence.
+- Checked active docs/guidance: `AGENTS.md`, `docs/benchmarks/README.md`, `docs/opentelemetry-instrumentation.md`, and `docs/release-qa-checklist.md` present OTEL span / `otelop-summary.php` as the current benchmark result source and keep JSON/TSV/baseline only as retired legacy guidance.
