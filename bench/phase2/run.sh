@@ -2,8 +2,8 @@
 #
 # Phase 2 exploratory benchmark entrypoint.
 #
-# This runner is intentionally separated from bench/run.sh. Phase 2 suites are
-# for deciding C-extension scope, not for Phase 1 regression baseline checks.
+# Dedicated benchmark runner for controlled RPC scenarios.
+# Legacy benchmark entrypoints have been removed.
 #
 # Usage:
 #   ./bench/phase2/run.sh contract-smoke

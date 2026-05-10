@@ -98,7 +98,7 @@ $document = ResultContract::document(
             'integer_loop',
             [
                 'revs' => $revs,
-                'purpose' => 'exercise ResourceSampler CPU and memory metrics without network or PHPBench',
+                'purpose' => 'exercise ResourceSampler CPU and memory metrics without network',
             ],
             $metrics,
         ),

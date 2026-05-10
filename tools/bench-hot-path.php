@@ -8,8 +8,8 @@ use Helloworld\HelloRequest;
 
 /**
  * Split the already-warm client path into local CPU costs without touching the
- * network. Keep this outside bench/ so the regular phpbench compare remains
- * focused on php-grpc-lite vs official ext-grpc RPC behavior.
+ * network. This script is a local hot-path helper, not a primary RPC
+ * comparison runner.
  */
 
 gc_disable();

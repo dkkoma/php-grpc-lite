@@ -21,7 +21,6 @@
         "grpc/grpc": "^1.80",
         "google/cloud-spanner": "^2.6",
         "google/protobuf": "^4.0",
-        "phpbench/phpbench": "^1.6",
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {

@@ -85,7 +85,7 @@ $document = ResultContract::document(
             'integer_loop',
             [
                 'revs' => $revs,
-                'purpose' => 'exercise Phase 2 result JSON without network or PHPBench',
+                'purpose' => 'exercise Phase 2 result JSON without network',
             ],
             $metrics,
         ),

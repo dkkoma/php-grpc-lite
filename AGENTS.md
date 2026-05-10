@@ -45,17 +45,17 @@
 - C拡張C coverage: `./tools/test/check-c-coverage.sh`。C unitとPHPTを実行し、`var/coverage/c-lcov/` にlcov traceとHTMLを出力する。
 - 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
 - C拡張静的解析: `./tools/test/check-c-static-analysis.sh`
-- 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`
-- ext-grpc 比較: `./bench/run.sh compare` または互換入口の `./bench/compare.sh`
-- grpc-php-rs 任意比較: `./bench/compare-rs.sh`。通常比較はあくまで php-grpc-lite vs 公式 ext-grpc とし、grpc-php-rs は明示依頼がある場合だけ使う。
+- 単独ベンチ: `./bench/phase2/run.sh <suite>`
+- ext-grpc 比較: `./bench/phase2/compare.sh <suite>`。Spanner代表形状は `./bench/phase2/compare-spanner-dml-unary-shape.sh` / `./bench/phase2/compare-small-select-streaming.sh`
+- grpc-php-rs 比較入口は廃止済み。必要になった場合だけ新しい専用runnerとして再作成する。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。
 
 ## ベンチ作業の注意
 
 - Spanner emulator は実機検証には有用だが、ベンチ指標としては内部状態の揺れが大きい。安定した性能観測は Go test-server の制御可能な RPC を優先する。
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
-- ベンチ実行ログと抽出済み JSON/TSV は `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` で保存名と保存先を固定する。
-- regression baseline は `bench/baselines/regression.json`。明示的な性能変化を受け入れる時だけ更新し、通常は `BENCH_BASELINE=bench/baselines/regression.json ./bench/run.sh cold` / `warm` / `stream-smoke` のように比較する。
+- ベンチ実行ログと結果JSON/TSV、OTEL summary用spanは `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` / `BENCH_OTEL_RUN_ID` で保存名と保存先を固定する。
+- 旧baseline運用は廃止済み。性能回帰を見る場合は `bench/phase2/` の代表ケースを同条件で再実行して比較する。
 
 ## サブエージェントの利用と作業の継続について
 
