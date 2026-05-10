@@ -8,11 +8,11 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
-output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
+output_dir="${TEST_OUTPUT_DIR:-var/test-results}"
 requests="${REQUESTS:-10}"
 mkdir -p "$output_dir"
 
-json="$output_dir/benchmark-native-fpm-lifecycle-$timestamp.json"
+json="$output_dir/native-fpm-lifecycle-$timestamp.json"
 
 docker compose run --rm dev sh -lc "
     cd /workspace/ext/grpc &&
@@ -68,4 +68,4 @@ docker compose run --rm dev sh -lc "
     '
 "
 
-echo "JSON: $json"
+echo "Test artifact: $json"

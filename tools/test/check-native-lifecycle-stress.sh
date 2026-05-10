@@ -12,7 +12,7 @@ message_count="${MESSAGE_COUNT:-20}"
 payload_bytes="${PAYLOAD_BYTES:-1024}"
 sleep_us="${SLEEP_US:-0}"
 valgrind="${VALGRIND:-0}"
-valgrind_log="var/bench-results/native-lifecycle-stress-${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}.valgrind.log"
+valgrind_log="var/test-results/native-lifecycle-stress-${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}.valgrind.log"
 mkdir -p "$(dirname "$valgrind_log")"
 
 php_args="-d extension=/workspace/ext/grpc/modules/grpc.so"
