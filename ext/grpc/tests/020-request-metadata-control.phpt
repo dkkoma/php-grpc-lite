@@ -73,6 +73,32 @@ $assertInvalidMetadata(['grpc-foo' => ['reserved']]);
 $assertInvalidMetadata(['grpc-timeout' => ['1S']]);
 $assertInvalidMetadata(['x-bench-crlf' => ["line\r\nbreak"]]);
 $assertInvalidMetadata(['x-bench-utf8' => ['utf8-あ']]);
+$assertInvalidMetadata(['x-bench-non-string' => [123]]);
+
+$tooManyValues = ['x-bench-many' => array_fill(0, 257, 'v')];
+$assertInvalidMetadata($tooManyValues);
+
+grpc_lite_phpt_expect_throw(static function () use ($client): void {
+    $call = $client->BenchServerStream(new BenchRequest(), [
+        ':path' => ['/evil.Service/Method'],
+    ]);
+    foreach ($call->responses() as $_reply) {
+    }
+}, 'metadata');
+
+grpc_lite_phpt_expect_throw(static function () use ($client): void {
+    $call = $client->BenchServerStream(new BenchRequest(), [
+        'x-bench-non-string' => [123],
+    ]);
+    foreach ($call->responses() as $_reply) {
+    }
+}, 'metadata');
+
+grpc_lite_phpt_expect_throw(static function () use ($client, $tooManyValues): void {
+    $call = $client->BenchServerStream(new BenchRequest(), $tooManyValues);
+    foreach ($call->responses() as $_reply) {
+    }
+}, 'metadata');
 
 echo "OK\n";
 ?>

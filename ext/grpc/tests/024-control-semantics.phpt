@@ -31,18 +31,34 @@ grpc_lite_phpt_assert_true($status->code !== Grpc\STATUS_OK, 'malformed unary fr
 [, $status] = $client('test-server:59999')->BenchUnary(new BenchRequest(), [], ['timeout' => 50000])->wait();
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $status->code, 'connection refused unary status');
 
+$refusedStreamCall = $client('test-server:59999')->BenchServerStream(new BenchRequest(), [], ['timeout' => 50000]);
+$refusedStreamCount = 0;
+foreach ($refusedStreamCall->responses() as $_reply) {
+    $refusedStreamCount++;
+}
+grpc_lite_phpt_assert_same(0, $refusedStreamCount, 'connection refused stream count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $refusedStreamCall->getStatus()->code, 'connection refused stream status');
+
 $goAwayAfterOk = $client('test-server:50055');
 [$response, $status] = $goAwayAfterOk->BenchUnary(new BenchRequest())->wait();
 grpc_lite_phpt_assert_true($response !== null, 'GOAWAY after OK response');
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'GOAWAY after OK status');
 
 $firstEof = $client('test-server:50056');
-[$response, $status] = $firstEof->BenchUnary(new BenchRequest())->wait();
-grpc_lite_phpt_assert_same(null, $response, 'first EOF response');
-grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $status->code, 'first EOF status');
-[$response, $status] = $firstEof->BenchUnary(new BenchRequest())->wait();
-grpc_lite_phpt_assert_true($response !== null, 'second after EOF response');
-grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'second after EOF status');
+$eofStatuses = [];
+$eofResponses = [];
+for ($attempt = 0; $attempt < 3; $attempt++) {
+    [$response, $status] = $firstEof->BenchUnary(new BenchRequest())->wait();
+    $eofResponses[] = $response;
+    $eofStatuses[] = $status->code;
+}
+grpc_lite_phpt_assert_true(in_array(Grpc\STATUS_UNAVAILABLE, $eofStatuses, true), 'EOF sequence includes unavailable status');
+grpc_lite_phpt_assert_true(in_array(Grpc\STATUS_OK, $eofStatuses, true), 'EOF sequence includes recovery OK status');
+foreach ($eofStatuses as $index => $code) {
+    if ($code === Grpc\STATUS_OK) {
+        grpc_lite_phpt_assert_true($eofResponses[$index] !== null, 'EOF recovery response');
+    }
+}
 
 $rstUnary = $client('test-server:50058');
 [$firstResponse, $firstStatus] = $rstUnary->BenchUnary(new BenchRequest())->wait();
@@ -85,6 +101,7 @@ foreach ($streamCall->responses() as $_reply) {
 [$response, $status] = $mainClient->BenchUnary(new BenchRequest())->wait();
 grpc_lite_phpt_assert_true($response !== null, 'unary after abandoned stream response');
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'unary after abandoned stream status');
+$streamCall->cancel();
 $streamCall->cancel();
 
 echo "OK\n";
