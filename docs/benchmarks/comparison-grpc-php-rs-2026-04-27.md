@@ -15,7 +15,7 @@
 - `grpc-php-rs`: `docker compose run --rm dev-grpc-rs bash -c 'cd bench-comparison && vendor/bin/phpbench run --report=aggregate'`
 - 対向サーバは既存の Go test-server。PHPBench のシナリオ、revs、iterations は既存の `bench/` / `bench-comparison/` と同一。
 
-再実行用に任意スクリプトを追加した。
+当時は再実行用に任意スクリプトを追加した。現行リポジトリでは `dev-grpc-rs` / `Dockerfile.grpc-php-rs` / `bench/compare-rs.sh` は削除済み。
 
 ```bash
 ./bench/compare-rs.sh
