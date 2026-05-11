@@ -5,7 +5,7 @@
 - `ext/grpc/tests/*.phpt`
 - `ext/grpc/tests/helpers.inc`
 - `tests/Integration/*.php`
-- `bench/phase2/check-native-phpt.sh`
+- `bench/check-native-phpt.sh`
 - `phpunit.xml.dist`
 - `AGENTS.md`
 - `README.md`
@@ -38,7 +38,7 @@
 - Recommended fix: `docs/code-reading-guide.md` の主要テスト表を現在のinventoryへ更新する。削除済みのbasic unary/server streaming/metadata-control PHPUnit行はPHPT行へ統合し、残るPHPUnit行は `CompressionTest`, `HttpValidationTest`, `ErrorSemanticsTest`, `MetadataCompatibilityTest`, `ControlSemanticsTest`, `InterceptorTest`, `TlsTest` / `MtlsTest`, `Spanner/*` のように、PHPTより高いintegration/compatibility責務として説明する。
 - Fix summary: `docs/code-reading-guide.md` の主要テスト表から削除済みPHPUnit suiteを外し、PHPTと残存PHPUnitの現在の責務境界へ更新した。
 - Fix commit: `this commit`
-- Verification: `./bench/phase2/check-native-phpt.sh`; `docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc) >/tmp/grpc-make.log && cd /workspace && php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit'`; review of `docs/code-reading-guide.md` against current test inventory
+- Verification: `./bench/check-native-phpt.sh`; `docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc) >/tmp/grpc-make.log && cd /workspace && php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit'`; review of `docs/code-reading-guide.md` against current test inventory
 - Notes: PHPT runnerはrequired extension load、autoload、Go test-server ports、artifact cleanupをpreflightしており、標準runnerとしてsilent skipを避ける構造になっている。残存PHPUnitの重複は、compatibility matrixやcontrol semanticsなどPHPTに寄せすぎない高レベルcoverageとして許容できる。
 
 ## Review Result

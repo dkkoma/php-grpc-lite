@@ -23,7 +23,7 @@ large request / small response で、現行 `php-grpc-lite` が upload で詰ま
 | RPC | `/helloworld.Greeter/BenchUnary` |
 | response | 0B payload / gRPC frame 5B |
 | server | `docker compose up -d --force-recreate test-server` 後に同一containerで連続測定 |
-| 通常経路 | `BENCH_TAG=upload-breakdown-postfields-20260501 ./bench/phase2/run.sh request-unary-diagnostic --duration=30 --max-calls=1000 --request-payload-sizes=102400,524288,1048576,2097152 --warmup-calls=10` |
+| 通常経路 | `BENCH_TAG=upload-breakdown-postfields-20260501 ./bench/run.sh request-unary-diagnostic --duration=30 --max-calls=1000 --request-payload-sizes=102400,524288,1048576,2097152 --warmup-calls=10` |
 | read callback | 上記に `--upload-read-callback` を追加 |
 
 ## POSTFIELDS 経路

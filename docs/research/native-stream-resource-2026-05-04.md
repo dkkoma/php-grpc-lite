@@ -44,7 +44,7 @@ docker compose run --rm dev vendor/bin/phpunit
 実行:
 
 ```bash
-BENCH_TAG=20260504-native-stream-resource INCLUDE_POC=0 NATIVE_RESPONSE_MODE=stream WARMUP_STREAMS=3 bench/phase2/compare-small-select-streaming.sh
+BENCH_TAG=20260504-native-stream-resource INCLUDE_POC=0 NATIVE_RESPONSE_MODE=stream WARMUP_STREAMS=3 bench/compare-small-select-streaming.sh
 ```
 
 summary: `var/bench-results/phase2-small-select-streaming-20260504-native-stream-resource.tsv`
@@ -63,7 +63,7 @@ small SELECT代表形状では、native stream resource化によりcurlより大
 実行:
 
 ```bash
-BENCH_TAG=20260504-native-stream-resource DURATION=1 WARMUP_CALLS=3 bench/phase2/compare-spanner-dml-unary-shape.sh
+BENCH_TAG=20260504-native-stream-resource DURATION=1 WARMUP_CALLS=3 bench/compare-spanner-dml-unary-shape.sh
 ```
 
 summary: `var/bench-results/phase2-spanner-dml-unary-shape-20260504-native-stream-resource.tsv`
@@ -81,7 +81,7 @@ summary: `var/bench-results/phase2-spanner-dml-unary-shape-20260504-native-strea
 実行:
 
 ```bash
-BENCH_TAG=20260504-native-stream-resource-main bench/phase2/compare-native-mvp-vs-libcurl-ext.sh
+BENCH_TAG=20260504-native-stream-resource-main bench/compare-native-mvp-vs-libcurl-ext.sh
 ```
 
 summary: `var/bench-results/phase2-native-mvp-vs-libcurl-ext-20260504-native-stream-resource-main.tsv`

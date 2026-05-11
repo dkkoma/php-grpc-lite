@@ -21,12 +21,17 @@
         "grpc/grpc": "^1.80",
         "google/cloud-spanner": "^2.6",
         "google/protobuf": "^4.0",
-        "phpbench/phpbench": "^1.6",
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
+        "ext-protobuf": "Use the protobuf C extension for faster serialization",
         "grpc/grpc": "Install the official PHP wrapper package in applications that use generated stubs or gax clients",
-        "ext-protobuf": "Use the protobuf C extension for faster serialization"
+        "open-telemetry/api": "Inject the active application trace context into gRPC metadata"
+    },
+    "autoload": {
+        "psr-4": {
+            "GrpcLite\\": "src/"
+        }
     },
     "autoload-dev": {
         "psr-4": {

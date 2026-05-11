@@ -16,7 +16,7 @@ BENCH_TAG=20260505-major-native ./bench/run.sh cold
 BENCH_TAG=20260505-major-native ./bench/run.sh warm
 BENCH_TAG=20260505-major-native ./bench/run.sh stream-smoke
 BENCH_TAG=20260505-major-native ./bench/run.sh tls
-BENCH_TAG=20260505-major-native ./bench/phase2/preset.sh compare
+BENCH_TAG=20260505-major-native ./bench/preset.sh compare
 ```
 
 `bench/run.sh` の php-grpc-lite 側は PHPBench remote executor の子PHPにも native extension を渡すため、`--php-config='{"extension":"/workspace/ext/grpc/modules/grpc.so"}'` を指定する。

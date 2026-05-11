@@ -16,10 +16,10 @@ BENCH_TAG=20260506-native-hardening ./bench/run.sh cold
 BENCH_TAG=20260506-native-hardening ./bench/run.sh warm
 BENCH_TAG=20260506-native-hardening ./bench/run.sh stream-smoke
 BENCH_TAG=20260506-native-hardening ./bench/run.sh tls
-BENCH_TAG=20260506-native-hardening ./bench/phase2/preset.sh compare
+BENCH_TAG=20260506-native-hardening ./bench/preset.sh compare
 ```
 
-`bench/phase2/preset.sh compare` は、汎用 transport ベンチに加えて Spanner 主用途の shape ベンチも実行する。
+`bench/preset.sh compare` は、汎用 transport ベンチに加えて Spanner 主用途の shape ベンチも実行する。
 
 ## PHPBench
 

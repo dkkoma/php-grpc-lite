@@ -12,6 +12,8 @@
 ## 作業方針
 
 - 既存の設計方針を先に読む。仕様と実装がずれる作業では、原則として `docs/SPEC.md` か関連 docs を更新してから実装する。
+- 新しいまとまった作業・設計判断・継続タスクは `docs/issues/` にissueとして記録してから進める。作業中は `docs/issues/open/`、完了後は `docs/issues/closed/` に置く。
+- issueは目的、背景、スコープ、非スコープ、計画、進捗、検証、判断ログ、完了条件を更新しながら進める。完了時は `Status: Closed`、修正コミット、検証結果を追記してから `closed/` へ移動する。
 - 変更は目的ごとに小さく保つ。過去履歴と同様に「実機検証の 1 ステップ」「ベンチ 1 系統」「実装 1 経路」程度をコミット単位にする。
 - 作業の切りがよい単位でコミットする。コミット前には `git status` でユーザーや他エージェントの未コミット変更を確認し、無関係な変更を混ぜない。
 - 既存の未コミット変更はユーザーの作業として扱う。明示依頼なしに戻したり、整理のために巻き戻したりしない。
@@ -43,17 +45,17 @@
 - C拡張C coverage: `./tools/test/check-c-coverage.sh`。C unitとPHPTを実行し、`var/coverage/c-lcov/` にlcov traceとHTMLを出力する。
 - 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
 - C拡張静的解析: `./tools/test/check-c-static-analysis.sh`
-- 単独ベンチ: `docker compose run --rm dev vendor/bin/phpbench run --report=aggregate`
-- ext-grpc 比較: `./bench/run.sh compare` または互換入口の `./bench/compare.sh`
-- grpc-php-rs 任意比較: `./bench/compare-rs.sh`。通常比較はあくまで php-grpc-lite vs 公式 ext-grpc とし、grpc-php-rs は明示依頼がある場合だけ使う。
+- 単独ベンチ: `./bench/run.sh <suite>`
+- ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner代表形状も `spanner-dml-unary-shape` / `small-select-streaming` として通常suiteに含める。franken-go backend を含める場合だけ `./bench/compare-spanner-dml-unary-shape.sh` / `./bench/compare-small-select-streaming.sh` を使う。
+- grpc-php-rs 比較入口は廃止済み。必要になった場合だけ新しい専用runnerとして再作成する。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。
 
 ## ベンチ作業の注意
 
 - Spanner emulator は実機検証には有用だが、ベンチ指標としては内部状態の揺れが大きい。安定した性能観測は Go test-server の制御可能な RPC を優先する。
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
-- ベンチ実行ログと抽出済み JSON/TSV は `var/bench-results/` に置く。必要に応じて `BENCH_TAG` / `BENCH_OUTPUT_DIR` で保存名と保存先を固定する。
-- regression baseline は `bench/baselines/regression.json`。明示的な性能変化を受け入れる時だけ更新し、通常は `BENCH_BASELINE=bench/baselines/regression.json ./bench/run.sh cold` / `warm` / `stream-smoke` のように比較する。
+- ベンチ計測結果はOTEL spanを一次ソースにする。`bench/` runnerは `otelop` へexportし、`tools/benchmark/otelop-summary.php` で集計する。必要に応じて `BENCH_TAG` / `BENCH_OTEL_RUN_ID` でrun idを固定する。JSON/TSVのベンチ結果保存や旧baseline運用は使わない。
+- 旧baseline運用は廃止済み。性能回帰を見る場合は `bench/` の代表ケースを同条件で再実行して比較する。
 
 ## サブエージェントの利用と作業の継続について
 

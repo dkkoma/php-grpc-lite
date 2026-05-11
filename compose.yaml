@@ -88,6 +88,18 @@ services:
   toxiproxy:
     image: ghcr.io/shopify/toxiproxy:latest
 
+  # Optional local OpenTelemetry viewer for benchmark instrumentation.
+  # UI: http://localhost:4319, OTLP/HTTP endpoint from containers:
+  # http://otelop:4318/v1/traces
+  otelop:
+    image: ghcr.io/mashiro/otelop:latest
+    environment:
+      OTELOP_TRACE_CAP: ${OTELOP_TRACE_CAP:-20000}
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "4319:4319"
+
   # Comparison environment: same workspace, same servers, but with the
   # official ext-grpc loaded. Our PSR-4 Grpc\* classes become dormant and
   # all calls dispatch through the C extension.

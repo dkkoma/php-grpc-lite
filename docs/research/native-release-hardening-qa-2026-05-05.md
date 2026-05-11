@@ -6,14 +6,14 @@ HTTP/2 transportをrelease defaultにする前のblockerである memory / lifec
 
 ## 追加した入口
 
-- `bench/phase2/check-native-lifecycle-stress.sh`
+- `bench/check-native-lifecycle-stress.sh`
   - `MAX_FD_DELTA`
   - `MAX_RSS_DELTA_KIB`
   - `MAX_PHP_MEMORY_DELTA_BYTES`
   - `VALGRIND=1`
-- `bench/phase2/check-native-fpm-lifecycle.sh`
+- `bench/check-native-fpm-lifecycle.sh`
   - single-worker PHP-FPMへFastCGI requestを複数回送り、同一worker pidで2回目以降 `persistent_reused=true` になることを確認する。
-- `bench/phase2/check-native-release-hardening.sh`
+- `bench/check-native-release-hardening.sh`
   - lifecycle smoke
   - Valgrind lifecycle smoke
   - long lifecycle stress
@@ -34,13 +34,13 @@ HTTP/2 transportをrelease defaultにする前のblockerである memory / lifec
 
 ```bash
 docker compose build dev fpm-lifecycle
-BENCH_TAG=release-hardening ./bench/phase2/check-native-release-hardening.sh
+BENCH_TAG=release-hardening ./bench/check-native-release-hardening.sh
 ```
 
 長時間stressを強める場合:
 
 ```bash
-LONG_ITERATIONS=10000 BENCH_TAG=release-hardening-long ./bench/phase2/check-native-release-hardening.sh
+LONG_ITERATIONS=10000 BENCH_TAG=release-hardening-long ./bench/check-native-release-hardening.sh
 ```
 
 ## 判定
@@ -53,7 +53,7 @@ LONG_ITERATIONS=10000 BENCH_TAG=release-hardening-long ./bench/phase2/check-nati
 docker compose build dev fpm-lifecycle
 docker compose run --rm dev sh -lc 'command -v valgrind && command -v cgi-fcgi && php -v | head -1'
 docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc) >/dev/null && cd /workspace && php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit'
-BENCH_TAG=20260505-hardening SMOKE_ITERATIONS=20 VALGRIND_ITERATIONS=2 LONG_ITERATIONS=50 FPM_REQUESTS=5 ./bench/phase2/check-native-release-hardening.sh
+BENCH_TAG=20260505-hardening SMOKE_ITERATIONS=20 VALGRIND_ITERATIONS=2 LONG_ITERATIONS=50 FPM_REQUESTS=5 ./bench/check-native-release-hardening.sh
 ```
 
 結果:

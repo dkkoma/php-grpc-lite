@@ -28,7 +28,7 @@
 ## 再実行方法
 
 ```bash
-BENCH_TAG=20260503-bounded-read-ahead bench/phase2/compare-server-stream-bounded-read-ahead.sh
+BENCH_TAG=20260503-bounded-read-ahead bench/compare-server-stream-bounded-read-ahead.sh
 ```
 
 出力:

@@ -335,6 +335,10 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *sta
     if (state->request != NULL) {
         zend_string_release(state->request);
     }
+    if (state->path != NULL) {
+        zend_string_release(state->path);
+    }
+    zval_ptr_dtor(&state->metadata);
     if (state->recv_buf != NULL) {
         efree(state->recv_buf);
     }

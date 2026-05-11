@@ -14,13 +14,13 @@
 三者比較runnerは `native-surface` variantを出す。
 
 ```bash
-BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/phase2/compare-native-mvp-vs-libcurl-ext.sh
+BENCH_TAG=20260503-native-mvp-vs-libcurl-ext bench/compare-native-mvp-vs-libcurl-ext.sh
 ```
 
 `100×100KiB` の例外形状だけを同じserver条件で繰り返す。
 
 ```bash
-REPEATS=3 BENCH_TAG=20260503-100x100k-repeat bench/phase2/repeat-server-stream-100x100k.sh
+REPEATS=3 BENCH_TAG=20260503-100x100k-repeat bench/repeat-server-stream-100x100k.sh
 ```
 
 ## Smoke
@@ -39,7 +39,7 @@ actual HTTP/2 surfaceの最小疎通:
 Command:
 
 ```bash
-REPEATS=1 BENCH_TAG=20260503-native-surface-repeat-smoke bench/phase2/repeat-server-stream-100x100k.sh
+REPEATS=1 BENCH_TAG=20260503-native-surface-repeat-smoke bench/repeat-server-stream-100x100k.sh
 ```
 
 | implementation | mode | p50 | p99 | msg/s | server last p99 |

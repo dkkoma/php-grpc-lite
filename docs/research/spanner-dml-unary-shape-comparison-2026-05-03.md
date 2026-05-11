@@ -11,7 +11,7 @@ Spanner emulatorで観測したDML flowのunary request/responseサイズを、G
 ```bash
 DURATION=0.2 WARMUP_CALLS=1 MAX_CALLS=50 \
 BENCH_TAG=20260503-spanner-dml-unary-shape \
-bench/phase2/compare-spanner-dml-unary-shape.sh
+bench/compare-spanner-dml-unary-shape.sh
 ```
 
 短時間のsanity runなので、tail判断には長めのrepeatが必要。

@@ -1,158 +1,127 @@
 #!/usr/bin/env bash
 #
-# Benchmark entrypoint for repeatable local runs. The regular comparison line
-# remains php-grpc-lite vs official ext-grpc; grpc-php-rs stays in compare-rs.sh.
+# OTEL benchmark entrypoint.
 #
 # Usage:
-#   ./bench/run.sh lite
-#   ./bench/run.sh ext
-#   ./bench/run.sh compare
-#   ./bench/run.sh cold
-#   ./bench/run.sh warm
-#   ./bench/run.sh stream
-#   ./bench/run.sh stream-smoke
-#   ./bench/run.sh stream-slow
-#   ./bench/run.sh metadata
-#   ./bench/run.sh tls
-#   ./bench/run.sh hot-path
+#   ./bench/run.sh throughput-unary
+#   ./bench/run.sh rtt-unary
+#   ./bench/run.sh throughput-streaming
+#   ./bench/run.sh large-streaming
+#   ./bench/run.sh payload-unary
+#   ./bench/run.sh payload-streaming
+#   ./bench/run.sh metadata-header
+#   ./bench/run.sh spanner-dml-unary-shape
+#   ./bench/run.sh small-select-streaming
 #
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-suite="${1:-compare}"
+suite="${1:-throughput-unary}"
+if [[ $# -gt 0 ]]; then
+    shift
+fi
+extra_args=("$@")
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
-output_dir="${BENCH_OUTPUT_DIR:-var/bench-results}"
-mkdir -p "$output_dir"
-last_log_path=""
+implementation="${BENCH_IMPLEMENTATION:-php-grpc-lite}"
+container_service="${BENCH_CONTAINER_SERVICE:-dev}"
+autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
+export BENCH_OTEL_RUN_ID="${BENCH_OTEL_RUN_ID:-$timestamp}"
+export BENCH_OTEL_EXPORTER="${BENCH_OTEL_EXPORTER:-otlp-http}"
+export BENCH_OTEL_EXPORTER_OTLP_ENDPOINT="${BENCH_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otelop:4318/v1/traces}"
+export NO_PROXY="${NO_PROXY:-test-server,spanner-emulator,toxiproxy,otelop,localhost,127.0.0.1}"
+export no_proxy="${no_proxy:-$NO_PROXY}"
 
-run_hot_path() {
+if [[ "$implementation" == "ext-grpc" ]]; then
+    container_service="${BENCH_CONTAINER_SERVICE:-dev-ext-grpc}"
+    autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
+fi
+
+docker compose up -d otelop
+
+run_benchmark_php() {
     local label="$1"
-    local log_name="$2"
-    shift 2
+    shift
 
-    local log_path="$output_dir/$suite-$timestamp-$log_name.log"
-    last_log_path="$log_path"
+    local php_args=()
+    if [[ "$implementation" == "php-grpc-lite" ]]; then
+        php_args=(-d extension=/workspace/ext/grpc/modules/grpc.so)
+    fi
+    local docker_env=()
+    local env_name
+    for env_name in \
+        BENCH_OTEL_EXPORTER \
+        BENCH_OTEL_EXPORTER_OTLP_ENDPOINT \
+        BENCH_OTEL_RUN_ID \
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
+        OTEL_EXPORTER_OTLP_ENDPOINT \
+        NO_PROXY \
+        no_proxy
+    do
+        if [[ -n "${!env_name:-}" ]]; then
+            docker_env+=(-e "$env_name=${!env_name}")
+        fi
+    done
 
     echo
     echo "==========================================="
     echo "  RUN: $label"
-    echo "  LOG: $log_path"
-    echo "==========================================="
-    "$@" | tee "$log_path"
-}
-
-run_lite() {
-    local bench_path="${1:-}"
-    local log_path="$output_dir/$suite-$timestamp-php-grpc-lite.log"
-    local cmd=(
-        docker compose run --rm dev bench/phpbench-with-artifacts.sh
-        --workdir=.
-        --log="$log_path"
-        --json="${log_path%.log}.json"
-        --tsv="${log_path%.log}.tsv"
-    )
-
-    if [[ "${BENCH_BASELINE:-}" != "" ]]; then
-        cmd+=(
-            --baseline="$BENCH_BASELINE"
-            --suite="$suite"
-            --implementation=php-grpc-lite
-        )
-    fi
-
-    echo
-    echo "==========================================="
-    echo "  RUN: php-grpc-lite ${bench_path:-full}"
-    echo "  LOG: $log_path"
+    echo "  OTEL run id: $BENCH_OTEL_RUN_ID"
     echo "==========================================="
 
-    if [[ "$bench_path" == "" ]]; then
-        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run --php-config='{"extension":"/workspace/ext/grpc/modules/grpc.so"}' --report=aggregate
-    else
-        "${cmd[@]}" -- php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpbench run "$bench_path" --php-config='{"extension":"/workspace/ext/grpc/modules/grpc.so"}' --report=aggregate
-    fi
-}
-
-run_ext() {
-    local bench_path="${1:-}"
-    local log_path="$output_dir/$suite-$timestamp-ext-grpc.log"
-
-    echo
-    echo "==========================================="
-    echo "  RUN: official ext-grpc ${bench_path:-full}"
-    echo "  LOG: $log_path"
-    echo "==========================================="
-
-    if [[ "$bench_path" == "" ]]; then
-        docker compose run --rm dev-ext-grpc bench/phpbench-with-artifacts.sh \
-            --workdir=. \
-            --log="$log_path" \
-            --json="${log_path%.log}.json" \
-            --tsv="${log_path%.log}.tsv" \
-            -- vendor/bin/phpbench run --report=aggregate
-    else
-        docker compose run --rm dev-ext-grpc bench/phpbench-with-artifacts.sh \
-            --workdir=. \
-            --log="$log_path" \
-            --json="${log_path%.log}.json" \
-            --tsv="${log_path%.log}.tsv" \
-            -- vendor/bin/phpbench run "$bench_path" --report=aggregate
-    fi
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$container_service" php ${php_args+"${php_args[@]}"} "$@" \
+        --suite="$suite" \
+        --implementation="$implementation" \
+        --autoload="$autoload_path" \
+        "${extra_args[@]+"${extra_args[@]}"}"
 }
 
 case "$suite" in
-    lite)
-        run_lite
+    throughput-unary)
+        run_benchmark_php "Benchmark unary throughput" tools/benchmark/throughput-unary.php
         ;;
-    ext)
-        run_ext
+    rtt-unary)
+        docker compose up -d toxiproxy
+        run_benchmark_php "Benchmark RTT unary" tools/benchmark/rtt-unary.php
         ;;
-    compare)
-        run_lite
-        run_ext
+    throughput-streaming)
+        run_benchmark_php "Benchmark streaming throughput" tools/benchmark/throughput-streaming.php
         ;;
-    cold)
-        run_lite "bench/ColdUnaryBench.php"
-        run_ext "bench/ColdUnaryBench.php"
+    large-streaming)
+        run_benchmark_php "Benchmark large streaming" tools/benchmark/large-streaming.php
         ;;
-    warm)
-        run_lite "bench/UnaryLatencyBench.php"
-        run_ext "bench/UnaryLatencyBench.php"
+    payload-unary)
+        run_benchmark_php "Benchmark unary payload sweep" tools/benchmark/payload-unary.php
         ;;
-    stream)
-        run_lite "bench/ServerStreamingBench.php"
-        run_ext "bench/ServerStreamingBench.php"
+    payload-streaming)
+        run_benchmark_php "Benchmark streaming payload sweep" tools/benchmark/payload-streaming.php
         ;;
-    stream-smoke)
-        run_lite "bench/ServerStreamingCount1000Bench.php"
-        run_ext "bench/ServerStreamingCount1000Bench.php"
+    metadata-header)
+        run_benchmark_php "Benchmark metadata/header sweep" tools/benchmark/metadata-header.php
         ;;
-    stream-slow)
-        run_lite "bench/ServerStreamingSlowConsumerBench.php"
-        run_ext "bench/ServerStreamingSlowConsumerBench.php"
+    spanner-dml-unary-shape)
+        run_benchmark_php "Benchmark Spanner DML unary shape" tools/benchmark/unary-shape.php
         ;;
-    metadata)
-        run_lite "bench/MetadataVolumeBench.php"
-        run_ext "bench/MetadataVolumeBench.php"
-        ;;
-    tls)
-        run_lite "bench/TlsUnaryBench.php"
-        run_ext "bench/TlsUnaryBench.php"
-        ;;
-    hot-path)
-        run_hot_path "php-grpc-lite local hot path split" "hot-path" \
-            docker compose run --rm dev php tools/bench-hot-path.php
+    small-select-streaming)
+        run_benchmark_php "Benchmark small SELECT streaming 1x100B" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=100 --native-response-mode=stream
+        run_benchmark_php "Benchmark small SELECT streaming 1x1KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=1024 --native-response-mode=stream
+        run_benchmark_php "Benchmark small SELECT streaming 1x4KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=4096 --native-response-mode=stream
+        run_benchmark_php "Benchmark small SELECT streaming 1x10KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=10240 --native-response-mode=stream
         ;;
     *)
-        cat >&2 <<EOF
-Unknown benchmark suite: $suite
+        cat >&2 <<USAGE
+Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [lite|ext|compare|cold|warm|stream|stream-smoke|stream-slow|metadata|tls|hot-path]
-EOF
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-dml-unary-shape|small-select-streaming]
+USAGE
         exit 2
         ;;
 esac
 
 echo
-echo "Saved logs: $output_dir/$suite-$timestamp-*.log"
+echo "OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
+docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
+    tools/benchmark/otelop-summary.php \
+    --run-id="$BENCH_OTEL_RUN_ID" \
+    --suite="$suite" \
+    --limit="${BENCH_OTEL_SUMMARY_LIMIT:-100000}"

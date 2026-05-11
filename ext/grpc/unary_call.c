@@ -3,16 +3,12 @@
 #include "internal.h"
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status_result, uint64_t total_started, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused)
+static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status_result, uint64_t start_unix_nanos, uint64_t total_started, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused)
 {
-    array_init(diagnostic_result);
+    grpc_lite_diagnostic_add_unary_result(diagnostic_result, path, path_len, metadata, call, connection, status_result, start_unix_nanos, monotonic_us() - total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
     add_status_result_to_return(diagnostic_result, status_result);
     add_assoc_str(diagnostic_result, "body", call->body.s ? zend_string_copy(call->body.s) : zend_empty_string);
-    add_assoc_long(diagnostic_result, "grpc_status", call->grpc_status);
     add_assoc_str(diagnostic_result, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
-    add_assoc_long(diagnostic_result, "http_status", call->http_status);
-    add_assoc_long(diagnostic_result, "stream_error_code", call->stream_error_code);
-    add_assoc_bool(diagnostic_result, "stream_reset_seen", call->stream_reset_seen);
     add_assoc_bool(diagnostic_result, "stream_refused_seen", call->stream_refused_seen);
     add_assoc_bool(diagnostic_result, "invalid_grpc_status", call->invalid_grpc_status);
     add_assoc_str(diagnostic_result, "content_type", call->content_type != NULL ? zend_string_copy(call->content_type) : zend_empty_string);
@@ -24,10 +20,7 @@ static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, grpc_
     add_assoc_bool(diagnostic_result, "invalid_content_type", call->invalid_content_type);
     add_assoc_bool(diagnostic_result, "unsupported_response_encoding", call->unsupported_response_encoding);
     add_assoc_long(diagnostic_result, "max_receive_message_length", call->max_receive_message_bytes > (size_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) call->max_receive_message_bytes);
-    add_assoc_long(diagnostic_result, "body_bytes", call->body.s ? ZSTR_LEN(call->body.s) : 0);
     add_assoc_long(diagnostic_result, "request_offset", call->request_offset);
-    add_assoc_long(diagnostic_result, "bytes_sent", call->bytes_sent);
-    add_assoc_long(diagnostic_result, "bytes_received", call->bytes_received);
     add_assoc_long(diagnostic_result, "data_read_calls", call->data_read_calls);
     add_assoc_long(diagnostic_result, "data_recv_calls", call->data_recv_calls);
     add_assoc_long(diagnostic_result, "last_session_error", call->last_session_error);
@@ -37,24 +30,13 @@ static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, grpc_
     add_assoc_long(diagnostic_result, "last_recv_frame_flags", call->last_recv_frame_flags);
     add_assoc_long(diagnostic_result, "last_not_sent_frame_type", call->last_not_sent_frame_type);
     add_assoc_long(diagnostic_result, "last_not_sent_error", call->last_not_sent_error);
-    add_assoc_long(diagnostic_result, "sent_frames", call->sent_frames);
-    add_assoc_long(diagnostic_result, "recv_frames", call->recv_frames);
     add_assoc_long(diagnostic_result, "not_sent_frames", call->not_sent_frames);
     add_assoc_long(diagnostic_result, "last_io_errno", call->last_io_errno);
     add_assoc_long(diagnostic_result, "last_ssl_error", call->last_ssl_error);
     add_assoc_string(diagnostic_result, "last_io_error_detail", call->last_io_error_detail);
-    add_assoc_long(diagnostic_result, "total_us", (zend_long) (monotonic_us() - total_started));
     add_assoc_long(diagnostic_result, "connect_us", 0);
-    add_assoc_long(diagnostic_result, "setup_us", (zend_long) setup_us);
-    add_assoc_long(diagnostic_result, "submit_us", (zend_long) submit_us);
-    add_assoc_long(diagnostic_result, "initial_send_us", (zend_long) initial_send_us);
-    add_assoc_long(diagnostic_result, "recv_loop_us", (zend_long) recv_loop_us);
     add_assoc_long(diagnostic_result, "cleanup_us", 0);
     add_assoc_bool(diagnostic_result, "timed_out", call->timed_out);
-    add_assoc_bool(diagnostic_result, "connection_reused", connection_reused);
-    add_assoc_bool(diagnostic_result, "persistent_reused", persistent_reused);
-    add_assoc_bool(diagnostic_result, "connection_dead", connection->dead);
-    add_assoc_bool(diagnostic_result, "connection_draining", connection->draining);
     add_assoc_long(diagnostic_result, "connection_last_error", connection->last_error);
     add_assoc_long(diagnostic_result, "connection_last_io_errno", connection->last_io_errno);
     add_assoc_long(diagnostic_result, "connection_last_ssl_error", connection->last_ssl_error);
@@ -80,6 +62,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     int rv;
     zend_long remaining_timeout_us;
     char recv_buf[16384];
+    uint64_t start_unix_nanos = 0;
     uint64_t total_started = 0;
     uint64_t setup_started = 0;
     uint64_t setup_us = 0;
@@ -109,6 +92,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     call.max_response_metadata_bytes = max_response_metadata_bytes;
     grpc_protocol_set_message_header(&call, call.request_len);
+    start_unix_nanos = unix_time_nanos();
     total_started = monotonic_us();
     call.deadline_abs_us = deadline_abs_us;
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
@@ -233,9 +217,9 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     }
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 	    if (diagnostic_result != NULL) {
-	        grpc_lite_unary_add_diagnostic_result(diagnostic_result, &call, connection, &status_result, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
+	        grpc_lite_unary_add_diagnostic_result(diagnostic_result, path, path_len, headers_zv, &call, connection, &status_result, start_unix_nanos, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
 	    }
-	#endif
+#endif
 	    clear_connection_call_owner(connection, &call);
 	    zend_string_release(status_result.details);
 	    free_request_headers(&request_headers);

@@ -18,7 +18,7 @@ Spanner emulator上の実測では、2 DATE + 2 STRING + 合計10 columnsの1行
 ## Command
 
 ```bash
-BENCH_TAG=20260503-small-select-streaming-poc bench/phase2/compare-small-select-streaming.sh
+BENCH_TAG=20260503-small-select-streaming-poc bench/compare-small-select-streaming.sh
 ```
 
 HTTP/2 transport は `NATIVE_RESPONSE_MODE=compact64` のdefaultで計測した。

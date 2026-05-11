@@ -20,6 +20,7 @@ PHP_INI_END()
 #include "protocol_core.c"
 #include "status_core.c"
 #include "transport.c"
+#include "diagnostic.c"
 #include "unary_call.c"
 #include "server_streaming_call.c"
 #include "bridge.c"
@@ -165,6 +166,11 @@ PHP_MSHUTDOWN_FUNCTION(grpc_lite)
     return SUCCESS;
 }
 
+PHP_RSHUTDOWN_FUNCTION(grpc_lite)
+{
+    return SUCCESS;
+}
+
 PHP_MINFO_FUNCTION(grpc_lite)
 {
     php_info_print_table_start();
@@ -183,7 +189,7 @@ zend_module_entry grpc_module_entry = {
     grpc_lite_functions,
     PHP_MINIT(grpc_lite),
     PHP_MSHUTDOWN(grpc_lite),
-    NULL,
+    PHP_RSHUTDOWN(grpc_lite),
     NULL,
     PHP_MINFO(grpc_lite),
     "0.1.0",
