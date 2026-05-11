@@ -9,17 +9,7 @@
  * module registration stay in main.c.
  */
 
-#define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
-#define GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE 65535
-#define GRPC_LITE_HTTP2_MAX_WINDOW_SIZE 2147483647L
-#define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
-#define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
-#define GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES (64 * 1024)
-#define GRPC_LITE_DEFAULT_METADATA_SOFT_BYTES (8 * 1024)
-#define GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_MESSAGES 32
-#define GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_BYTES (8 * 1024 * 1024)
-#define GRPC_LITE_DEFAULT_METADATA_HARD_BYTES (16 * 1024)
-#define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
+#include "transport_core.c"
 
 static void destroy_h2_connection(h2_connection *connection);
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
@@ -36,8 +26,6 @@ static void mark_connection_dead(h2_connection *connection, int error_code);
 static void set_connection_error_detail(h2_connection *connection, const char *detail);
 static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
 static bool connection_usable(h2_connection *connection);
-static zend_ulong hash_bytes(const char *data, size_t data_len);
-static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
 static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
 static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
 static bool preflight_persistent_connection(h2_connection *connection);
@@ -46,9 +34,6 @@ static int set_socket_timeout_us(int fd, zend_long timeout_us);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
 static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
-static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length);
-static uint32_t effective_http2_window_size(zend_long configured);
-static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit);
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
@@ -78,8 +63,6 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
 static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
 static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
-static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
-static const char *validate_grpc_path(const char *path, size_t path_len);
 static size_t count_custom_header_values(zval *headers_zv);
 static int init_request_headers(h2_request_headers *headers, size_t custom_values);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
@@ -410,33 +393,6 @@ static bool connection_usable(h2_connection *connection)
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
 }
 
-static zend_ulong hash_bytes(const char *data, size_t data_len)
-{
-    zend_ulong hash = (zend_ulong) 1469598103934665603ULL;
-    size_t i;
-
-    if (data == NULL || data_len == 0) {
-        return 0;
-    }
-    for (i = 0; i < data_len; i++) {
-        hash ^= (unsigned char) data[i];
-        hash *= (zend_ulong) 1099511628211ULL;
-    }
-    return hash;
-}
-
-static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len)
-{
-    if (authority != NULL && authority_len > 0) {
-        size_t copy_len = authority_len < buffer_len - 1 ? authority_len : buffer_len - 1;
-        memcpy(buffer, authority, copy_len);
-        buffer[copy_len] = '\0';
-        return;
-    }
-
-    snprintf(buffer, buffer_len, "%s:%ld", host, port);
-}
-
 static bool identity_matches(zend_string *stored, const char *expected, size_t expected_len)
 {
     if (stored == NULL) {
@@ -680,28 +636,6 @@ static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us)
     return remaining > (uint64_t) ZEND_LONG_MAX ? ZEND_LONG_MAX : (zend_long) remaining;
 }
 
-static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length)
-{
-    if (max_receive_message_length == -1) {
-        return SIZE_MAX;
-    }
-    if (max_receive_message_length > 0) {
-        return (size_t) max_receive_message_length;
-    }
-    return GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES;
-}
-
-static uint32_t effective_http2_window_size(zend_long configured)
-{
-    if (configured < GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE) {
-        return GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE;
-    }
-    if (configured > GRPC_LITE_HTTP2_MAX_WINDOW_SIZE) {
-        return GRPC_LITE_HTTP2_MAX_WINDOW_SIZE;
-    }
-    return (uint32_t) configured;
-}
-
 static size_t effective_server_streaming_read_ahead_max_messages(void)
 {
     return PHP_GRPC_LITE_G(server_streaming_read_ahead_max_messages) > 0
@@ -714,24 +648,6 @@ static size_t effective_server_streaming_read_ahead_max_bytes(void)
     return PHP_GRPC_LITE_G(server_streaming_read_ahead_max_bytes) > 0
         ? (size_t) PHP_GRPC_LITE_G(server_streaming_read_ahead_max_bytes)
         : GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_BYTES;
-}
-
-static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit)
-{
-    if (hard_limit >= 0) {
-        return (size_t) hard_limit;
-    }
-    if (soft_limit >= 0) {
-        double derived = (double) soft_limit * 1.25;
-        if (derived > (double) SIZE_MAX) {
-            return SIZE_MAX;
-        }
-        if (derived < GRPC_LITE_DEFAULT_METADATA_HARD_BYTES) {
-            return GRPC_LITE_DEFAULT_METADATA_HARD_BYTES;
-        }
-        return (size_t) derived;
-    }
-    return GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES;
 }
 
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us)
@@ -1768,89 +1684,6 @@ static void add_status_result_to_return(zval *return_value, grpc_lite_status_res
 {
     add_assoc_long(return_value, "status_code", status->code);
     add_assoc_str(return_value, "status_details", status->details != NULL ? zend_string_copy(status->details) : zend_empty_string);
-}
-
-static bool contains_nul_or_control(const char *value, size_t value_len)
-{
-    size_t index;
-
-    if (value == NULL) {
-        return false;
-    }
-    for (index = 0; index < value_len; index++) {
-        unsigned char ch = (unsigned char) value[index];
-        if (ch == '\0' || ch < 0x20 || ch == 0x7f) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool contains_authority_forbidden_char(const char *value, size_t value_len)
-{
-    size_t index;
-
-    if (value == NULL) {
-        return false;
-    }
-    for (index = 0; index < value_len; index++) {
-        unsigned char ch = (unsigned char) value[index];
-        if (ch == '@' || ch == '/' || ch == '\\' || ch <= 0x20 || ch == 0x7f) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static const char *validate_grpc_path(const char *path, size_t path_len)
-{
-    bool second_slash_seen = false;
-    size_t index;
-
-    if (path == NULL || path_len < 3 || path[0] != '/') {
-        return "invalid gRPC method path";
-    }
-    for (index = 0; index < path_len; index++) {
-        unsigned char ch = (unsigned char) path[index];
-        if (ch <= 0x20 || ch == 0x7f) {
-            return "invalid gRPC method path";
-        }
-        if (index > 0 && ch == '/') {
-            second_slash_seen = true;
-        }
-    }
-    return second_slash_seen ? NULL : "invalid gRPC method path";
-}
-
-static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len)
-{
-    char port_buf[32];
-    int port_len;
-
-    if (key_len == 0 || key_len > 512 || contains_nul_or_control(key, key_len)) {
-        return "invalid grpc_lite connection key";
-    }
-    if (host_len == 0 || contains_nul_or_control(host, host_len)) {
-        return "invalid gRPC target host";
-    }
-    if (port <= 0 || port > 65535) {
-        return "invalid gRPC target port";
-    }
-    if (authority_len > 0) {
-        if (authority_len >= sizeof(((h2_connection *) 0)->authority) || contains_authority_forbidden_char(authority, authority_len)) {
-            return "invalid gRPC authority";
-        }
-    } else {
-        port_len = snprintf(port_buf, sizeof(port_buf), "%ld", port);
-        if (port_len < 0 || host_len + 1 + (size_t) port_len >= sizeof(((h2_connection *) 0)->authority)) {
-            return "gRPC authority is too long";
-        }
-    }
-    if (tls_verify_name_len > 0 && contains_authority_forbidden_char(tls_verify_name, tls_verify_name_len)) {
-        return "invalid TLS verify name";
-    }
-
-    return NULL;
 }
 
 static size_t count_custom_header_values(zval *headers_zv)

@@ -55,6 +55,24 @@ $assertUnaryStatus(
     Grpc\STATUS_UNIMPLEMENTED,
     'unsupported grpc-encoding: gzip',
 );
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['partial-frame']],
+    Grpc\STATUS_INTERNAL,
+    'malformed gRPC response frame',
+);
+
+$assertStreamStatus = static function (array $metadata, int $code, string $details, int $expectedCount = 0) use ($client): void {
+    $request = new BenchRequest();
+    $request->setMessageCount(10);
+    $call = $client->BenchServerStream($request, $metadata);
+    $count = 0;
+    foreach ($call->responses() as $_reply) {
+        $count++;
+    }
+    grpc_lite_phpt_assert_same($expectedCount, $count, 'stream error yield count');
+    grpc_lite_phpt_assert_same($code, $call->getStatus()->code, 'stream error status');
+    grpc_lite_phpt_assert_same($details, $call->getStatus()->details, 'stream error details');
+};
 
 $request = new BenchRequest();
 $request->setMessageCount(10);
@@ -68,6 +86,28 @@ foreach ($call->responses() as $_reply) {
 grpc_lite_phpt_assert_same(0, $count, 'invalid stream content-type yield count');
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $call->getStatus()->code, 'invalid stream content-type status');
 grpc_lite_phpt_assert_same('invalid gRPC content-type: application/grpcfoo', $call->getStatus()->details, 'invalid stream content-type details');
+
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['compressed-flag']],
+    Grpc\STATUS_UNIMPLEMENTED,
+    'compressed gRPC messages are not supported',
+);
+$assertStreamStatus(
+    ['x-bench-grpc-encoding' => ['gzip']],
+    Grpc\STATUS_UNIMPLEMENTED,
+    'unsupported grpc-encoding: gzip',
+);
+$assertStreamStatus(
+    ['x-bench-grpc-status' => ['abc']],
+    Grpc\STATUS_UNKNOWN,
+    'invalid grpc-status trailer',
+    1,
+);
+$assertStreamStatus(
+    ['x-bench-http-status' => ['503'], 'x-bench-content-type' => ['application/grpc']],
+    Grpc\STATUS_UNAVAILABLE,
+    'HTTP status 503 without grpc-status',
+);
 
 $request = new BenchRequest();
 $request->setMessageCount(10);
@@ -86,4 +126,3 @@ echo "OK\n";
 ?>
 --EXPECT--
 OK
-
