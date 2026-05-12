@@ -1,5 +1,7 @@
 FROM php:8.4-cli-trixie
 
+ARG PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -11,14 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL -o /usr/local/bin/pie https://github.com/php/pie/releases/latest/download/pie.phar \
     && chmod +x /usr/local/bin/pie
 
-WORKDIR /usr/src/php-grpc-lite
-
-COPY composer.json ./
-COPY ext/grpc ./ext/grpc
-
-RUN pie install --working-dir=/usr/src/php-grpc-lite --skip-enable-extension --no-interaction --no-cache \
+RUN pie install "${PHP_GRPC_LITE_PACKAGE}" --no-interaction --no-cache \
         --auto-install-build-tools --auto-install-system-dependencies -j"$(nproc)" \
-    && echo 'extension=grpc' > /usr/local/etc/php/conf.d/20-php-grpc-lite.ini \
     && php -m | grep -x grpc \
     && php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 

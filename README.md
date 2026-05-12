@@ -135,6 +135,14 @@ docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
 docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 ```
 
+To verify a specific released package from Packagist:
+
+```bash
+docker build -f Dockerfile.install-pie \
+  --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.2 \
+  -t php-grpc-lite-install-pie-0.0.2 .
+```
+
 Design and QA status:
 
 - `docs/SPEC.md`

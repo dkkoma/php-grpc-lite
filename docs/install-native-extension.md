@@ -85,6 +85,14 @@ docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
 docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 ```
 
+特定release packageをPackagist経由で検証する場合:
+
+```bash
+docker build -f Dockerfile.install-pie \
+  --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.2 \
+  -t php-grpc-lite-install-pie-0.0.2 .
+```
+
 ## Enable extension
 
 PIEまたは `make install` が出力したinstall先に合わせて、必要ならPHPの設定へ `extension=grpc` を追加する。
