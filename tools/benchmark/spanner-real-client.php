@@ -153,26 +153,29 @@ function measureSelect(
     int $warmupCalls,
 ): void {
     $benchTelemetry->setContext('small_select_1row_10col', commonContext($target, $calls, $transport, $warmupCalls) + [
-        'benchmark.spanner_api' => 'Database::execute',
+        'benchmark.spanner_api' => 'Transaction::execute',
         'benchmark.operation_shape' => 'select_1row_10col',
+        'benchmark.transaction_scope' => 'pre_started_read_write',
         'benchmark.rows' => 1,
         'benchmark.columns' => 10,
     ]);
 
     for ($index = 0; $index < $calls; $index++) {
-        $startNs = hrtime(true);
         $statusCode = 1;
+        $transaction = $database->transaction();
+        $startNs = hrtime(true);
         try {
-            drainSelect($database);
+            drainSelect($transaction);
         } catch (Throwable $throwable) {
             $statusCode = 2;
             throw $throwable;
         } finally {
             $endNs = hrtime(true);
-            $benchTelemetry->recordRpcSpan('Spanner.Database.execute', $startNs, $endNs, [
+            $benchTelemetry->recordRpcSpan('Spanner.Transaction.execute', $startNs, $endNs, [
                 'rpc.service' => 'google.spanner.v1.Spanner',
                 'rpc.method' => 'ExecuteStreamingSql',
             ], $statusCode);
+            rollbackActive($transaction);
         }
     }
 }
@@ -189,6 +192,7 @@ function measureDml(
     $benchTelemetry->setContext($measurement, commonContext($target, $calls, $transport, $warmupCalls) + [
         'benchmark.spanner_api' => 'Transaction::executeUpdate',
         'benchmark.operation_shape' => $measurement,
+        'benchmark.transaction_scope' => 'pre_started_read_write',
         'benchmark.rows' => 1,
         'benchmark.columns' => 10,
     ]);
@@ -199,13 +203,14 @@ function measureDml(
             runDmlTransaction($database, insertSql($id));
         }
 
-        $startNs = hrtime(true);
         $statusCode = 1;
+        $transaction = $database->transaction();
+        $startNs = hrtime(true);
         try {
             $rowCount = match ($measurement) {
-                'dml_insert_10col' => runDmlTransaction($database, insertSql($id)),
-                'dml_update_10col' => runDmlTransaction($database, updateSql($id)),
-                'dml_delete_10col' => runDmlTransaction($database, deleteSql($id)),
+                'dml_insert_10col' => $transaction->executeUpdate(insertSql($id)),
+                'dml_update_10col' => $transaction->executeUpdate(updateSql($id)),
+                'dml_delete_10col' => $transaction->executeUpdate(deleteSql($id)),
                 default => throw new LogicException("unknown DML measurement: $measurement"),
             };
             if ($rowCount !== 1) {
@@ -218,12 +223,9 @@ function measureDml(
             $endNs = hrtime(true);
             $benchTelemetry->recordRpcSpan('Spanner.Transaction.executeUpdate', $startNs, $endNs, [
                 'rpc.service' => 'google.spanner.v1.Spanner',
-                'rpc.method' => 'ExecuteStreamingSql+Commit',
+                'rpc.method' => 'ExecuteStreamingSql',
             ], $statusCode);
-        }
-
-        if ($measurement === 'dml_insert_10col') {
-            runDmlTransaction($database, deleteSql($id));
+            rollbackActive($transaction);
         }
     }
 }
@@ -240,9 +242,9 @@ function commonContext(string $target, int $calls, string $transport, int $warmu
     ];
 }
 
-function drainSelect(Database $database): void
+function drainSelect(Database|Transaction $databaseOrTransaction): void
 {
-    $result = $database->execute(selectSql());
+    $result = $databaseOrTransaction->execute(selectSql());
     $rows = 0;
     foreach ($result->rows() as $_row) {
         $rows++;
@@ -259,6 +261,14 @@ function runDmlTransaction(Database $database, string $sql): int
         $transaction->commit();
         return $rowCount;
     });
+}
+
+function rollbackActive(Transaction $transaction): void
+{
+    if ($transaction->state() !== Transaction::STATE_ACTIVE) {
+        return;
+    }
+    $transaction->rollback();
 }
 
 function operationId(string $measurement, int $index): int
