@@ -10,6 +10,7 @@
 #   ./bench/run.sh payload-unary
 #   ./bench/run.sh payload-streaming
 #   ./bench/run.sh metadata-header
+#   ./bench/run.sh spanner-shape
 #   ./bench/run.sh spanner-real-client
 #
 set -euo pipefail
@@ -100,6 +101,9 @@ case "$suite" in
     metadata-header)
         run_benchmark_php "Benchmark metadata/header sweep" tools/benchmark/metadata-header.php
         ;;
+    spanner-shape)
+        run_benchmark_php "Benchmark Spanner RPC shape" tools/benchmark/spanner-shape.php
+        ;;
     spanner-real-client)
         run_benchmark_php "Benchmark google/cloud-spanner high-level client" tools/benchmark/spanner-real-client.php
         ;;
@@ -107,7 +111,7 @@ case "$suite" in
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-real-client]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|spanner-real-client]
 USAGE
         exit 2
         ;;

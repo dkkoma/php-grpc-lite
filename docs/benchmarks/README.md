@@ -9,6 +9,7 @@
 通常の継続比較は **php-grpc-lite vs 公式 ext-grpc** に固定する。ベンチ結果の一次ソースは `otelop` にexportしたOTEL spanで、JSON/TSV保存やregression baselineは使わない。
 
 ```bash
+./bench/compare.sh spanner-shape
 ./bench/compare.sh spanner-real-client
 ./bench/compare.sh throughput-unary --duration=3
 ./bench/compare.sh rtt-unary --calls=20
@@ -17,6 +18,7 @@
 `BENCH_TAG` または `BENCH_OTEL_RUN_ID` でrun idを固定できる。runnerはcompose内の `otelop` を起動し、デフォルトで `http://otelop:4318/v1/traces` へOTLP/HTTP exportする。
 
 ```bash
+BENCH_OTEL_RUN_ID=local-spanner-shape ./bench/compare.sh spanner-shape
 BENCH_OTEL_RUN_ID=local-spanner-real ./bench/compare.sh spanner-real-client
 ```
 
@@ -47,7 +49,8 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 
 | script / suite | 用途 |
 |---|---|
-| `spanner-real-client` | `google/cloud-spanner` の高レベルAPI経由で small SELECT / DML insert / update / delete を実行する実 lifecycle |
+| `spanner-shape` | Spanner代表RPC shape。Begin / Commit はunary、SELECT / DML はserver streamingとしてtransport寄りに観測する |
+| `spanner-real-client` | `google/cloud-spanner` の高レベルAPI経由で small SELECT / DML insert / update / delete を実行する実 lifecycle smoke/regression |
 | `throughput-unary` | 単一 PHP process / concurrency=1 の sustained unary throughput と tail latency |
 | `rtt-unary` | direct と downstream latency 1 / 3 / 5 ms の unary RTT |
 | `throughput-streaming` | server streaming message/sec と stream latency |
@@ -62,7 +65,7 @@ franken-go backend を含める場合は、対象suiteを明確にした専用ru
 
 - 対向サーバ、実行コマンド、代表値、揺れ幅を残す。
 - ext-grpc は目標値ではなく比較線として扱う。
-- Spanner emulator は実機互換検証には使うが、性能比較では Go test-server を優先する。
+- Spanner emulator は実機互換検証には使うが、transport寄りの性能比較では Go test-server の `spanner-shape` を優先する。
 - cold と warm を混ぜない。request 内で Channel を再利用できる workload は warm、request ごとに 1 RPC の workload は cold を参照する。
 
 ## 記録済みの比較
