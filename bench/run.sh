@@ -10,8 +10,6 @@
 #   ./bench/run.sh payload-unary
 #   ./bench/run.sh payload-streaming
 #   ./bench/run.sh metadata-header
-#   ./bench/run.sh spanner-dml-unary-shape
-#   ./bench/run.sh small-select-streaming
 #   ./bench/run.sh spanner-real-client
 #
 set -euo pipefail
@@ -102,15 +100,6 @@ case "$suite" in
     metadata-header)
         run_benchmark_php "Benchmark metadata/header sweep" tools/benchmark/metadata-header.php
         ;;
-    spanner-dml-unary-shape)
-        run_benchmark_php "Benchmark Spanner DML unary shape" tools/benchmark/unary-shape.php
-        ;;
-    small-select-streaming)
-        run_benchmark_php "Benchmark small SELECT streaming 1x100B" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=100 --native-response-mode=stream
-        run_benchmark_php "Benchmark small SELECT streaming 1x1KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=1024 --native-response-mode=stream
-        run_benchmark_php "Benchmark small SELECT streaming 1x4KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=4096 --native-response-mode=stream
-        run_benchmark_php "Benchmark small SELECT streaming 1x10KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=10240 --native-response-mode=stream
-        ;;
     spanner-real-client)
         run_benchmark_php "Benchmark google/cloud-spanner high-level client" tools/benchmark/spanner-real-client.php
         ;;
@@ -118,7 +107,7 @@ case "$suite" in
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-dml-unary-shape|small-select-streaming|spanner-real-client]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-real-client]
 USAGE
         exit 2
         ;;

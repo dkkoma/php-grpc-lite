@@ -46,12 +46,12 @@
 - 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
 - C拡張静的解析: `./tools/test/check-c-static-analysis.sh`
 - 単独ベンチ: `./bench/run.sh <suite>`
-- ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner代表形状も `spanner-dml-unary-shape` / `small-select-streaming` として通常suiteに含める。franken-go backend を含める場合だけ `./bench/compare-spanner-dml-unary-shape.sh` / `./bench/compare-small-select-streaming.sh` を使う。
+- ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner実経路は `spanner-real-client` を通常suiteとして使う。franken-go backend を含める場合は対象suiteを明確にした専用runnerを追加する。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。
 
 ## ベンチ作業の注意
 
-- Spanner emulator は実機検証には有用だが、ベンチ指標としては内部状態の揺れが大きい。安定した性能観測は Go test-server の制御可能な RPC を優先する。
+- Spanner emulator は実機検証には有用だが、ベンチ指標としては内部状態の揺れが大きい。安定したtransport性能観測は Go test-server の制御可能な RPC を優先し、実アプリ経路の回帰確認は `spanner-real-client` を使う。
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
 - ベンチ計測結果はOTEL spanを一次ソースにする。`bench/` runnerは `otelop` へexportし、`tools/benchmark/otelop-summary.php` で集計する。必要に応じて `BENCH_TAG` / `BENCH_OTEL_RUN_ID` でrun idを固定する。JSON/TSVのベンチ結果保存や旧baseline運用は使わない。
 - 旧baseline運用は廃止済み。性能回帰を見る場合は `bench/` の代表ケースを同条件で再実行して比較する。

@@ -59,12 +59,12 @@ docker compose up -d otelop
 BENCH_OTEL_EXPORTER=otlp-http \
 BENCH_OTEL_RUN_ID=local-otel \
 BENCH_OTEL_EXPORTER_OTLP_ENDPOINT=http://otelop:4318/v1/traces \
-./bench/compare-spanner-dml-unary-shape.sh
+./bench/compare.sh spanner-real-client
 
 docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
   tools/benchmark/otelop-summary.php \
   --run-id=local-otel \
-  --suite=spanner-dml-unary-shape
+  --suite=spanner-real-client
 ```
 
 ブラウザでは `http://localhost:4319` を開く。OTLP/HTTP endpointはcompose内から `http://otelop:4318/v1/traces`、ホストから直接送る場合は `http://localhost:4318/v1/traces` を使う。

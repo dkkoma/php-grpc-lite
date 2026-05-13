@@ -9,8 +9,6 @@
 通常の継続比較は **php-grpc-lite vs 公式 ext-grpc** に固定する。ベンチ結果の一次ソースは `otelop` にexportしたOTEL spanで、JSON/TSV保存やregression baselineは使わない。
 
 ```bash
-./bench/compare.sh spanner-dml-unary-shape
-./bench/compare.sh small-select-streaming
 ./bench/compare.sh spanner-real-client
 ./bench/compare.sh throughput-unary --duration=3
 ./bench/compare.sh rtt-unary --calls=20
@@ -19,8 +17,6 @@
 `BENCH_TAG` または `BENCH_OTEL_RUN_ID` でrun idを固定できる。runnerはcompose内の `otelop` を起動し、デフォルトで `http://otelop:4318/v1/traces` へOTLP/HTTP exportする。
 
 ```bash
-BENCH_OTEL_RUN_ID=local-dml ./bench/compare.sh spanner-dml-unary-shape
-BENCH_OTEL_RUN_ID=local-small-select ./bench/compare.sh small-select-streaming
 BENCH_OTEL_RUN_ID=local-spanner-real ./bench/compare.sh spanner-real-client
 ```
 
@@ -39,20 +35,18 @@ BENCH_IMPLEMENTATION=ext-grpc ./bench/run.sh throughput-unary --duration=5 --pay
 
 ```bash
 BENCH_OTEL_RUN_ID=local-otel \
-./bench/compare.sh spanner-dml-unary-shape
+./bench/compare.sh spanner-real-client
 
 docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
   tools/benchmark/otelop-summary.php \
   --run-id=local-otel \
-  --suite=spanner-dml-unary-shape
+  --suite=spanner-real-client
 ```
 
 ## 代表ケース
 
 | script / suite | 用途 |
 |---|---|
-| `spanner-dml-unary-shape` | Spanner DML flow の BeginTransaction / ExecuteSql DML / Commit に近い small unary shape |
-| `small-select-streaming` | Spanner `ExecuteStreamingSql` が 1 `PartialResultSet` で返る small SELECT 近似 |
 | `spanner-real-client` | `google/cloud-spanner` の高レベルAPI経由で small SELECT / DML insert / update / delete を実行する実 lifecycle |
 | `throughput-unary` | 単一 PHP process / concurrency=1 の sustained unary throughput と tail latency |
 | `rtt-unary` | direct と downstream latency 1 / 3 / 5 ms の unary RTT |
@@ -62,7 +56,7 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 | `payload-streaming` | streaming payload size 別の messages/sec と stream latency |
 | `metadata-header` | request / initial / trailing metadata 数別の unary latency |
 
-`compare-spanner-dml-unary-shape.sh` と `compare-small-select-streaming.sh` は franken-go backend を含めて確認する場合の補助入口。通常比較は `compare.sh <suite>` を使う。
+franken-go backend を含める場合は、対象suiteを明確にした専用runnerを追加する。通常比較は `compare.sh <suite>` を使う。
 
 ## ベンチ文書を書く基準
 
