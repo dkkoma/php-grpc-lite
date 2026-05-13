@@ -12,6 +12,7 @@
 #   ./bench/run.sh metadata-header
 #   ./bench/run.sh spanner-dml-unary-shape
 #   ./bench/run.sh small-select-streaming
+#   ./bench/run.sh spanner-real-client
 #
 set -euo pipefail
 
@@ -29,6 +30,7 @@ autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
 export BENCH_OTEL_RUN_ID="${BENCH_OTEL_RUN_ID:-$timestamp}"
 export BENCH_OTEL_EXPORTER="${BENCH_OTEL_EXPORTER:-otlp-http}"
 export BENCH_OTEL_EXPORTER_OTLP_ENDPOINT="${BENCH_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otelop:4318/v1/traces}"
+export SPANNER_EMULATOR_HOST="${SPANNER_EMULATOR_HOST:-spanner-emulator:9010}"
 export NO_PROXY="${NO_PROXY:-test-server,spanner-emulator,toxiproxy,otelop,localhost,127.0.0.1}"
 export no_proxy="${no_proxy:-$NO_PROXY}"
 
@@ -55,6 +57,7 @@ run_benchmark_php() {
         BENCH_OTEL_RUN_ID \
         OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
         OTEL_EXPORTER_OTLP_ENDPOINT \
+        SPANNER_EMULATOR_HOST \
         NO_PROXY \
         no_proxy
     do
@@ -108,11 +111,14 @@ case "$suite" in
         run_benchmark_php "Benchmark small SELECT streaming 1x4KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=4096 --native-response-mode=stream
         run_benchmark_php "Benchmark small SELECT streaming 1x10KiB" tools/benchmark/small-select-streaming.php --streams=1000 --message-count=1 --payload-bytes=10240 --native-response-mode=stream
         ;;
+    spanner-real-client)
+        run_benchmark_php "Benchmark google/cloud-spanner high-level client" tools/benchmark/spanner-real-client.php
+        ;;
     *)
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-dml-unary-shape|small-select-streaming]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-dml-unary-shape|small-select-streaming|spanner-real-client]
 USAGE
         exit 2
         ;;

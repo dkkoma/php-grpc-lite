@@ -144,6 +144,9 @@ function shapeKey(array $attributes): string
     if (isset($attributes['benchmark.request_payload_bytes'])) {
         return 'request_payload=' . (string) $attributes['benchmark.request_payload_bytes'];
     }
+    if (isset($attributes['benchmark.operation_shape'])) {
+        return (string) $attributes['benchmark.operation_shape'];
+    }
     return '-';
 }
 

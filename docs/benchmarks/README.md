@@ -11,6 +11,7 @@
 ```bash
 ./bench/compare.sh spanner-dml-unary-shape
 ./bench/compare.sh small-select-streaming
+./bench/compare.sh spanner-real-client
 ./bench/compare.sh throughput-unary --duration=3
 ./bench/compare.sh rtt-unary --calls=20
 ```
@@ -20,6 +21,7 @@
 ```bash
 BENCH_OTEL_RUN_ID=local-dml ./bench/compare.sh spanner-dml-unary-shape
 BENCH_OTEL_RUN_ID=local-small-select ./bench/compare.sh small-select-streaming
+BENCH_OTEL_RUN_ID=local-spanner-real ./bench/compare.sh spanner-real-client
 ```
 
 ## Runner
@@ -51,6 +53,7 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 |---|---|
 | `spanner-dml-unary-shape` | Spanner DML flow の BeginTransaction / ExecuteSql DML / Commit に近い small unary shape |
 | `small-select-streaming` | Spanner `ExecuteStreamingSql` が 1 `PartialResultSet` で返る small SELECT 近似 |
+| `spanner-real-client` | `google/cloud-spanner` の高レベルAPI経由で small SELECT / DML insert / update / delete を実行する実 lifecycle |
 | `throughput-unary` | 単一 PHP process / concurrency=1 の sustained unary throughput と tail latency |
 | `rtt-unary` | direct と downstream latency 1 / 3 / 5 ms の unary RTT |
 | `throughput-streaming` | server streaming message/sec と stream latency |
