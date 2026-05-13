@@ -17,18 +17,22 @@ Current review status:
 
 ## Performance snapshot
 
-Latest major local benchmarks: 2026-05-05 / 2026-05-06, Docker compose on OrbStack, Go gRPC test server, `php-grpc-lite` HTTP/2 transport vs official `ext-grpc`. These numbers are workload guidance, not a portability guarantee; rerun the benchmark suite on release hardware for final decisions. Full data: `docs/benchmarks/native-major-2026-05-05.md` and `docs/benchmarks/native-hardening-2026-05-06.md`.
+Latest representative local benchmarks: 2026-05-14 for Spanner RPC shape, 2026-05-05 / 2026-05-06 for broader unary and streaming payload sweeps. Environment: Docker compose on OrbStack, Go gRPC test server, `php-grpc-lite` HTTP/2 transport vs official `ext-grpc`. These numbers are workload guidance, not a portability guarantee; rerun the benchmark suite on release hardware for final decisions. Full data: `docs/benchmarks/spanner-shape-2026-05-14.md`, `docs/benchmarks/spanner-real-client-2026-05-14.md`, `docs/benchmarks/native-major-2026-05-05.md`, and `docs/benchmarks/native-hardening-2026-05-06.md`.
 
-| case | php-grpc-lite throughput | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc throughput | ext-grpc p50 | ext-grpc p99 | result |
-|---|---:|---:|---:|---:|---:|---:|---|
-| unary 100B | 29,403 calls/s | 28.1μs | 67.8μs | 16,289 calls/s | 56.6μs | 103.6μs | php-grpc-lite faster |
-| unary 100KiB | 5,504 calls/s | 77.9μs | 2,243.1μs | 5,458 calls/s | 106.7μs | 1,491.2μs | p50 comparable/faster; p99 slower |
-| Spanner DML insert shape | 26,545 calls/s | 31.9μs | 72.5μs | 15,852 calls/s | 58.3μs | 105.8μs | php-grpc-lite faster |
-| Spanner commit shape | 26,836 calls/s | 31.8μs | 70.1μs | 15,539 calls/s | 60.6μs | 107.1μs | php-grpc-lite faster |
-| Spanner small SELECT 1x1KiB | 12,442 msg/s | 58.0μs | 552.7μs | 6,159 msg/s | 115.3μs | 899.3μs | php-grpc-lite faster |
-| Spanner small SELECT 1x10KiB | 9,941 msg/s | 63.4μs | 760.9μs | 5,654 msg/s | 116.6μs | 988.8μs | php-grpc-lite faster |
-| server streaming 100x100B | 648,945 msg/s | 135.8μs | 538.8μs | 286,357 msg/s | 334.1μs | 796.8μs | php-grpc-lite faster |
-| server streaming 100x10KiB | 78,123 msg/s | 1,111.2μs | 2,255.9μs | 71,098 msg/s | 1,452.6μs | 1,974.3μs | p50/throughput faster; p99 slower |
+| case | php-grpc-lite p50 | php-grpc-lite p99 | ext-grpc p50 | ext-grpc p99 | result |
+|---|---:|---:|---:|---:|---|
+| unary 100B | 28.1μs | 67.8μs | 56.6μs | 103.6μs | php-grpc-lite faster |
+| unary 100KiB | 77.9μs | 2,243.1μs | 106.7μs | 1,491.2μs | p50 faster; p99 slower |
+| Spanner shape: BeginTransaction unary | 31.6μs | 128.6μs | 59.2μs | 393.4μs | php-grpc-lite faster |
+| Spanner shape: Commit unary | 28.2μs | 83.4μs | 54.9μs | 107.0μs | php-grpc-lite faster |
+| Spanner shape: SELECT streaming | 28.9μs | 70.9μs | 62.3μs | 115.6μs | php-grpc-lite faster |
+| Spanner shape: DML insert streaming | 26.1μs | 69.0μs | 68.1μs | 110.4μs | php-grpc-lite faster |
+| Spanner shape: DML update streaming | 26.1μs | 72.5μs | 68.5μs | 110.3μs | php-grpc-lite faster |
+| Spanner shape: DML delete streaming | 27.3μs | 65.4μs | 71.1μs | 128.9μs | php-grpc-lite faster |
+| server streaming 100x100B | 135.8μs | 538.8μs | 334.1μs | 796.8μs | php-grpc-lite faster |
+| server streaming 100x10KiB | 1,111.2μs | 2,255.9μs | 1,452.6μs | 1,974.3μs | p50 faster; p99 slower |
+
+`spanner-shape` is the primary Spanner-oriented performance signal because it keeps the RPC shape close to Spanner while avoiding emulator and GAX noise. `spanner-real-client` is kept as a high-level `google/cloud-spanner` smoke/regression benchmark rather than a transport microbenchmark.
 
 Large bulk streaming remains the main case that should be measured against the actual workload before choosing this extension.
 
