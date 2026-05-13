@@ -86,12 +86,14 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
             (string) ($attributes['benchmark.measurement'] ?? ''),
             $shape,
             (string) ($attributes['benchmark.implementation'] ?? ''),
+            (string) ($attributes['benchmark.transport'] ?? '-'),
         ];
         $key = implode("\t", $keyParts);
         $groups[$key]['suite'] = $keyParts[0];
         $groups[$key]['measurement'] = $keyParts[1];
         $groups[$key]['shape'] = $shape;
         $groups[$key]['implementation'] = $keyParts[3];
+        $groups[$key]['transport'] = $keyParts[4];
         $groups[$key]['durations_us'][] = ((float) ($span['durationMs'] ?? 0.0)) * 1000.0;
     }
 
@@ -107,7 +109,7 @@ printf(
     'suite',
     'measurement',
     'shape',
-    'implementation',
+    'variant',
     'count',
     'span_p50_us',
     'span_p99_us',
@@ -122,7 +124,7 @@ foreach ($groups as $group) {
         $group['suite'],
         $group['measurement'],
         $group['shape'],
-        $group['implementation'],
+        variantName($group['implementation'], $group['transport']),
         count($durations),
         $spanPercentiles['p50'],
         $spanPercentiles['p99'],
@@ -169,6 +171,15 @@ function postJson(string $endpoint, array $payload): array
         throw new RuntimeException('otelop GraphQL error: ' . json_encode($decoded['errors'], JSON_UNESCAPED_SLASHES));
     }
     return $decoded;
+}
+
+function variantName(string $implementation, string $transport): string
+{
+    if ($implementation === 'php-grpc-lite' && $transport !== '-' && $transport !== '') {
+        return $transport;
+    }
+
+    return $implementation;
 }
 
 /** @param list<float> $values */
