@@ -70,6 +70,17 @@ services:
     depends_on:
       - test-server
 
+  fpm-ext-grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile.fpm-ext-grpc
+    image: php-grpc-lite-fpm-ext-grpc
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    depends_on:
+      - test-server
+
   test-server:
     build:
       context: ./poc

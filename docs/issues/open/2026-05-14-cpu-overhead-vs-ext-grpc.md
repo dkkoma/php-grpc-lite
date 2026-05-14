@@ -144,9 +144,21 @@ run id: `cpu-micro-lifecycle-20260514-204100`
 
 client objectをcallごとに作り直す条件でもnative高CPUは再現しない。むしろext-grpcはchannel upper bound warningを大量に出し、CPU/wallが大きく悪化する。
 
+### php-fpm request lifecycle
+
+`Dockerfile.fpm-ext-grpc` は `php-grpc-lite-dev-ext-grpc` のビルド済み `grpc.so` / `protobuf.so` を流用し、PECLからext-grpcを再ビルドしない。`bench/fpm-cpu-compare.sh` は `pm=static` / `pm.max_children=1` のFPM workerにFastCGI requestを投げ、worker process CPU ticksとFPM container cgroup CPUを読む。
+
+| measurement | native worker_cpu_us/request | ext-grpc worker_cpu_us/request | native/ext | native cgroup_cpu_us/request | ext-grpc cgroup_cpu_us/request | native/ext |
+|---|---:|---:|---:|---:|---:|---:|
+| small_unary_100b | 110.0 | 170.0 | 0.65x | 126.4 | 201.8 | 0.63x |
+| small_streaming_1x100b | 140.0 | 190.0 | 0.74x | 166.3 | 211.8 | 0.79x |
+
+FPM request lifecycle全体に近づけても、nativeのCPU使用量がext-grpcより大きくなる現象は再現していない。worker CPUとcontainer cgroup CPUのどちらでもnativeのほうが低い。
+
 ## 現時点のレビュー
 
 - `php-grpc-lite` transport単体、`google/cloud-spanner`高レベル経路、複数PHP process並列、client object per-call lifecycleのいずれでも、process-local CPU timeでは実アプリ負荷試験の「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
+- php-fpm request lifecycleでも、worker CPU / container cgroup CPUのどちらでも「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
 - 再現しないため、現時点でC transport hot pathを最適化する根拠は弱い。
 - 次に見るべき対象は、このリポジトリ内micro benchではなく、実アプリ負荷試験で使った測定単位との差分である。特に、HTTP/FPM/FrankenPHP request lifecycle全体、container全体CPU、固定RPS下のCPU%、アプリ側のSpanner/GAX client生成・認証・middleware、負荷試験ツールの集計範囲を確認する。
 

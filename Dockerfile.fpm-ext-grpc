@@ -1,0 +1,24 @@
+FROM php-grpc-lite-dev-ext-grpc AS ext-grpc-build
+
+FROM php:8.4-fpm-trixie
+
+COPY --from=ext-grpc-build /usr/local/lib/php/extensions/no-debug-non-zts-20240924/protobuf.so /usr/local/lib/php/extensions/no-debug-non-zts-20240924/protobuf.so
+COPY --from=ext-grpc-build /usr/local/lib/php/extensions/no-debug-non-zts-20240924/grpc.so /usr/local/lib/php/extensions/no-debug-non-zts-20240924/grpc.so
+
+RUN { \
+        echo 'extension=protobuf.so'; \
+        echo 'extension=grpc.so'; \
+    } > /usr/local/etc/php/conf.d/zz-ext-grpc.ini
+
+RUN { \
+        echo '[www]'; \
+        echo 'pm = static'; \
+        echo 'pm.max_children = 1'; \
+        echo 'pm.max_requests = 0'; \
+        echo 'clear_env = no'; \
+        echo 'catch_workers_output = yes'; \
+    } > /usr/local/etc/php-fpm.d/zz-grpc-lifecycle.conf
+
+WORKDIR /workspace
+
+CMD ["php-fpm", "-F"]
