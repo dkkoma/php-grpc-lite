@@ -72,6 +72,25 @@ Branch: main
 - `docker compose run --rm dev php -l tools/benchmark/otelop-summary.php`
 - `BENCH_TAG=cpu-micro-smoke BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=3 --warmup-calls=1`
 - `BENCH_TAG=cpu-micro-verify BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=100 --warmup-calls=10`
+- `BENCH_TAG=cpu-micro-20260514-203044 BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=5000 --warmup-calls=100`
+
+## 2026-05-14 CPU micro計測結果
+
+run id: `cpu-micro-20260514-203044`
+
+| measurement | native cpu_us/call | ext-grpc cpu_us/call | native/ext | native wall_us/call | ext-grpc wall_us/call |
+|---|---:|---:|---:|---:|---:|
+| small_unary_100b | 11.3 | 39.5 | 0.29x | 31.4 | 65.8 |
+| begin_txn_unary | 10.5 | 40.5 | 0.26x | 29.4 | 66.4 |
+| commit_txn_unary | 10.9 | 40.7 | 0.27x | 31.4 | 65.8 |
+| small_streaming_1x100b | 11.2 | 45.3 | 0.25x | 30.1 | 70.8 |
+| small_streaming_100x100b | 54.5 | 266.5 | 0.20x | 136.0 | 345.4 |
+| select_1row_10col_streaming | 11.5 | 45.3 | 0.25x | 30.8 | 73.1 |
+| dml_insert_10col_streaming | 11.5 | 46.2 | 0.25x | 32.5 | 71.1 |
+| dml_update_10col_streaming | 11.1 | 44.6 | 0.25x | 31.4 | 72.3 |
+| dml_delete_10col_streaming | 11.0 | 46.0 | 0.24x | 30.8 | 71.2 |
+
+このmicro benchでは `php-grpc-lite` nativeのCPU timeは `ext-grpc` より低く、実アプリ負荷試験の「CPU使用率約1.5倍」は再現していない。次の確認対象は、micro benchに含まれていない高レベルアプリ経路、並列実行時のprocess/container CPU、worker lifecycle、または負荷試験側のCPU測定単位。
 
 ## 判断ログ
 
