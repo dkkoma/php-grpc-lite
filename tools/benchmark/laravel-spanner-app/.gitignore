@@ -1,3 +1,7 @@
 /vendor/
 /storage/framework/spanner/*
 !/storage/framework/spanner/.gitkeep
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+/storage/logs/*
+!/storage/logs/.gitignore

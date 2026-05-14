@@ -90,9 +90,55 @@ services:
       args:
         FPM_MAX_CHILDREN: 16
     image: php-grpc-lite-fpm-lifecycle-16
+    cpus: 4.0
     volumes:
       - .:/workspace
+      - ${HOME}/.config/gcloud:/var/www/.config/gcloud:ro
     working_dir: /workspace
+    environment:
+      HOME: /var/www
+      SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
+      DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
+      DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
+      DB_SPANNER_DATABASE_ID: ${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}
+      LARAVEL_SPANNER_MIN_SESSIONS: ${LARAVEL_SPANNER_MIN_SESSIONS:-16}
+    command:
+      - sh
+      - -lc
+      - |
+        mkdir -p /workspace/tools/benchmark/laravel-spanner-app/storage/framework/spanner /workspace/tools/benchmark/laravel-spanner-app/storage/framework/views /workspace/tools/benchmark/laravel-spanner-app/storage/logs /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
+        chown -R www-data:www-data /workspace/tools/benchmark/laravel-spanner-app/storage /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
+        su -s /bin/sh www-data -c 'php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
+        exec php-fpm -F -d extension=/workspace/ext/grpc/modules/grpc.so
+    depends_on:
+      - test-server
+      - spanner-emulator
+
+  fpm-lifecycle-profile:
+    build:
+      context: .
+      dockerfile: Dockerfile.fpm-profile
+    image: php-grpc-lite-fpm-lifecycle-profile
+    cpus: 4.0
+    volumes:
+      - .:/workspace
+      - ${HOME}/.config/gcloud:/var/www/.config/gcloud:ro
+    working_dir: /workspace
+    environment:
+      HOME: /var/www
+      SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
+      DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
+      DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
+      DB_SPANNER_DATABASE_ID: ${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}
+      LARAVEL_SPANNER_MIN_SESSIONS: ${LARAVEL_SPANNER_MIN_SESSIONS:-16}
+    command:
+      - sh
+      - -lc
+      - |
+        mkdir -p /workspace/tools/benchmark/laravel-spanner-app/storage/framework/spanner /workspace/tools/benchmark/laravel-spanner-app/storage/framework/views /workspace/tools/benchmark/laravel-spanner-app/storage/logs /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
+        chown -R www-data:www-data /workspace/tools/benchmark/laravel-spanner-app/storage /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
+        su -s /bin/sh www-data -c 'php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
+        exec php-fpm -F -d extension=/workspace/ext/grpc/modules/grpc.so
     depends_on:
       - test-server
       - spanner-emulator
@@ -104,9 +150,26 @@ services:
       args:
         FPM_MAX_CHILDREN: 16
     image: php-grpc-lite-fpm-ext-grpc-16
+    cpus: 4.0
     volumes:
       - .:/workspace
+      - ${HOME}/.config/gcloud:/var/www/.config/gcloud:ro
     working_dir: /workspace
+    environment:
+      HOME: /var/www
+      SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
+      DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
+      DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
+      DB_SPANNER_DATABASE_ID: ${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}
+      LARAVEL_SPANNER_MIN_SESSIONS: ${LARAVEL_SPANNER_MIN_SESSIONS:-16}
+    command:
+      - sh
+      - -lc
+      - |
+        mkdir -p /workspace/tools/benchmark/laravel-spanner-app/storage/framework/spanner /workspace/tools/benchmark/laravel-spanner-app/storage/framework/views /workspace/tools/benchmark/laravel-spanner-app/storage/logs /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
+        chown -R www-data:www-data /workspace/tools/benchmark/laravel-spanner-app/storage /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
+        su -s /bin/sh www-data -c 'php /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
+        exec php-fpm -F
     depends_on:
       - test-server
       - spanner-emulator
@@ -118,8 +181,26 @@ services:
       - ./tools/benchmark/nginx/laravel-spanner.conf.template:/etc/nginx/templates/default.conf.template:ro
     environment:
       FPM_UPSTREAM: fpm-lifecycle-16
+      SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
+      DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
+      DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
+      DB_SPANNER_DATABASE_ID: ${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}
     depends_on:
       - fpm-lifecycle-16
+
+  nginx-laravel-profile:
+    image: nginx:1.27-alpine
+    volumes:
+      - .:/workspace:ro
+      - ./tools/benchmark/nginx/laravel-spanner.conf.template:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      FPM_UPSTREAM: fpm-lifecycle-profile
+      SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
+      DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
+      DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
+      DB_SPANNER_DATABASE_ID: ${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}
+    depends_on:
+      - fpm-lifecycle-profile
 
   nginx-laravel-ext-grpc:
     image: nginx:1.27-alpine
@@ -128,6 +209,10 @@ services:
       - ./tools/benchmark/nginx/laravel-spanner.conf.template:/etc/nginx/templates/default.conf.template:ro
     environment:
       FPM_UPSTREAM: fpm-ext-grpc-16
+      SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
+      DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
+      DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
+      DB_SPANNER_DATABASE_ID: ${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}
     depends_on:
       - fpm-ext-grpc-16
 
@@ -151,6 +236,27 @@ services:
 
   spanner-emulator:
     image: gcr.io/cloud-spanner-emulator/emulator
+
+  spanner-omni:
+    profiles:
+      - spanner-omni
+    image: us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r1-beta
+    entrypoint:
+      - /bin/tini
+      - --
+    command:
+      - sh
+      - -c
+      - |
+        /google/spanner/bin/spanner start-single-server &
+        sleep 5
+        /app/bin/spanner-console &
+        wait
+    volumes:
+      - spanner-omni-data:/spanner
+    ports:
+      - "15000:15000"
+      - "15026:15026"
 
   toxiproxy:
     image: ghcr.io/shopify/toxiproxy:latest
@@ -202,3 +308,6 @@ services:
     depends_on:
       - test-server
       - spanner-emulator
+
+volumes:
+  spanner-omni-data:

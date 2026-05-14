@@ -7,6 +7,11 @@
     "php": ">=8.4",
     "colopl/laravel-spanner": "dev-master"
   },
+  "autoload": {
+    "psr-4": {
+      "BenchApp\\": "app/"
+    }
+  },
   "config": {
     "sort-packages": true,
     "preferred-install": "dist",

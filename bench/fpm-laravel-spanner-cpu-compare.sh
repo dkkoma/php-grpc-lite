@@ -12,11 +12,30 @@ cd "$(dirname "$0")/.."
 requests="${1:-100}"
 actions=(select_1row_10col dml_insert_10col dml_update_10col dml_delete_10col)
 app_dir="tools/benchmark/laravel-spanner-app"
+run_id="${BENCH_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
+log_dir="${BENCH_LOG_DIR:-var/bench-results/fpm-laravel-spanner-cpu-$run_id}"
 export COMPOSE_IGNORE_ORPHANS=True
-export SPANNER_EMULATOR_HOST="${SPANNER_EMULATOR_HOST:-spanner-emulator:9010}"
-export DB_SPANNER_PROJECT_ID="${DB_SPANNER_PROJECT_ID:-test-project}"
-export DB_SPANNER_INSTANCE_ID="${DB_SPANNER_INSTANCE_ID:-laravel-bench-instance}"
-export DB_SPANNER_DATABASE_ID="${DB_SPANNER_DATABASE_ID:-laravel-bench-db}"
+export LARAVEL_SPANNER_EMULATOR_HOST="${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}"
+export LARAVEL_SPANNER_PROJECT_ID="${LARAVEL_SPANNER_PROJECT_ID:-test-project}"
+export LARAVEL_SPANNER_INSTANCE_ID="${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}"
+export LARAVEL_SPANNER_DATABASE_ID="${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}"
+export LARAVEL_SPANNER_MIN_SESSIONS="${LARAVEL_SPANNER_MIN_SESSIONS:-16}"
+
+mkdir -p "$log_dir"
+if [[ "${BENCH_LOG_CAPTURED:-}" != "1" ]]; then
+    export BENCH_LOG_CAPTURED=1
+    exec > >(tee -a "$log_dir/runner.log") 2>&1
+fi
+
+printf 'log_dir=%s\n' "$log_dir"
+printf 'requests=%s actions=%s project=%s instance=%s database=%s emulator_host=%s min_sessions=%s\n' \
+    "$requests" \
+    "${actions[*]}" \
+    "$LARAVEL_SPANNER_PROJECT_ID" \
+    "$LARAVEL_SPANNER_INSTANCE_ID" \
+    "$LARAVEL_SPANNER_DATABASE_ID" \
+    "${LARAVEL_SPANNER_EMULATOR_HOST:-<cloud>}" \
+    "$LARAVEL_SPANNER_MIN_SESSIONS"
 
 ensure_app_dependencies() {
     if [[ -f "$app_dir/vendor/autoload.php" ]]; then
@@ -33,29 +52,24 @@ run_variant() {
     local service="$2"
     local action="$3"
 
-    docker compose up -d spanner-emulator "$service"
-
-    fastcgi_loop "$service" setup 1 >/dev/null
-    fastcgi_loop "$service" warmup 1 >/dev/null
+    if [[ "$LARAVEL_SPANNER_EMULATOR_HOST" != "" ]]; then
+        docker compose up -d spanner-emulator
+    fi
+    docker compose up -d --force-recreate "$service"
+    fastcgi_loop "$service" select_1row_10col 1 >/dev/null
 
     local ticks
     ticks="$(docker compose exec -T "$service" sh -lc 'getconf CLK_TCK')"
-    local worker_pid
-    worker_pid="$(docker compose exec -T "$service" sh -lc "for path in /proc/[0-9]*/cmdline; do cmd=\$(tr '\\0' ' ' < \"\$path\"); case \"\$cmd\" in 'php-fpm: pool www'*) basename \"\$(dirname \"\$path\")\"; break;; esac; done")"
-    if [[ -z "$worker_pid" ]]; then
-        echo "failed to find php-fpm worker pid for $service" >&2
-        exit 1
-    fi
 
     local before_worker
-    before_worker="$(worker_ticks "$service" "$worker_pid")"
+    before_worker="$(worker_ticks "$service")"
     local before_cgroup
     before_cgroup="$(cgroup_cpu_us "$service")"
 
     fastcgi_loop "$service" "$action" "$requests" >/dev/null
 
     local after_worker
-    after_worker="$(worker_ticks "$service" "$worker_pid")"
+    after_worker="$(worker_ticks "$service")"
     local after_cgroup
     after_cgroup="$(cgroup_cpu_us "$service")"
 
@@ -80,13 +94,15 @@ fastcgi_loop() {
     local action="$2"
     local count="$3"
     docker compose run --rm \
-        -e "SCRIPT_FILENAME=/workspace/tools/benchmark/laravel-spanner-request.php" \
+        -e "SCRIPT_FILENAME=/workspace/tools/benchmark/laravel-spanner-app/public/index.php" \
+        -e "DOCUMENT_ROOT=/workspace/tools/benchmark/laravel-spanner-app/public" \
         -e "REQUEST_METHOD=GET" \
-        -e "BENCH_ACTION=$action" \
-        -e "SPANNER_EMULATOR_HOST=$SPANNER_EMULATOR_HOST" \
-        -e "DB_SPANNER_PROJECT_ID=$DB_SPANNER_PROJECT_ID" \
-        -e "DB_SPANNER_INSTANCE_ID=$DB_SPANNER_INSTANCE_ID" \
-        -e "DB_SPANNER_DATABASE_ID=$DB_SPANNER_DATABASE_ID" \
+        -e "REQUEST_URI=/bench?action=$action" \
+        -e "QUERY_STRING=action=$action" \
+        -e "SPANNER_EMULATOR_HOST=$LARAVEL_SPANNER_EMULATOR_HOST" \
+        -e "DB_SPANNER_PROJECT_ID=$LARAVEL_SPANNER_PROJECT_ID" \
+        -e "DB_SPANNER_INSTANCE_ID=$LARAVEL_SPANNER_INSTANCE_ID" \
+        -e "DB_SPANNER_DATABASE_ID=$LARAVEL_SPANNER_DATABASE_ID" \
         -e "FPM_SERVICE=$service" \
         -e "REQUESTS=$count" \
         dev sh -lc '
@@ -100,8 +116,7 @@ fastcgi_loop() {
 
 worker_ticks() {
     local service="$1"
-    local worker_pid="$2"
-    docker compose exec -T "$service" sh -lc "awk '{print \$14 + \$15}' /proc/$worker_pid/stat"
+    docker compose exec -T "$service" sh -lc "total=0; for path in /proc/[0-9]*/cmdline; do cmd=\$(tr '\\0' ' ' < \"\$path\"); case \"\$cmd\" in 'php-fpm: pool www'*) pid=\$(basename \"\$(dirname \"\$path\")\"); ticks=\$(awk '{print \$14 + \$15}' /proc/\$pid/stat); total=\$((total + ticks));; esac; done; echo \$total"
 }
 
 cgroup_cpu_us() {
@@ -115,6 +130,6 @@ printf "%-12s %-24s %8s %20s %20s\n" variant measurement requests worker_cpu_us/
 printf "%80s\n" "" | tr " " "-"
 
 for action in "${actions[@]}"; do
-    run_variant native fpm-lifecycle "$action"
-    run_variant ext-grpc fpm-ext-grpc "$action"
+    run_variant native fpm-lifecycle-16 "$action"
+    run_variant ext-grpc fpm-ext-grpc-16 "$action"
 done
