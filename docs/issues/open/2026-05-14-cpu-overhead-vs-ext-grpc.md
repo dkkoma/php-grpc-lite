@@ -40,10 +40,44 @@ Branch: main
 ## 計画
 
 1. 実アプリ負荷試験の条件を記録する。
-2. 既存主要ベンチでCPU指標を追加取得する。
-3. `perf` / `callgrind` / PHP profilerのどれで見るか決める。
-4. C hot pathを関数単位に分解する。
-5. 改善候補をissue分割して検証する。
+2. 制御可能なGo test-server上のmicro benchでCPU指標を追加取得する。
+3. 既存主要ベンチと対応する代表形状をCPU観測対象にする。
+4. `perf` / `callgrind` / PHP profilerのどれで見るか決める。
+5. C hot pathを関数単位に分解する。
+6. 改善候補をissue分割して検証する。
+
+## 進捗
+
+- `cpu-micro` suiteを追加した。
+- `getrusage()` のuser/sys CPU timeをwarmup後の測定loop全体で取得し、`cpu_us/call`、`user_us/call`、`sys_us/call`、`wall_us/call` を出す。
+- 測定loop内ではRPCごとのOTEL span生成を行わず、計測コード自体のCPUノイズを抑える。結果は `CpuMicroSummary` spanとしてOTELへexportする。
+- `tools/benchmark/otelop-summary.php` は `benchmark.metric_kind=cpu_summary` を別表で集計する。
+
+## CPU micro対象
+
+- `small_unary_100b`
+- `begin_txn_unary`
+- `commit_txn_unary`
+- `small_streaming_1x100b`
+- `small_streaming_100x100b`
+- `select_1row_10col_streaming`
+- `dml_insert_10col_streaming`
+- `dml_update_10col_streaming`
+- `dml_delete_10col_streaming`
+
+## 検証
+
+- `docker compose run --rm dev php -l tools/benchmark/cpu-micro.php`
+- `docker compose run --rm dev php -l tools/benchmark/BenchTelemetry.php`
+- `docker compose run --rm dev php -l tools/benchmark/otelop-summary.php`
+- `BENCH_TAG=cpu-micro-smoke BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=3 --warmup-calls=1`
+- `BENCH_TAG=cpu-micro-verify BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=100 --warmup-calls=10`
+
+## 判断ログ
+
+- 実アプリのCPU使用率差を直接再現する前段として、外部負荷ツールではなくプロセス内 `getrusage()` によるmicro benchを追加した。
+- CPU差分を見るsuiteではRPCごとのspan生成を測定loopから外し、OTEL exportはaggregate summaryに限定する。
+- `franken-go` backendは今回の観測対象から外す。
 
 ## 必要な入力
 

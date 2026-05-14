@@ -12,6 +12,7 @@
 #   ./bench/run.sh metadata-header
 #   ./bench/run.sh spanner-shape
 #   ./bench/run.sh spanner-real-client
+#   ./bench/run.sh cpu-micro
 #
 set -euo pipefail
 
@@ -107,11 +108,14 @@ case "$suite" in
     spanner-real-client)
         run_benchmark_php "Benchmark google/cloud-spanner high-level client" tools/benchmark/spanner-real-client.php
         ;;
+    cpu-micro)
+        run_benchmark_php "Benchmark CPU micro overhead" tools/benchmark/cpu-micro.php
+        ;;
     *)
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|spanner-real-client]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|spanner-real-client|cpu-micro]
 USAGE
         exit 2
         ;;

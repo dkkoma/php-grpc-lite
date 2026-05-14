@@ -68,6 +68,22 @@ final class BenchTelemetry
      */
     public function recordRpcSpan(string $name, int $startNs, int $endNs, array $attributes = [], int $statusCode = 1): void
     {
+        $this->recordSpan($name, $startNs, $endNs, ['rpc.system' => 'grpc'] + $attributes, $statusCode);
+    }
+
+    /**
+     * @param array<string, int|float|string|bool|null> $attributes
+     */
+    public function recordMetricSpan(string $name, int $startNs, int $endNs, array $attributes = [], int $statusCode = 1): void
+    {
+        $this->recordSpan($name, $startNs, $endNs, $attributes, $statusCode);
+    }
+
+    /**
+     * @param array<string, int|float|string|bool|null> $attributes
+     */
+    private function recordSpan(string $name, int $startNs, int $endNs, array $attributes = [], int $statusCode = 1): void
+    {
         if ($endNs < $startNs) {
             return;
         }
@@ -80,7 +96,7 @@ final class BenchTelemetry
             'kind' => 3,
             'start_unix_nanos' => $startUnixNanos,
             'end_unix_nanos' => (string) (((int) $startUnixNanos) + ($endNs - $startNs)),
-            'attributes' => self::cleanAttributes($this->context + ['rpc.system' => 'grpc'] + $attributes),
+            'attributes' => self::cleanAttributes($this->context + $attributes),
             'status_code' => $statusCode,
         ];
     }

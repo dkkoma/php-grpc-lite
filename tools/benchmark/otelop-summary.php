@@ -52,6 +52,7 @@ query Traces($limit: Int!, $offset: Int!) {
 GRAPHQL;
 
 $groups = [];
+$cpuGroups = [];
 for ($offset = 0; ; $offset += min($limit, 1000)) {
     $pageLimit = min($limit, 1000);
     $response = postJson($endpoint, [
@@ -81,6 +82,31 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
         }
 
         $shape = shapeKey($attributes);
+        if (($attributes['benchmark.metric_kind'] ?? '') === 'cpu_summary') {
+            $keyParts = [
+                (string) ($attributes['benchmark.suite'] ?? ''),
+                (string) ($attributes['benchmark.measurement'] ?? ''),
+                $shape,
+                (string) ($attributes['benchmark.implementation'] ?? ''),
+                (string) ($attributes['benchmark.transport'] ?? '-'),
+            ];
+            $key = implode("\t", $keyParts);
+            $cpuGroups[$key] = [
+                'suite' => $keyParts[0],
+                'measurement' => $keyParts[1],
+                'shape' => $shape,
+                'implementation' => $keyParts[3],
+                'transport' => $keyParts[4],
+                'calls' => (int) ($attributes['benchmark.calls'] ?? 0),
+                'cpu_total_us_per_call' => (float) ($attributes['benchmark.cpu_total_us_per_call'] ?? 0.0),
+                'cpu_user_us_per_call' => (float) ($attributes['benchmark.cpu_user_us_per_call'] ?? 0.0),
+                'cpu_sys_us_per_call' => (float) ($attributes['benchmark.cpu_sys_us_per_call'] ?? 0.0),
+                'wall_us_per_call' => (float) ($attributes['benchmark.wall_us_per_call'] ?? 0.0),
+                'cpu_total_us' => (float) ($attributes['benchmark.cpu_total_us'] ?? 0.0),
+            ];
+            continue;
+        }
+
         $keyParts = [
             (string) ($attributes['benchmark.suite'] ?? ''),
             (string) ($attributes['benchmark.measurement'] ?? ''),
@@ -104,32 +130,66 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
 }
 
 ksort($groups);
-printf(
-    "%-28s %-24s %-18s %-14s %8s %12s %12s %12s\n",
-    'suite',
-    'measurement',
-    'shape',
-    'variant',
-    'count',
-    'span_p50_us',
-    'span_p99_us',
-    'span_max_us',
-);
-printf("%'-125s\n", '');
-foreach ($groups as $group) {
-    $durations = $group['durations_us'];
-    $spanPercentiles = percentiles($durations);
+if ($groups !== []) {
     printf(
-        "%-28s %-24s %-18s %-14s %8d %12.1f %12.1f %12.1f\n",
-        $group['suite'],
-        $group['measurement'],
-        $group['shape'],
-        variantName($group['implementation'], $group['transport']),
-        count($durations),
-        $spanPercentiles['p50'],
-        $spanPercentiles['p99'],
-        $spanPercentiles['max'],
+        "%-28s %-24s %-18s %-14s %8s %12s %12s %12s\n",
+        'suite',
+        'measurement',
+        'shape',
+        'variant',
+        'count',
+        'span_p50_us',
+        'span_p99_us',
+        'span_max_us',
     );
+    printf("%'-125s\n", '');
+    foreach ($groups as $group) {
+        $durations = $group['durations_us'];
+        $spanPercentiles = percentiles($durations);
+        printf(
+            "%-28s %-24s %-18s %-14s %8d %12.1f %12.1f %12.1f\n",
+            $group['suite'],
+            $group['measurement'],
+            $group['shape'],
+            variantName($group['implementation'], $group['transport']),
+            count($durations),
+            $spanPercentiles['p50'],
+            $spanPercentiles['p99'],
+            $spanPercentiles['max'],
+        );
+    }
+}
+
+if ($cpuGroups !== []) {
+    ksort($cpuGroups);
+    echo "\nCPU summary spans\n";
+    printf(
+        "%-28s %-24s %-18s %-14s %8s %14s %14s %14s %14s\n",
+        'suite',
+        'measurement',
+        'shape',
+        'variant',
+        'calls',
+        'cpu_us/call',
+        'user_us/call',
+        'sys_us/call',
+        'wall_us/call',
+    );
+    printf("%'-145s\n", '');
+    foreach ($cpuGroups as $group) {
+        printf(
+            "%-28s %-24s %-18s %-14s %8d %14.1f %14.1f %14.1f %14.1f\n",
+            $group['suite'],
+            $group['measurement'],
+            $group['shape'],
+            variantName($group['implementation'], $group['transport']),
+            $group['calls'],
+            $group['cpu_total_us_per_call'],
+            $group['cpu_user_us_per_call'],
+            $group['cpu_sys_us_per_call'],
+            $group['wall_us_per_call'],
+        );
+    }
 }
 
 /** @param array<string, mixed> $attributes */
