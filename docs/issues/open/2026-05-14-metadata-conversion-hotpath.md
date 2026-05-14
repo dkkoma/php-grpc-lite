@@ -80,26 +80,36 @@ small unary / small server streaming ではpayload処理よりも固定費が支
 
 ### ベンチ結果
 
-metadata-header native p50:
+main基準:
 
-| measurement | before-ish p50 | after p50 | 判断 |
-| --- | ---: | ---: | --- |
-| req0/resp0/value0 | 33.2µs | 35.5µs | 同等、ノイズ範囲 |
-| req10/resp0/value32 | 39.5µs | 35.5µs | 改善 |
-| req10/resp10/value32 | 49.0µs | 35.3µs | 改善 |
-| req50/resp0/value32 | 93.4µs | 80.5µs | 改善 |
-| req50/resp50/value32 | 149.5µs | 164.2µs | 悪化気味、再測定余地あり |
+- `./bench/compare.sh metadata-header`: `20260514-092917`
+- `./bench/compare.sh payload-streaming`: `20260514-092932`
 
-spanner-shape native p50/p99:
+metadata branch:
 
-| measurement | p50 | p99 | 判断 |
-| --- | ---: | ---: | --- |
-| begin_txn_unary | 30.8µs | 134.4µs | 同等 |
-| commit_txn_unary | 28.1µs | 72.1µs | 同等 |
-| select_1row_10col_streaming | 27.3µs | 66.8µs | 同等〜改善 |
-| dml_insert_10col_streaming | 25.7µs | 61.1µs | 同等〜改善 |
-| dml_update_10col_streaming | 28.2µs | 82.5µs | 同等 |
-| dml_delete_10col_streaming | 26.9µs | 69.5µs | 同等 |
+- `./bench/compare.sh metadata-header`: `20260514-092546`
+- `./bench/compare.sh spanner-shape`: `20260514-092600`
+
+metadata-header native full comparison:
+
+| measurement | main p50 | branch p50 | p50差分 | main p99 | branch p99 | p99差分 | 判断 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| req0/resp0/value0 | 40.6µs | 35.5µs | -5.1µs | 4951.7µs | 4853.4µs | -98.3µs | 同等〜改善 |
+| req10/resp0/value32 | 50.9µs | 35.5µs | -15.4µs | 345.3µs | 696.0µs | +350.7µs | p50改善、p99悪化 |
+| req10/resp10/value32 | 54.5µs | 35.3µs | -19.2µs | 3595.6µs | 177.1µs | -3418.5µs | 改善 |
+| req50/resp0/value32 | 86.9µs | 80.5µs | -6.4µs | 1577.4µs | 524.8µs | -1052.6µs | 改善 |
+| req50/resp50/value32 | 180.3µs | 164.2µs | -16.1µs | 1576.8µs | 633.2µs | -943.6µs | 改善 |
+
+spanner-shape native full comparison:
+
+| measurement | main p50 | branch p50 | p50差分 | main p99 | branch p99 | p99差分 | 判断 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| begin_txn_unary | 31.6µs | 30.8µs | -0.8µs | 128.6µs | 134.4µs | +5.8µs | 同等 |
+| commit_txn_unary | 28.2µs | 28.1µs | -0.1µs | 83.4µs | 72.1µs | -11.3µs | 同等〜改善 |
+| select_1row_10col_streaming | 28.9µs | 27.3µs | -1.6µs | 70.9µs | 66.8µs | -4.1µs | 同等〜改善 |
+| dml_insert_10col_streaming | 26.1µs | 25.7µs | -0.4µs | 69.0µs | 61.1µs | -7.9µs | 同等〜改善 |
+| dml_update_10col_streaming | 26.1µs | 28.2µs | +2.1µs | 72.5µs | 82.5µs | +10.0µs | 同等〜やや悪化 |
+| dml_delete_10col_streaming | 27.3µs | 26.9µs | -0.4µs | 65.4µs | 69.5µs | +4.1µs | 同等 |
 
 ### 暫定判断
 
