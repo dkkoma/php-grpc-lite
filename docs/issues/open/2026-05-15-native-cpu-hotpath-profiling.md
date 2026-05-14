@@ -85,3 +85,16 @@ Laravel + `colopl/laravel-spanner` + Cloud Spanner + FPM worker32 / CPU quota 4.
 - native CPU hot pathが関数/処理カテゴリ単位で説明できる。
 - 改善候補が個別issueへ分解されている。
 - 少なくとも最優先候補について、改善前後のCPU/throttling/latency結果が記録されている。
+
+## 2026-05-15 worker warmup再計測
+
+FPM worker32条件では、startup時のsession warmupとは別に、各FPM workerへHTTP requestを流してPHP/opcache/protobuf/native channelを暖める必要がある。`bench/fpm-laravel-spanner-load-compare.sh` と `bench/fpm-laravel-spanner-cpu-sustain.sh` にworker数ベースのwarmupを追加した。
+
+条件: Cloud Spanner / native / FPM worker32 / CPU quota 4.0 / client concurrency 32 / 30s。
+
+| 条件 | RPS | avg | p50 | p90 | p99 | throttled_usec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| deadline I/O改善後、worker HTTP warmupなし | 259.7230 | 123.0ms | 115.4ms | 172.6ms | 263.9ms | 30,241,007 |
+| deadline I/O改善後、worker HTTP warmupあり | 333.5908 | 95.8ms | 94.9ms | 126.3ms | 163.5ms | 34,087,066 |
+
+warmupありではRPSがさらに約1.28倍、p99が約38%低下した。これはnative transportの追加改善ではなく、計測条件の妥当化である。以後のFPM CPU計測では、startup session warmupとFPM worker HTTP warmupを分離して必須にする。

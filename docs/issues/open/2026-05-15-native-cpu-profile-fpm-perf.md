@@ -45,3 +45,21 @@ callgrind CLIではLaravel bootstrapやPHP VMが大きく、FPM high-loadの実C
 
 - FPM workerのCPU sampling profileが取得できている。
 - native改善候補の優先順位をprofileで説明できる。
+
+## 2026-05-15 FPM callgrind worker path
+
+`bench/fpm-laravel-spanner-callgrind-worker.sh` を追加し、php-fpm workerをValgrind/Callgrind配下で起動してFastCGI経路を直接profileできるようにした。
+
+- log: `var/bench-results/fpm-laravel-spanner-callgrind-fpm-callgrind-select5-20260515/`
+- target: Cloud Spanner / `select_1row_10col` / 5 requests / concurrency 1
+- note: `callgrind_control -i on/off` はphp-fpm master/worker構成でValgrindのvgdb FIFOを壊して空profileになるため使わない。`instr-atstart=yes` で安定取得する。
+
+観測:
+
+- callgrindはFPM実行形に近いが、少数requestでは各workerの初回PHP/protobuf/generated class loadが強く、steady-state high-load CPU profileとしては限定的。
+- `grpc.so` / `transport.c` のself costはprofile上で支配的ではない。
+- `protobuf.so` descriptor系、PHP VM、OpenSSL/libcrypto certificate parsingなどが大きく見えるが、これはworker cold pathが混ざる。
+
+判断:
+
+- FPM workerをrequest前に十分warmする必要がある。Cloud Spanner実経路のCPU計測では、startup session warmupだけでは不十分で、workerごとのHTTP request warmupを計測基盤に入れる。

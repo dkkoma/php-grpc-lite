@@ -80,6 +80,7 @@ start_services() {
     fi
 
     wait_until_ready
+    warm_fpm_workers
 }
 
 wait_until_ready() {
@@ -92,6 +93,24 @@ wait_until_ready() {
     done
     echo "failed to wait for $nginx_service" >&2
     return 1
+}
+
+warm_fpm_workers() {
+    local workers
+    read -r _usage _periods _throttled _throttled_usec workers _ticks _vcsw _nvcsw _pressure < <(sample_fpm_state)
+    if [[ "${workers:-0}" -le 0 ]]; then
+        workers=1
+    fi
+    local warmup_requests="${BENCH_FPM_WARMUP_REQUESTS:-$((workers * 4))}"
+    local warmup_concurrency="${BENCH_FPM_WARMUP_CONCURRENCY:-$workers}"
+    printf 'warmup variant=%s action=%s workers=%s requests=%s concurrency=%s\n' \
+        "$variant" "$action" "$workers" "$warmup_requests" "$warmup_concurrency"
+    docker compose run --rm loadgen \
+        -n "$warmup_requests" \
+        -c "$warmup_concurrency" \
+        -disable-keepalive \
+        "http://$nginx_service:8080/bench?action=$action" \
+        > "$log_dir/warmup-$variant-$action.log"
 }
 
 sample_fpm_state() {

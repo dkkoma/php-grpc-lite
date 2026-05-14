@@ -66,6 +66,7 @@ run_variant() {
     fi
     docker compose up -d --force-recreate "$fpm_service" "$nginx_service"
     wait_until_ready "$nginx_service"
+    warm_fpm_workers "$fpm_service" "$nginx_service" "$action" "$variant"
 
     local before_cgroup
     before_cgroup="$(cgroup_cpu_us "$fpm_service")"
@@ -106,6 +107,42 @@ run_variant() {
             cgroup_cpu_us = after_cgroup - before_cgroup;
             printf("%-12s %-24s %8d %8s %12.1f %10.1f %10.1f %10.1f %10.1f\n", variant, action, completed_requests, rps, cgroup_cpu_us / completed_requests, average_ms, p50_ms, p90_ms, max_ms);
         }'
+}
+
+fpm_worker_count() {
+    local service="$1"
+    docker compose exec -T "$service" sh -lc '
+        count=0
+        for path in /proc/[0-9]*/cmdline; do
+            cmd=$(tr "\0" " " < "$path" 2>/dev/null || true)
+            case "$cmd" in
+                "php-fpm: pool www"*) count=$((count + 1)) ;;
+            esac
+        done
+        printf "%s\n" "$count"
+    '
+}
+
+warm_fpm_workers() {
+    local fpm_service="$1"
+    local nginx_service="$2"
+    local action="$3"
+    local variant="$4"
+    local workers
+    workers="$(fpm_worker_count "$fpm_service")"
+    if [[ "$workers" -le 0 ]]; then
+        workers=1
+    fi
+    local warmup_requests="${BENCH_FPM_WARMUP_REQUESTS:-$((workers * 4))}"
+    local warmup_concurrency="${BENCH_FPM_WARMUP_CONCURRENCY:-$workers}"
+    printf 'warmup variant=%s action=%s workers=%s requests=%s concurrency=%s\n' \
+        "$variant" "$action" "$workers" "$warmup_requests" "$warmup_concurrency"
+    docker compose run --rm loadgen \
+        -n "$warmup_requests" \
+        -c "$warmup_concurrency" \
+        -disable-keepalive \
+        "http://$nginx_service:8080/bench?action=$action" \
+        > "$log_dir/warmup-$variant-$action.log"
 }
 
 assert_success_responses() {
