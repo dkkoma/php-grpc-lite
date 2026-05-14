@@ -155,10 +155,24 @@ client objectをcallごとに作り直す条件でもnative高CPUは再現しな
 
 FPM request lifecycle全体に近づけても、nativeのCPU使用量がext-grpcより大きくなる現象は再現していない。worker CPUとcontainer cgroup CPUのどちらでもnativeのほうが低い。
 
+### Laravel + laravel-spanner request lifecycle
+
+`tools/benchmark/laravel-spanner-app` の最小Laravel fixtureで、`colopl/laravel-spanner`、`google/cloud-spanner` v1、Spanner emulatorを経由するFPM request lifecycleを追加した。測定前に同じFPM workerで `setup` と Spanner session `warmup` を実行する。
+
+| measurement | native worker_cpu_us/request | ext-grpc worker_cpu_us/request | native/ext | native cgroup_cpu_us/request | ext-grpc cgroup_cpu_us/request | native/ext |
+|---|---:|---:|---:|---:|---:|---:|
+| select_1row_10col | 2750.0 | 2900.0 | 0.95x | 2839.5 | 2937.1 | 0.97x |
+| dml_insert_10col | 2650.0 | 2900.0 | 0.91x | 2735.8 | 2965.7 | 0.92x |
+| dml_update_10col | 3100.0 | 3300.0 | 0.94x | 3165.7 | 3413.4 | 0.93x |
+| dml_delete_10col | 2900.0 | 3200.0 | 0.91x | 2954.9 | 3288.7 | 0.90x |
+
+Laravel + laravel-spanner経路でも、現ローカルDocker環境ではnative高CPUは再現していない。
+
 ## 現時点のレビュー
 
 - `php-grpc-lite` transport単体、`google/cloud-spanner`高レベル経路、複数PHP process並列、client object per-call lifecycleのいずれでも、process-local CPU timeでは実アプリ負荷試験の「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
 - php-fpm request lifecycleでも、worker CPU / container cgroup CPUのどちらでも「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
+- Laravel + laravel-spanner request lifecycleでも、worker CPU / container cgroup CPUのどちらでも「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
 - 再現しないため、現時点でC transport hot pathを最適化する根拠は弱い。
 - 次に見るべき対象は、このリポジトリ内micro benchではなく、実アプリ負荷試験で使った測定単位との差分である。特に、HTTP/FPM/FrankenPHP request lifecycle全体、container全体CPU、固定RPS下のCPU%、アプリ側のSpanner/GAX client生成・認証・middleware、負荷試験ツールの集計範囲を確認する。
 

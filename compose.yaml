@@ -69,6 +69,7 @@ services:
     working_dir: /workspace
     depends_on:
       - test-server
+      - spanner-emulator
 
   fpm-ext-grpc:
     build:
@@ -80,6 +81,7 @@ services:
     working_dir: /workspace
     depends_on:
       - test-server
+      - spanner-emulator
 
   test-server:
     build:

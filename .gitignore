@@ -6,6 +6,7 @@
 
 vendor/
 composer.lock
+!tools/benchmark/laravel-spanner-app/composer.lock
 bench-comparison/vendor/
 bench-comparison/composer.lock
 .phpunit.cache/

@@ -1,0 +1,23 @@
+{
+  "name": "dkkoma/php-grpc-lite-laravel-spanner-bench",
+  "description": "Local benchmark fixture for Laravel + colopl/laravel-spanner request lifecycle",
+  "type": "project",
+  "private": true,
+  "require": {
+    "php": ">=8.4",
+    "colopl/laravel-spanner": "dev-master"
+  },
+  "config": {
+    "sort-packages": true,
+    "preferred-install": "dist",
+    "platform": {
+      "ext-grpc": "1.80.0",
+      "ext-protobuf": "4.0.0"
+    },
+    "allow-plugins": {
+      "pestphp/pest-plugin": true
+    }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
+}
