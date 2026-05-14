@@ -56,6 +56,7 @@ run_variant() {
         docker compose up -d spanner-emulator
     fi
     docker compose up -d --force-recreate "$service"
+    wait_until_fpm_ready "$service" "$action"
     fastcgi_loop "$service" "$action" 1 >/dev/null
 
     local ticks
@@ -87,6 +88,20 @@ run_variant() {
             cgroup_cpu_us = after_cgroup - before_cgroup;
             printf("%-12s %-24s %8d %20.1f %20.1f\n", variant, action, requests, worker_cpu_us / requests, cgroup_cpu_us / requests);
         }'
+}
+
+wait_until_fpm_ready() {
+    local service="$1"
+    local action="$2"
+    local attempt
+    for attempt in $(seq 1 60); do
+        if fastcgi_loop "$service" "$action" 1 >/dev/null 2>&1; then
+            return
+        fi
+        sleep 1
+    done
+    echo "failed to wait for $service" >&2
+    return 1
 }
 
 fastcgi_loop() {
