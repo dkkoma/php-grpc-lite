@@ -98,3 +98,39 @@ FPM worker32条件では、startup時のsession warmupとは別に、各FPM work
 | deadline I/O改善後、worker HTTP warmupあり | 333.5908 | 95.8ms | 94.9ms | 126.3ms | 163.5ms | 34,087,066 |
 
 warmupありではRPSがさらに約1.28倍、p99が約38%低下した。これはnative transportの追加改善ではなく、計測条件の妥当化である。以後のFPM CPU計測では、startup session warmupとFPM worker HTTP warmupを分離して必須にする。
+
+## 2026-05-15 native / ext-grpc 同一FPM条件の再比較
+
+`bench/fpm-laravel-spanner-load-compare.sh` の `requests=1000, concurrency=32` は、`hey` が並列workerへ均等配分する都合で実際には992件だけ実行されていた。runnerを修正し、`requests` が `concurrency` で割り切れない条件を禁止した。以後は実行件数と成功件数が一致しないrunを失敗扱いにする。
+
+条件: Cloud Spanner / FPM worker32 / CPU quota 4.0 / client concurrency 32 / `select_1row_10col` / startup session warmup + FPM worker HTTP warmup / 1024 successful requests。
+
+| variant | success | RPS | CPU/request | avg | p50 | p90 | max | log |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| native | 1024 | 337.1501 | 11,514.8µs | 91.2ms | 87.0ms | 124.1ms | 251.5ms | `var/bench-results/fpm-worker32-warmup-native-ext-20260515-c32-r4/` |
+| ext-grpc | 1024 | 349.1953 | 11,099.4µs | 87.4ms | 86.6ms | 116.5ms | 177.4ms | `var/bench-results/fpm-worker32-warmup-native-ext-20260515-c32-r4/` |
+
+同一条件のstrict countでは、nativeのCPU/requestはext-grpc比で約1.04倍まで縮んだ。実アプリ負荷試験で見えた1.5倍差は、少なくともこの再現条件では残っていない。
+
+## 2026-05-15 controlled CPU micro comparison
+
+`./bench/compare.sh cpu-micro` では、nativeはすべての主要micro caseでext-grpcよりCPU/callが小さい。したがって、現在の実装から追える範囲では、native transportの呼び出し構造そのものにext-grpc比で大きなCPU hot pathは見えていない。
+
+代表値:
+
+| case | native CPU/call | ext-grpc CPU/call | note |
+| --- | ---: | ---: | --- |
+| `small_unary_100b` | 12.7µs | 51.8µs | native優位 |
+| `select_1row_10col_streaming` | 12.5µs | 55.7µs | native優位 |
+| `dml_insert_10col_streaming` | 12.7µs | 56.8µs | native優位 |
+| `small_streaming_100x100b` | 58.6µs | 314.7µs | native優位 |
+
+`new_client_*` caseではext-grpcがpersistent channel上限警告を大量出力するため、実アプリのCPU差説明には使わない。
+
+## 現時点の結論
+
+- `setsockopt` hot pathはこのリポジトリ側で修正済みで、FPM高負荷の大きな悪化要因だった。
+- FPM worker HTTP warmupなしの比較は、worker cold pathを含むためCPU効率判断に使わない。
+- strict count + worker warmup後のCloud Spanner FPM比較では、nativeとext-grpcのCPU/request差は約4%で、1.5倍差は再現していない。
+- controlled microではnativeのほうが軽く、nghttp2/native transport呼び出し構造に追加の明確なhot pathは見えていない。
+- 追加で追うなら、実アプリ本番条件との差分であるLaravel middleware、実際のAPI endpoint、session pool実装、FPM worker warmup条件、CPU quota / throttling条件を揃えた外側のprofileが必要。

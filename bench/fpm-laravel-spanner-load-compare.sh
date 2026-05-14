@@ -5,6 +5,9 @@
 # Usage:
 #   ./bench/fpm-laravel-spanner-load-compare.sh [requests] [concurrency]
 #
+# requests must be divisible by concurrency. hey distributes work evenly across
+# workers and otherwise runs fewer requests than requested.
+#
 # BENCH_ACTIONS can override the default action list. Set
 # LARAVEL_SPANNER_EMULATOR_HOST= to use Cloud Spanner instead of the local
 # emulator.
@@ -13,7 +16,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-requests="${1:-1000}"
+requests="${1:-1024}"
 concurrency="${2:-16}"
 IFS=" " read -r -a actions <<< "${BENCH_ACTIONS:-select_1row_10col}"
 IFS=" " read -r -a variants <<< "${BENCH_VARIANTS:-native ext-grpc}"
@@ -34,6 +37,10 @@ if [[ "${BENCH_LOG_CAPTURED:-}" != "1" ]]; then
 fi
 
 printf 'log_dir=%s\n' "$log_dir"
+if (( requests % concurrency != 0 )); then
+    printf 'requests must be divisible by concurrency: requests=%s concurrency=%s\n' "$requests" "$concurrency" >&2
+    exit 1
+fi
 printf 'requests=%s concurrency=%s actions=%s variants=%s project=%s instance=%s database=%s emulator_host=%s min_sessions=%s\n' \
     "$requests" \
     "$concurrency" \
@@ -154,7 +161,7 @@ assert_success_responses() {
 
     ok_count="$(printf '%s\n' "$output" | awk '/  \[200\]/ {print $2}')"
     non_200_count="$(printf '%s\n' "$output" | awk '/^  \[[0-9]+\]/{gsub(/\[/, "", $1); gsub(/\]/, "", $1); if ($1 != "200") total += $2} END {print total + 0}')"
-    if [[ "${ok_count:-0}" == "0" || "$non_200_count" != "0" ]]; then
+    if [[ "${ok_count:-0}" != "$requests" || "$non_200_count" != "0" ]]; then
         printf 'unsuccessful response detected: variant=%s action=%s expected=%s actual_200=%s non_200=%s\n' \
             "$variant" "$action" "$requests" "${ok_count:-0}" "$non_200_count" >&2
         printf '%s\n' "$output" >&2
