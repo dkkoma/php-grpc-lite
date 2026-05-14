@@ -1,5 +1,5 @@
 ---
-Status: Open
+Status: Closed
 Owner: Codex
 Created: 2026-05-14
 Branch: perf/metadata-conversion-hotpath
@@ -144,3 +144,14 @@ spanner-real-client ext-grpc rerun比較:
 | dml_delete_10col | 1123.9µs | 1151.7µs | +27.8µs | 1262.6µs | 1444.6µs | +182.0µs |
 
 判断: `spanner-real-client` はGAX/Spanner emulatorの揺れが大きく、metadata branch単体の効果判定には向かない。DML update以外はmain比で同等〜悪化気味に見えるが、ext-grpc rerun側も同程度に揺れている。採否判断は `metadata-header` と `spanner-shape` を主にし、real clientは実用上の悪化監視として扱う。
+
+## 採用判断
+
+- Status: Closed
+- Decision: Adopted
+- Fix commits:
+  - `226a943 性能検証: metadata変換のHashTableコピーを削減`
+  - `a01be5a 性能検証: metadata変換ベンチのmain比較を追記`
+  - `7b0dcd6 性能検証: metadata変換のSpanner実経路比較を追記`
+
+metadata-heavyで明確な改善があり、主要 `spanner-shape` では構造的な悪化が見えないため採用する。`spanner-real-client` はGAX/Spanner emulatorの揺れが大きく、採否の主指標にはしない。
