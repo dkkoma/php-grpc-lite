@@ -168,11 +168,34 @@ FPM request lifecycle全体に近づけても、nativeのCPU使用量がext-grpc
 
 Laravel + laravel-spanner経路でも、現ローカルDocker環境ではnative高CPUは再現していない。
 
+### Laravel + laravel-spanner load test
+
+`bench/fpm-laravel-spanner-load-compare.sh` で nginx + hey を使い、client concurrency 16 / FPM worker 16 の並列負荷を追加した。測定前に `setup` と `warmup` をHTTP/FastCGI経由で実行する。
+
+実行条件:
+
+- requests: 1000
+- client concurrency: 16
+- FPM `pm=static`
+- FPM workers: 16
+- HTTP load tool: `hey`
+- Spanner emulator
+
+| measurement | native rps | ext-grpc rps | native cpu_us/request | ext-grpc cpu_us/request | native/ext CPU | native avg_ms | ext-grpc avg_ms | native p90_ms | ext-grpc p90_ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| select_1row_10col | 367.6631 | 316.8997 | 6387.8 | 8963.9 | 0.71x | 42.3 | 49.6 | 85.9 | 94.5 |
+| dml_insert_10col | 223.9122 | 203.4608 | 7524.5 | 10812.5 | 0.70x | 68.7 | 76.0 | 111.7 | 117.9 |
+| dml_update_10col | 134.3244 | 133.8950 | 9752.8 | 13637.8 | 0.72x | 116.4 | 116.3 | 167.9 | 169.8 |
+| dml_delete_10col | 136.9663 | 132.2545 | 9688.7 | 13937.4 | 0.70x | 114.5 | 118.5 | 173.9 | 173.5 |
+
+client16 / worker16 の並列負荷でも、現ローカルDocker環境ではnative高CPUは再現していない。cgroup CPUではnativeがext-grpcの約0.70〜0.72x。
+
 ## 現時点のレビュー
 
 - `php-grpc-lite` transport単体、`google/cloud-spanner`高レベル経路、複数PHP process並列、client object per-call lifecycleのいずれでも、process-local CPU timeでは実アプリ負荷試験の「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
 - php-fpm request lifecycleでも、worker CPU / container cgroup CPUのどちらでも「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
 - Laravel + laravel-spanner request lifecycleでも、worker CPU / container cgroup CPUのどちらでも「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
+- nginx + hey + client16 / FPM worker16 の並列負荷でも、container cgroup CPUでは「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
 - 再現しないため、現時点でC transport hot pathを最適化する根拠は弱い。
 - 次に見るべき対象は、このリポジトリ内micro benchではなく、実アプリ負荷試験で使った測定単位との差分である。特に、HTTP/FPM/FrankenPHP request lifecycle全体、container全体CPU、固定RPS下のCPU%、アプリ側のSpanner/GAX client生成・認証・middleware、負荷試験ツールの集計範囲を確認する。
 

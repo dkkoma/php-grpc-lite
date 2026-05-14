@@ -1,0 +1,6 @@
+FROM golang:1.25-trixie AS build
+RUN go install github.com/rakyll/hey@latest
+
+FROM debian:trixie-slim
+COPY --from=build /go/bin/hey /usr/local/bin/hey
+ENTRYPOINT ["hey"]

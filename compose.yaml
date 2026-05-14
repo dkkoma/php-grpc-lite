@@ -83,6 +83,60 @@ services:
       - test-server
       - spanner-emulator
 
+  fpm-lifecycle-16:
+    build:
+      context: .
+      dockerfile: Dockerfile.fpm
+      args:
+        FPM_MAX_CHILDREN: 16
+    image: php-grpc-lite-fpm-lifecycle-16
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    depends_on:
+      - test-server
+      - spanner-emulator
+
+  fpm-ext-grpc-16:
+    build:
+      context: .
+      dockerfile: Dockerfile.fpm-ext-grpc
+      args:
+        FPM_MAX_CHILDREN: 16
+    image: php-grpc-lite-fpm-ext-grpc-16
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    depends_on:
+      - test-server
+      - spanner-emulator
+
+  nginx-laravel-native:
+    image: nginx:1.27-alpine
+    volumes:
+      - .:/workspace:ro
+      - ./tools/benchmark/nginx/laravel-spanner.conf.template:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      FPM_UPSTREAM: fpm-lifecycle-16
+    depends_on:
+      - fpm-lifecycle-16
+
+  nginx-laravel-ext-grpc:
+    image: nginx:1.27-alpine
+    volumes:
+      - .:/workspace:ro
+      - ./tools/benchmark/nginx/laravel-spanner.conf.template:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      FPM_UPSTREAM: fpm-ext-grpc-16
+    depends_on:
+      - fpm-ext-grpc-16
+
+  loadgen:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadgen
+    image: php-grpc-lite-loadgen
+
   test-server:
     build:
       context: ./poc
