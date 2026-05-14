@@ -30,7 +30,6 @@ static persistent_connection_entry *create_persistent_connection_entry(h2_connec
 static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
 static bool preflight_persistent_connection(h2_connection *connection);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
-static int set_socket_timeout_us(int fd, zend_long timeout_us);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
 static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
@@ -567,28 +566,6 @@ static void remove_unusable_persistent_connection(const char *key, size_t key_le
     destroy_h2_connection(connection);
 }
 
-static int set_socket_timeout_us(int fd, zend_long timeout_us)
-{
-    struct timeval tv;
-    if (timeout_us <= 0) {
-        tv.tv_sec = 0;
-        tv.tv_usec = 0;
-    } else {
-        tv.tv_sec = (time_t) (timeout_us / 1000000);
-        tv.tv_usec = (suseconds_t) (timeout_us % 1000000);
-        if (tv.tv_sec == 0 && tv.tv_usec == 0) {
-            tv.tv_usec = 1;
-        }
-    }
-    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0) {
-        return -1;
-    }
-    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
-        return -1;
-    }
-    return 0;
-}
-
 static int set_fd_nonblocking_mode(int fd, bool nonblocking)
 {
     int flags = fcntl(fd, F_GETFL, 0);
@@ -856,7 +833,6 @@ static int configure_tls_connection(h2_connection *connection, const char *host,
         set_fd_nonblocking_mode(connection->fd, false);
         return -1;
     }
-    set_fd_nonblocking_mode(connection->fd, false);
     connection->tls_verify_result = SSL_get_verify_result(connection->ssl);
     if (connection->tls_verify_result != X509_V_OK) {
         snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "TLS certificate verification failed: %s", X509_verify_cert_error_string(connection->tls_verify_result));
@@ -916,9 +892,6 @@ static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data
         set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
         return -1;
     }
-    if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
-        return -1;
-    }
     if (connection->ssl != NULL) {
         if (length > INT_MAX) {
             errno = EMSGSIZE;
@@ -926,41 +899,77 @@ static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data
             set_connection_error_detail(connection, "SSL_write length exceeds INT_MAX");
             return -1;
         }
-        int written = SSL_write(connection->ssl, data, (int) length);
-        if (written <= 0) {
+        while (true) {
+            int written = SSL_write(connection->ssl, data, (int) length);
+            if (written > 0) {
+                return written;
+            }
             int ssl_error = SSL_get_error(connection->ssl, written);
             connection->last_ssl_error = ssl_error;
-            errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
-            if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
+            if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+                short events = ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+                int poll_result = poll_fd_until_deadline(connection->fd, events, deadline_abs_us);
+                if (poll_result == 0) {
+                    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+                    if (remaining_timeout_us >= 0) {
+                        continue;
+                    }
+                    errno = ETIMEDOUT;
+                }
+                if (errno != ETIMEDOUT) {
+                    connection->last_io_errno = errno;
+                    snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "SSL_write poll failed: %s", strerror(errno));
+                    return -1;
+                }
                 if (timed_out != NULL) {
                     *timed_out = true;
                 }
-                errno = ETIMEDOUT;
+                connection->last_io_errno = errno;
+                set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
+                return -1;
             }
+            errno = ECONNRESET;
             connection->last_io_errno = errno;
             snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "SSL_write failed: SSL_get_error=%d", ssl_error);
             return -1;
         }
-        return written;
     }
-    ssize_t written = send(connection->fd, data, length,
+    while (true) {
+        ssize_t written = send(connection->fd, data, length,
 #ifdef MSG_NOSIGNAL
-        MSG_NOSIGNAL
+            MSG_NOSIGNAL
 #else
-        0
+            0
 #endif
-    );
-    if (written < 0) {
-        if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
+        );
+        if (written >= 0) {
+            return written;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            int poll_result = poll_fd_until_deadline(connection->fd, POLLOUT, deadline_abs_us);
+            if (poll_result == 0) {
+                remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+                if (remaining_timeout_us >= 0) {
+                    continue;
+                }
+                errno = ETIMEDOUT;
+            }
+            if (errno != ETIMEDOUT) {
+                connection->last_io_errno = errno;
+                snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "send poll failed: %s", strerror(errno));
+                return -1;
+            }
             if (timed_out != NULL) {
                 *timed_out = true;
             }
-            errno = ETIMEDOUT;
+            connection->last_io_errno = errno;
+            set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
+            return -1;
         }
         connection->last_io_errno = errno;
         snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "send failed: %s", strerror(errno));
+        return -1;
     }
-    return written;
 }
 
 static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us)
@@ -977,33 +986,66 @@ static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t 
         set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
         return -1;
     }
-    if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
-        return -1;
-    }
     if (connection->ssl != NULL) {
-        int nread = SSL_read(connection->ssl, data, (int) length);
-        if (nread <= 0) {
+        while (true) {
+            int nread = SSL_read(connection->ssl, data, (int) length);
+            if (nread > 0) {
+                return nread;
+            }
             int ssl_error = SSL_get_error(connection->ssl, nread);
             connection->last_ssl_error = ssl_error;
-            errno = (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) ? EAGAIN : ECONNRESET;
-            if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
-                errno = ETIMEDOUT;
+            if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+                short events = ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+                int poll_result = poll_fd_until_deadline(connection->fd, events, deadline_abs_us);
+                if (poll_result == 0) {
+                    remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+                    if (remaining_timeout_us >= 0) {
+                        continue;
+                    }
+                    errno = ETIMEDOUT;
+                }
+                if (errno != ETIMEDOUT) {
+                    connection->last_io_errno = errno;
+                    snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "SSL_read poll failed: %s", strerror(errno));
+                    return -1;
+                }
+                connection->last_io_errno = errno;
+                set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
+                return -1;
             }
+            errno = ECONNRESET;
             connection->last_io_errno = errno;
             snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "SSL_read failed: SSL_get_error=%d", ssl_error);
             return -1;
         }
-        return nread;
     }
-    ssize_t nread = recv(connection->fd, data, length, 0);
-    if (nread < 0) {
-        if ((errno == EAGAIN || errno == EWOULDBLOCK) && deadline_abs_us > 0) {
-            errno = ETIMEDOUT;
+    while (true) {
+        ssize_t nread = recv(connection->fd, data, length, 0);
+        if (nread >= 0) {
+            return nread;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            int poll_result = poll_fd_until_deadline(connection->fd, POLLIN, deadline_abs_us);
+            if (poll_result == 0) {
+                remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
+                if (remaining_timeout_us >= 0) {
+                    continue;
+                }
+                errno = ETIMEDOUT;
+            }
+            if (errno != ETIMEDOUT) {
+                connection->last_io_errno = errno;
+                snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "recv poll failed: %s", strerror(errno));
+                return -1;
+            }
+            connection->last_io_errno = errno;
+            set_connection_error_detail(connection, "HTTP/2 transport deadline exceeded");
+            return -1;
         }
         connection->last_io_errno = errno;
         snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "recv failed: %s", strerror(errno));
+        return -1;
     }
-    return nread;
 }
 
 static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
@@ -1035,6 +1077,11 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
             *error_message = "failed to establish TLS";
         }
         destroy_h2_connection(connection);
+        return NULL;
+    }
+    if (!use_tls && set_fd_nonblocking_mode(connection->fd, true) != 0) {
+        destroy_h2_connection(connection);
+        *error_message = "failed to set HTTP/2 socket nonblocking";
         return NULL;
     }
 

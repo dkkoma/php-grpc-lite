@@ -88,11 +88,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         call.timed_out = true;
         goto build_unary_result;
     }
-    if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
-        mark_connection_dead(connection, errno);
-        zend_throw_exception(NULL, "failed to set socket timeout", 0);
-        return FAILURE;
-    }
 
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
         clear_connection_call_owner(connection, &call);

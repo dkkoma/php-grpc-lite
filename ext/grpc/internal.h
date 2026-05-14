@@ -542,7 +542,6 @@ static persistent_connection_entry *create_persistent_connection_entry(h2_connec
 static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
 static bool preflight_persistent_connection(h2_connection *connection);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
-static int set_socket_timeout_us(int fd, zend_long timeout_us);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
 static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);

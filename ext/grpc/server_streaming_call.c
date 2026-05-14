@@ -76,18 +76,6 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
         return FAILURE;
     }
-    if (set_socket_timeout_us(connection->fd, remaining_timeout_us) != 0) {
-        mark_connection_dead(connection, errno);
-        discard_persistent_connection(key, key_len, connection);
-        if (setup_failure != NULL) {
-            setup_failure->code = GRPC_STATUS_UNAVAILABLE;
-            setup_failure->details = zend_string_init("failed to set socket timeout", sizeof("failed to set socket timeout") - 1, 0);
-            ZVAL_UNDEF(return_value);
-            return SUCCESS;
-        }
-        zend_throw_exception(NULL, "failed to set socket timeout", 0);
-        return FAILURE;
-    }
 
     state = ecalloc(1, sizeof(server_streaming_call_state));
     state->request = zend_string_init(request, request_len, 0);
