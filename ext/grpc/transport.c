@@ -53,9 +53,7 @@ static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
-static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
-static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);
 static uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
@@ -343,9 +341,7 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(*callbacks, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_header_callback(*callbacks, on_header_callback);
     nghttp2_session_callbacks_set_on_stream_close_callback(*callbacks, on_stream_close_callback);
-    nghttp2_session_callbacks_set_on_frame_send_callback(*callbacks, on_frame_send_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(*callbacks, on_frame_recv_callback);
-    nghttp2_session_callbacks_set_on_frame_not_send_callback(*callbacks, on_frame_not_send_callback);
     return 0;
 }
 
@@ -1347,7 +1343,6 @@ static ssize_t data_source_read_callback(nghttp2_session *session, int32_t strea
     total_len = call->grpc_header_len + call->request_len;
     remaining = remaining_request_bytes(call);
     to_send = remaining < length ? remaining : length;
-    call->data_read_calls++;
 
     size_t copied = copy_request_bytes(call, buf, to_send);
     if (call->request_offset >= total_len) {
@@ -1376,7 +1371,6 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
         return 0;
     }
     if (stream_id == call->stream_id && len > 0) {
-        call->data_recv_calls++;
         if (call->direct_response_payload && call->decode_response_incrementally && ((call->payload_callback_fci != NULL && call->payload_callback_fcc != NULL) || call->queue_response_payloads)) {
             if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -1490,21 +1484,6 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     return 0;
 }
 
-static int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
-{
-    h2_connection *connection = (h2_connection *) user_data;
-    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
-    (void) session;
-    if (call == NULL) {
-        return 0;
-    }
-    call->sent_frames++;
-    call->last_sent_frame_type = frame->hd.type;
-    call->last_sent_frame_flags = frame->hd.flags;
-    call->bytes_sent += frame->hd.length;
-    return 0;
-}
-
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
@@ -1530,9 +1509,6 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     if (call == NULL) {
         return 0;
     }
-    call->recv_frames++;
-    call->last_recv_frame_type = frame->hd.type;
-    call->last_recv_frame_flags = frame->hd.flags;
     if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
         && frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
@@ -1555,20 +1531,6 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
             nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_PROTOCOL_ERROR);
         }
     }
-    return 0;
-}
-
-static int on_frame_not_send_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
-{
-    h2_connection *connection = (h2_connection *) user_data;
-    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
-    (void) session;
-    if (call == NULL) {
-        return 0;
-    }
-    call->not_sent_frames++;
-    call->last_not_sent_frame_type = frame->hd.type;
-    call->last_not_sent_error = lib_error_code;
     return 0;
 }
 
@@ -2175,9 +2137,10 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
 
             if (call->response_payload_offset == call->response_payload_len) {
                 zend_string *payload = call->response_payload;
-                uint64_t ready_abs_us = monotonic_us();
+                uint64_t ready_abs_us = 0;
 
                 if (call->observe_message_ready != NULL) {
+                    ready_abs_us = monotonic_us();
                     call->observe_message_ready(call, ready_abs_us);
                 }
                 ZSTR_VAL(payload)[call->response_payload_len] = '\0';
@@ -2240,7 +2203,7 @@ static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, z
 
     queued_payload *entry = emalloc(sizeof(queued_payload));
     entry->payload = payload;
-    entry->ready_abs_us = monotonic_us();
+    entry->ready_abs_us = 0;
     entry->next = NULL;
 
     if (call->response_queue_tail == NULL) {

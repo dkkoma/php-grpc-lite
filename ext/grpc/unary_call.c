@@ -5,7 +5,7 @@
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status_result, uint64_t start_unix_nanos, uint64_t total_started, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused)
 {
-    grpc_lite_diagnostic_add_unary_result(diagnostic_result, path, path_len, metadata, call, connection, status_result, start_unix_nanos, monotonic_us() - total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
+    grpc_lite_diagnostic_add_unary_result(diagnostic_result, path, path_len, metadata, call, connection, status_result, start_unix_nanos, total_started > 0 ? monotonic_us() - total_started : 0, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
     add_status_result_to_return(diagnostic_result, status_result);
     add_assoc_str(diagnostic_result, "body", call->body.s ? zend_string_copy(call->body.s) : zend_empty_string);
     add_assoc_str(diagnostic_result, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
@@ -62,16 +62,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     int rv;
     zend_long remaining_timeout_us;
     char recv_buf[16384];
-    uint64_t start_unix_nanos = 0;
-    uint64_t total_started = 0;
-    uint64_t setup_started = 0;
-    uint64_t setup_us = 0;
-    uint64_t submit_started = 0;
-    uint64_t submit_us = 0;
-    uint64_t initial_send_started = 0;
-    uint64_t initial_send_us = 0;
-    uint64_t recv_loop_started = 0;
-    uint64_t recv_loop_us = 0;
     grpc_lite_status_result status_result;
     if (!connection_usable(connection)) {
         zend_throw_exception(NULL, "invalid grpc_lite connection", 0);
@@ -92,8 +82,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     call.max_response_metadata_bytes = max_response_metadata_bytes;
     grpc_protocol_set_message_header(&call, call.request_len);
-    start_unix_nanos = unix_time_nanos();
-    total_started = monotonic_us();
     call.deadline_abs_us = deadline_abs_us;
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
@@ -106,7 +94,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         return FAILURE;
     }
 
-    setup_started = monotonic_us();
     if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
         clear_connection_call_owner(connection, &call);
         cleanup_grpc_call(&call);
@@ -135,11 +122,8 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
     data_provider.source.ptr = &call;
-    setup_us = monotonic_us() - setup_started;
 
-    submit_started = monotonic_us();
     call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
-    submit_us = monotonic_us() - submit_started;
     if (call.stream_id < 0) {
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);
@@ -156,16 +140,12 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         return FAILURE;
     }
 
-    initial_send_started = monotonic_us();
     rv = send_pending_h2_frames(connection, &call);
-    initial_send_us = monotonic_us() - initial_send_started;
     if (rv != 0) {
         mark_connection_dead(connection, rv);
-        recv_loop_us = 0;
         goto build_unary_result;
     }
 
-    recv_loop_started = monotonic_us();
     while (!call.stream_closed) {
         ssize_t nread = connection_recv(connection, (uint8_t *) recv_buf, sizeof(recv_buf), call.deadline_abs_us);
         if (nread <= 0) {
@@ -183,7 +163,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             }
             break;
         }
-        call.bytes_received += (size_t) nread;
         connection->current_read_call = &call;
         rv = nghttp2_session_mem_recv(connection->session, (const uint8_t *) recv_buf, (size_t) nread);
         connection->current_read_call = NULL;
@@ -201,9 +180,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             mark_connection_dead(connection, rv);
             break;
         }
-        call.last_session_error = rv;
     }
-	    recv_loop_us = monotonic_us() - recv_loop_started;
 	build_unary_result:
 	    resolve_grpc_call_status(&call, false, &status_result);
 
@@ -217,7 +194,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     }
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 	    if (diagnostic_result != NULL) {
-	        grpc_lite_unary_add_diagnostic_result(diagnostic_result, path, path_len, headers_zv, &call, connection, &status_result, start_unix_nanos, total_started, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
+	        grpc_lite_unary_add_diagnostic_result(diagnostic_result, path, path_len, headers_zv, &call, connection, &status_result, 0, 0, 0, 0, 0, 0, connection_reused, persistent_reused);
 	    }
 #endif
 	    clear_connection_call_owner(connection, &call);
