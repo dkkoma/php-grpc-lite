@@ -51,13 +51,42 @@ final class SpannerBench
 
     public function selectOneRow(): array
     {
-        $rows = $this->connection()->transaction(function (Connection $connection): array {
-            return $connection->select('SELECT Id, DateA, DateB, StringA, StringB, IntA, IntB, BoolA, FloatA, StringC FROM ' . self::TABLE . ' WHERE Id = ?', [1]);
-        });
-        if (count($rows) !== 1) {
-            throw new RuntimeException('expected 1 row, got ' . count($rows));
-        }
+        $rows = $this->connection()->transaction(fn(Connection $connection): array => $this->selectRowsById($connection, 1));
+        $this->assertRowCount($rows, 1);
         return ['rows' => count($rows)];
+    }
+
+    public function mixedTransaction(): array
+    {
+        $selectedId = random_int(1_000_000, 2_000_000_000);
+        $insertedId = random_int(2_000_000_001, PHP_INT_MAX);
+        $connection = $this->connection();
+
+        $preInserted = $connection->transaction(fn(Connection $connection): int => $connection->affectingStatement($this->insertSql($selectedId)));
+        $this->assertAffected($preInserted);
+
+        $result = $connection->transaction(function (Connection $connection) use ($selectedId, $insertedId): array {
+            $firstRows = $this->selectRowsById($connection, $selectedId);
+            $this->assertRowCount($firstRows, 1);
+
+            $secondRows = $this->selectRowsById($connection, $selectedId);
+            $this->assertRowCount($secondRows, 1);
+
+            $updated = $connection->affectingStatement($this->updateSql($selectedId));
+            $this->assertAffected($updated);
+
+            $inserted = $connection->affectingStatement($this->insertSql($insertedId));
+            $this->assertAffected($inserted);
+
+            return [
+                'selects' => 2,
+                'selected_rows' => count($firstRows) + count($secondRows),
+                'updated' => $updated,
+                'inserted' => $inserted,
+            ];
+        });
+
+        return ['pre_inserted' => $preInserted] + $result;
     }
 
     public function dmlInsert(): array
@@ -154,6 +183,18 @@ SQL;
     {
         if ($affected !== 1) {
             throw new RuntimeException("expected 1 affected row, got $affected");
+        }
+    }
+
+    private function selectRowsById(Connection $connection, int $id): array
+    {
+        return $connection->select('SELECT Id, DateA, DateB, StringA, StringB, IntA, IntB, BoolA, FloatA, StringC FROM ' . self::TABLE . ' WHERE Id = ?', [$id]);
+    }
+
+    private function assertRowCount(array $rows, int $expected): void
+    {
+        if (count($rows) !== $expected) {
+            throw new RuntimeException('expected ' . $expected . ' row(s), got ' . count($rows));
         }
     }
 }

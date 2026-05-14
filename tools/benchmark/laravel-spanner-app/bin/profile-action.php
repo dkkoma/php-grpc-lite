@@ -11,7 +11,7 @@ require __DIR__ . '/../vendor/autoload.php';
 $app = require __DIR__ . '/../bootstrap/app.php';
 $app->make(ConsoleKernel::class)->bootstrap();
 
-$action = $argv[1] ?? 'select_1row_10col';
+$action = $argv[1] ?? 'transaction_select2_update1_insert1';
 $iterations = max(1, (int) ($argv[2] ?? '1'));
 
 $bench = $app->make(SpannerBench::class);
@@ -23,6 +23,7 @@ for ($index = 0; $index < $iterations; $index++) {
         'dml_insert_10col' => $bench->dmlInsert(),
         'dml_update_10col' => $bench->dmlUpdate(),
         'dml_delete_10col' => $bench->dmlDelete(),
+        'transaction_select2_update1_insert1' => $bench->mixedTransaction(),
         default => throw new InvalidArgumentException("unknown action: $action"),
     };
 }

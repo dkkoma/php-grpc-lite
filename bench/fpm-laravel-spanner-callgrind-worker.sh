@@ -9,7 +9,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-action="${1:-select_1row_10col}"
+action="${1:-transaction_select2_update1_insert1}"
 requests="${2:-10}"
 concurrency="${3:-1}"
 run_id="${BENCH_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"

@@ -9,7 +9,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-action="${1:-select_1row_10col}"
+action="${1:-transaction_select2_update1_insert1}"
 iterations="${2:-10}"
 run_id="${BENCH_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 log_dir="${BENCH_LOG_DIR:-var/bench-results/native-callgrind-$run_id}"

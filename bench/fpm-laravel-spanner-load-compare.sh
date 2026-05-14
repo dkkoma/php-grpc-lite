@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 
 requests="${1:-1024}"
 concurrency="${2:-16}"
-IFS=" " read -r -a actions <<< "${BENCH_ACTIONS:-select_1row_10col}"
+IFS=" " read -r -a actions <<< "${BENCH_ACTIONS:-transaction_select2_update1_insert1}"
 IFS=" " read -r -a variants <<< "${BENCH_VARIANTS:-native ext-grpc}"
 app_dir="tools/benchmark/laravel-spanner-app"
 run_id="${BENCH_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"

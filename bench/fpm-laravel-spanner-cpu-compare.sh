@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 requests="${1:-100}"
-actions=(select_1row_10col dml_insert_10col dml_update_10col dml_delete_10col)
+actions=(transaction_select2_update1_insert1)
 app_dir="tools/benchmark/laravel-spanner-app"
 run_id="${BENCH_RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 log_dir="${BENCH_LOG_DIR:-var/bench-results/fpm-laravel-spanner-cpu-$run_id}"
@@ -56,7 +56,7 @@ run_variant() {
         docker compose up -d spanner-emulator
     fi
     docker compose up -d --force-recreate "$service"
-    fastcgi_loop "$service" select_1row_10col 1 >/dev/null
+    fastcgi_loop "$service" "$action" 1 >/dev/null
 
     local ticks
     ticks="$(docker compose exec -T "$service" sh -lc 'getconf CLK_TCK')"
