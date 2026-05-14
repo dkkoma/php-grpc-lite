@@ -30,6 +30,17 @@ static void grpc_lite_copy_metadata(zval *dest, zval *src)
     zend_hash_copy(Z_ARRVAL_P(dest), Z_ARRVAL_P(src), zval_add_ref);
 }
 
+static void grpc_lite_move_metadata(zval *dest, zval *src)
+{
+    zval_ptr_dtor(dest);
+    if (src != NULL && Z_TYPE_P(src) == IS_ARRAY) {
+        ZVAL_COPY_VALUE(dest, src);
+        array_init(src);
+        return;
+    }
+    array_init(dest);
+}
+
 static void grpc_lite_append_user_agent(grpc_lite_channel_obj *channel, zval *metadata)
 {
     zval values;
@@ -126,8 +137,7 @@ static void grpc_lite_make_status_object(zval *status, int code, zend_string *de
     add_property_str(status, "details", zend_string_copy(details));
     if (metadata != NULL && Z_TYPE_P(metadata) == IS_ARRAY) {
         zval copy;
-        array_init(&copy);
-        zend_hash_copy(Z_ARRVAL(copy), Z_ARRVAL_P(metadata), zval_add_ref);
+        ZVAL_COPY(&copy, metadata);
         add_property_zval(status, "metadata", &copy);
         zval_ptr_dtor(&copy);
     } else {
@@ -341,8 +351,8 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         remove_unusable_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), h2);
     }
     details = zend_string_copy(result.status.details);
-    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
-    grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
+    grpc_lite_move_metadata(&call->initial_metadata, &result.initial_metadata);
+    grpc_lite_move_metadata(&call->trailing_metadata, &result.trailing_metadata);
     zval_ptr_dtor(&call->status);
     grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
     call->initial_metadata_ready = true;

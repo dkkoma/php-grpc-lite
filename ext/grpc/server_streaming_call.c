@@ -366,7 +366,11 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
         if (typed_result != NULL) {
             typed_result->done = false;
             typed_result->payload = entry->payload;
-            grpc_protocol_copy_metadata_map(&typed_result->initial_metadata, call, false);
+            if (state->delivered_messages == 1) {
+                grpc_protocol_copy_metadata_map(&typed_result->initial_metadata, call, false);
+            } else {
+                array_init(&typed_result->initial_metadata);
+            }
         }
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
         if (diagnostic_result != NULL) {

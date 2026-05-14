@@ -62,3 +62,45 @@ small unary / small server streaming ではpayload処理よりも固定費が支
 ## 判断ログ
 
 - このissueは response delivery 最適化とは分ける。metadata変更だけで採否判断できるbranchにする。
+
+## 2026-05-14 検証メモ
+
+### 実装した候補
+
+- server streamingでinitial metadataをmessageごとに再構築しないようにした。最初のmessageでのみmetadata mapを作り、それ以降のmessage resultは空配列にする。
+- unary resultから `Grpc\Call` objectへmetadataを移す際、HashTable copyではなくownership moveにした。
+- status objectの `metadata` は明示的なHashTable copyではなくCOW参照で設定するようにした。PHP側でmutationされてもCOWで分離される前提。
+
+### 検証
+
+- PHPT: pass。15/15。
+- C unit: pass。protocol/status/transport core。
+- `./bench/compare.sh metadata-header`: `20260514-092546`。
+- `./bench/compare.sh spanner-shape`: `20260514-092600`。
+
+### ベンチ結果
+
+metadata-header native p50:
+
+| measurement | before-ish p50 | after p50 | 判断 |
+| --- | ---: | ---: | --- |
+| req0/resp0/value0 | 33.2µs | 35.5µs | 同等、ノイズ範囲 |
+| req10/resp0/value32 | 39.5µs | 35.5µs | 改善 |
+| req10/resp10/value32 | 49.0µs | 35.3µs | 改善 |
+| req50/resp0/value32 | 93.4µs | 80.5µs | 改善 |
+| req50/resp50/value32 | 149.5µs | 164.2µs | 悪化気味、再測定余地あり |
+
+spanner-shape native p50/p99:
+
+| measurement | p50 | p99 | 判断 |
+| --- | ---: | ---: | --- |
+| begin_txn_unary | 30.8µs | 134.4µs | 同等 |
+| commit_txn_unary | 28.1µs | 72.1µs | 同等 |
+| select_1row_10col_streaming | 27.3µs | 66.8µs | 同等〜改善 |
+| dml_insert_10col_streaming | 25.7µs | 61.1µs | 同等〜改善 |
+| dml_update_10col_streaming | 28.2µs | 82.5µs | 同等 |
+| dml_delete_10col_streaming | 26.9µs | 69.5µs | 同等 |
+
+### 暫定判断
+
+採用候補。主要Spanner形状では悪化が見えず、metadata-headerの一部で固定費改善が見える。ただしmetadata-heavyの `req50/resp50` は揺れか悪化かを追加測定で確認する必要がある。
