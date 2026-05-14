@@ -114,3 +114,33 @@ spanner-shape native full comparison:
 ### 暫定判断
 
 採用候補。主要Spanner形状では悪化が見えず、metadata-headerの一部で固定費改善が見える。ただしmetadata-heavyの `req50/resp50` は揺れか悪化かを追加測定で確認する必要がある。
+
+### spanner-real-client 追加比較
+
+main基準:
+
+- `spanner-real-client` main native/ext-grpc: 既存計測値。transaction scopeは開始済みread-write transaction内。
+
+metadata branch:
+
+- `./bench/compare.sh spanner-real-client`: `20260514-095212`
+
+spanner-real-client native main vs metadata branch:
+
+| measurement | main native p50 | branch native p50 | p50差分 | main native p99 | branch native p99 | p99差分 | 判断 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| small_select_1row_10col | 778.6µs | 772.3µs | -6.3µs | 951.4µs | 1183.7µs | +232.3µs | p50同等、p99悪化気味 |
+| dml_insert_10col | 788.0µs | 792.9µs | +4.9µs | 918.1µs | 929.3µs | +11.2µs | 同等 |
+| dml_update_10col | 930.9µs | 906.4µs | -24.5µs | 1080.5µs | 1031.4µs | -49.1µs | 改善 |
+| dml_delete_10col | 1059.2µs | 1142.6µs | +83.4µs | 1217.0µs | 1324.0µs | +107.0µs | 悪化気味 |
+
+spanner-real-client ext-grpc rerun比較:
+
+| measurement | main ext-grpc p50 | current ext-grpc p50 | p50差分 | main ext-grpc p99 | current ext-grpc p99 | p99差分 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| small_select_1row_10col | 844.7µs | 863.7µs | +19.0µs | 979.2µs | 1058.7µs | +79.5µs |
+| dml_insert_10col | 816.0µs | 866.5µs | +50.5µs | 889.2µs | 976.4µs | +87.2µs |
+| dml_update_10col | 968.2µs | 1011.6µs | +43.4µs | 1199.5µs | 1112.6µs | -86.9µs |
+| dml_delete_10col | 1123.9µs | 1151.7µs | +27.8µs | 1262.6µs | 1444.6µs | +182.0µs |
+
+判断: `spanner-real-client` はGAX/Spanner emulatorの揺れが大きく、metadata branch単体の効果判定には向かない。DML update以外はmain比で同等〜悪化気味に見えるが、ext-grpc rerun側も同程度に揺れている。採否判断は `metadata-header` と `spanner-shape` を主にし、real clientは実用上の悪化監視として扱う。
