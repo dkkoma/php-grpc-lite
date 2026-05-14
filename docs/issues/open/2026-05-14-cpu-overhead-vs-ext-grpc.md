@@ -73,6 +73,10 @@ Branch: main
 - `BENCH_TAG=cpu-micro-smoke BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=3 --warmup-calls=1`
 - `BENCH_TAG=cpu-micro-verify BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=100 --warmup-calls=10`
 - `BENCH_TAG=cpu-micro-20260514-203044 BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=5000 --warmup-calls=100`
+- `BENCH_TAG=cpu-real-20260514-203520 BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-spanner-real-client --calls=100 --warmup-calls=5`
+- `BENCH_TAG=cpu-concurrent-4w-20260514-204000 BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-concurrent --workers=4 --calls=5000 --warmup-calls=100`
+- `BENCH_TAG=cpu-concurrent-8w-20260514-204000 BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-concurrent --workers=8 --calls=3000 --warmup-calls=100`
+- `BENCH_TAG=cpu-micro-lifecycle-20260514-204100 BENCH_OTEL_SUMMARY_LIMIT=100000 ./bench/compare.sh cpu-micro --calls=3000 --warmup-calls=100`
 
 ## 2026-05-14 CPU micro計測結果
 
@@ -91,6 +95,60 @@ run id: `cpu-micro-20260514-203044`
 | dml_delete_10col_streaming | 11.0 | 46.0 | 0.24x | 30.8 | 71.2 |
 
 このmicro benchでは `php-grpc-lite` nativeのCPU timeは `ext-grpc` より低く、実アプリ負荷試験の「CPU使用率約1.5倍」は再現していない。次の確認対象は、micro benchに含まれていない高レベルアプリ経路、並列実行時のprocess/container CPU、worker lifecycle、または負荷試験側のCPU測定単位。
+
+## 2026-05-14 追加計測結果
+
+### google/cloud-spanner high-level client
+
+run id: `cpu-real-20260514-203520`
+
+| measurement | native cpu_us/call | ext-grpc cpu_us/call | native/ext | native wall_us/call | ext-grpc wall_us/call |
+|---|---:|---:|---:|---:|---:|
+| small_select_1row_10col | 227.1 | 360.4 | 0.63x | 1004.7 | 1230.4 |
+| dml_insert_10col | 222.0 | 343.9 | 0.65x | 1192.4 | 1257.3 |
+| dml_update_10col | 206.4 | 357.6 | 0.58x | 1298.4 | 1585.3 |
+| dml_delete_10col | 221.2 | 364.8 | 0.61x | 1565.8 | 1748.4 |
+
+高レベル `google/cloud-spanner` 経路でも、process-local CPU timeではnative高CPUは再現しない。
+
+### concurrent workers
+
+run id: `cpu-concurrent-4w-20260514-204000`
+
+| measurement | workers | total calls | native cpu_us/call | ext-grpc cpu_us/call | native/ext |
+|---|---:|---:|---:|---:|---:|
+| small_unary_100b | 4 | 20000 | 15.0 | 55.2 | 0.27x |
+| small_streaming_1x100b | 4 | 20000 | 15.6 | 59.6 | 0.26x |
+| small_streaming_100x100b | 4 | 20000 | 62.8 | 309.2 | 0.20x |
+
+run id: `cpu-concurrent-8w-20260514-204000`
+
+| measurement | workers | total calls | native cpu_us/call | ext-grpc cpu_us/call | native/ext |
+|---|---:|---:|---:|---:|---:|
+| small_unary_100b | 8 | 24000 | 17.6 | 83.2 | 0.21x |
+| small_streaming_1x100b | 8 | 24000 | 18.3 | 91.5 | 0.20x |
+| small_streaming_100x100b | 8 | 24000 | 80.0 | 401.3 | 0.20x |
+
+複数PHP worker process同時実行でも、native高CPUは再現しない。
+
+### client lifecycle
+
+run id: `cpu-micro-lifecycle-20260514-204100`
+
+| measurement | native cpu_us/call | ext-grpc cpu_us/call | native/ext |
+|---|---:|---:|---:|
+| small_unary_100b | 11.2 | 40.9 | 0.27x |
+| new_client_unary_100b | 11.2 | 360.8 | 0.03x |
+| small_streaming_1x100b | 10.9 | 43.8 | 0.25x |
+| new_client_streaming_1x100b | 12.4 | 366.1 | 0.03x |
+
+client objectをcallごとに作り直す条件でもnative高CPUは再現しない。むしろext-grpcはchannel upper bound warningを大量に出し、CPU/wallが大きく悪化する。
+
+## 現時点のレビュー
+
+- `php-grpc-lite` transport単体、`google/cloud-spanner`高レベル経路、複数PHP process並列、client object per-call lifecycleのいずれでも、process-local CPU timeでは実アプリ負荷試験の「nativeがext-grpc比でCPU約1.5倍」は再現しなかった。
+- 再現しないため、現時点でC transport hot pathを最適化する根拠は弱い。
+- 次に見るべき対象は、このリポジトリ内micro benchではなく、実アプリ負荷試験で使った測定単位との差分である。特に、HTTP/FPM/FrankenPHP request lifecycle全体、container全体CPU、固定RPS下のCPU%、アプリ側のSpanner/GAX client生成・認証・middleware、負荷試験ツールの集計範囲を確認する。
 
 ## 判断ログ
 

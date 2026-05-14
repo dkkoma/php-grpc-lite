@@ -83,6 +83,16 @@ $cases = [
     [
         'name' => 'small_unary_100b',
         'call_type' => 'unary',
+        'client_scope' => 'reused',
+        'request' => unaryRequest(100, 100),
+        'request_bytes' => 100,
+        'response_bytes' => 100,
+        'message_count' => 1,
+    ],
+    [
+        'name' => 'new_client_unary_100b',
+        'call_type' => 'unary',
+        'client_scope' => 'per_call',
         'request' => unaryRequest(100, 100),
         'request_bytes' => 100,
         'response_bytes' => 100,
@@ -91,6 +101,7 @@ $cases = [
     [
         'name' => 'begin_txn_unary',
         'call_type' => 'unary',
+        'client_scope' => 'reused',
         'request' => unaryRequest(92, 18),
         'request_bytes' => 92,
         'response_bytes' => 18,
@@ -99,6 +110,7 @@ $cases = [
     [
         'name' => 'commit_txn_unary',
         'call_type' => 'unary',
+        'client_scope' => 'reused',
         'request' => unaryRequest(106, 14),
         'request_bytes' => 106,
         'response_bytes' => 14,
@@ -107,6 +119,16 @@ $cases = [
     [
         'name' => 'small_streaming_1x100b',
         'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
+        'request' => streamingRequest(1, 100, 100),
+        'request_bytes' => 100,
+        'response_bytes' => 100,
+        'message_count' => 1,
+    ],
+    [
+        'name' => 'new_client_streaming_1x100b',
+        'call_type' => 'server_streaming',
+        'client_scope' => 'per_call',
         'request' => streamingRequest(1, 100, 100),
         'request_bytes' => 100,
         'response_bytes' => 100,
@@ -115,6 +137,7 @@ $cases = [
     [
         'name' => 'small_streaming_100x100b',
         'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
         'request' => streamingRequest(100, 100, 100),
         'request_bytes' => 100,
         'response_bytes' => 100,
@@ -123,6 +146,7 @@ $cases = [
     [
         'name' => 'select_1row_10col_streaming',
         'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
         'request' => streamingRequest(1, 160, 100),
         'request_bytes' => 160,
         'response_bytes' => 100,
@@ -131,6 +155,7 @@ $cases = [
     [
         'name' => 'dml_insert_10col_streaming',
         'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
         'request' => streamingRequest(1, 355, 8),
         'request_bytes' => 355,
         'response_bytes' => 8,
@@ -139,6 +164,7 @@ $cases = [
     [
         'name' => 'dml_update_10col_streaming',
         'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
         'request' => streamingRequest(1, 327, 8),
         'request_bytes' => 327,
         'response_bytes' => 8,
@@ -147,6 +173,7 @@ $cases = [
     [
         'name' => 'dml_delete_10col_streaming',
         'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
         'request' => streamingRequest(1, 144, 8),
         'request_bytes' => 144,
         'response_bytes' => 8,
@@ -172,12 +199,13 @@ foreach ($cases as $case) {
         'benchmark.request_bytes' => $case['request_bytes'],
         'benchmark.response_bytes' => $case['response_bytes'],
         'benchmark.message_count' => $case['message_count'],
+        'benchmark.client_scope' => $case['client_scope'],
         'benchmark.native_response_mode' => $nativeResponseMode,
         'benchmark.operation_shape' => $case['name'],
     ]);
 
-    runWarmup($case, $unaryClient, $streamingClient, $warmupCalls);
-    $result = measureCase($case, $unaryClient, $streamingClient, $calls);
+    runWarmup($case, $unaryClient, $streamingClient, $target, $warmupCalls);
+    $result = measureCase($case, $unaryClient, $streamingClient, $target, $calls);
 
     printf(
         "%-32s %-16s %8d %14.1f %14.1f %14.1f %14.1f\n",
@@ -230,10 +258,10 @@ function commonContext(string $target, int $calls, int $warmupCalls, string $tra
 }
 
 /** @param array<string, mixed> $case */
-function runWarmup(array $case, object $unaryClient, object $streamingClient, int $warmupCalls): void
+function runWarmup(array $case, object $unaryClient, object $streamingClient, string $target, int $warmupCalls): void
 {
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
-        runOneCall($case, $unaryClient, $streamingClient);
+        runOneCall($case, $unaryClient, $streamingClient, $target);
     }
 }
 
@@ -241,12 +269,12 @@ function runWarmup(array $case, object $unaryClient, object $streamingClient, in
  * @param array<string, mixed> $case
  * @return array<string, float|int>
  */
-function measureCase(array $case, object $unaryClient, object $streamingClient, int $calls): array
+function measureCase(array $case, object $unaryClient, object $streamingClient, string $target, int $calls): array
 {
     $usageStart = getrusage();
     $startNs = hrtime(true);
     for ($call = 0; $call < $calls; $call++) {
-        runOneCall($case, $unaryClient, $streamingClient);
+        runOneCall($case, $unaryClient, $streamingClient, $target);
     }
     $endNs = hrtime(true);
     $usageEnd = getrusage();
@@ -271,13 +299,19 @@ function measureCase(array $case, object $unaryClient, object $streamingClient, 
 }
 
 /** @param array<string, mixed> $case */
-function runOneCall(array $case, object $unaryClient, object $streamingClient): void
+function runOneCall(array $case, object $unaryClient, object $streamingClient, string $target): void
 {
     if ($case['call_type'] === 'unary') {
+        if ($case['client_scope'] === 'per_call') {
+            $unaryClient = UnaryBenchHelper::client($target);
+        }
         UnaryBenchHelper::call($unaryClient, $case['request']);
         return;
     }
 
+    if ($case['client_scope'] === 'per_call') {
+        $streamingClient = StreamingBenchHelper::client($target);
+    }
     StreamingBenchHelper::drain($streamingClient, $case['request']);
 }
 

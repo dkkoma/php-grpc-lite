@@ -21,6 +21,7 @@ $target = getenv('SPANNER_EMULATOR_HOST') ?: 'spanner-emulator:9010';
 $warmupCalls = 5;
 $calls = 100;
 $transport = 'native';
+$cpuSummaryOnly = false;
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -52,6 +53,8 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
         $transport = substr($arg, strlen('--transport='));
+    } elseif ($arg === '--cpu-summary-only') {
+        $cpuSummaryOnly = true;
     } else {
         usage("unexpected argument: $arg");
     }
@@ -98,10 +101,10 @@ try {
     seedSelectRow($database);
     warmup($database, $warmupCalls);
 
-    measureSelect($benchTelemetry, $database, $calls, $target, $transport, $warmupCalls);
-    measureDml($benchTelemetry, $database, 'dml_insert_10col', $calls, $target, $transport, $warmupCalls);
-    measureDml($benchTelemetry, $database, 'dml_update_10col', $calls, $target, $transport, $warmupCalls);
-    measureDml($benchTelemetry, $database, 'dml_delete_10col', $calls, $target, $transport, $warmupCalls);
+    measureSelect($benchTelemetry, $database, $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
+    measureDml($benchTelemetry, $database, 'dml_insert_10col', $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
+    measureDml($benchTelemetry, $database, 'dml_update_10col', $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
+    measureDml($benchTelemetry, $database, 'dml_delete_10col', $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
 } finally {
     if ($instanceName !== null) {
         SpannerEnv::deleteInstance($instanceAdmin, $instanceId);
@@ -151,6 +154,7 @@ function measureSelect(
     string $target,
     string $transport,
     int $warmupCalls,
+    bool $cpuSummaryOnly,
 ): void {
     $benchTelemetry->setContext('small_select_1row_10col', commonContext($target, $calls, $transport, $warmupCalls) + [
         'benchmark.spanner_api' => 'Transaction::execute',
@@ -159,6 +163,18 @@ function measureSelect(
         'benchmark.rows' => 1,
         'benchmark.columns' => 10,
     ]);
+
+    if ($cpuSummaryOnly) {
+        recordCpuSummary($benchTelemetry, $calls, static function () use ($database): void {
+            $transaction = $database->transaction();
+            try {
+                drainSelect($transaction);
+            } finally {
+                rollbackActive($transaction);
+            }
+        });
+        return;
+    }
 
     for ($index = 0; $index < $calls; $index++) {
         $statusCode = 1;
@@ -188,6 +204,7 @@ function measureDml(
     string $target,
     string $transport,
     int $warmupCalls,
+    bool $cpuSummaryOnly,
 ): void {
     $benchTelemetry->setContext($measurement, commonContext($target, $calls, $transport, $warmupCalls) + [
         'benchmark.spanner_api' => 'Transaction::executeUpdate',
@@ -196,6 +213,31 @@ function measureDml(
         'benchmark.rows' => 1,
         'benchmark.columns' => 10,
     ]);
+
+    if ($cpuSummaryOnly) {
+        if ($measurement !== 'dml_insert_10col') {
+            seedDmlRows($database, $measurement, $calls);
+        }
+
+        recordCpuSummary($benchTelemetry, $calls, static function (int $index) use ($database, $measurement): void {
+            $id = operationId($measurement, $index);
+            $transaction = $database->transaction();
+            try {
+                $rowCount = match ($measurement) {
+                    'dml_insert_10col' => $transaction->executeUpdate(insertSql($id)),
+                    'dml_update_10col' => $transaction->executeUpdate(updateSql($id)),
+                    'dml_delete_10col' => $transaction->executeUpdate(deleteSql($id)),
+                    default => throw new LogicException("unknown DML measurement: $measurement"),
+                };
+                if ($rowCount !== 1) {
+                    throw new RuntimeException("expected 1 updated row, got $rowCount");
+                }
+            } finally {
+                rollbackActive($transaction);
+            }
+        });
+        return;
+    }
 
     for ($index = 0; $index < $calls; $index++) {
         $id = operationId($measurement, $index);
@@ -263,6 +305,48 @@ function runDmlTransaction(Database $database, string $sql): int
     });
 }
 
+function seedDmlRows(Database $database, string $measurement, int $calls): void
+{
+    for ($index = 0; $index < $calls; $index++) {
+        runDmlTransaction($database, insertSql(operationId($measurement, $index)));
+    }
+}
+
+function recordCpuSummary(BenchTelemetry $benchTelemetry, int $calls, callable $operation): void
+{
+    $usageStart = getrusage();
+    $startNs = hrtime(true);
+    for ($index = 0; $index < $calls; $index++) {
+        $operation($index);
+    }
+    $endNs = hrtime(true);
+    $usageEnd = getrusage();
+
+    $cpuUserUs = rusageTimeUs($usageEnd, 'ru_utime') - rusageTimeUs($usageStart, 'ru_utime');
+    $cpuSysUs = rusageTimeUs($usageEnd, 'ru_stime') - rusageTimeUs($usageStart, 'ru_stime');
+    $cpuTotalUs = $cpuUserUs + $cpuSysUs;
+    $wallTotalUs = ($endNs - $startNs) / 1000.0;
+
+    $benchTelemetry->recordMetricSpan('SpannerRealClientCpuSummary', $startNs, $endNs, [
+        'benchmark.metric_kind' => 'cpu_summary',
+        'benchmark.cpu_total_us' => $cpuTotalUs,
+        'benchmark.cpu_user_us' => $cpuUserUs,
+        'benchmark.cpu_sys_us' => $cpuSysUs,
+        'benchmark.cpu_total_us_per_call' => $cpuTotalUs / $calls,
+        'benchmark.cpu_user_us_per_call' => $cpuUserUs / $calls,
+        'benchmark.cpu_sys_us_per_call' => $cpuSysUs / $calls,
+        'benchmark.wall_total_us' => $wallTotalUs,
+        'benchmark.wall_us_per_call' => $wallTotalUs / $calls,
+    ]);
+}
+
+/** @param array<string, mixed> $usage */
+function rusageTimeUs(array $usage, string $prefix): float
+{
+    return ((float) ($usage[$prefix . '.tv_sec'] ?? 0)) * 1_000_000.0
+        + (float) ($usage[$prefix . '.tv_usec'] ?? 0);
+}
+
 function rollbackActive(Transaction $transaction): void
 {
     if ($transaction->state() !== Transaction::STATE_ACTIVE) {
@@ -304,6 +388,6 @@ function deleteSql(int $id): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/spanner-real-client.php --suite=spanner-real-client --implementation=php-grpc-lite [--calls=100] [--warmup-calls=5] [--target=spanner-emulator:9010]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/spanner-real-client.php --suite=spanner-real-client --implementation=php-grpc-lite [--calls=100] [--warmup-calls=5] [--target=spanner-emulator:9010] [--cpu-summary-only]\n");
     exit(2);
 }

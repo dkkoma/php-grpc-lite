@@ -12,7 +12,9 @@
 #   ./bench/run.sh metadata-header
 #   ./bench/run.sh spanner-shape
 #   ./bench/run.sh spanner-real-client
+#   ./bench/run.sh cpu-spanner-real-client
 #   ./bench/run.sh cpu-micro
+#   ./bench/run.sh cpu-concurrent
 #
 set -euo pipefail
 
@@ -108,14 +110,20 @@ case "$suite" in
     spanner-real-client)
         run_benchmark_php "Benchmark google/cloud-spanner high-level client" tools/benchmark/spanner-real-client.php
         ;;
+    cpu-spanner-real-client)
+        run_benchmark_php "Benchmark google/cloud-spanner high-level client CPU" tools/benchmark/spanner-real-client.php --cpu-summary-only
+        ;;
     cpu-micro)
         run_benchmark_php "Benchmark CPU micro overhead" tools/benchmark/cpu-micro.php
+        ;;
+    cpu-concurrent)
+        run_benchmark_php "Benchmark concurrent worker CPU overhead" tools/benchmark/cpu-concurrent.php
         ;;
     *)
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|spanner-real-client|cpu-micro]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|spanner-real-client|cpu-spanner-real-client|cpu-micro|cpu-concurrent]
 USAGE
         exit 2
         ;;
