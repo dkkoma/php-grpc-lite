@@ -26,7 +26,6 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     server_streaming_call_state *state;
     nghttp2_data_provider data_provider;
     h2_request_headers request_headers;
-    bool persistent_reused = false;
     const char *error_message = NULL;
     char error_detail[256] = {0};
     uint64_t deadline_abs_us = 0;
@@ -53,7 +52,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         return FAILURE;
     }
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    connection = get_persistent_connection(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
+    connection = get_persistent_connection(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), NULL, &error_message);
     if (connection == NULL) {
         if (setup_failure != NULL) {
             bool deadline_exceeded = (deadline_abs_us > 0 && monotonic_us() >= deadline_abs_us)
@@ -96,7 +95,6 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     ZVAL_COPY(&state->metadata, headers_zv);
     state->recv_buf_len = 65536;
     state->recv_buf = emalloc(state->recv_buf_len);
-    state->persistent_reused = persistent_reused;
 
     memset(&state->call, 0, sizeof(state->call));
     state->call.connection = connection;

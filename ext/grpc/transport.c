@@ -72,8 +72,6 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
 static bool server_streaming_read_ahead_limit_would_exceed(grpc_call *call, size_t payload_len);
 static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call);
 static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
-static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us);
-static int deliver_queued_response_payloads(grpc_call *call);
 static void free_queued_response_payloads(grpc_call *call);
 static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
 static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
@@ -1092,7 +1090,9 @@ static h2_connection *get_persistent_connection(const char *key, size_t key_len,
     persistent_connection_entry *entry;
     h2_connection *connection;
 
-    *persistent_reused = false;
+    if (persistent_reused != NULL) {
+        *persistent_reused = false;
+    }
     if (!PHP_GRPC_LITE_G(persistent_connections_initialized)) {
         *error_message = "persistent connection cache is not initialized";
         return NULL;
@@ -1135,7 +1135,9 @@ static h2_connection *get_persistent_connection(const char *key, size_t key_len,
         return connection;
     }
 
-    *persistent_reused = true;
+    if (persistent_reused != NULL) {
+        *persistent_reused = true;
+    }
     return connection;
 }
 
@@ -1371,7 +1373,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
         return 0;
     }
     if (stream_id == call->stream_id && len > 0) {
-        if (call->direct_response_payload && call->decode_response_incrementally && ((call->payload_callback_fci != NULL && call->payload_callback_fcc != NULL) || call->queue_response_payloads)) {
+        if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
             if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
@@ -2125,24 +2127,14 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
         } else if (call->response_payload != NULL) {
             size_t need = call->response_payload_len - call->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
-            uint64_t payload_copy_started = call->observe_payload_copy != NULL ? monotonic_us() : 0;
             if (take > 0) {
                 memcpy(ZSTR_VAL(call->response_payload) + call->response_payload_offset, data + offset, take);
                 call->response_payload_offset += take;
                 offset += take;
             }
-            if (call->observe_payload_copy != NULL) {
-                call->observe_payload_copy(call, monotonic_us() - payload_copy_started);
-            }
 
             if (call->response_payload_offset == call->response_payload_len) {
                 zend_string *payload = call->response_payload;
-                uint64_t ready_abs_us = 0;
-
-                if (call->observe_message_ready != NULL) {
-                    ready_abs_us = monotonic_us();
-                    call->observe_message_ready(call, ready_abs_us);
-                }
                 ZSTR_VAL(payload)[call->response_payload_len] = '\0';
                 call->response_payload = NULL;
                 call->response_header_len = 0;
@@ -2153,8 +2145,8 @@ static int grpc_protocol_process_response_data_direct(nghttp2_session *session, 
                     if (enqueue_response_payload(session, call, payload) != 0) {
                         return -1;
                     }
-                } else if (deliver_response_payload(call, payload, ready_abs_us) != 0) {
-                    return -1;
+                } else {
+                    zend_string_release(payload);
                 }
             }
         }
@@ -2203,7 +2195,6 @@ static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, z
 
     queued_payload *entry = emalloc(sizeof(queued_payload));
     entry->payload = payload;
-    entry->ready_abs_us = 0;
     entry->next = NULL;
 
     if (call->response_queue_tail == NULL) {
@@ -2214,67 +2205,6 @@ static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, z
     call->response_queue_tail = entry;
     call->response_queue_count++;
     call->response_queue_bytes += ZSTR_LEN(payload);
-    if (call->observe_payload_queued != NULL) {
-        call->observe_payload_queued(call);
-    }
-
-    if (call->flush_queue_if_limited != NULL && call->flush_queue_if_limited(call) != 0) {
-        return -1;
-    }
-
-    return 0;
-}
-
-static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us)
-{
-    zval params[1];
-    zval retval;
-    uint64_t started = call->observe_payload_delivered != NULL ? monotonic_us() : 0;
-
-    ZVAL_STR(&params[0], payload);
-    ZVAL_UNDEF(&retval);
-    // cppcheck-suppress autoVariables
-    call->payload_callback_fci->params = params;
-    call->payload_callback_fci->param_count = 1;
-    // cppcheck-suppress autoVariables
-    call->payload_callback_fci->retval = &retval;
-
-    if (zend_call_function(call->payload_callback_fci, call->payload_callback_fcc) != SUCCESS || EG(exception)) {
-        zval_ptr_dtor(&params[0]);
-        if (!Z_ISUNDEF(retval)) {
-            zval_ptr_dtor(&retval);
-        }
-        return -1;
-    }
-    if (call->observe_payload_delivered != NULL) {
-        uint64_t elapsed = monotonic_us() - started;
-        call->observe_payload_delivered(call, ready_abs_us, started, elapsed);
-    }
-
-    zval_ptr_dtor(&params[0]);
-    if (!Z_ISUNDEF(retval)) {
-        zval_ptr_dtor(&retval);
-    }
-
-    return 0;
-}
-
-static int deliver_queued_response_payloads(grpc_call *call)
-{
-    while (call->response_queue_head != NULL) {
-        queued_payload *entry = call->response_queue_head;
-        call->response_queue_head = entry->next;
-        if (call->response_queue_head == NULL) {
-            call->response_queue_tail = NULL;
-        }
-        call->response_queue_count--;
-        call->response_queue_bytes -= ZSTR_LEN(entry->payload);
-        if (deliver_response_payload(call, entry->payload, entry->ready_abs_us) != 0) {
-            efree(entry);
-            return -1;
-        }
-        efree(entry);
-    }
 
     return 0;
 }

@@ -15,58 +15,6 @@
 
 static int bench_process_response_messages_from_offset(grpc_call *call, zend_fcall_info *fci, zend_fcall_info_cache *fcc, size_t *offset, bool require_complete, zend_long *decoded_messages, uint64_t *payload_string_us, uint64_t *max_payload_string_us, uint64_t *decode_us, uint64_t *max_decode_us);
 
-static void bench_observe_payload_copy(grpc_call *call, uint64_t elapsed_us)
-{
-    call->bench.call_response_payload_string_us += elapsed_us;
-    if (elapsed_us > call->bench.call_max_response_payload_string_us) {
-        call->bench.call_max_response_payload_string_us = elapsed_us;
-    }
-}
-
-static void bench_observe_message_ready(grpc_call *call, uint64_t ready_abs_us)
-{
-    if (call->bench.call_started_us == 0 || ready_abs_us < call->bench.call_started_us) {
-        return;
-    }
-    uint64_t ready_us = ready_abs_us - call->bench.call_started_us;
-    if (call->bench.first_response_message_ready_us == 0) {
-        call->bench.first_response_message_ready_us = ready_us;
-    }
-    call->bench.last_response_message_ready_us = ready_us;
-}
-
-static void bench_observe_payload_queued(grpc_call *call)
-{
-    if (call->response_queue_count > call->bench.call_max_response_queue_count) {
-        call->bench.call_max_response_queue_count = call->response_queue_count;
-    }
-    if (call->response_queue_bytes > call->bench.call_max_response_queue_bytes) {
-        call->bench.call_max_response_queue_bytes = call->response_queue_bytes;
-    }
-}
-
-static void bench_observe_payload_delivered(grpc_call *call, uint64_t ready_abs_us, uint64_t callback_started_abs_us, uint64_t elapsed_us)
-{
-    uint64_t queue_wait = ready_abs_us > 0 && callback_started_abs_us >= ready_abs_us ? callback_started_abs_us - ready_abs_us : 0;
-
-    call->bench.call_response_queue_wait_us += queue_wait;
-    if (queue_wait > call->bench.call_max_response_queue_wait_us) {
-        call->bench.call_max_response_queue_wait_us = queue_wait;
-    }
-    if (call->bench.call_started_us != 0) {
-        uint64_t done_us = monotonic_us() - call->bench.call_started_us;
-        if (call->bench.first_response_callback_done_us == 0) {
-            call->bench.first_response_callback_done_us = done_us;
-        }
-        call->bench.last_response_callback_done_us = done_us;
-    }
-    call->bench.call_response_decode_us += elapsed_us;
-    if (elapsed_us > call->bench.call_max_response_decode_us) {
-        call->bench.call_max_response_decode_us = elapsed_us;
-    }
-    call->bench.call_decoded_messages++;
-}
-
 static void bench_observe_response_callback_done(grpc_call *call)
 {
     if (call->bench.call_started_us == 0) {
@@ -77,18 +25,6 @@ static void bench_observe_response_callback_done(grpc_call *call)
         call->bench.first_response_callback_done_us = done_us;
     }
     call->bench.last_response_callback_done_us = done_us;
-}
-
-static int bench_flush_queue_if_limited(grpc_call *call)
-{
-    bool over_message_limit = call->bench.read_ahead_max_messages > 0 && call->response_queue_count >= call->bench.read_ahead_max_messages;
-    bool over_byte_limit = call->bench.read_ahead_max_bytes > 0 && call->response_queue_bytes >= call->bench.read_ahead_max_bytes;
-
-    if (!over_message_limit && !over_byte_limit) {
-        return 0;
-    }
-
-    return deliver_queued_response_payloads(call);
 }
 
 static void bench_record_data_sent(grpc_call *call)
@@ -328,7 +264,7 @@ static int bench_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t f
             }
             call->bench.awaiting_data_after_window_update_sent = false;
         }
-        if (call->direct_response_payload && call->decode_response_incrementally && ((call->payload_callback_fci != NULL && call->payload_callback_fcc != NULL) || call->queue_response_payloads)) {
+        if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
             if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
             }
@@ -349,26 +285,6 @@ static int bench_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t f
             call->bench.call_body_append_us += append_elapsed;
             if (append_elapsed > call->bench.call_max_body_append_us) {
                 call->bench.call_max_body_append_us = append_elapsed;
-            }
-            if (call->decode_response_incrementally && call->payload_callback_fci != NULL && call->payload_callback_fcc != NULL) {
-                zend_long decoded_messages = 0;
-                uint64_t payload_string_us = 0;
-                uint64_t max_payload_string_us = 0;
-                uint64_t decode_us = 0;
-                uint64_t max_decode_us = 0;
-                if (bench_process_response_messages_from_offset(call, call->payload_callback_fci, call->payload_callback_fcc, &call->response_parse_offset, false, &decoded_messages, &payload_string_us, &max_payload_string_us, &decode_us, &max_decode_us) != 0) {
-                    return NGHTTP2_ERR_CALLBACK_FAILURE;
-                }
-                call->bench.call_decoded_messages += decoded_messages;
-                call->bench.call_response_payload_string_us += payload_string_us;
-                if (max_payload_string_us > call->bench.call_max_response_payload_string_us) {
-                    call->bench.call_max_response_payload_string_us = max_payload_string_us;
-                }
-                call->bench.call_response_decode_us += decode_us;
-                if (max_decode_us > call->bench.call_max_response_decode_us) {
-                    call->bench.call_max_response_decode_us = max_decode_us;
-                }
-                bench_compact_response_body_if_needed(call);
             }
         }
     }
@@ -928,9 +844,6 @@ static int drive_stream_poll(nghttp2_session *session, grpc_call *call, char *re
             if (rv < 0) {
                 return rv;
             }
-            if (call->bench.read_ahead_delivery && deliver_queued_response_payloads(call) != 0) {
-                return NGHTTP2_ERR_CALLBACK_FAILURE;
-            }
             if (call->stream_closed) {
                 return 0;
             }
@@ -955,9 +868,6 @@ static int drive_stream_poll(nghttp2_session *session, grpc_call *call, char *re
         rv = receive_available(session, call, recv_buf, recv_buf_len);
         if (rv < 0) {
             return rv;
-        }
-        if (call->bench.read_ahead_delivery && deliver_queued_response_payloads(call) != 0) {
-            return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
         if (call->stream_closed) {
             return 0;
@@ -1316,8 +1226,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     zval client_first_flow_control_pause_us;
     zval client_response_header_us;
     zval client_stream_close_us;
-    zval client_first_response_message_ready_us;
-    zval client_last_response_message_ready_us;
     zval client_first_response_callback_done_us;
     zval client_last_response_callback_done_us;
     zval call_window_update_frames_recv;
@@ -1367,12 +1275,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     zval call_decoded_messages;
     zval call_max_response_queue_count;
     zval call_max_response_queue_bytes;
-    zval call_response_queue_wait_us;
-    zval call_max_response_queue_wait_us;
-    zval call_response_payload_string_us;
-    zval call_max_response_payload_string_us;
-    zval call_response_decode_us;
-    zval call_max_response_decode_us;
     zval server_handler_ns;
     zval server_payload_alloc_ns;
     zval server_payload_bytes;
@@ -1458,22 +1360,13 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     call.bench.flush_after_mem_recv = flush_after_mem_recv;
     call.bench.read_first_poll_loop = read_first_poll_loop;
     call.decode_response_incrementally = decode_response_incrementally;
-    call.direct_response_payload = direct_response_payload && decode_response_incrementally && response_callback_enabled;
+    call.direct_response_payload = direct_response_payload && decode_response_incrementally && read_ahead_delivery;
     call.bench.read_ahead_delivery = read_ahead_delivery && call.direct_response_payload;
     call.queue_response_payloads = call.bench.read_ahead_delivery;
     call.bench.read_ahead_max_messages = read_ahead_max_messages > 0 ? (size_t) read_ahead_max_messages : 0;
     call.bench.read_ahead_max_bytes = read_ahead_max_bytes > 0 ? (size_t) read_ahead_max_bytes : 0;
     call.bench.compact_response_buffer = compact_response_buffer && decode_response_incrementally && !call.direct_response_payload;
     call.bench.response_compact_threshold = response_compact_threshold > 0 ? (size_t) response_compact_threshold : 1;
-    call.observe_payload_copy = bench_observe_payload_copy;
-    call.observe_message_ready = bench_observe_message_ready;
-    call.observe_payload_queued = bench_observe_payload_queued;
-    call.observe_payload_delivered = bench_observe_payload_delivered;
-    call.flush_queue_if_limited = bench_flush_queue_if_limited;
-    if (response_callback_enabled) {
-        call.payload_callback_fci = &response_fci;
-        call.payload_callback_fcc = &response_fcc;
-    }
     if (data_frame_size > 0) {
         call.bench.data_frame_size_cap = (uint32_t) data_frame_size;
     }
@@ -1574,8 +1467,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     array_init(&client_first_flow_control_pause_us);
     array_init(&client_response_header_us);
     array_init(&client_stream_close_us);
-    array_init(&client_first_response_message_ready_us);
-    array_init(&client_last_response_message_ready_us);
     array_init(&client_first_response_callback_done_us);
     array_init(&client_last_response_callback_done_us);
     array_init(&call_window_update_frames_recv);
@@ -1625,12 +1516,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     array_init(&call_decoded_messages);
     array_init(&call_max_response_queue_count);
     array_init(&call_max_response_queue_bytes);
-    array_init(&call_response_queue_wait_us);
-    array_init(&call_max_response_queue_wait_us);
-    array_init(&call_response_payload_string_us);
-    array_init(&call_max_response_payload_string_us);
-    array_init(&call_response_decode_us);
-    array_init(&call_max_response_decode_us);
     array_init(&server_handler_ns);
     array_init(&server_payload_alloc_ns);
     array_init(&server_payload_bytes);
@@ -1673,8 +1558,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         call.bench.first_flow_control_pause_us = 0;
         call.bench.first_response_header_us = 0;
         call.bench.stream_closed_us = 0;
-        call.bench.first_response_message_ready_us = 0;
-        call.bench.last_response_message_ready_us = 0;
         call.bench.first_response_callback_done_us = 0;
         call.bench.last_response_callback_done_us = 0;
         call.bench.call_window_update_frames_recv = 0;
@@ -1736,13 +1619,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         call.bench.call_decoded_messages = 0;
         call.bench.call_max_response_queue_count = 0;
         call.bench.call_max_response_queue_bytes = 0;
-        call.bench.call_response_queue_wait_us = 0;
-        call.bench.call_max_response_queue_wait_us = 0;
         free_queued_response_payloads(&call);
-        call.bench.call_response_payload_string_us = 0;
-        call.bench.call_max_response_payload_string_us = 0;
-        call.bench.call_response_decode_us = 0;
-        call.bench.call_max_response_decode_us = 0;
         call.bench.server_handler_ns = 0;
         call.bench.server_payload_alloc_ns = 0;
         call.bench.server_payload_bytes = 0;
@@ -1806,10 +1683,8 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         }
 
         zend_long decoded_messages = call.bench.call_decoded_messages;
-        uint64_t response_payload_string_us = call.bench.call_response_payload_string_us;
-        uint64_t max_response_payload_string_us = call.bench.call_max_response_payload_string_us;
-        uint64_t response_decode_us = call.bench.call_response_decode_us;
-        uint64_t max_response_decode_us = call.bench.call_max_response_decode_us;
+        uint64_t response_decode_us = 0;
+        uint64_t max_response_decode_us = 0;
         if (response_callback_enabled && !decode_response_incrementally) {
             if (bench_process_response_messages(&call, &response_fci, &response_fcc, &decoded_messages, &response_decode_us, &max_response_decode_us) != 0) {
                 failed++;
@@ -1838,8 +1713,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         add_next_index_long(&client_first_flow_control_pause_us, (zend_long) call.bench.first_flow_control_pause_us);
         add_next_index_long(&client_response_header_us, (zend_long) call.bench.first_response_header_us);
         add_next_index_long(&client_stream_close_us, (zend_long) call.bench.stream_closed_us);
-        add_next_index_long(&client_first_response_message_ready_us, (zend_long) call.bench.first_response_message_ready_us);
-        add_next_index_long(&client_last_response_message_ready_us, (zend_long) call.bench.last_response_message_ready_us);
         add_next_index_long(&client_first_response_callback_done_us, (zend_long) call.bench.first_response_callback_done_us);
         add_next_index_long(&client_last_response_callback_done_us, (zend_long) call.bench.last_response_callback_done_us);
         add_next_index_long(&call_window_update_frames_recv, (zend_long) call.bench.call_window_update_frames_recv);
@@ -1889,12 +1762,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         add_next_index_long(&call_decoded_messages, decoded_messages);
         add_next_index_long(&call_max_response_queue_count, (zend_long) call.bench.call_max_response_queue_count);
         add_next_index_long(&call_max_response_queue_bytes, (zend_long) call.bench.call_max_response_queue_bytes);
-        add_next_index_long(&call_response_queue_wait_us, (zend_long) call.bench.call_response_queue_wait_us);
-        add_next_index_long(&call_max_response_queue_wait_us, (zend_long) call.bench.call_max_response_queue_wait_us);
-        add_next_index_long(&call_response_payload_string_us, (zend_long) response_payload_string_us);
-        add_next_index_long(&call_max_response_payload_string_us, (zend_long) max_response_payload_string_us);
-        add_next_index_long(&call_response_decode_us, (zend_long) response_decode_us);
-        add_next_index_long(&call_max_response_decode_us, (zend_long) max_response_decode_us);
         add_next_index_long(&server_handler_ns, call.bench.server_handler_ns);
         add_next_index_long(&server_payload_alloc_ns, call.bench.server_payload_alloc_ns);
         add_next_index_long(&server_payload_bytes, call.bench.server_payload_bytes);
@@ -2005,8 +1872,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     add_assoc_zval(return_value, "client_first_flow_control_pause_us", &client_first_flow_control_pause_us);
     add_assoc_zval(return_value, "client_response_header_us", &client_response_header_us);
     add_assoc_zval(return_value, "client_stream_close_us", &client_stream_close_us);
-    add_assoc_zval(return_value, "client_first_response_message_ready_us", &client_first_response_message_ready_us);
-    add_assoc_zval(return_value, "client_last_response_message_ready_us", &client_last_response_message_ready_us);
     add_assoc_zval(return_value, "client_first_response_callback_done_us", &client_first_response_callback_done_us);
     add_assoc_zval(return_value, "client_last_response_callback_done_us", &client_last_response_callback_done_us);
     add_assoc_zval(return_value, "call_window_update_frames_recv", &call_window_update_frames_recv);
@@ -2056,12 +1921,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     add_assoc_zval(return_value, "call_decoded_messages", &call_decoded_messages);
     add_assoc_zval(return_value, "call_max_response_queue_count", &call_max_response_queue_count);
     add_assoc_zval(return_value, "call_max_response_queue_bytes", &call_max_response_queue_bytes);
-    add_assoc_zval(return_value, "call_response_queue_wait_us", &call_response_queue_wait_us);
-    add_assoc_zval(return_value, "call_max_response_queue_wait_us", &call_max_response_queue_wait_us);
-    add_assoc_zval(return_value, "call_response_payload_string_us", &call_response_payload_string_us);
-    add_assoc_zval(return_value, "call_max_response_payload_string_us", &call_max_response_payload_string_us);
-    add_assoc_zval(return_value, "call_response_decode_us", &call_response_decode_us);
-    add_assoc_zval(return_value, "call_max_response_decode_us", &call_max_response_decode_us);
     add_assoc_zval(return_value, "server_handler_ns", &server_handler_ns);
     add_assoc_zval(return_value, "server_payload_alloc_ns", &server_payload_alloc_ns);
     add_assoc_zval(return_value, "server_payload_bytes", &server_payload_bytes);

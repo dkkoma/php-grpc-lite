@@ -117,7 +117,6 @@ static bool grpc_lite_diagnostic_build_server_streaming_record(zval *record, ser
     zval connection_record;
     zend_string *service;
     zend_string *method;
-    uint64_t total_us;
 
     if (state == NULL) {
         return false;
@@ -129,7 +128,6 @@ static bool grpc_lite_diagnostic_build_server_streaming_record(zval *record, ser
     }
 
     grpc_lite_diagnostic_split_method(ZSTR_VAL(state->path), ZSTR_LEN(state->path), &service, &method);
-    total_us = state->total_started_us > 0 ? monotonic_us() - state->total_started_us : 0;
 
     array_init(record);
     add_assoc_string(record, "kind", "server_streaming");
@@ -141,23 +139,13 @@ static bool grpc_lite_diagnostic_build_server_streaming_record(zval *record, ser
     add_assoc_string(record, "backend", "http2");
     add_assoc_long(record, "grpc_status_code", status->code);
     add_assoc_long(record, "http_status_code", call->http_status);
-    add_assoc_str(record, "start_unix_nanos", strpprintf(0, "%" PRIu64, state->start_unix_nanos));
-    grpc_lite_diagnostic_add_uint64(record, "duration_us", total_us);
     grpc_lite_diagnostic_add_uint64(record, "message_count", state->delivered_messages);
     if (status->details != NULL && ZSTR_LEN(status->details) > 0) {
         add_assoc_str(record, "grpc_status_details", zend_string_copy(status->details));
     }
 
-    array_init(&timings);
-    grpc_lite_diagnostic_add_uint64(&timings, "setup_us", state->setup_us);
-    grpc_lite_diagnostic_add_uint64(&timings, "submit_us", state->submit_us);
-    grpc_lite_diagnostic_add_uint64(&timings, "initial_send_us", state->initial_send_us);
-    grpc_lite_diagnostic_add_uint64(&timings, "recv_loop_us", state->recv_loop_us);
-    add_assoc_zval(record, "timings", &timings);
-
     array_init(&sizes);
     grpc_lite_diagnostic_add_size(&sizes, "request_bytes", call->request_len);
-    grpc_lite_diagnostic_add_uint64(&sizes, "response_body_bytes", state->delivered_payload_bytes);
     grpc_lite_diagnostic_add_size(&sizes, "bytes_sent", call->bytes_sent);
     grpc_lite_diagnostic_add_size(&sizes, "bytes_received", call->bytes_received);
     add_assoc_zval(record, "sizes", &sizes);
@@ -171,8 +159,8 @@ static bool grpc_lite_diagnostic_build_server_streaming_record(zval *record, ser
     add_assoc_zval(record, "http2", &http2);
 
     array_init(&connection_record);
-    add_assoc_bool(&connection_record, "reused", state->persistent_reused);
-    add_assoc_bool(&connection_record, "persistent_reused", state->persistent_reused);
+    add_assoc_bool(&connection_record, "reused", false);
+    add_assoc_bool(&connection_record, "persistent_reused", false);
     add_assoc_bool(&connection_record, "dead", connection->dead);
     add_assoc_bool(&connection_record, "draining", connection->draining);
     add_assoc_zval(record, "connection", &connection_record);

@@ -185,7 +185,6 @@ ZEND_END_ARG_INFO()
 
 typedef struct queued_payload {
     zend_string *payload;
-    uint64_t ready_abs_us;
     struct queued_payload *next;
 } queued_payload;
 
@@ -217,12 +216,6 @@ typedef struct {
     zval initial_metadata;
     zval trailing_metadata;
 } grpc_lite_streaming_next_result;
-
-typedef void (*grpc_call_payload_copy_observer)(grpc_call *call, uint64_t elapsed_us);
-typedef void (*grpc_call_message_ready_observer)(grpc_call *call, uint64_t ready_abs_us);
-typedef void (*grpc_call_payload_queued_observer)(grpc_call *call);
-typedef void (*grpc_call_payload_delivered_observer)(grpc_call *call, uint64_t ready_abs_us, uint64_t callback_started_abs_us, uint64_t elapsed_us);
-typedef int (*grpc_call_queue_limit_observer)(grpc_call *call);
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 typedef struct {
@@ -282,8 +275,6 @@ typedef struct {
     uint64_t first_flow_control_pause_us;
     uint64_t first_response_header_us;
     uint64_t stream_closed_us;
-    uint64_t first_response_message_ready_us;
-    uint64_t last_response_message_ready_us;
     uint64_t first_response_callback_done_us;
     uint64_t last_response_callback_done_us;
     size_t response_data_bytes;
@@ -296,15 +287,9 @@ typedef struct {
     size_t read_ahead_max_bytes;
     size_t call_max_response_queue_count;
     size_t call_max_response_queue_bytes;
-    uint64_t call_response_queue_wait_us;
-    uint64_t call_max_response_queue_wait_us;
     bool compact_response_buffer;
     size_t response_compact_threshold;
     zend_long call_decoded_messages;
-    uint64_t call_response_payload_string_us;
-    uint64_t call_max_response_payload_string_us;
-    uint64_t call_response_decode_us;
-    uint64_t call_max_response_decode_us;
     size_t call_body_compact_count;
     size_t call_body_compact_bytes;
     uint64_t call_body_compact_us;
@@ -397,6 +382,7 @@ struct _grpc_call {
     size_t response_message_count;
     size_t max_response_messages;
     size_t max_receive_message_bytes;
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     size_t bytes_sent;
     size_t bytes_received;
     size_t data_read_calls;
@@ -411,6 +397,7 @@ struct _grpc_call {
     size_t sent_frames;
     size_t recv_frames;
     size_t not_sent_frames;
+#endif
     bool timed_out;
     int last_io_errno;
     int last_ssl_error;
@@ -423,13 +410,8 @@ struct _grpc_call {
     queued_payload *response_queue_tail;
     size_t response_queue_count;
     size_t response_queue_bytes;
-    zend_fcall_info *payload_callback_fci;
-    zend_fcall_info_cache *payload_callback_fcc;
-    grpc_call_payload_copy_observer observe_payload_copy;
-    grpc_call_message_ready_observer observe_message_ready;
-    grpc_call_payload_queued_observer observe_payload_queued;
-    grpc_call_payload_delivered_observer observe_payload_delivered;
-    grpc_call_queue_limit_observer flush_queue_if_limited;
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+#endif
     metadata_entry *metadata_head;
     metadata_entry *metadata_tail;
     size_t metadata_entry_count;
@@ -530,17 +512,9 @@ struct server_streaming_call_state {
     zval metadata;
     char *recv_buf;
     size_t recv_buf_len;
-    uint64_t start_unix_nanos;
-    uint64_t total_started_us;
-    uint64_t setup_us;
-    uint64_t submit_us;
-    uint64_t initial_send_us;
-    uint64_t recv_loop_us;
     uint64_t delivered_messages;
-    uint64_t delivered_payload_bytes;
     bool completed;
     bool cancelled;
-    bool persistent_reused;
 };
 
 
@@ -615,8 +589,6 @@ static void free_request_headers(h2_request_headers *headers);
 static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
-static int deliver_response_payload(grpc_call *call, zend_string *payload, uint64_t ready_abs_us);
-static int deliver_queued_response_payloads(grpc_call *call);
 static void free_queued_response_payloads(grpc_call *call);
 static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
 static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);

@@ -20,7 +20,9 @@ PHP_INI_END()
 #include "protocol_core.c"
 #include "status_core.c"
 #include "transport.c"
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
 #include "diagnostic.c"
+#endif
 #include "unary_call.c"
 #include "server_streaming_call.c"
 #include "bridge.c"
