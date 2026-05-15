@@ -97,6 +97,7 @@ services:
     working_dir: /workspace
     environment:
       HOME: /var/www
+      NATIVE_GRPC_SO: ${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}
       SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
       DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
       DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
@@ -108,8 +109,8 @@ services:
       - |
         mkdir -p /workspace/tools/benchmark/laravel-spanner-app/storage/framework/spanner /workspace/tools/benchmark/laravel-spanner-app/storage/framework/views /workspace/tools/benchmark/laravel-spanner-app/storage/logs /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
         chown -R www-data:www-data /workspace/tools/benchmark/laravel-spanner-app/storage /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
-        su -s /bin/sh www-data -c 'php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
-        exec php-fpm -F -d extension=/workspace/ext/grpc/modules/grpc.so
+        su -s /bin/sh www-data -c 'php -d extension=${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so} /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
+        exec php-fpm -F -d extension=${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}
     depends_on:
       - test-server
       - spanner-emulator
@@ -126,6 +127,7 @@ services:
     working_dir: /workspace
     environment:
       HOME: /var/www
+      NATIVE_GRPC_SO: ${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}
       SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
       DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
       DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
@@ -137,8 +139,8 @@ services:
       - |
         mkdir -p /workspace/tools/benchmark/laravel-spanner-app/storage/framework/spanner /workspace/tools/benchmark/laravel-spanner-app/storage/framework/views /workspace/tools/benchmark/laravel-spanner-app/storage/logs /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
         chown -R www-data:www-data /workspace/tools/benchmark/laravel-spanner-app/storage /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache
-        su -s /bin/sh www-data -c 'php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
-        exec php-fpm -F -d extension=/workspace/ext/grpc/modules/grpc.so
+        su -s /bin/sh www-data -c 'php -d extension=${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so} /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
+        exec php-fpm -F -d extension=${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}
     depends_on:
       - test-server
       - spanner-emulator
@@ -155,6 +157,7 @@ services:
     working_dir: /workspace
     environment:
       HOME: /var/www
+      NATIVE_GRPC_SO: ${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}
       SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
       DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
       DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
@@ -167,8 +170,8 @@ services:
       - |
         mkdir -p /workspace/tools/benchmark/laravel-spanner-app/storage/framework/spanner /workspace/tools/benchmark/laravel-spanner-app/storage/framework/views /workspace/tools/benchmark/laravel-spanner-app/storage/logs /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache /workspace/$$FPM_CALLGRIND_LOG_DIR
         chown -R www-data:www-data /workspace/tools/benchmark/laravel-spanner-app/storage /workspace/tools/benchmark/laravel-spanner-app/bootstrap/cache /workspace/$$FPM_CALLGRIND_LOG_DIR
-        su -s /bin/sh www-data -c 'php -d extension=/workspace/ext/grpc/modules/grpc.so /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
-        exec valgrind --tool=callgrind --trace-children=yes --instr-atstart=yes --callgrind-out-file=/workspace/$$FPM_CALLGRIND_LOG_DIR/callgrind.out.%p php-fpm -F -d extension=/workspace/ext/grpc/modules/grpc.so
+        su -s /bin/sh www-data -c 'php -d extension=${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so} /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
+        exec valgrind --tool=callgrind --trace-children=yes --instr-atstart=yes --callgrind-out-file=/workspace/$$FPM_CALLGRIND_LOG_DIR/callgrind.out.%p php-fpm -F -d extension=${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}
     depends_on:
       - test-server
       - spanner-emulator

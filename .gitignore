@@ -69,3 +69,7 @@ ext/grpc/tests/*.log
 ext/grpc/tests/*.out
 ext/grpc/tests/*.php
 ext/grpc/tests/*.sh
+
+# Tagged extension build artifacts
+var/tag-builds/
+var/tag-so/
