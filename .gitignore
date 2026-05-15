@@ -75,3 +75,4 @@ var/tag-builds/
 var/tag-so/
 var/official-ext-grpc-builds/
 var/official-ext-grpc-so/
+var/current-grpc-lite-so/
