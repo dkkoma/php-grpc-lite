@@ -43,6 +43,8 @@ Branch: main
 - FPM fixtureでは `NATIVE_GRPC_SO=/workspace/var/official-ext-grpc-so/1.58.0/grpc.so` を指定し、`php -n -d extension=...` で `phpversion("grpc") === 1.58.0` を確認した。
 - `grpc-lite` は現行 `main` の `/workspace/ext/grpc/modules/grpc.so`、比較対象は公式 `ext-grpc 1.58.0` のso。今回はバージョン合わせのみで、実アプリのビルド条件差は未反映。
 - 現在のdevコンテナは `gcc (Debian 14.2.0-19) 14.2.0` / `PHP 8.4.20`。実アプリで使った `GCC 15` 条件にもまだ揃っていない。
+- `tools/dev/build-official-ext-grpc-so.sh` に `default` / `optimized` profileを追加し、`ext-grpc 1.58.0` を `-O3 -flto -fno-semantic-interposition` 付きでビルドできるようにした。
+- `var/official-ext-grpc-so/1.58.0-optimized/grpc.so` を作成し、GCC 14のまま `grpc-lite` 通常ビルド vs `ext-grpc 1.58.0 optimized` を比較した。
 
 ## 検証
 
@@ -79,6 +81,30 @@ real Spanner / Laravel FPM / 16 workers / 4 CPU limit / worker warmupあり。
 - `dml_insert_10col` はc4〜c32で1.03〜1.12x程度で、1.5x差の主因には見えていない。
 - mixed transactionは1.30xで、select系より差が大きい可能性はあるが、まだ1.5xには届いていない。
 - 次に再現性を上げるなら、バージョンだけでなく実アプリ条件の非対称ビルド差、CPU制限、worker/client比、長時間sustainでCPU集計窓を広げる必要がある。
+
+### ext-grpc 1.58.0 optimized比較
+
+GCCはdevコンテナ既定の14.2.0のまま。`grpc-lite` は通常ビルド、`ext-grpc 1.58.0` だけ `-O3 -flto -fno-semantic-interposition` 付き。
+
+| concurrency | requests | action | grpc-lite cpu_us/req | ext-grpc 1.58 optimized cpu_us/req | ratio |
+|---:|---:|---|---:|---:|---:|
+| 4 | 96 | select_1row_10col | 9952.6 | 7169.6 | 1.39x |
+| 4 | 96 | dml_insert_10col | 8461.1 | 7999.9 | 1.06x |
+| 4 | 96 | transaction_select2_update1_insert1 | 13036.9 | 9965.9 | 1.31x |
+| 16 | 192 | select_1row_10col | 14897.7 | 13283.4 | 1.12x |
+| 16 | 192 | dml_insert_10col | 9567.9 | 8359.6 | 1.14x |
+| 16 | 192 | transaction_select2_update1_insert1 | 13453.2 | 9622.7 | 1.40x |
+| 8 | 96 | transaction_select2_update1_insert1 | 13196.0 | 11073.4 | 1.19x |
+| 32 | 384 | transaction_select2_update1_insert1 | 12861.1 | 9553.7 | 1.35x |
+| 16 | 192 | transaction_select2_update1_insert1 repeat 1 | 12956.7 | 9652.3 | 1.34x |
+| 16 | 192 | transaction_select2_update1_insert1 repeat 2 | 12786.0 | 10038.7 | 1.27x |
+| 16 | 512 | transaction_select2_update1_insert1 long | 13353.2 | 9700.2 | 1.38x |
+
+判断:
+
+- ext-grpcだけを最適化すると、バージョン合わせのみよりCPU差は広がった。
+- 差が最も安定して大きいのは mixed transaction 系で、c16 付近ではおおむね 1.3〜1.4x。
+- この条件でも安定した 1.5x にはまだ届いていない。実アプリの 1.5x は、GCC 15差、実アプリ固有のエンドポイント構成、またはCPU集計窓・負荷条件の違いが重なっている可能性が高い。
 
 ## 完了条件
 
