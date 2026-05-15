@@ -288,6 +288,10 @@ static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
         zend_string_release(obj->primary_user_agent);
         obj->primary_user_agent = NULL;
     }
+    if (obj->connection_key != NULL) {
+        zend_string_release(obj->connection_key);
+        obj->connection_key = NULL;
+    }
     zval_ptr_dtor(&obj->credentials);
     ZVAL_UNDEF(&obj->credentials);
     zval_ptr_dtor(&obj->franken_channel);
@@ -438,6 +442,23 @@ static int split_target_to_host_port(zend_string *target, zend_string **host, ze
     return SUCCESS;
 }
 
+static zend_string *grpc_lite_build_channel_key(grpc_lite_channel_obj *channel)
+{
+    grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
+    return strpprintf(0, "%s|%ld|%s|%s|%d|%zu:%lu|%zu:%lu|%zu:%lu",
+        ZSTR_VAL(channel->host),
+        channel->port,
+        channel->authority != NULL ? ZSTR_VAL(channel->authority) : "",
+        channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : "",
+        credentials->type,
+        credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
+        credentials->root_certs != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->root_certs), ZSTR_LEN(credentials->root_certs)) : 0,
+        credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
+        credentials->cert_chain != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->cert_chain), ZSTR_LEN(credentials->cert_chain)) : 0,
+        credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
+        credentials->private_key != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->private_key), ZSTR_LEN(credentials->private_key)) : 0);
+}
+
 PHP_METHOD(Channel, __construct)
 {
     zend_string *target;
@@ -543,6 +564,9 @@ PHP_METHOD(Channel, __construct)
         zend_throw_exception(NULL, error_message, 0);
         RETURN_THROWS();
     }
+    if (obj->backend == GRPC_LITE_BACKEND_HTTP2) {
+        obj->connection_key = grpc_lite_build_channel_key(obj);
+    }
     if (obj->backend == GRPC_LITE_BACKEND_FRANKEN_GO && grpc_lite_construct_franken_channel(obj, target, opts) != SUCCESS) {
         grpc_lite_channel_clear_fields(obj);
         RETURN_THROWS();
@@ -560,28 +584,9 @@ PHP_METHOD(Channel, getTarget)
     RETURN_STR_COPY(Z_GRPC_LITE_CHANNEL_P(ZEND_THIS)->target);
 }
 
-static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key)
-{
-    grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
-    *key = strpprintf(0, "%s|%ld|%s|%s|%d|%zu:%lu|%zu:%lu|%zu:%lu",
-        ZSTR_VAL(channel->host),
-        channel->port,
-        channel->authority != NULL ? ZSTR_VAL(channel->authority) : "",
-        channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : "",
-        credentials->type,
-        credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
-        credentials->root_certs != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->root_certs), ZSTR_LEN(credentials->root_certs)) : 0,
-        credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
-        credentials->cert_chain != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->cert_chain), ZSTR_LEN(credentials->cert_chain)) : 0,
-        credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
-        credentials->private_key != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->private_key), ZSTR_LEN(credentials->private_key)) : 0);
-    return SUCCESS;
-}
-
 PHP_METHOD(Channel, close)
 {
     grpc_lite_channel_obj *obj = Z_GRPC_LITE_CHANNEL_P(ZEND_THIS);
-    zend_string *key = NULL;
     ZEND_PARSE_PARAMETERS_NONE();
     if (!obj->initialized) {
         zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
@@ -594,14 +599,16 @@ PHP_METHOD(Channel, close)
         }
         return;
     }
-    grpc_lite_channel_key(obj, &key);
+    if (obj->connection_key == NULL) {
+        zend_throw_exception(NULL, "Grpc\\Channel connection key is not initialized", 0);
+        RETURN_THROWS();
+    }
     if (PHP_GRPC_LITE_G(persistent_connections_initialized)) {
-        persistent_connection_entry *entry = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key);
+        persistent_connection_entry *entry = zend_hash_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), obj->connection_key);
         if (entry != NULL) {
-            discard_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), entry->connection);
+            discard_persistent_connection(ZSTR_VAL(obj->connection_key), ZSTR_LEN(obj->connection_key), entry->connection);
         }
     }
-    zend_string_release(key);
 }
 
 PHP_METHOD(Channel, getConnectivityState)

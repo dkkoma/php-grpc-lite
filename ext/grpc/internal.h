@@ -109,6 +109,7 @@ typedef struct {
     zend_string *authority;
     zend_string *tls_verify_name;
     zend_string *primary_user_agent;
+    zend_string *connection_key;
     zend_long max_receive_message_length;
     size_t max_response_metadata_bytes;
     zval credentials;
@@ -615,7 +616,6 @@ static int server_streaming_call_next_resource(zval *server_streaming_resource_z
 static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value);
 #endif
 static int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv);
-static int grpc_lite_channel_key(grpc_lite_channel_obj *channel, zend_string **key);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static void grpc_lite_diagnostic_add_unary_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status, uint64_t start_unix_nanos, uint64_t total_us, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused);
 static void grpc_lite_diagnostic_add_server_streaming_status(zval *diagnostic_result, server_streaming_call_state *state, grpc_lite_status_result *status);
