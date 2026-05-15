@@ -13,7 +13,7 @@ Branch: main
 
 ## 背景
 
-これまでの比較では公式 `ext-grpc` のバージョンが実アプリ条件と一致していなかった。実アプリ側の比較対象は `ext-grpc 1.58.0` であり、ビルド条件も `php-grpc-lite` と揃えられていた。まずはバージョンだけを合わせ、1.5倍差が見えるかを確認する。
+これまでの比較では公式 `ext-grpc` のバージョンが実アプリ条件と一致していなかった。実アプリ側の比較対象は `ext-grpc 1.58.0`。追加確認により、実アプリ側では `ext-grpc 1.58.0` が LTO / O3 / `-fno-semantic-interposition` 付き、`php-grpc-lite` は通常ビルドで GCC 15 のみだった。まずはバージョンだけを合わせ、1.5倍差が見えるかを確認する。
 
 ## スコープ
 
@@ -24,7 +24,9 @@ Branch: main
 
 ## 非スコープ
 
-- GCC 15 / LTO / O3 / `-fno-semantic-interposition` の完全再現。
+- 実アプリの非対称ビルド条件の完全再現。
+  - `ext-grpc 1.58.0`: GCC 15 + LTO + O3 + `-fno-semantic-interposition`
+  - `php-grpc-lite`: GCC 15のみの通常ビルド
 - 公式ext-grpc 1.58.0のソース改変。
 - 上位レイヤCPU breakdown。
 
@@ -39,7 +41,8 @@ Branch: main
 
 - `tools/dev/build-official-ext-grpc-so.sh 1.58.0` 相当の手順で公式 `ext-grpc 1.58.0` をビルドし、`var/official-ext-grpc-so/1.58.0/grpc.so` を作成した。
 - FPM fixtureでは `NATIVE_GRPC_SO=/workspace/var/official-ext-grpc-so/1.58.0/grpc.so` を指定し、`php -n -d extension=...` で `phpversion("grpc") === 1.58.0` を確認した。
-- `grpc-lite` は現行 `main` の `/workspace/ext/grpc/modules/grpc.so`、比較対象は公式 `ext-grpc 1.58.0` のso。今回はバージョン合わせのみで、GCC 15 / LTO / O3 / `-fno-semantic-interposition` は未反映。
+- `grpc-lite` は現行 `main` の `/workspace/ext/grpc/modules/grpc.so`、比較対象は公式 `ext-grpc 1.58.0` のso。今回はバージョン合わせのみで、実アプリのビルド条件差は未反映。
+- 現在のdevコンテナは `gcc (Debian 14.2.0-19) 14.2.0` / `PHP 8.4.20`。実アプリで使った `GCC 15` 条件にもまだ揃っていない。
 
 ## 検証
 
@@ -75,7 +78,7 @@ real Spanner / Laravel FPM / 16 workers / 4 CPU limit / worker warmupあり。
 - 単発では `c4 select` で1.38x、反復1回目で3.44xが出たが、反復2〜3回目では差が消えており、現時点では「1.5x CPU差が安定再現する負荷条件」とは言えない。
 - `dml_insert_10col` はc4〜c32で1.03〜1.12x程度で、1.5x差の主因には見えていない。
 - mixed transactionは1.30xで、select系より差が大きい可能性はあるが、まだ1.5xには届いていない。
-- 次に再現性を上げるなら、バージョンだけでなく実アプリ条件のビルドフラグ差、CPU制限、worker/client比、長時間sustainでCPU集計窓を広げる必要がある。
+- 次に再現性を上げるなら、バージョンだけでなく実アプリ条件の非対称ビルド差、CPU制限、worker/client比、長時間sustainでCPU集計窓を広げる必要がある。
 
 ## 完了条件
 
@@ -84,7 +87,9 @@ real Spanner / Laravel FPM / 16 workers / 4 CPU limit / worker warmupあり。
 
 ## 次に見る候補
 
-1. GCC 15 / O3 / LTO / `-fno-semantic-interposition` のビルド条件も合わせる。
+1. 実アプリの非対称ビルド条件を合わせる。
+   - `ext-grpc 1.58.0`: GCC 15 + O3 + LTO + `-fno-semantic-interposition`
+   - `php-grpc-lite`: GCC 15 通常ビルド
 2. `transaction_select2_update1_insert1` を長めに反復し、CPU/requestの揺れを下げる。
 3. FPM CPU limit / worker数 / client concurrencyを実アプリ条件に寄せる。
 4. `perf` / `callgrind` は、差が安定再現する条件が見えた後に限定して実施する。
