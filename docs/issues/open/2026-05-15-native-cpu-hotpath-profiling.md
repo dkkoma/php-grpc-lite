@@ -171,3 +171,51 @@ FastCGI sequential CPU runner:
 - native/ext-grpcの差は固定件数でCPU/request約12%、RPS約8%だが、単一runのmax outlierが大きい。30秒sustainの再計測ではtailはext-grpcとほぼ同等まで戻る。
 - `bench/fpm-laravel-spanner-cpu-compare.sh` がFPM ready待ちなしで起動直後に失敗する問題を見つけ、`docs/issues/closed/2026-05-15-fpm-fastcgi-cpu-runner-readiness.md` で修正した。
 - `strace -c` では `setsockopt` は10 iterationsで4回のみで、以前のdeadline I/O hot pathは再発していない。
+
+## 2026-05-16 0.0.2 / 0.0.3 grpc.so comparison under non-saturated real Spanner load
+
+タグ別 `grpc.so` を使い、PHP userland / Laravel fixture / benchmark runnerは現在の `main` のまま、native extension binaryだけを切り替えて比較した。`tools/dev/build-tag-so.sh 0.0.2` で `var/tag-so/0.0.2/grpc.so` を作成し、`NATIVE_GRPC_SO` でFPM native serviceへ差し替えた。
+
+条件:
+
+- real Cloud Spanner: `vast-falcon-165704` / `bench` / `laravel-bench-db`
+- FPM workers: 16
+- client concurrency: 4
+- requests: 128 per action per run
+- actions: `select_1row_10col`, `dml_insert_10col`
+- variants: native only
+- repeats: 3
+
+Raw results:
+
+| so | run | action | RPS | CPU/req | avg | p50 | p90 | max |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.0.2 | 1 | select | 76.4654 | 11940.7µs | 50.1ms | 45.3ms | 65.7ms | 155.1ms |
+| 0.0.2 | 2 | select | 86.8225 | 11006.1µs | 45.7ms | 44.5ms | 53.6ms | 65.1ms |
+| 0.0.2 | 3 | select | 88.9657 | 10393.7µs | 44.0ms | 42.0ms | 51.9ms | 61.9ms |
+| 0.0.3 | 1 | select | 88.5252 | 9945.9µs | 44.4ms | 43.0ms | 52.5ms | 62.0ms |
+| 0.0.3 | 2 | select | 77.3588 | 14444.3µs | 49.5ms | 47.1ms | 59.4ms | 106.5ms |
+| 0.0.3 | 3 | select | 75.5869 | 16474.0µs | 51.9ms | 51.3ms | 61.5ms | 71.8ms |
+| 0.0.2 | 1 | dml insert | 34.7341 | 15889.1µs | 113.1ms | 111.1ms | 146.9ms | 213.4ms |
+| 0.0.2 | 2 | dml insert | 34.3171 | 13021.4µs | 116.3ms | 115.4ms | 152.0ms | 209.7ms |
+| 0.0.2 | 3 | dml insert | 32.5531 | 12483.0µs | 121.8ms | 115.6ms | 166.0ms | 273.1ms |
+| 0.0.3 | 1 | dml insert | 57.0169 | 11519.4µs | 68.7ms | 61.3ms | 103.6ms | 133.1ms |
+| 0.0.3 | 2 | dml insert | 64.4876 | 12709.0µs | 61.2ms | 57.8ms | 75.4ms | 121.6ms |
+| 0.0.3 | 3 | dml insert | 58.3394 | 17944.8µs | 68.0ms | 62.1ms | 77.8ms | 235.5ms |
+
+Median summary:
+
+| action | so | median RPS | median CPU/req | median p50 | 判断 |
+| --- | --- | ---: | ---: | ---: | --- |
+| select | 0.0.2 | 86.8225 | 11006.1µs | 44.5ms | baseline |
+| select | 0.0.3 | 77.3588 | 14444.3µs | 47.1ms | run間の揺れが大きく、改善とは言えない |
+| dml insert | 0.0.2 | 34.3171 | 13021.4µs | 115.4ms | baseline |
+| dml insert | 0.0.3 | 58.3394 | 12709.0µs | 61.3ms | wall/RPSは良いがCPU/reqは同等程度 |
+
+判断:
+
+- 1worker/1clientでは0.0.2/0.0.3のCPU/req差はほぼ同等だった。
+- 16worker/4clientではDMLのwall/RPSが0.0.3で大きく改善したが、CPU/reqは中央値で約2.4%改善に留まる。
+- selectは0.0.3のrun間揺れが大きく、中央値では悪化した。単発で見えたCPU改善は安定した差ではない。
+- request header inline/growとdeadline I/O削減は構造改善として妥当だが、real Spanner + Laravel endpoint全体のCPU/reqを大きく変える支配要因ではない。
+- このリポジトリ側のnative transport改善だけで、実アプリCPU効率を大きく改善できる余地は現時点では薄い。次に見るなら `google/cloud-spanner` / `colopl/laravel-spanner` / protobuf / Laravel request lifecycle のCPU breakdownを分ける。
