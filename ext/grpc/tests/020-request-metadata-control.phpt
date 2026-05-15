@@ -39,6 +39,25 @@ $serverSeen = static function (string $observedKey, array $metadata) use ($clien
     return $values;
 };
 
+$serverStreamSeen = static function (string $observedKey, array $metadata) use ($client): array {
+    $request = new BenchRequest();
+    $request->setMessageCount(1);
+    $call = $client->BenchServerStream($request, $metadata);
+    foreach ($call->responses() as $_reply) {
+    }
+    grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $call->getStatus()->code, 'server streaming metadata control status');
+
+    $responseMetadata = $call->getMetadata();
+    grpc_lite_phpt_assert_same($observedKey, $responseMetadata['x-bench-seen-000-key-bin'][0] ?? null, 'server streaming observed metadata key');
+    $count = (int) ($responseMetadata['x-bench-seen-000-count'][0] ?? 0);
+    $values = [];
+    for ($index = 0; $index < $count; $index++) {
+        $valueKey = sprintf('x-bench-seen-000-value-%03d-bin', $index);
+        $values[] = $responseMetadata[$valueKey][0] ?? null;
+    }
+    return $values;
+};
+
 $seen = $serverSeen('user-agent', [
     'x-bench-observe-metadata-key' => ['user-agent'],
     'user-agent' => ['user-agent-override'],
@@ -59,6 +78,19 @@ grpc_lite_phpt_assert_same(["\x00\x01\xff"], $serverSeen('x-bench-raw-bin', [
     'x-bench-observe-metadata-key' => ['x-bench-raw-bin'],
     'x-bench-raw-bin' => ["\x00\x01\xff"],
 ]), 'raw binary metadata value');
+
+$growValues = [];
+for ($index = 0; $index < 24; $index++) {
+    $growValues[] = sprintf('value-%02d', $index);
+}
+grpc_lite_phpt_assert_same($growValues, $serverSeen('x-bench-grow', [
+    'x-bench-observe-metadata-key' => ['x-bench-grow'],
+    'x-bench-grow' => $growValues,
+]), 'unary metadata values across inline growth boundary');
+grpc_lite_phpt_assert_same($growValues, $serverStreamSeen('x-bench-grow', [
+    'x-bench-observe-metadata-key' => ['x-bench-grow'],
+    'x-bench-grow' => $growValues,
+]), 'server streaming metadata values across inline growth boundary');
 
 $assertInvalidMetadata = static function (array $metadata) use ($client): void {
     grpc_lite_phpt_expect_throw(static function () use ($client, $metadata): void {

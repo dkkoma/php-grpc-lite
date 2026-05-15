@@ -60,8 +60,7 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
 static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
 static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
-static size_t count_custom_header_values(zval *headers_zv);
-static int init_request_headers(h2_request_headers *headers, size_t custom_values);
+static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
@@ -1697,53 +1696,64 @@ static void add_status_result_to_return(zval *return_value, grpc_lite_status_res
     add_assoc_str(return_value, "status_details", status->details != NULL ? zend_string_copy(status->details) : zend_empty_string);
 }
 
-static size_t count_custom_header_values(zval *headers_zv)
+static int init_request_headers(h2_request_headers *headers)
 {
-    size_t count = 0;
-    zend_string *key;
-    zval *value;
-
-    if (headers_zv == NULL || Z_TYPE_P(headers_zv) != IS_ARRAY) {
-        return 0;
-    }
-
-    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), key, value) {
-        if (key == NULL) {
-            continue;
-        }
-        if (Z_TYPE_P(value) == IS_ARRAY) {
-            zval *nested;
-            ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), nested) {
-                count++;
-            } ZEND_HASH_FOREACH_END();
-            continue;
-        }
-        count++;
-    } ZEND_HASH_FOREACH_END();
-
-    return count;
-}
-
-static int init_request_headers(h2_request_headers *headers, size_t custom_values)
-{
-    if (custom_values > GRPC_LITE_MAX_REQUEST_METADATA_VALUES || custom_values > SIZE_MAX - 7) {
-        zend_throw_exception(NULL, "gRPC request metadata exceeds maximum count", 0);
-        return -1;
-    }
-    headers->capacity = 7 + custom_values;
+    headers->capacity = GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY;
     headers->len = 0;
     headers->name_count = 0;
     headers->value_count = 0;
-    headers->nva = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(nghttp2_nv));
-    headers->name_strings = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(zend_string *));
-    headers->value_strings = ecalloc(headers->capacity == 0 ? 1 : headers->capacity, sizeof(zend_string *));
+    headers->custom_value_count = 0;
+    headers->nva = headers->inline_nva;
+    headers->name_strings = headers->inline_name_strings;
+    headers->value_strings = headers->inline_value_strings;
     return 0;
+}
+
+static void grow_request_headers(h2_request_headers *headers)
+{
+    size_t new_capacity = headers->capacity * 2;
+    nghttp2_nv *new_nva;
+    zend_string **new_name_strings;
+    zend_string **new_value_strings;
+
+    if (new_capacity < headers->capacity || new_capacity > GRPC_LITE_MAX_REQUEST_METADATA_VALUES + 7) {
+        new_capacity = GRPC_LITE_MAX_REQUEST_METADATA_VALUES + 7;
+    }
+    if (new_capacity <= headers->capacity) {
+        return;
+    }
+
+    new_nva = ecalloc(new_capacity, sizeof(nghttp2_nv));
+    new_name_strings = ecalloc(new_capacity, sizeof(zend_string *));
+    new_value_strings = ecalloc(new_capacity, sizeof(zend_string *));
+
+    memcpy(new_nva, headers->nva, headers->len * sizeof(nghttp2_nv));
+    memcpy(new_name_strings, headers->name_strings, headers->name_count * sizeof(zend_string *));
+    memcpy(new_value_strings, headers->value_strings, headers->value_count * sizeof(zend_string *));
+
+    if (headers->nva != headers->inline_nva) {
+        efree(headers->nva);
+    }
+    if (headers->name_strings != headers->inline_name_strings) {
+        efree(headers->name_strings);
+    }
+    if (headers->value_strings != headers->inline_value_strings) {
+        efree(headers->value_strings);
+    }
+
+    headers->nva = new_nva;
+    headers->name_strings = new_name_strings;
+    headers->value_strings = new_value_strings;
+    headers->capacity = new_capacity;
 }
 
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
 {
     if (headers->len >= headers->capacity) {
-        return;
+        grow_request_headers(headers);
+        if (headers->len >= headers->capacity) {
+            return;
+        }
     }
     headers->nva[headers->len++] = (nghttp2_nv) {
         (uint8_t *) name,
@@ -1889,7 +1899,14 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
         zend_throw_exception(NULL, "gRPC request metadata value must be a string", 0);
         return -1;
     }
-    if (headers->name_strings == NULL || headers->value_strings == NULL || headers->name_count >= headers->capacity || headers->value_count >= headers->capacity) {
+    if (headers->custom_value_count >= GRPC_LITE_MAX_REQUEST_METADATA_VALUES) {
+        zend_throw_exception(NULL, "gRPC request metadata exceeds maximum count", 0);
+        return -1;
+    }
+    if (headers->len >= headers->capacity || headers->name_count >= headers->capacity || headers->value_count >= headers->capacity) {
+        grow_request_headers(headers);
+    }
+    if (headers->name_strings == NULL || headers->value_strings == NULL || headers->len >= headers->capacity || headers->name_count >= headers->capacity || headers->value_count >= headers->capacity) {
         zend_throw_exception(NULL, "gRPC request metadata exceeds maximum count", 0);
         return -1;
     }
@@ -1912,6 +1929,7 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
         headers->value_strings[headers->value_count++] = value_str;
     }
     append_request_header(headers, ZSTR_VAL(name_str), ZSTR_LEN(name_str), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    headers->custom_value_count++;
     return 0;
 }
 
@@ -1956,7 +1974,9 @@ static void free_request_headers(h2_request_headers *headers)
                 zend_string_release(headers->name_strings[i]);
             }
         }
-        efree(headers->name_strings);
+        if (headers->name_strings != headers->inline_name_strings) {
+            efree(headers->name_strings);
+        }
     }
     if (headers->value_strings != NULL) {
         for (i = 0; i < headers->value_count; i++) {
@@ -1964,9 +1984,11 @@ static void free_request_headers(h2_request_headers *headers)
                 zend_string_release(headers->value_strings[i]);
             }
         }
-        efree(headers->value_strings);
+        if (headers->value_strings != headers->inline_value_strings) {
+            efree(headers->value_strings);
+        }
     }
-    if (headers->nva != NULL) {
+    if (headers->nva != NULL && headers->nva != headers->inline_nva) {
         efree(headers->nva);
     }
     headers->nva = NULL;
@@ -1976,6 +1998,7 @@ static void free_request_headers(h2_request_headers *headers)
     headers->capacity = 0;
     headers->name_count = 0;
     headers->value_count = 0;
+    headers->custom_value_count = 0;
 }
 
 static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)

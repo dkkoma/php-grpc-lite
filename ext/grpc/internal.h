@@ -69,6 +69,8 @@ static zend_object_handlers grpc_timeval_handlers;
 #define GRPC_STATUS_DATA_LOSS 15
 #define GRPC_STATUS_UNAUTHENTICATED 16
 
+#define GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY 16
+
 #define GRPC_OP_SEND_INITIAL_METADATA 0
 #define GRPC_OP_SEND_MESSAGE 1
 #define GRPC_OP_SEND_CLOSE_FROM_CLIENT 2
@@ -448,6 +450,10 @@ typedef struct {
     size_t name_count;
     zend_string **value_strings;
     size_t value_count;
+    size_t custom_value_count;
+    nghttp2_nv inline_nva[GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY];
+    zend_string *inline_name_strings[GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY];
+    zend_string *inline_value_strings[GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY];
 } h2_request_headers;
 
 struct _h2_connection {
@@ -579,8 +585,7 @@ static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t va
 static int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled);
 static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
 static const char *validate_grpc_path(const char *path, size_t path_len);
-static size_t count_custom_header_values(zval *headers_zv);
-static int init_request_headers(h2_request_headers *headers, size_t custom_values);
+static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);

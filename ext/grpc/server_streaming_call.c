@@ -98,7 +98,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     state->call.queue_response_payloads = true;
     grpc_protocol_set_message_header(&state->call, state->call.request_len);
 
-    if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
+    if (init_request_headers(&request_headers) != 0) {
         destroy_server_streaming_call_state(state);
         return FAILURE;
     }

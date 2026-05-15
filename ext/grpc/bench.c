@@ -1431,7 +1431,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     }
 
     snprintf(authority, sizeof(authority), "%s:%ld", host, port);
-    if (init_request_headers(&request_headers, count_custom_header_values(headers_zv)) != 0) {
+    if (init_request_headers(&request_headers) != 0) {
         close(call.fd);
         nghttp2_session_del(session);
         nghttp2_session_callbacks_del(callbacks);
