@@ -79,8 +79,9 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
 
     state = ecalloc(1, sizeof(server_streaming_call_state));
     state->request = zend_string_init(request, request_len, 0);
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     state->path = zend_string_init(path, path_len, 0);
-    ZVAL_COPY(&state->metadata, headers_zv);
+#endif
     state->recv_buf_len = 65536;
     state->recv_buf = emalloc(state->recv_buf_len);
 

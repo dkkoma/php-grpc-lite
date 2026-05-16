@@ -497,8 +497,9 @@ struct persistent_connection_entry {
 struct server_streaming_call_state {
     grpc_call call;
     zend_string *request;
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zend_string *path;
-    zval metadata;
+#endif
     char *recv_buf;
     size_t recv_buf_len;
     uint64_t delivered_messages;
