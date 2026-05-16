@@ -6,7 +6,6 @@ require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
-use Grpc\ChannelCredentials;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
@@ -79,12 +78,6 @@ register_shutdown_function([$benchTelemetry, 'shutdown']);
 $clientOptions = ['php_grpc_lite.native_response_mode' => $nativeResponseMode];
 $unaryClient = UnaryBenchHelper::client($target, $clientOptions);
 $streamingClient = StreamingBenchHelper::client($target, $clientOptions);
-$tlsTarget = 'test-server:50052';
-$tlsUnaryClient = null;
-$tlsStreamingClient = null;
-$callCredentialsOptions = [
-    'call_credentials_callback' => static fn (): array => ['authorization' => ['Bearer cpu-micro-token']],
-];
 
 $cases = [
     [
@@ -95,19 +88,6 @@ $cases = [
         'request_bytes' => 100,
         'response_bytes' => 100,
         'message_count' => 1,
-        'target' => $target,
-    ],
-    [
-        'name' => 'small_unary_100b_call_credentials',
-        'call_type' => 'unary',
-        'client_scope' => 'reused',
-        'request' => unaryRequest(100, 100),
-        'request_bytes' => 100,
-        'response_bytes' => 100,
-        'message_count' => 1,
-        'target' => $tlsTarget,
-        'secure' => true,
-        'call_options' => $callCredentialsOptions,
     ],
     [
         'name' => 'new_client_unary_100b',
@@ -117,7 +97,6 @@ $cases = [
         'request_bytes' => 100,
         'response_bytes' => 100,
         'message_count' => 1,
-        'target' => $target,
     ],
     [
         'name' => 'begin_txn_unary',
@@ -127,7 +106,6 @@ $cases = [
         'request_bytes' => 92,
         'response_bytes' => 18,
         'message_count' => 1,
-        'target' => $target,
     ],
     [
         'name' => 'commit_txn_unary',
@@ -137,7 +115,6 @@ $cases = [
         'request_bytes' => 106,
         'response_bytes' => 14,
         'message_count' => 1,
-        'target' => $target,
     ],
     [
         'name' => 'small_streaming_1x100b',
@@ -147,19 +124,6 @@ $cases = [
         'request_bytes' => 100,
         'response_bytes' => 100,
         'message_count' => 1,
-        'target' => $target,
-    ],
-    [
-        'name' => 'small_streaming_1x100b_call_credentials',
-        'call_type' => 'server_streaming',
-        'client_scope' => 'reused',
-        'request' => streamingRequest(1, 100, 100),
-        'request_bytes' => 100,
-        'response_bytes' => 100,
-        'message_count' => 1,
-        'target' => $tlsTarget,
-        'secure' => true,
-        'call_options' => $callCredentialsOptions,
     ],
     [
         'name' => 'new_client_streaming_1x100b',
@@ -169,7 +133,6 @@ $cases = [
         'request_bytes' => 100,
         'response_bytes' => 100,
         'message_count' => 1,
-        'target' => $target,
     ],
     [
         'name' => 'small_streaming_100x100b',
@@ -179,7 +142,6 @@ $cases = [
         'request_bytes' => 100,
         'response_bytes' => 100,
         'message_count' => 100,
-        'target' => $target,
     ],
     [
         'name' => 'select_1row_10col_streaming',
@@ -189,7 +151,6 @@ $cases = [
         'request_bytes' => 160,
         'response_bytes' => 100,
         'message_count' => 1,
-        'target' => $target,
     ],
     [
         'name' => 'dml_insert_10col_streaming',
@@ -199,7 +160,6 @@ $cases = [
         'request_bytes' => 355,
         'response_bytes' => 8,
         'message_count' => 1,
-        'target' => $target,
     ],
     [
         'name' => 'dml_update_10col_streaming',
@@ -209,7 +169,6 @@ $cases = [
         'request_bytes' => 327,
         'response_bytes' => 8,
         'message_count' => 1,
-        'target' => $target,
     ],
     [
         'name' => 'dml_delete_10col_streaming',
@@ -219,7 +178,6 @@ $cases = [
         'request_bytes' => 144,
         'response_bytes' => 8,
         'message_count' => 1,
-        'target' => $target,
     ],
 ];
 
@@ -236,19 +194,18 @@ printf(
 printf("%'-116s\n", '');
 
 foreach ($cases as $case) {
-    $benchTelemetry->setContext($case['name'], commonContext($case['target'], $calls, $warmupCalls, $transport) + [
+    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport) + [
         'benchmark.call_type' => $case['call_type'],
         'benchmark.request_bytes' => $case['request_bytes'],
         'benchmark.response_bytes' => $case['response_bytes'],
         'benchmark.message_count' => $case['message_count'],
         'benchmark.client_scope' => $case['client_scope'],
-        'benchmark.call_credentials' => isset($case['call_options']) ? 'plugin' : 'none',
         'benchmark.native_response_mode' => $nativeResponseMode,
         'benchmark.operation_shape' => $case['name'],
     ]);
 
-    runWarmup($case, $unaryClient, $streamingClient, $tlsUnaryClient, $tlsStreamingClient, $target, $nativeResponseMode, $warmupCalls);
-    $result = measureCase($case, $unaryClient, $streamingClient, $tlsUnaryClient, $tlsStreamingClient, $target, $nativeResponseMode, $calls);
+    runWarmup($case, $unaryClient, $streamingClient, $target, $warmupCalls);
+    $result = measureCase($case, $unaryClient, $streamingClient, $target, $calls);
 
     printf(
         "%-32s %-16s %8d %14.1f %14.1f %14.1f %14.1f\n",
@@ -301,10 +258,10 @@ function commonContext(string $target, int $calls, int $warmupCalls, string $tra
 }
 
 /** @param array<string, mixed> $case */
-function runWarmup(array $case, object $unaryClient, object $streamingClient, ?object &$tlsUnaryClient, ?object &$tlsStreamingClient, string $target, string $nativeResponseMode, int $warmupCalls): void
+function runWarmup(array $case, object $unaryClient, object $streamingClient, string $target, int $warmupCalls): void
 {
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
-        runOneCall($case, $unaryClient, $streamingClient, $tlsUnaryClient, $tlsStreamingClient, $target, $nativeResponseMode);
+        runOneCall($case, $unaryClient, $streamingClient, $target);
     }
 }
 
@@ -312,12 +269,12 @@ function runWarmup(array $case, object $unaryClient, object $streamingClient, ?o
  * @param array<string, mixed> $case
  * @return array<string, float|int>
  */
-function measureCase(array $case, object $unaryClient, object $streamingClient, ?object &$tlsUnaryClient, ?object &$tlsStreamingClient, string $target, string $nativeResponseMode, int $calls): array
+function measureCase(array $case, object $unaryClient, object $streamingClient, string $target, int $calls): array
 {
     $usageStart = getrusage();
     $startNs = hrtime(true);
     for ($call = 0; $call < $calls; $call++) {
-        runOneCall($case, $unaryClient, $streamingClient, $tlsUnaryClient, $tlsStreamingClient, $target, $nativeResponseMode);
+        runOneCall($case, $unaryClient, $streamingClient, $target);
     }
     $endNs = hrtime(true);
     $usageEnd = getrusage();
@@ -342,35 +299,20 @@ function measureCase(array $case, object $unaryClient, object $streamingClient, 
 }
 
 /** @param array<string, mixed> $case */
-function runOneCall(array $case, object $unaryClient, object $streamingClient, ?object &$tlsUnaryClient, ?object &$tlsStreamingClient, string $target, string $nativeResponseMode): void
+function runOneCall(array $case, object $unaryClient, object $streamingClient, string $target): void
 {
-    $caseTarget = (string) ($case['target'] ?? $target);
-    if (($case['secure'] ?? false) === true) {
-        if ($tlsUnaryClient === null || $tlsStreamingClient === null) {
-            $rootCerts = file_get_contents(__DIR__ . '/../../poc/test-server/certs/server.crt');
-            if ($rootCerts === false) {
-                throw new RuntimeException('TLS root certificate fixture is required for secure CallCredentials CPU cases');
-            }
-            $tlsClientOptions = ['php_grpc_lite.native_response_mode' => $nativeResponseMode, 'credentials' => ChannelCredentials::createSsl($rootCerts)];
-            $tlsUnaryClient = UnaryBenchHelper::client($caseTarget, $tlsClientOptions);
-            $tlsStreamingClient = StreamingBenchHelper::client($caseTarget, $tlsClientOptions);
-        }
-        $unaryClient = $tlsUnaryClient;
-        $streamingClient = $tlsStreamingClient;
-    }
-
     if ($case['call_type'] === 'unary') {
         if ($case['client_scope'] === 'per_call') {
-            $unaryClient = UnaryBenchHelper::client($caseTarget);
+            $unaryClient = UnaryBenchHelper::client($target);
         }
-        UnaryBenchHelper::call($unaryClient, $case['request'], $case['call_options'] ?? []);
+        UnaryBenchHelper::call($unaryClient, $case['request']);
         return;
     }
 
     if ($case['client_scope'] === 'per_call') {
-        $streamingClient = StreamingBenchHelper::client($caseTarget);
+        $streamingClient = StreamingBenchHelper::client($target);
     }
-    StreamingBenchHelper::drain($streamingClient, $case['request'], 0, $case['call_options'] ?? []);
+    StreamingBenchHelper::drain($streamingClient, $case['request']);
 }
 
 /** @param array<string, mixed> $usage */

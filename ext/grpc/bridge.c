@@ -57,28 +57,6 @@ static void grpc_lite_append_user_agent(grpc_lite_channel_obj *channel, zval *me
     zend_hash_str_update(Z_ARRVAL_P(metadata), "user-agent", sizeof("user-agent") - 1, &values);
 }
 
-static zend_string *grpc_lite_get_call_credentials_service_url(grpc_lite_channel_obj *channel, const char *method, size_t service_len)
-{
-    zval *cached;
-    zval service_url_zv;
-    zend_string *service_url;
-    zend_string *authority = channel->authority != NULL ? channel->authority : channel->target;
-
-    cached = zend_hash_str_find(&channel->call_credentials_service_urls, method, service_len);
-    if (cached != NULL && Z_TYPE_P(cached) == IS_STRING) {
-        return Z_STR_P(cached);
-    }
-
-    service_url = strpprintf(0, "%s://%s%.*s",
-        Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials)->type == GRPC_LITE_CREDENTIALS_INSECURE ? "http" : "https",
-        ZSTR_VAL(authority),
-        (int) service_len,
-        method);
-    ZVAL_STR(&service_url_zv, service_url);
-    cached = zend_hash_str_update(&channel->call_credentials_service_urls, method, service_len, &service_url_zv);
-    return cached != NULL && Z_TYPE_P(cached) == IS_STRING ? Z_STR_P(cached) : service_url;
-}
-
 static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, grpc_lite_channel_obj *channel)
 {
     grpc_lite_call_credentials_obj *credentials;
@@ -99,7 +77,11 @@ static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, g
         return SUCCESS;
     }
 
-    service_url = grpc_lite_get_call_credentials_service_url(channel, method, service_len);
+    service_url = strpprintf(0, "%s://%s%.*s",
+        Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials)->type == GRPC_LITE_CREDENTIALS_INSECURE ? "http" : "https",
+        ZSTR_VAL(channel->target),
+        (int) service_len,
+        method);
     ZVAL_COPY(&function_name, &credentials->callback);
     ZVAL_STR_COPY(&params[0], service_url);
     ZVAL_STR_COPY(&params[1], call->method);
@@ -109,11 +91,13 @@ static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, g
         zval_ptr_dtor(&params[0]);
         zval_ptr_dtor(&params[1]);
         zval_ptr_dtor(&retval);
+        zend_string_release(service_url);
         return FAILURE;
     }
     zval_ptr_dtor(&function_name);
     zval_ptr_dtor(&params[0]);
     zval_ptr_dtor(&params[1]);
+    zend_string_release(service_url);
     if (Z_TYPE(retval) != IS_ARRAY) {
         zval_ptr_dtor(&retval);
         zend_throw_exception(NULL, "CallCredentials plugin must return an array", 0);

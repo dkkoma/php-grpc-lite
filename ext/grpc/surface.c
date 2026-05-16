@@ -258,7 +258,6 @@ static zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
     object_properties_init(&obj->std, ce);
     ZVAL_UNDEF(&obj->credentials);
     ZVAL_UNDEF(&obj->franken_channel);
-    zend_hash_init(&obj->call_credentials_service_urls, 0, NULL, ZVAL_PTR_DTOR, 0);
     obj->port = 443;
     obj->max_receive_message_length = 0;
     obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(-1, -1);
@@ -293,7 +292,6 @@ static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
         zend_string_release(obj->connection_key);
         obj->connection_key = NULL;
     }
-    zend_hash_clean(&obj->call_credentials_service_urls);
     zval_ptr_dtor(&obj->credentials);
     ZVAL_UNDEF(&obj->credentials);
     zval_ptr_dtor(&obj->franken_channel);
@@ -397,7 +395,6 @@ static void grpc_lite_channel_free_object(zend_object *object)
 {
     grpc_lite_channel_obj *obj = grpc_lite_channel_fetch(object);
     grpc_lite_channel_clear_fields(obj);
-    zend_hash_destroy(&obj->call_credentials_service_urls);
     zend_object_std_dtor(&obj->std);
 }
 
