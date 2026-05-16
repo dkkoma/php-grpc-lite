@@ -1,5 +1,5 @@
 ---
-Status: Open
+Status: Closed
 Owner: Codex
 Created: 2026-05-16
 Branch: main
@@ -134,3 +134,45 @@ CLI profile path / `transaction_select2_update1_insert1` / 8 iterations。
 - CPU差の主要因候補が、計測根拠付きで列挙されている。
 - 修正候補が個別issue化されている。
 - 少なくともビルドフラグ差、callgrind上位、cgroup CPU挙動の3観点で説明できる。
+
+
+## 2026-05-16 修正候補の消化結果
+
+| Step | 候補 | 判断 | 主な結果 |
+| --- | --- | --- | --- |
+| Step 1 | Channel key生成のRPCごと固定費 | 採用 | `docs/issues/closed/2026-05-16-cache-channel-key-and-credential-identity.md`。CPU/requestは約12.9msから約11.4msへ改善。 |
+| Step 2 | unary direct payload | 棄却 | `docs/issues/closed/2026-05-16-unary-direct-response-payload.md`。real mixedで改善せず、状態管理リスクが増えた。 |
+| Step 3 | user-agentをwire headerで直接付与 | 採用 | `docs/issues/closed/2026-05-16-user-agent-header-hotpath.md`。CPU効果は小さいが責務分離として妥当。 |
+| Step 4 | StartBatch response metadata COW | 棄却 | `docs/issues/closed/2026-05-16-startbatch-result-construction-hotpath.md`。real mixedで改善せず、公開event object aliasingリスクに見合わない。 |
+| Step 5 | persistent connection reuse時のcredential再検証削減 | 採用 | `docs/issues/closed/2026-05-16-persistent-connection-identity-revalidation.md`。default roots PEMの毎RPC再hashが最大要因。grpc-liteは同一runでext-grpcよりCPU/requestが低いケースまで改善。 |
+| Step 6 | TLS reuse preflight fcntl削減 | 採用 | `docs/issues/closed/2026-05-16-tls-reuse-preflight-hotpath.md`。TLS connectionがnonblocking維持される前提で不要なfcntl往復を削除。 |
+| Step 7 | CallCredentials固定費 | スコープ外 | `docs/issues/closed/2026-05-16-call-credentials-hotpath-followup.md`。real Spanner/GAX通常経路ではC ext `CallCredentials` pluginを通らない。 |
+| Step 8 | request metadata保持のCOW化 | 採用 | `docs/issues/closed/2026-05-16-request-metadata-cow-hotpath.md`。request metadata HashTable copyをCOW参照へ変更。互換性PHPTとreal mixedで悪化なし。 |
+| Step 9 | server streaming state未使用保持削減 | 採用 | `docs/issues/closed/2026-05-16-server-streaming-state-allocation-hotpath.md`。production stateから不要metadata/path保持を削除し、bench diagnostic pathはbench限定に分離。 |
+
+## 最終比較メモ
+
+代表条件は real Cloud Spanner / Laravel FPM / 16 workers / client concurrency 16 / `transaction_select2_update1_insert1` / 256 requests。
+
+| checkpoint | native cpu_us/req | ext-grpc cpu_us/req | 備考 |
+| --- | ---: | ---: | --- |
+| initial default build比較 | 12909.9 | 10404.6 | grpc-lite通常build vs ext-grpc 1.58 optimized。 |
+| channel key cache後 | 11431.5 | - | default roots PEM hash固定費の一部を削減。 |
+| persistent identity key後同一run | 9215.4 | 11330.1 | 最大要因だったcredential再検証を削除。 |
+| TLS preflight fcntl削減後 | 9141.4 | - | 小幅改善。 |
+| request metadata COW後同一run | 10508.6 | 11465.9 | Spanner揺れあり。悪化なし。 |
+| server state削減後同一run | 9963.3 | 11878.5 | Spanner揺れあり。grpc-lite優位。 |
+
+## 最終判断
+
+- 当初見えていたCPU差の最大要因は、`Channel` key cache後もpersistent connection reuse時にdefault roots PEMを含むcredential materialを毎RPC再hash/revalidateしていたこと。
+- それ以外のC/PHP bridge固定費は小さいが、user-agent責務分離、request metadata COW、server streaming state整理は互換性を保ったまま採用できた。
+- unary direct payloadとStartBatch response metadata COWは、実ワークロードで改善せずリスクが勝つため棄却した。
+- Docker Desktop環境ではperf/eBPF/hardware counterは権限上使えなかった。必要ならLinux VM/GCE上で `perf stat` / `perf record` / eBPFを使うが、現時点ではこのリポジトリ内で追える主要CPU差は潰せている。
+- transport scheduler/event loop差は構造差として残るが、現在の代表mixed条件ではCPU/request差の主因ではない。別環境で再度CPU差が再現した場合は `docs/issues/open/2026-05-16-transport-scheduler-cpu-followup.md` を再開する。
+
+## 完了
+
+- Status: Closed
+- 修正候補は個別issue化し、採用/棄却/スコープ外を記録した。
+- 採用候補は実装、PHPT/static、ベンチ、レビューを実施済み。
