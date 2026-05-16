@@ -296,7 +296,6 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;
     }
-    grpc_lite_append_user_agent(channel, &call->metadata);
     key = channel->connection_key;
     if (key == NULL) {
         zend_throw_exception(NULL, "Grpc\\Channel connection key is not initialized", 0);
@@ -345,7 +344,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zend_string_release(details);
         return SUCCESS;
     }
-    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, deadline_abs_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, channel->primary_user_agent, deadline_abs_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
         return FAILURE;
     }
     status_code = result.status.code;
@@ -471,7 +470,6 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;
     }
-    grpc_lite_append_user_agent(channel, &call->metadata);
     key = channel->connection_key;
     if (key == NULL) {
         zend_throw_exception(NULL, "Grpc\\Channel connection key is not initialized", 0);
@@ -490,6 +488,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
             ZSTR_VAL(call->request_payload),
             ZSTR_LEN(call->request_payload),
             &call->metadata,
+            channel->primary_user_agent,
             timeout_us,
             credentials->type != GRPC_LITE_CREDENTIALS_INSECURE,
             credentials->root_certs != NULL ? ZSTR_VAL(credentials->root_certs) : NULL,

@@ -20,7 +20,7 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
     }
     state->completed = true;
 }
-static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure)
+static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure)
 {
     h2_connection *connection;
     server_streaming_call_state *state;
@@ -124,6 +124,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         return FAILURE;
     }
     append_grpc_timeout_request_header(&request_headers, remaining_timeout_us);
+    append_user_agent_request_header(&request_headers, primary_user_agent);
     if (append_custom_request_headers(&request_headers, headers_zv) != 0) {
         free_request_headers(&request_headers);
         destroy_server_streaming_call_state(state);

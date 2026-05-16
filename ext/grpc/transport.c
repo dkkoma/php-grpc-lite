@@ -63,6 +63,7 @@ static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valu
 static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
+static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
 static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
@@ -1783,6 +1784,15 @@ static void append_grpc_timeout_request_header(h2_request_headers *headers, zend
     append_request_header(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, ZSTR_VAL(value_str), ZSTR_LEN(value_str));
 }
 
+static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent)
+{
+    if (primary_user_agent != NULL && ZSTR_LEN(primary_user_agent) > 0) {
+        append_request_header(headers, "user-agent", sizeof("user-agent") - 1, ZSTR_VAL(primary_user_agent), ZSTR_LEN(primary_user_agent));
+        return;
+    }
+    append_request_header(headers, "user-agent", sizeof("user-agent") - 1, "php-grpc-lite/0.1.0", sizeof("php-grpc-lite/0.1.0") - 1);
+}
+
 static bool is_valid_custom_request_header_name_char(unsigned char ch)
 {
     return (ch >= 'a' && ch <= 'z')
@@ -1841,6 +1851,13 @@ static bool is_forbidden_custom_request_header(zend_string *key)
         return true;
     }
     return false;
+}
+
+static bool is_user_agent_custom_request_header(zend_string *key)
+{
+    return key != NULL
+        && ZSTR_LEN(key) == sizeof("user-agent") - 1
+        && memcmp(ZSTR_VAL(key), "user-agent", sizeof("user-agent") - 1) == 0;
 }
 
 static bool is_binary_metadata_header(zend_string *key)
@@ -1943,6 +1960,9 @@ static int append_custom_request_headers(h2_request_headers *headers, zval *head
     }
 
     ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(headers_zv), key, value) {
+        if (is_user_agent_custom_request_header(key)) {
+            continue;
+        }
         if (is_forbidden_custom_request_header(key)) {
             zend_throw_exception(NULL, "forbidden gRPC request metadata key", 0);
             return -1;

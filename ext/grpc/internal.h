@@ -589,6 +589,7 @@ static const char *validate_grpc_path(const char *path, size_t path_len);
 static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
+static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 static void free_request_headers(h2_request_headers *headers);
 static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
@@ -606,11 +607,11 @@ static void cleanup_grpc_call(grpc_call *call);
 
 static void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result);
 static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result);
-static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result);
+static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);
+static int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);
 #endif
-static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure);
+static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure);
 static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value);
