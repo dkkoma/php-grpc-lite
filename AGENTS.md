@@ -55,6 +55,8 @@
 - ext-grpc は目標値ではなく比較対象。差分の理由を分解し、固定費、per-message、per-byte、server pacing などに分けて判断する。
 - ベンチ計測結果はOTEL spanを一次ソースにする。`bench/` runnerは `otelop` へexportし、`tools/benchmark/otelop-summary.php` で集計する。必要に応じて `BENCH_TAG` / `BENCH_OTEL_RUN_ID` でrun idを固定する。JSON/TSVのベンチ結果保存や旧baseline運用は使わない。
 - 旧baseline運用は廃止済み。性能回帰を見る場合は `bench/` の代表ケースを同条件で再実行して比較する。
+- hotpath最適化や性能改善を目的にする変更は、必ず実装前に仮説、対象ワークロード、before計測、採否基準をissueへ書く。実装後は同条件のafter計測、改善幅、副作用、コード複雑性を記録し、効果が小さい場合は採用せず調査結果として閉じる。before/afterなしに性能改善としてコミットしない。
+- micro optimizationは、改善対象の固定費が支配的であること、cacheや分岐追加のoverheadを上回ること、lifetime/invalidationが単純であることを実測で確認してから採用する。互換性テストや観測ケース追加は、性能最適化本体と切り分けてコミットする。
 
 ## サブエージェントの利用と作業の継続について
 
