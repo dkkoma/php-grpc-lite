@@ -15,13 +15,17 @@ declare(strict_types=1);
 require __DIR__ . '/helpers.inc';
 grpc_lite_phpt_require_autoload();
 
+use Grpc\Channel;
 use Grpc\ChannelCredentials;
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
 
-$client = new GreeterClient('test-server:50051', [
+$channel = new Channel('test-server:50051', [
     'credentials' => ChannelCredentials::createInsecure(),
 ]);
+$client = new GreeterClient('test-server:50051', [
+    'credentials' => ChannelCredentials::createInsecure(),
+], $channel);
 
 $serverSeen = static function (string $observedKey, array $metadata) use ($client): array {
     $call = $client->BenchUnary(new BenchRequest(), $metadata);
@@ -91,6 +95,26 @@ grpc_lite_phpt_assert_same($growValues, $serverStreamSeen('x-bench-grow', [
     'x-bench-observe-metadata-key' => ['x-bench-grow'],
     'x-bench-grow' => $growValues,
 ]), 'server streaming metadata values across inline growth boundary');
+
+$rawMetadata = [
+    'x-bench-observe-metadata-key' => ['x-bench-mutation'],
+    'x-bench-mutation' => ['before'],
+];
+$rawRequest = new BenchRequest();
+$rawCall = new Grpc\Call($channel, '/helloworld.Greeter/BenchUnary', Grpc\Timeval::infFuture());
+$rawCall->startBatch([
+    Grpc\OP_SEND_INITIAL_METADATA => $rawMetadata,
+    Grpc\OP_SEND_MESSAGE => ['message' => $rawRequest->serializeToString()],
+    Grpc\OP_SEND_CLOSE_FROM_CLIENT => true,
+]);
+$rawMetadata['x-bench-mutation'][0] = 'after';
+$rawEvent = $rawCall->startBatch([
+    Grpc\OP_RECV_INITIAL_METADATA => true,
+    Grpc\OP_RECV_MESSAGE => true,
+    Grpc\OP_RECV_STATUS_ON_CLIENT => true,
+]);
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $rawEvent->status->code, 'raw metadata mutation status');
+grpc_lite_phpt_assert_same('before', $rawEvent->metadata['x-bench-seen-000-value-000-bin'][0] ?? null, 'metadata is isolated after startBatch');
 
 $assertInvalidMetadata = static function (array $metadata) use ($client): void {
     grpc_lite_phpt_expect_throw(static function () use ($client, $metadata): void {

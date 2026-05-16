@@ -22,12 +22,15 @@ static zend_long grpc_lite_call_timeout_us(grpc_lite_call_obj *call)
 
 static void grpc_lite_copy_metadata(zval *dest, zval *src)
 {
-    zval_ptr_dtor(dest);
-    array_init(dest);
-    if (src == NULL || Z_TYPE_P(src) != IS_ARRAY) {
+    if (dest == src) {
         return;
     }
-    zend_hash_copy(Z_ARRVAL_P(dest), Z_ARRVAL_P(src), zval_add_ref);
+    zval_ptr_dtor(dest);
+    if (src == NULL || Z_TYPE_P(src) != IS_ARRAY) {
+        array_init(dest);
+        return;
+    }
+    ZVAL_COPY(dest, src);
 }
 
 static void grpc_lite_move_metadata(zval *dest, zval *src)
@@ -44,6 +47,7 @@ static void grpc_lite_move_metadata(zval *dest, zval *src)
 static void grpc_lite_append_user_agent(grpc_lite_channel_obj *channel, zval *metadata)
 {
     zval values;
+    SEPARATE_ARRAY(metadata);
     array_init(&values);
     if (channel->primary_user_agent != NULL && ZSTR_LEN(channel->primary_user_agent) > 0) {
         add_next_index_str(&values, zend_string_copy(channel->primary_user_agent));
@@ -99,6 +103,7 @@ static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, g
         zend_throw_exception(NULL, "CallCredentials plugin must return an array", 0);
         return FAILURE;
     }
+    SEPARATE_ARRAY(&call->metadata);
     zend_hash_merge(Z_ARRVAL(call->metadata), Z_ARRVAL(retval), zval_add_ref, 0);
     zval_ptr_dtor(&retval);
     return SUCCESS;
