@@ -427,18 +427,8 @@ static bool preflight_persistent_connection(h2_connection *connection)
     }
     if (connection->ssl != NULL) {
         int ssl_error;
-        int previous_mode = fcntl(connection->fd, F_GETFL, 0);
-        if (set_fd_nonblocking_mode(connection->fd, true) != 0) {
-            mark_connection_dead(connection, errno);
-            return false;
-        }
         rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
         ssl_error = SSL_get_error(connection->ssl, (int) rv);
-        if (previous_mode >= 0) {
-            fcntl(connection->fd, F_SETFL, previous_mode);
-        } else {
-            set_fd_nonblocking_mode(connection->fd, false);
-        }
         if (rv > 0) {
             mark_connection_draining(connection, 0, NGHTTP2_NO_ERROR);
             set_connection_error_detail(connection, "persistent TLS connection has pending control data before reuse");
