@@ -27,10 +27,11 @@ final class StreamingBenchHelper
         return $request;
     }
 
-    public static function drain(GreeterClient $client, BenchRequest $request, int $sleepUs = 0): int
+    /** @param array<string, mixed> $options */
+    public static function drain(GreeterClient $client, BenchRequest $request, int $sleepUs = 0, array $options = []): int
     {
         $count = 0;
-        foreach ($client->BenchServerStream($request)->responses() as $_reply) {
+        foreach ($client->BenchServerStream($request, [], $options)->responses() as $_reply) {
             $count++;
             if ($sleepUs > 0) {
                 usleep($sleepUs);

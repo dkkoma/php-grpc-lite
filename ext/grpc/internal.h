@@ -111,6 +111,7 @@ typedef struct {
     zend_string *tls_verify_name;
     zend_string *primary_user_agent;
     zend_string *connection_key;
+    HashTable call_credentials_service_urls;
     zend_long max_receive_message_length;
     size_t max_response_metadata_bytes;
     zval credentials;
