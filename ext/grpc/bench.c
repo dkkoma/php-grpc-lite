@@ -127,7 +127,6 @@ static int bench_process_response_messages_from_offset(grpc_call *call, zend_fca
         }
         *offset += 5;
 
-        bench_observe_message_ready(call, monotonic_us());
         payload_string_started = monotonic_us();
         ZVAL_STRINGL(&params[0], data + *offset, payload_len);
         payload_string_elapsed = monotonic_us() - payload_string_started;
@@ -1976,6 +1975,30 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_bench_unary_batch, 0, 
 ZEND_END_ARG_INFO()
 
 /* Bench-build diagnostic PHP entrypoints for direct transport measurement. */
+static zend_string *grpc_lite_build_bench_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+{
+    zend_string *root_certs_string = root_certs != NULL ? zend_string_init(root_certs, root_certs_len, 0) : NULL;
+    zend_string *cert_chain_string = cert_chain != NULL ? zend_string_init(cert_chain, cert_chain_len, 0) : NULL;
+    zend_string *private_key_string = private_key != NULL ? zend_string_init(private_key, private_key_len, 0) : NULL;
+    zend_string *connection_key = grpc_lite_build_connection_key(
+        host,
+        host_len,
+        port,
+        authority,
+        authority_len,
+        tls_verify_name,
+        tls_verify_name_len,
+        use_tls ? GRPC_LITE_CREDENTIALS_SSL : GRPC_LITE_CREDENTIALS_INSECURE,
+        root_certs_string,
+        cert_chain_string,
+        private_key_string);
+
+    if (root_certs_string != NULL) zend_string_release(root_certs_string);
+    if (cert_chain_string != NULL) zend_string_release(cert_chain_string);
+    if (private_key_string != NULL) zend_string_release(private_key_string);
+    return connection_key;
+}
+
 PHP_FUNCTION(grpc_lite_unary)
 {
     char *key = NULL;
@@ -2007,6 +2030,7 @@ PHP_FUNCTION(grpc_lite_unary)
     char error_detail[256] = {0};
     uint64_t deadline_abs_us = 0;
     zend_long remaining_timeout_us = 0;
+    zend_string *connection_key = NULL;
 
     ZEND_PARSE_PARAMETERS_START(5, 14)
         Z_PARAM_STRING(key, key_len)
@@ -2026,7 +2050,9 @@ PHP_FUNCTION(grpc_lite_unary)
         Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
+    (void) key;
+    (void) key_len;
+    error_message = validate_channel_inputs("bench", sizeof("bench") - 1, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
     if (error_message != NULL) {
         zend_throw_exception(NULL, error_message, 0);
         RETURN_THROWS();
@@ -2046,29 +2072,39 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
+    connection_key = grpc_lite_build_bench_connection_key(host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
+    if (connection_key == NULL) {
+        zend_throw_exception(NULL, "failed to build grpc_lite connection key", 0);
+        RETURN_THROWS();
+    }
+
     deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    connection = get_persistent_connection(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
+    connection = get_persistent_connection(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), &persistent_reused, &error_message);
     if (connection == NULL) {
+        zend_string_release(connection_key);
         zend_throw_exception(NULL, error_message != NULL ? error_message : "failed to open persistent connection", 0);
         RETURN_THROWS();
     }
 
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
+        zend_string_release(connection_key);
         zend_throw_exception(NULL, "HTTP/2 transport deadline exceeded", 0);
         RETURN_THROWS();
     }
 
     if (grpc_lite_unary_call_perform_diagnostic_on_connection(connection, path, path_len, request, request_len, headers_zv, NULL, remaining_timeout_us, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), true, persistent_reused, return_value) != SUCCESS) {
         if (connection != NULL && !connection_usable(connection)) {
-            remove_unusable_persistent_connection(key, key_len, connection);
+            remove_unusable_persistent_connection(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), connection);
         }
+        zend_string_release(connection_key);
         RETURN_THROWS();
     }
 
     if (!connection_usable(connection)) {
-        remove_unusable_persistent_connection(key, key_len, connection);
+        remove_unusable_persistent_connection(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), connection);
     }
+    zend_string_release(connection_key);
 }
 
 PHP_FUNCTION(grpc_lite_server_streaming_open)
@@ -2096,6 +2132,7 @@ PHP_FUNCTION(grpc_lite_server_streaming_open)
     size_t authority_len = 0;
     char *tls_verify_name = NULL;
     size_t tls_verify_name_len = 0;
+    zend_string *connection_key = NULL;
 
     ZEND_PARSE_PARAMETERS_START(5, 14)
         Z_PARAM_STRING(key, key_len)
@@ -2115,9 +2152,19 @@ PHP_FUNCTION(grpc_lite_server_streaming_open)
         Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (server_streaming_call_open_resource(key, key_len, host, host_len, port, path, path_len, request, request_len, headers_zv, NULL, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), authority, authority_len, tls_verify_name, tls_verify_name_len, return_value, NULL) != SUCCESS) {
+    (void) key;
+    (void) key_len;
+    connection_key = grpc_lite_build_bench_connection_key(host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
+    if (connection_key == NULL) {
+        zend_throw_exception(NULL, "failed to build grpc_lite connection key", 0);
         RETURN_THROWS();
     }
+
+    if (server_streaming_call_open_resource(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), host, host_len, port, path, path_len, request, request_len, headers_zv, NULL, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), authority, authority_len, tls_verify_name, tls_verify_name_len, return_value, NULL) != SUCCESS) {
+        zend_string_release(connection_key);
+        RETURN_THROWS();
+    }
+    zend_string_release(connection_key);
 }
 
 PHP_FUNCTION(grpc_lite_server_streaming_next)
@@ -2140,29 +2187,6 @@ PHP_FUNCTION(grpc_lite_server_streaming_cancel)
     if (server_streaming_call_cancel_resource(stream_zv) != SUCCESS) {
         RETURN_THROWS();
     }
-    RETURN_TRUE;
-}
-
-PHP_FUNCTION(grpc_lite_channel_close)
-{
-    char *key = NULL;
-    size_t key_len = 0;
-    persistent_connection_entry *entry;
-
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_STRING(key, key_len)
-    ZEND_PARSE_PARAMETERS_END();
-
-    if (!PHP_GRPC_LITE_G(persistent_connections_initialized)) {
-        RETURN_FALSE;
-    }
-
-    entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
-    if (entry == NULL) {
-        RETURN_FALSE;
-    }
-
-    discard_persistent_connection(key, key_len, entry->connection);
     RETURN_TRUE;
 }
 
@@ -2208,16 +2232,11 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_server_streaming_cance
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_channel_close, 0, 1, _IS_BOOL, 0)
-    ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
-ZEND_END_ARG_INFO()
-
 static const zend_function_entry grpc_lite_functions[] = {
     PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
     PHP_FE(grpc_lite_server_streaming_open, arginfo_grpc_lite_server_streaming_open)
     PHP_FE(grpc_lite_server_streaming_next, arginfo_grpc_lite_server_streaming_next)
     PHP_FE(grpc_lite_server_streaming_cancel, arginfo_grpc_lite_server_streaming_cancel)
-    PHP_FE(grpc_lite_channel_close, arginfo_grpc_lite_channel_close)
     PHP_FE(grpc_lite_multiplex_unary, arginfo_grpc_lite_multiplex_unary)
     PHP_FE(grpc_lite_bench_unary_batch, arginfo_grpc_lite_bench_unary_batch)
     PHP_FE_END

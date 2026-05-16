@@ -442,21 +442,89 @@ static int split_target_to_host_port(zend_string *target, zend_string **host, ze
     return SUCCESS;
 }
 
+static void grpc_lite_sha256_hex(zend_string *value, char *hex)
+{
+    static const char chars[] = "0123456789abcdef";
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    size_t index;
+
+    if (value == NULL || ZSTR_LEN(value) == 0) {
+        hex[0] = '0';
+        hex[1] = '\0';
+        return;
+    }
+
+    SHA256((const unsigned char *) ZSTR_VAL(value), ZSTR_LEN(value), digest);
+    for (index = 0; index < SHA256_DIGEST_LENGTH; index++) {
+        hex[index * 2] = chars[digest[index] >> 4];
+        hex[index * 2 + 1] = chars[digest[index] & 0x0f];
+    }
+    hex[SHA256_DIGEST_LENGTH * 2] = '\0';
+}
+
+static zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key)
+{
+    smart_str canonical = {0};
+    char root_certs_digest[SHA256_DIGEST_LENGTH * 2 + 1];
+    char cert_chain_digest[SHA256_DIGEST_LENGTH * 2 + 1];
+    char private_key_digest[SHA256_DIGEST_LENGTH * 2 + 1];
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    char hex[SHA256_DIGEST_LENGTH * 2 + 1];
+    static const char chars[] = "0123456789abcdef";
+    size_t index;
+
+    grpc_lite_sha256_hex(root_certs, root_certs_digest);
+    grpc_lite_sha256_hex(cert_chain, cert_chain_digest);
+    grpc_lite_sha256_hex(private_key, private_key_digest);
+
+    smart_str_append_printf(&canonical, "%zu:%.*s|%ld|%zu:%.*s|%zu:%.*s|%d|%zu:%s|%zu:%s|%zu:%s",
+        host_len,
+        (int) host_len,
+        host,
+        port,
+        authority_len,
+        (int) authority_len,
+        authority != NULL ? authority : "",
+        tls_verify_name_len,
+        (int) tls_verify_name_len,
+        tls_verify_name != NULL ? tls_verify_name : "",
+        credentials_type,
+        root_certs != NULL ? ZSTR_LEN(root_certs) : 0,
+        root_certs_digest,
+        cert_chain != NULL ? ZSTR_LEN(cert_chain) : 0,
+        cert_chain_digest,
+        private_key != NULL ? ZSTR_LEN(private_key) : 0,
+        private_key_digest);
+    smart_str_0(&canonical);
+    if (canonical.s == NULL) {
+        return NULL;
+    }
+
+    SHA256((const unsigned char *) ZSTR_VAL(canonical.s), ZSTR_LEN(canonical.s), digest);
+    smart_str_free(&canonical);
+    for (index = 0; index < SHA256_DIGEST_LENGTH; index++) {
+        hex[index * 2] = chars[digest[index] >> 4];
+        hex[index * 2 + 1] = chars[digest[index] & 0x0f];
+    }
+    hex[SHA256_DIGEST_LENGTH * 2] = '\0';
+    return strpprintf(0, "sha256:%s", hex);
+}
+
 static zend_string *grpc_lite_build_channel_key(grpc_lite_channel_obj *channel)
 {
     grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
-    return strpprintf(0, "%s|%ld|%s|%s|%d|%zu:%lu|%zu:%lu|%zu:%lu",
+    return grpc_lite_build_connection_key(
         ZSTR_VAL(channel->host),
+        ZSTR_LEN(channel->host),
         channel->port,
-        channel->authority != NULL ? ZSTR_VAL(channel->authority) : "",
-        channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : "",
+        channel->authority != NULL ? ZSTR_VAL(channel->authority) : NULL,
+        channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
+        channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,
+        channel->tls_verify_name != NULL ? ZSTR_LEN(channel->tls_verify_name) : 0,
         credentials->type,
-        credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
-        credentials->root_certs != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->root_certs), ZSTR_LEN(credentials->root_certs)) : 0,
-        credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
-        credentials->cert_chain != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->cert_chain), ZSTR_LEN(credentials->cert_chain)) : 0,
-        credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
-        credentials->private_key != NULL ? (unsigned long) hash_bytes(ZSTR_VAL(credentials->private_key), ZSTR_LEN(credentials->private_key)) : 0);
+        credentials->root_certs,
+        credentials->cert_chain,
+        credentials->private_key);
 }
 
 PHP_METHOD(Channel, __construct)

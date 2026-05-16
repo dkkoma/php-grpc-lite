@@ -26,8 +26,8 @@ static void mark_connection_dead(h2_connection *connection, int error_code);
 static void set_connection_error_detail(h2_connection *connection, const char *detail);
 static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
 static bool connection_usable(h2_connection *connection);
-static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
-static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
+static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
 static bool preflight_persistent_connection(h2_connection *connection);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
@@ -186,23 +186,8 @@ static void destroy_persistent_connection_entry(persistent_connection_entry *ent
     if (destroy_connection && entry->connection != NULL) {
         destroy_h2_connection(entry->connection);
     }
-    if (entry->host_identity != NULL) {
-        zend_string_release_ex(entry->host_identity, true);
-    }
-    if (entry->authority_identity != NULL) {
-        zend_string_release_ex(entry->authority_identity, true);
-    }
-    if (entry->tls_verify_name_identity != NULL) {
-        zend_string_release_ex(entry->tls_verify_name_identity, true);
-    }
-    if (entry->root_certs_identity != NULL) {
-        zend_string_release_ex(entry->root_certs_identity, true);
-    }
-    if (entry->cert_chain_identity != NULL) {
-        zend_string_release_ex(entry->cert_chain_identity, true);
-    }
-    if (entry->private_key_identity != NULL) {
-        zend_string_release_ex(entry->private_key_identity, true);
+    if (entry->connection_key_identity != NULL) {
+        zend_string_release_ex(entry->connection_key_identity, true);
     }
     pefree(entry, true);
 }
@@ -397,10 +382,9 @@ static bool identity_matches(zend_string *stored, const char *expected, size_t e
     return ZSTR_LEN(stored) == expected_len && memcmp(ZSTR_VAL(stored), expected, expected_len) == 0;
 }
 
-static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len)
 {
     persistent_connection_entry *entry;
-    char built_authority[512];
 
     if (connection == NULL) {
         return NULL;
@@ -411,35 +395,10 @@ static persistent_connection_entry *create_persistent_connection_entry(h2_connec
         return NULL;
     }
 
-    build_authority(built_authority, sizeof(built_authority), host, port, authority, authority_len);
     entry->connection = connection;
-    entry->host_len = strlen(host);
-    entry->host_hash = hash_bytes(host, entry->host_len);
-    entry->host_identity = zend_string_init(host, entry->host_len, true);
-    entry->port = port;
-    entry->authority_len = strlen(built_authority);
-    entry->authority_hash = hash_bytes(built_authority, entry->authority_len);
-    entry->authority_identity = zend_string_init(built_authority, entry->authority_len, true);
-    entry->use_tls = use_tls;
-    entry->tls_verify_name_len = tls_verify_name_len;
-    entry->tls_verify_name_hash = hash_bytes(tls_verify_name, tls_verify_name_len);
-    entry->tls_verify_name_identity = zend_string_init(tls_verify_name != NULL ? tls_verify_name : "", tls_verify_name_len, true);
-    entry->root_certs_len = root_certs_len;
-    entry->root_certs_hash = hash_bytes(root_certs, root_certs_len);
-    entry->root_certs_identity = zend_string_init(root_certs != NULL ? root_certs : "", root_certs_len, true);
-    entry->cert_chain_len = cert_chain_len;
-    entry->cert_chain_hash = hash_bytes(cert_chain, cert_chain_len);
-    entry->cert_chain_identity = zend_string_init(cert_chain != NULL ? cert_chain : "", cert_chain_len, true);
-    entry->private_key_len = private_key_len;
-    entry->private_key_hash = hash_bytes(private_key, private_key_len);
-    entry->private_key_identity = zend_string_init(private_key != NULL ? private_key : "", private_key_len, true);
+    entry->connection_key_identity = zend_string_init(key, key_len, true);
 
-    if (entry->host_identity == NULL
-        || entry->authority_identity == NULL
-        || entry->tls_verify_name_identity == NULL
-        || entry->root_certs_identity == NULL
-        || entry->cert_chain_identity == NULL
-        || entry->private_key_identity == NULL) {
+    if (entry->connection_key_identity == NULL) {
         destroy_persistent_connection_entry(entry, false);
         return NULL;
     }
@@ -447,37 +406,12 @@ static persistent_connection_entry *create_persistent_connection_entry(h2_connec
     return entry;
 }
 
-static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len)
+static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len)
 {
-    char expected_authority[512];
-    size_t host_len;
-
     if (entry == NULL || entry->connection == NULL) {
         return false;
     }
-    build_authority(expected_authority, sizeof(expected_authority), host, port, authority, authority_len);
-    host_len = strlen(host);
-
-    return entry->use_tls == use_tls
-        && entry->port == port
-        && entry->host_len == host_len
-        && entry->host_hash == hash_bytes(host, host_len)
-        && identity_matches(entry->host_identity, host, host_len)
-        && entry->authority_len == strlen(expected_authority)
-        && entry->authority_hash == hash_bytes(expected_authority, strlen(expected_authority))
-        && identity_matches(entry->authority_identity, expected_authority, strlen(expected_authority))
-        && entry->tls_verify_name_len == tls_verify_name_len
-        && entry->tls_verify_name_hash == hash_bytes(tls_verify_name, tls_verify_name_len)
-        && identity_matches(entry->tls_verify_name_identity, tls_verify_name, tls_verify_name_len)
-        && entry->root_certs_len == root_certs_len
-        && entry->root_certs_hash == hash_bytes(root_certs, root_certs_len)
-        && identity_matches(entry->root_certs_identity, root_certs, root_certs_len)
-        && entry->cert_chain_len == cert_chain_len
-        && entry->cert_chain_hash == hash_bytes(cert_chain, cert_chain_len)
-        && identity_matches(entry->cert_chain_identity, cert_chain, cert_chain_len)
-        && entry->private_key_len == private_key_len
-        && entry->private_key_hash == hash_bytes(private_key, private_key_len)
-        && identity_matches(entry->private_key_identity, private_key, private_key_len);
+    return identity_matches(entry->connection_key_identity, key, key_len);
 }
 
 static bool preflight_persistent_connection(h2_connection *connection)
@@ -1157,7 +1091,7 @@ static h2_connection *get_persistent_connection(const char *key, size_t key_len,
         entry = NULL;
         connection = NULL;
     }
-    if (connection != NULL && !connection_entry_matches_identity(entry, host, port, use_tls, authority, authority_len, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len)) {
+    if (connection != NULL && !connection_entry_matches_key(entry, key, key_len)) {
         discard_persistent_connection(key, key_len, connection);
         entry = NULL;
         connection = NULL;
@@ -1172,7 +1106,7 @@ static h2_connection *get_persistent_connection(const char *key, size_t key_len,
         if (connection == NULL) {
             return NULL;
         }
-        entry = create_persistent_connection_entry(connection, host, port, use_tls, authority, authority_len, tls_verify_name, tls_verify_name_len, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
+        entry = create_persistent_connection_entry(connection, key, key_len);
         if (entry == NULL) {
             destroy_h2_connection(connection);
             *error_message = "failed to allocate persistent connection entry";

@@ -22,6 +22,7 @@
 #include <netinet/tcp.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
+#include <openssl/sha.h>
 #include <openssl/ssl.h>
 #include <poll.h>
 #include <signal.h>
@@ -490,26 +491,7 @@ struct _h2_connection {
 
 struct persistent_connection_entry {
     h2_connection *connection;
-    zend_string *host_identity;
-    zend_string *authority_identity;
-    zend_string *tls_verify_name_identity;
-    zend_string *root_certs_identity;
-    zend_string *cert_chain_identity;
-    zend_string *private_key_identity;
-    size_t host_len;
-    zend_ulong host_hash;
-    zend_long port;
-    size_t authority_len;
-    zend_ulong authority_hash;
-    bool use_tls;
-    size_t tls_verify_name_len;
-    zend_ulong tls_verify_name_hash;
-    size_t root_certs_len;
-    zend_ulong root_certs_hash;
-    size_t cert_chain_len;
-    zend_ulong cert_chain_hash;
-    size_t private_key_len;
-    zend_ulong private_key_hash;
+    zend_string *connection_key_identity;
 };
 
 struct server_streaming_call_state {
@@ -545,8 +527,9 @@ static void mark_connection_draining(h2_connection *connection, int32_t last_str
 static bool connection_usable(h2_connection *connection);
 static zend_ulong hash_bytes(const char *data, size_t data_len);
 static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
-static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
-static bool connection_entry_matches_identity(persistent_connection_entry *entry, const char *host, zend_long port, bool use_tls, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len);
+static zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key);
+static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
+static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
 static bool preflight_persistent_connection(h2_connection *connection);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
