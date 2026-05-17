@@ -29,6 +29,8 @@ namespace FrankenGrpc {
 
     final class UnaryCall
     {
+        public static int $starts = 0;
+
         public function __construct(
             public Channel $channel,
             public string $method,
@@ -37,6 +39,7 @@ namespace FrankenGrpc {
 
         public function start(string $payload, array $metadata = [], ?float $timeoutSeconds = null): UnaryResult
         {
+            self::$starts++;
             if ($this->channel->target !== 'franken.test:443') {
                 throw new \RuntimeException('target was not delegated');
             }
@@ -67,6 +70,8 @@ namespace FrankenGrpc {
 
     final class ServerStreamingCall
     {
+        public static int $starts = 0;
+
         private int $offset = 0;
 
         public function __construct(
@@ -77,6 +82,7 @@ namespace FrankenGrpc {
 
         public function start(string $payload, array $metadata = [], ?float $timeoutSeconds = null): void
         {
+            self::$starts++;
             if ($this->method !== '/pkg.Service/Stream' || $payload !== 'stream-request') {
                 throw new \RuntimeException('stream start was not delegated');
             }
@@ -176,6 +182,38 @@ namespace {
     grpc_lite_phpt_assert_same('message-2', $second->message, 'franken stream second message');
     grpc_lite_phpt_assert_same(null, $done->message, 'franken stream done message');
     grpc_lite_phpt_assert_same(\Grpc\STATUS_OK, $status->status->code, 'franken stream status');
+
+    $unaryCredentialsCallbackCalled = false;
+    $unaryStartsBefore = \FrankenGrpc\UnaryCall::$starts;
+    $insecureUnary = new \Grpc\Call($channel, '/pkg.Service/Unary', new \Grpc\Timeval(1000000));
+    $insecureUnary->setCredentials(\Grpc\CallCredentials::createFromPlugin(static function () use (&$unaryCredentialsCallbackCalled): array {
+        $unaryCredentialsCallbackCalled = true;
+        return ['authorization' => 'Bearer token'];
+    }));
+    $insecureUnaryResult = $insecureUnary->startBatch([
+        \Grpc\OP_SEND_MESSAGE => ['message' => 'request-bytes'],
+        \Grpc\OP_RECV_STATUS_ON_CLIENT => true,
+    ]);
+    grpc_lite_phpt_assert_true(!$unaryCredentialsCallbackCalled, 'franken insecure unary credentials callback must not be called');
+    grpc_lite_phpt_assert_same($unaryStartsBefore, \FrankenGrpc\UnaryCall::$starts, 'franken insecure unary must not delegate start');
+    grpc_lite_phpt_assert_same(\Grpc\STATUS_UNAUTHENTICATED, $insecureUnaryResult->status->code, 'franken insecure unary credentials status');
+
+    $streamCredentialsCallbackCalled = false;
+    $streamStartsBefore = \FrankenGrpc\ServerStreamingCall::$starts;
+    $insecureStream = new \Grpc\Call($channel, '/pkg.Service/Stream', new \Grpc\Timeval(1000000));
+    $insecureStream->setCredentials(\Grpc\CallCredentials::createFromPlugin(static function () use (&$streamCredentialsCallbackCalled): array {
+        $streamCredentialsCallbackCalled = true;
+        return ['authorization' => 'Bearer token'];
+    }));
+    $insecureStreamFirst = $insecureStream->startBatch([
+        \Grpc\OP_SEND_MESSAGE => ['message' => 'stream-request'],
+        \Grpc\OP_RECV_MESSAGE => true,
+    ]);
+    $insecureStreamStatus = $insecureStream->startBatch([\Grpc\OP_RECV_STATUS_ON_CLIENT => true]);
+    grpc_lite_phpt_assert_same(null, $insecureStreamFirst->message, 'franken insecure stream must not yield messages');
+    grpc_lite_phpt_assert_true(!$streamCredentialsCallbackCalled, 'franken insecure stream credentials callback must not be called');
+    grpc_lite_phpt_assert_same($streamStartsBefore, \FrankenGrpc\ServerStreamingCall::$starts, 'franken insecure stream must not delegate start');
+    grpc_lite_phpt_assert_same(\Grpc\STATUS_UNAUTHENTICATED, $insecureStreamStatus->status->code, 'franken insecure stream credentials status');
 
     $channel->close();
 

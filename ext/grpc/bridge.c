@@ -57,6 +57,34 @@ static void grpc_lite_append_user_agent(grpc_lite_channel_obj *channel, zval *me
     zend_hash_str_update(Z_ARRVAL_P(metadata), "user-agent", sizeof("user-agent") - 1, &values);
 }
 
+static bool grpc_lite_call_has_credentials_plugin(grpc_lite_call_obj *call)
+{
+    grpc_lite_call_credentials_obj *credentials;
+    if (Z_TYPE(call->credentials) != IS_OBJECT || !instanceof_function(Z_OBJCE(call->credentials), grpc_ce_call_credentials)) {
+        return false;
+    }
+    credentials = Z_GRPC_LITE_CALL_CREDENTIALS_P(&call->credentials);
+    return Z_TYPE(credentials->callback) != IS_UNDEF;
+}
+
+static bool grpc_lite_channel_is_secure(grpc_lite_channel_obj *channel)
+{
+    grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
+    return credentials->type != GRPC_LITE_CREDENTIALS_INSECURE;
+}
+
+static bool grpc_lite_fail_if_call_credentials_require_secure_channel(grpc_lite_call_obj *call, grpc_lite_channel_obj *channel)
+{
+    zend_string *details;
+    if (!grpc_lite_call_has_credentials_plugin(call) || grpc_lite_channel_is_secure(channel)) {
+        return false;
+    }
+    details = zend_string_init("CallCredentials require a secure channel", sizeof("CallCredentials require a secure channel") - 1, 0);
+    grpc_lite_mark_call_failed(call, GRPC_STATUS_UNAUTHENTICATED, details);
+    zend_string_release(details);
+    return true;
+}
+
 static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, grpc_lite_channel_obj *channel)
 {
     grpc_lite_call_credentials_obj *credentials;
@@ -199,6 +227,10 @@ static int grpc_lite_perform_call_unary_franken_go(grpc_lite_call_obj *call)
         zend_throw_exception(NULL, "grpc_lite.backend=franken-go requires FrankenGrpc\\UnaryCall", 0);
         return FAILURE;
     }
+    if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
+        call->unary_performed = true;
+        return SUCCESS;
+    }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;
     }
@@ -297,6 +329,10 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     if (call->request_payload == NULL) {
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
+    }
+    if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
+        call->unary_performed = true;
+        return SUCCESS;
     }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;
@@ -414,6 +450,9 @@ static int grpc_lite_open_call_stream_franken_go(grpc_lite_call_obj *call)
         zend_throw_exception(NULL, "grpc_lite.backend=franken-go requires FrankenGrpc\\ServerStreamingCall", 0);
         return FAILURE;
     }
+    if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
+        return SUCCESS;
+    }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;
     }
@@ -471,6 +510,9 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     if (call->request_payload == NULL) {
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
+    }
+    if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
+        return SUCCESS;
     }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
         return FAILURE;

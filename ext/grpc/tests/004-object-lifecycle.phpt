@@ -120,12 +120,18 @@ grpc_lite_phpt_expect_throw(static fn () => $noMessageCall->startBatch([
     Grpc\OP_RECV_STATUS_ON_CLIENT => true,
 ]), 'request message');
 
-$badCredentialsCall = new Grpc\Call($channel, '/helloworld.Greeter/SayHello', Grpc\Timeval::infFuture());
-$badCredentialsCall->setCredentials(Grpc\CallCredentials::createFromPlugin(static fn (): string => 'not metadata'));
-grpc_lite_phpt_expect_throw(static fn () => $badCredentialsCall->startBatch([
+$insecureCredentialsCallbackCalled = false;
+$insecureCredentialsCall = new Grpc\Call($channel, '/helloworld.Greeter/SayHello', Grpc\Timeval::infFuture());
+$insecureCredentialsCall->setCredentials(Grpc\CallCredentials::createFromPlugin(static function () use (&$insecureCredentialsCallbackCalled): array {
+    $insecureCredentialsCallbackCalled = true;
+    return ['authorization' => 'Bearer token'];
+}));
+$insecureCredentialsEvent = $insecureCredentialsCall->startBatch([
     Grpc\OP_SEND_MESSAGE => ['message' => ''],
     Grpc\OP_RECV_STATUS_ON_CLIENT => true,
-]), 'must return an array');
+]);
+grpc_lite_phpt_assert_true(!$insecureCredentialsCallbackCalled, 'insecure call credentials callback must not be called');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAUTHENTICATED, $insecureCredentialsEvent->status->code, 'insecure call credentials status');
 
 $call->cancel();
 $cancelledEvent = $call->startBatch([

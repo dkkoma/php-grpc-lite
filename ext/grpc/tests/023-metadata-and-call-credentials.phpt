@@ -6,7 +6,10 @@ if (!extension_loaded('grpc')) {
     die('skip grpc extension not loaded');
 }
 require __DIR__ . '/helpers.inc';
-grpc_lite_phpt_skip_if_integration_unavailable([50051]);
+grpc_lite_phpt_skip_if_integration_unavailable([50051, 50052]);
+if (!is_file(grpc_lite_phpt_repo_root() . '/poc/test-server/certs/server.crt')) {
+    die('skip test certificate is not available');
+}
 ?>
 --FILE--
 <?php
@@ -19,8 +22,15 @@ use Grpc\ChannelCredentials;
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
 
+$certDir = grpc_lite_phpt_repo_root() . '/poc/test-server/certs';
+$root = file_get_contents($certDir . '/server.crt');
+grpc_lite_phpt_assert_true($root !== false, 'cert fixture');
+
 $client = new GreeterClient('test-server:50051', [
     'credentials' => ChannelCredentials::createInsecure(),
+]);
+$tlsClient = new GreeterClient('test-server:50052', [
+    'credentials' => ChannelCredentials::createSsl($root),
 ]);
 
 $binaryValues = ["\x00\x01\xff,a"];
@@ -45,15 +55,44 @@ $callbackCalled = false;
 $call = $client->BenchUnary(new BenchRequest(), [], [
     'call_credentials_callback' => static function (string $serviceUrl, string $methodName) use (&$callbackCalled): array {
         $callbackCalled = true;
-        grpc_lite_phpt_assert_contains('test-server:50051', $serviceUrl, 'call credentials service URL');
-        grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $methodName, 'call credentials method');
         return ['x-bench-echo-ascii' => 'from-plugin'];
     },
 ]);
 [, $status] = $call->wait();
-grpc_lite_phpt_assert_true($callbackCalled, 'call credentials callback must be called');
-grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'call credentials status');
-grpc_lite_phpt_assert_same(['from-plugin'], $call->getMetadata()['x-bench-initial-ascii'] ?? null, 'call credentials metadata');
+grpc_lite_phpt_assert_true(!$callbackCalled, 'insecure call credentials callback must not be called');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAUTHENTICATED, $status->code, 'insecure call credentials status');
+grpc_lite_phpt_assert_contains('secure channel', $status->details, 'insecure call credentials details');
+
+$tlsCallbackCalled = false;
+$tlsCall = $tlsClient->BenchUnary(new BenchRequest(), [], [
+    'call_credentials_callback' => static function (string $serviceUrl, string $methodName) use (&$tlsCallbackCalled): array {
+        $tlsCallbackCalled = true;
+        grpc_lite_phpt_assert_contains('https://test-server:50052/helloworld.Greeter', $serviceUrl, 'TLS call credentials service URL');
+        grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $methodName, 'TLS call credentials method');
+        return ['x-bench-echo-ascii' => 'from-plugin'];
+    },
+]);
+[, $tlsStatus] = $tlsCall->wait();
+grpc_lite_phpt_assert_true($tlsCallbackCalled, 'TLS call credentials callback must be called');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $tlsStatus->code, 'TLS call credentials status');
+grpc_lite_phpt_assert_same(['from-plugin'], $tlsCall->getMetadata()['x-bench-initial-ascii'] ?? null, 'TLS call credentials metadata');
+
+grpc_lite_phpt_expect_throw(static fn () => $tlsClient->BenchUnary(new BenchRequest(), [], [
+    'call_credentials_callback' => static fn (): string => 'not metadata',
+])->wait(), 'must return an array');
+
+$streamCallbackCalled = false;
+$streamRequest = (new BenchRequest())->setMessageCount(1);
+$streamCall = $client->BenchServerStream($streamRequest, [], [
+    'call_credentials_callback' => static function () use (&$streamCallbackCalled): array {
+        $streamCallbackCalled = true;
+        return ['x-bench-echo-ascii' => 'from-plugin-stream'];
+    },
+]);
+grpc_lite_phpt_assert_same([], iterator_to_array($streamCall->responses()), 'insecure stream call credentials responses');
+$streamStatus = $streamCall->getStatus();
+grpc_lite_phpt_assert_true(!$streamCallbackCalled, 'insecure stream call credentials callback must not be called');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAUTHENTICATED, $streamStatus->code, 'insecure stream call credentials status');
 
 echo "OK\n";
 ?>
