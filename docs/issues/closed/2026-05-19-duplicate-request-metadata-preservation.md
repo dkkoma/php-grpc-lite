@@ -1,5 +1,5 @@
 ---
-Status: Open
+Status: Closed
 Owner: Codex
 Created: 2026-05-19
 Related-Issue: https://github.com/dkkoma/php-grpc-lite/issues/5
@@ -60,3 +60,13 @@ GitHub issue #5のreal Spanner `Spanner/Commit` wire shape比較で、ext-grpc 1
 - `x-goog-api-client` のbase valueと `cred-type/u` がどちらも送信される。
 - 既存metadata validation / filteringが壊れていない。
 - PHPTとdomain model reviewが通る。
+
+
+## 修正コミット
+
+- `532c3c5 GitHub issue #5: duplicate request metadataを保持`
+
+## 判断ログ
+
+- duplicate request metadataはgRPC metadata modelとして保持すべきなので、公式文字列の模倣ではなく仕様準拠として採用した。
+- `grpc-accept-encoding` は一時実験のみで、本issueの修正対象には含めない。

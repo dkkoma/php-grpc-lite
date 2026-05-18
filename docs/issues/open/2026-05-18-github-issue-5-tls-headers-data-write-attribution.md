@@ -666,3 +666,58 @@ HTTP load結果:
 ## 訂正 2026-05-18
 
 GitHub issue #5へ最初に投稿したコメントは、ローカルTLS test-serverでの確認を強く解釈しすぎていた。issue #5の報告対象はreal Spanner workloadであり、ローカルで再現しないことは反証にならない。GitHub issueには訂正コメントを追加済み。
+
+## 0.0.6 trace build local FPM measurement 2026-05-19
+
+0.0.6へ入れる調査用traceを使い、こちらで再現可能なreal Spanner + FPM single-concurrency条件を再計測した。
+
+条件:
+
+- real Spanner: `vast-falcon-165704 / bench / laravel-bench-db`
+- endpoint: `transaction_select2_update1_insert1`
+- load: `hey -z 30s -c 1 -disable-keepalive`
+- FPM: `fpm-lifecycle-profile`, `cpus: 4.0`, startup session warmupあり
+- trace: `LARAVEL_SPANNER_TRACE=1`
+- php-grpc-lite currentのみ `GRPC_LITE_TRACE_FILE` による拡張内 `rpc.end` も取得
+- order: current -> ext-grpc 1.58 optimized -> 0.0.5 -> ext-grpc 1.58 optimized -> current
+- logs: `var/bench-results/issue5-006-local-20260519-084435/`
+
+HTTP load結果:
+
+| variant | runs | ok total | rps mean | avg ms mean | p50 ms mean | p90 ms mean | p95 ms mean | p99 ms mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| php-grpc-lite current | 2 | 293 | 4.866 | 205.7 | 192.6 | 268.6 | 279.9 | 316.2 |
+| ext-grpc 1.58 optimized | 2 | 302 | 5.017 | 199.3 | 190.3 | 224.8 | 293.2 | 401.0 |
+| php-grpc-lite 0.0.5 | 1 | 144 | 4.784 | 209.0 | 189.1 | 291.2 | 313.4 | 456.4 |
+
+currentのgrpc-lite拡張内RPC elapsed:
+
+| run | method | n | avg us | p50 us | p90 us | p95 us | p99 us | max us |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 | `Spanner/Commit` | 286 | 24816 | 23517 | 29121 | 34563 | 43570 | 50935 |
+| 1 | `Spanner/ExecuteStreamingSql` | 713 | 29415 | 25942 | 35314 | 41046 | 121025 | 127196 |
+| 5 | `Spanner/Commit` | 304 | 24029 | 23503 | 26445 | 27948 | 34194 | 44071 |
+| 5 | `Spanner/ExecuteStreamingSql` | 758 | 27644 | 25883 | 34416 | 40719 | 64166 | 133382 |
+
+app step比較の代表値:
+
+| variant/run | `http.bench` p50/p95 us | `mixed.main_transaction` p50/p95 us | `mixed.pre_insert.transaction` p50/p95 us |
+|---|---:|---:|---:|
+| current run 1 | 186594 / 296471 | 133778 / 152728 | 49862 / 158626 |
+| ext 1.58 run 2 | 181150 / 242418 | 132080 / 147196 | 47467 / 94819 |
+| 0.0.5 run 3 | 182483 / 299523 | 131735 / 150049 | 49653 / 152073 |
+| ext 1.58 run 4 | 184031 / 260163 | 133808 / 155721 | 48928 / 94782 |
+| current run 5 | 184138 / 234331 | 131913 / 145297 | 50005 / 91720 |
+
+解釈:
+
+- 手元のreal Spanner + FPM c1条件では、報告者環境のような `ext-grpc 1.58` に対するphp-grpc-lite 0.0.5の大きな劣後は再現しなかった。
+- current trace buildはext-grpc 1.58 optimizedと同じレンジにあり、2 run平均ではRPSが約3%低い程度だった。ただし30秒runかつSpanner backendの揺れを含むため、優劣の結論には使わない。
+- currentの拡張内traceでは、`Spanner/Commit` はp50約23.5ms、p99約34〜44msだった。報告者の `Commit wait` 差が出る環境では、この `rpc.end` とapp stepを同時に取ることで、差がCommit RPC内に寄るか、app/transaction stepに寄るかを切り分けられる。
+- ext-grpc内部のRPC completionはこのリポジトリからは取れないため、共通比較はapp step、php-grpc-lite詳細は0.0.6 traceの `rpc.end` として扱う。
+
+レビュー:
+
+- 報告者環境の差をこちらで再現した、とは言えない。
+- ただし、こちらで実施可能な範囲では、real Spanner/FPM/official ext-grpc 1.58 optimized/current/0.0.5の同一endpoint比較と、currentのRPC method-level traceは取得できた。
+- 次に必要なのは、同じ0.0.6 trace buildを報告者環境で実行してもらい、こちらと同じ観測点で差が出るか確認すること。
