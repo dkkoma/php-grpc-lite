@@ -45,7 +45,14 @@ GitHub issue #5のreal Spanner `Spanner/Commit` wire shape比較で、ext-grpc 1
 
 ## 検証
 
-- 未実施。
+- `./tools/test/check-phpt.sh ext/grpc/tests/023-metadata-and-call-credentials.phpt ext/grpc/tests/022-error-and-http-validation.phpt`
+  - 実際にはpreflightによりPHPT 15件が実行され、全件PASS。
+
+## 進捗
+
+- `grpc_lite_merge_call_credentials_metadata()` で同名keyを上書き/無視せず、既存値をarray化してplugin返却値をappendするようにした。
+- `023-metadata-and-call-credentials.phpt` に、request metadataとCallCredentials pluginが同じ `x-bench-echo-ascii` keyを返すケースを追加した。
+- `grpc-accept-encoding` は別差分として計測したが、本issueの修正対象には含めない。現時点ではcompression未対応のため、`identity, deflate, gzip` をproduction defaultで送る判断はしない。
 
 ## 完了条件
 

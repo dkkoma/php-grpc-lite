@@ -85,6 +85,52 @@ static bool grpc_lite_fail_if_call_credentials_require_secure_channel(grpc_lite_
     return true;
 }
 
+static void grpc_lite_append_metadata_zval(zval *metadata, zend_string *key, zval *value)
+{
+    zval *existing;
+    zval copy;
+
+    if (key == NULL) {
+        return;
+    }
+    existing = zend_hash_find(Z_ARRVAL_P(metadata), key);
+    if (existing == NULL) {
+        ZVAL_COPY(&copy, value);
+        zend_hash_update(Z_ARRVAL_P(metadata), key, &copy);
+        return;
+    }
+    if (Z_TYPE_P(existing) == IS_ARRAY) {
+        SEPARATE_ARRAY(existing);
+    } else {
+        ZVAL_COPY(&copy, existing);
+        zval_ptr_dtor(existing);
+        array_init(existing);
+        add_next_index_zval(existing, &copy);
+    }
+
+    if (Z_TYPE_P(value) == IS_ARRAY) {
+        zval *nested;
+        ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), nested) {
+            ZVAL_COPY(&copy, nested);
+            add_next_index_zval(existing, &copy);
+        } ZEND_HASH_FOREACH_END();
+        return;
+    }
+
+    ZVAL_COPY(&copy, value);
+    add_next_index_zval(existing, &copy);
+}
+
+static void grpc_lite_merge_metadata_append_values(zval *metadata, zval *source)
+{
+    zend_string *key;
+    zval *value;
+
+    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(source), key, value) {
+        grpc_lite_append_metadata_zval(metadata, key, value);
+    } ZEND_HASH_FOREACH_END();
+}
+
 static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, grpc_lite_channel_obj *channel)
 {
     grpc_lite_call_credentials_obj *credentials;
@@ -132,7 +178,7 @@ static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, g
         return FAILURE;
     }
     SEPARATE_ARRAY(&call->metadata);
-    zend_hash_merge(Z_ARRVAL(call->metadata), Z_ARRVAL(retval), zval_add_ref, 0);
+    grpc_lite_merge_metadata_append_values(&call->metadata, &retval);
     zval_ptr_dtor(&retval);
     return SUCCESS;
 }

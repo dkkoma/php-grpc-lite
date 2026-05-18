@@ -77,6 +77,20 @@ grpc_lite_phpt_assert_true($tlsCallbackCalled, 'TLS call credentials callback mu
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $tlsStatus->code, 'TLS call credentials status');
 grpc_lite_phpt_assert_same(['from-plugin'], $tlsCall->getMetadata()['x-bench-initial-ascii'] ?? null, 'TLS call credentials metadata');
 
+$duplicateCredentialsCallbackCalled = false;
+$duplicateCredentialsCall = $tlsClient->BenchUnary(new BenchRequest(), [
+    'x-bench-echo-ascii' => ['from-request'],
+], [
+    'call_credentials_callback' => static function () use (&$duplicateCredentialsCallbackCalled): array {
+        $duplicateCredentialsCallbackCalled = true;
+        return ['x-bench-echo-ascii' => ['from-plugin']];
+    },
+]);
+[, $duplicateCredentialsStatus] = $duplicateCredentialsCall->wait();
+grpc_lite_phpt_assert_true($duplicateCredentialsCallbackCalled, 'duplicate call credentials callback must be called');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $duplicateCredentialsStatus->code, 'duplicate call credentials status');
+grpc_lite_phpt_assert_same(['from-request', 'from-plugin'], $duplicateCredentialsCall->getMetadata()['x-bench-initial-ascii'] ?? null, 'duplicate call credentials metadata must append values');
+
 grpc_lite_phpt_expect_throw(static fn () => $tlsClient->BenchUnary(new BenchRequest(), [], [
     'call_credentials_callback' => static fn (): string => 'not metadata',
 ])->wait(), 'must return an array');

@@ -629,6 +629,40 @@ packet length bucketの参考:
 3. ext-grpc 1.58 / php-grpc-lite current / php-grpc-lite 0.0.5 を交互順序で複数runする。
 4. metadata差修正は重要だが、原因特定前に主因扱いしない。
 
+## metadata alignment実験 2026-05-19
+
+wire shape差のうち、まずCallCredentials plugin由来のduplicate metadata保持を修正した。加えて、`grpc-accept-encoding: identity, deflate, gzip` を一時的な実験フックで送る条件を作り、real Spanner FPM single-concurrencyで比較した。
+
+条件:
+
+- endpoint: `transaction_select2_update1_insert1`
+- load: `hey -z 45s -c 1 -disable-keepalive`
+- backend: real Spanner `vast-falcon-165704 / bench / laravel-bench-db`
+- FPM: `fpm-lifecycle-profile`
+- SO: current working tree build
+- accept-encoding条件: 一時的に `GRPC_LITE_EXPERIMENTAL_ACCEPT_ENCODING=identity, deflate, gzip` を見てrequest headerを追加するpatchで測定。測定後、この実験フックは本実装から戻した。
+
+HTTP load結果:
+
+| variant | run | requests | rps | avg | p50 | p90 | p95 | p99 | max |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| duplicate metadata fix only | warm run 1 | 252 | 5.5897 | 178.9ms | 176.7ms | 191.4ms | 207.3ms | 230.4ms | 289.2ms |
+| duplicate metadata fix only | recreated, run 1 | 240 | 5.3136 | 188.2ms | 178.2ms | 224.0ms | 240.1ms | 344.9ms | 539.9ms |
+| duplicate metadata fix only | recreated, run 2 | 250 | 5.5361 | 180.6ms | 177.9ms | 187.6ms | 193.1ms | 301.7ms | 330.8ms |
+| duplicate + `grpc-accept-encoding` | recreated, run 1 | 218 | 4.8409 | 206.6ms | 182.8ms | 334.2ms | 391.2ms | 461.1ms | 512.4ms |
+| duplicate + `grpc-accept-encoding` | same FPM warm run 2 | 247 | 5.4769 | 182.6ms | 179.9ms | 195.1ms | 198.5ms | 240.3ms | 299.4ms |
+
+無効run:
+
+- FPM再作成直後に5秒sleepだけで開始したrunは、502が大量に混ざったため破棄した。
+
+解釈:
+
+- `grpc-accept-encoding` をext-grpcと同じ値に揃えても、warm runではduplicate-onlyとの差は小さい。
+- recreated直後のrunではtail悪化が出たが、同じFPMプロセスを再利用したwarm runでは消えたため、`grpc-accept-encoding` そのものが安定した改善要因/悪化要因とはまだ言えない。
+- php-grpc-liteはresponse compressionを実装していない。`grpc-accept-encoding: identity, deflate, gzip` をproduction defaultで送ると、serverがgzip responseを返した場合にclient側でUNIMPLEMENTEDになる可能性がある。このため、今回の結果だけでは本採用しない。
+- ただし、報告者環境との差を詰める観測項目としては有効なので、必要ならmethod単位diagnosticの次段で再度含める。
+
 ## 訂正 2026-05-18
 
 GitHub issue #5へ最初に投稿したコメントは、ローカルTLS test-serverでの確認を強く解釈しすぎていた。issue #5の報告対象はreal Spanner workloadであり、ローカルで再現しないことは反証にならない。GitHub issueには訂正コメントを追加済み。
