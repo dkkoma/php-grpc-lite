@@ -11,9 +11,11 @@
 #   ./bench/run.sh payload-streaming
 #   ./bench/run.sh metadata-header
 #   ./bench/run.sh spanner-shape
+#   ./bench/run.sh tls-spanner-shape
 #   ./bench/run.sh spanner-real-client
 #   ./bench/run.sh cpu-spanner-real-client
 #   ./bench/run.sh cpu-micro
+#   ./bench/run.sh tls-cpu-micro
 #   ./bench/run.sh cpu-concurrent
 #
 set -euo pipefail
@@ -107,6 +109,9 @@ case "$suite" in
     spanner-shape)
         run_benchmark_php "Benchmark Spanner RPC shape" tools/benchmark/spanner-shape.php
         ;;
+    tls-spanner-shape)
+        run_benchmark_php "Benchmark TLS Spanner RPC shape" tools/benchmark/spanner-shape.php
+        ;;
     spanner-real-client)
         run_benchmark_php "Benchmark google/cloud-spanner high-level client" tools/benchmark/spanner-real-client.php
         ;;
@@ -116,6 +121,9 @@ case "$suite" in
     cpu-micro)
         run_benchmark_php "Benchmark CPU micro overhead" tools/benchmark/cpu-micro.php
         ;;
+    tls-cpu-micro)
+        run_benchmark_php "Benchmark TLS CPU micro overhead" tools/benchmark/cpu-micro.php
+        ;;
     cpu-concurrent)
         run_benchmark_php "Benchmark concurrent worker CPU overhead" tools/benchmark/cpu-concurrent.php
         ;;
@@ -123,7 +131,7 @@ case "$suite" in
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|spanner-real-client|cpu-spanner-real-client|cpu-micro|cpu-concurrent]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|tls-spanner-shape|spanner-real-client|cpu-spanner-real-client|cpu-micro|tls-cpu-micro|cpu-concurrent]
 USAGE
         exit 2
         ;;

@@ -6,6 +6,7 @@ require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
+use Grpc\ChannelCredentials;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
@@ -21,6 +22,7 @@ $calls = 1000;
 $warmupCalls = 10;
 $nativeResponseMode = 'stream';
 $transport = 'native';
+$tlsRoot = '';
 
 $unaryCases = [
     ['name' => 'begin_txn_unary', 'request_bytes' => 92, 'response_bytes' => 18],
@@ -67,9 +69,17 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
         $transport = substr($arg, strlen('--transport='));
+    } elseif ($arg === '--tls-root') {
+        $tlsRoot = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--tls-root=')) {
+        $tlsRoot = substr($arg, strlen('--tls-root='));
     } else {
         usage("unexpected argument: $arg");
     }
+}
+
+if ($suite === 'tls-spanner-shape' && $target === 'test-server:50051') {
+    $target = 'test-server:50052';
 }
 
 if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
@@ -90,12 +100,13 @@ $clientOptions = ['php_grpc_lite.native_response_mode' => $nativeResponseMode];
 if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
     $clientOptions['grpc_lite.backend'] = 'franken-go';
 }
+$clientOptions += tlsClientOptions($suite, $tlsRoot);
 $unaryClient = UnaryBenchHelper::client($target, $clientOptions);
 $streamingClient = StreamingBenchHelper::client($target, $clientOptions);
 
 foreach ($unaryCases as $case) {
     $request = unaryRequest($case['request_bytes'], $case['response_bytes']);
-    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport) + [
+    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport, isTlsSuite($suite)) + [
         'benchmark.call_type' => 'unary',
         'benchmark.request_bytes' => $case['request_bytes'],
         'benchmark.response_bytes' => $case['response_bytes'],
@@ -124,7 +135,7 @@ foreach ($unaryCases as $case) {
 
 foreach ($streamingCases as $case) {
     $request = streamingRequest($case['message_count'], $case['request_bytes'], $case['response_bytes']);
-    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport) + [
+    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport, isTlsSuite($suite)) + [
         'benchmark.call_type' => 'server_streaming',
         'benchmark.request_bytes' => $case['request_bytes'],
         'benchmark.response_bytes' => $case['response_bytes'],
@@ -168,20 +179,42 @@ function streamingRequest(int $messageCount, int $requestBytes, int $responseByt
 }
 
 /** @return array<string, int|string> */
-function commonContext(string $target, int $calls, int $warmupCalls, string $transport): array
+function commonContext(string $target, int $calls, int $warmupCalls, string $transport, bool $tls): array
 {
     return [
         'benchmark.target' => $target,
         'benchmark.calls' => $calls,
         'benchmark.warmup_calls' => $warmupCalls,
         'benchmark.transport' => $transport,
+        'benchmark.security' => $tls ? 'tls' : 'h2c',
         'benchmark.spanner_path' => 'synthetic-shape',
     ];
+}
+
+/** @return array<string, mixed> */
+function tlsClientOptions(string $suite, string $tlsRoot): array
+{
+    if (!str_starts_with($suite, 'tls-')) {
+        return [];
+    }
+    if ($tlsRoot === '') {
+        $tlsRoot = dirname(__DIR__, 2) . '/poc/test-server/certs/server.crt';
+    }
+    $root = file_get_contents($tlsRoot);
+    if ($root === false) {
+        throw new RuntimeException("TLS root certificate not found: $tlsRoot");
+    }
+    return ['credentials' => ChannelCredentials::createSsl($root)];
+}
+
+function isTlsSuite(string $suite): bool
+{
+    return str_starts_with($suite, 'tls-');
 }
 
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/spanner-shape.php --suite=spanner-shape --implementation=php-grpc-lite [--calls=1000] [--warmup-calls=10]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/spanner-shape.php --suite=spanner-shape|tls-spanner-shape --implementation=php-grpc-lite [--calls=1000] [--warmup-calls=10] [--tls-root=...]\n");
     exit(2);
 }

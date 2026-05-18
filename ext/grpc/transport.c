@@ -11,6 +11,8 @@
 
 #include "transport_core.c"
 
+#define GRPC_LITE_H2_WRITE_COALESCE_CAPACITY 16384
+
 static void destroy_h2_connection(h2_connection *connection);
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
 static void detach_persistent_connection_by_ptr(h2_connection *connection);
@@ -161,6 +163,9 @@ static void destroy_h2_connection(h2_connection *connection)
     }
     if (connection->fd >= 0) {
         close(connection->fd);
+    }
+    if (connection->write_buffer != NULL) {
+        pefree(connection->write_buffer, connection->persistent);
     }
     if (connection->session != NULL) {
         nghttp2_session_del(connection->session);
@@ -702,6 +707,7 @@ static int configure_tls_connection(h2_connection *connection, const char *host,
         set_connection_error_detail(connection, "failed to create SSL object");
         return -1;
     }
+    SSL_set_read_ahead(connection->ssl, 1);
     static const unsigned char alpn[] = {2, 'h', '2'};
     if (SSL_set_alpn_protos(connection->ssl, alpn, sizeof(alpn)) != 0) {
         set_connection_error_detail(connection, "failed to configure TLS ALPN h2");
@@ -897,6 +903,66 @@ static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data
     }
 }
 
+static int h2_connection_write_all(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out)
+{
+    size_t total_written = 0;
+    while (total_written < length) {
+        ssize_t written = h2_connection_send(connection, data + total_written, length - total_written, deadline_abs_us, timed_out);
+        if (written <= 0) {
+            return FAILURE;
+        }
+        total_written += (size_t) written;
+    }
+    return SUCCESS;
+}
+
+static int h2_connection_flush_write_buffer(h2_connection *connection, uint64_t deadline_abs_us, bool *timed_out)
+{
+    if (connection == NULL || connection->write_buffer_len == 0) {
+        return SUCCESS;
+    }
+    if (h2_connection_write_all(connection, connection->write_buffer, connection->write_buffer_len, deadline_abs_us, timed_out) != SUCCESS) {
+        return FAILURE;
+    }
+    connection->write_buffer_len = 0;
+    return SUCCESS;
+}
+
+static int h2_connection_buffer_or_write(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out)
+{
+    if (connection == NULL) {
+        errno = EINVAL;
+        return FAILURE;
+    }
+    if (!connection->write_coalescing) {
+        return h2_connection_write_all(connection, data, length, deadline_abs_us, timed_out);
+    }
+    if (length > GRPC_LITE_H2_WRITE_COALESCE_CAPACITY) {
+        if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
+            return FAILURE;
+        }
+        return h2_connection_write_all(connection, data, length, deadline_abs_us, timed_out);
+    }
+    if (connection->write_buffer == NULL) {
+        connection->write_buffer = pemalloc(GRPC_LITE_H2_WRITE_COALESCE_CAPACITY, connection->persistent);
+        if (connection->write_buffer == NULL) {
+            errno = ENOMEM;
+            connection->last_io_errno = errno;
+            set_connection_error_detail(connection, "failed to allocate HTTP/2 write buffer");
+            return FAILURE;
+        }
+        connection->write_buffer_cap = GRPC_LITE_H2_WRITE_COALESCE_CAPACITY;
+    }
+    if (connection->write_buffer_len + length > connection->write_buffer_cap) {
+        if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
+            return FAILURE;
+        }
+    }
+    memcpy(connection->write_buffer + connection->write_buffer_len, data, length);
+    connection->write_buffer_len += length;
+    return SUCCESS;
+}
+
 static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us)
 {
     zend_long remaining_timeout_us;
@@ -1043,7 +1109,7 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
             }
         }
     }
-    rv = nghttp2_session_send(connection->session);
+    rv = send_pending_h2_frames(connection, NULL);
     if (rv != 0) {
         if (connection->setup_timed_out) {
             *error_message = "HTTP/2 transport deadline exceeded";
@@ -1212,30 +1278,24 @@ static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_u
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
-    grpc_call *call;
-    size_t total_written = 0;
+    uint64_t deadline_abs_us;
+    bool *timed_out;
     (void) session;
     (void) flags;
 
     if (connection == NULL) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    call = connection->current_io_call;
-
-    while (total_written < length) {
-        bool *timed_out = connection->current_write_deadline_abs_us > 0
-            ? &connection->current_write_timed_out
-            : &connection->setup_timed_out;
-        uint64_t deadline_abs_us = connection->current_write_deadline_abs_us > 0
-            ? connection->current_write_deadline_abs_us
-            : connection->setup_deadline_abs_us;
-        ssize_t written = h2_connection_send(connection, data + total_written, length - total_written, deadline_abs_us, timed_out);
-        if (written <= 0) {
-            return NGHTTP2_ERR_CALLBACK_FAILURE;
-        }
-        total_written += (size_t) written;
+    timed_out = connection->current_write_deadline_abs_us > 0
+        ? &connection->current_write_timed_out
+        : &connection->setup_timed_out;
+    deadline_abs_us = connection->current_write_deadline_abs_us > 0
+        ? connection->current_write_deadline_abs_us
+        : connection->setup_deadline_abs_us;
+    if (h2_connection_buffer_or_write(connection, data, length, deadline_abs_us, timed_out) != SUCCESS) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    return (ssize_t) total_written;
+    return (ssize_t) length;
 }
 
 static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
@@ -1248,7 +1308,20 @@ static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
     connection->current_io_call = call;
     connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : connection->setup_deadline_abs_us;
     connection->current_write_timed_out = false;
+    connection->write_coalescing = connection->tls;
+    connection->write_buffer_len = 0;
     rv = nghttp2_session_send(connection->session);
+    if (rv == 0) {
+        bool *timed_out = connection->current_write_deadline_abs_us > 0
+            ? &connection->current_write_timed_out
+            : &connection->setup_timed_out;
+        uint64_t deadline_abs_us = connection->current_write_deadline_abs_us > 0
+            ? connection->current_write_deadline_abs_us
+            : connection->setup_deadline_abs_us;
+        if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
+            rv = NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+    }
     if (rv != 0 && call != NULL) {
         if (connection->current_write_timed_out) {
             call->timed_out = true;
@@ -1260,6 +1333,8 @@ static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
     connection->current_io_call = NULL;
     connection->current_write_deadline_abs_us = 0;
     connection->current_write_timed_out = false;
+    connection->write_coalescing = false;
+    connection->write_buffer_len = 0;
     return rv;
 }
 

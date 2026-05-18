@@ -6,6 +6,7 @@ require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
+use Grpc\ChannelCredentials;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
@@ -21,6 +22,7 @@ $calls = 5000;
 $warmupCalls = 100;
 $nativeResponseMode = 'stream';
 $transport = 'native';
+$tlsRoot = '';
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -56,9 +58,17 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
         $transport = substr($arg, strlen('--transport='));
+    } elseif ($arg === '--tls-root') {
+        $tlsRoot = $args[++$argIndex] ?? '';
+    } elseif (str_starts_with($arg, '--tls-root=')) {
+        $tlsRoot = substr($arg, strlen('--tls-root='));
     } else {
         usage("unexpected argument: $arg");
     }
+}
+
+if ($suite === 'tls-cpu-micro' && $target === 'test-server:50051') {
+    $target = 'test-server:50052';
 }
 
 if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
@@ -76,6 +86,7 @@ $benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementatio
 register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $clientOptions = ['php_grpc_lite.native_response_mode' => $nativeResponseMode];
+$clientOptions += tlsClientOptions($suite, $tlsRoot);
 $unaryClient = UnaryBenchHelper::client($target, $clientOptions);
 $streamingClient = StreamingBenchHelper::client($target, $clientOptions);
 
@@ -194,7 +205,7 @@ printf(
 printf("%'-116s\n", '');
 
 foreach ($cases as $case) {
-    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport) + [
+    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport, isTlsSuite($suite)) + [
         'benchmark.call_type' => $case['call_type'],
         'benchmark.request_bytes' => $case['request_bytes'],
         'benchmark.response_bytes' => $case['response_bytes'],
@@ -204,8 +215,8 @@ foreach ($cases as $case) {
         'benchmark.operation_shape' => $case['name'],
     ]);
 
-    runWarmup($case, $unaryClient, $streamingClient, $target, $warmupCalls);
-    $result = measureCase($case, $unaryClient, $streamingClient, $target, $calls);
+    runWarmup($case, $unaryClient, $streamingClient, $target, $clientOptions, $warmupCalls);
+    $result = measureCase($case, $unaryClient, $streamingClient, $target, $clientOptions, $calls);
 
     printf(
         "%-32s %-16s %8d %14.1f %14.1f %14.1f %14.1f\n",
@@ -246,22 +257,23 @@ function streamingRequest(int $messageCount, int $requestBytes, int $responseByt
 }
 
 /** @return array<string, int|string> */
-function commonContext(string $target, int $calls, int $warmupCalls, string $transport): array
+function commonContext(string $target, int $calls, int $warmupCalls, string $transport, bool $tls): array
 {
     return [
         'benchmark.target' => $target,
         'benchmark.calls' => $calls,
         'benchmark.warmup_calls' => $warmupCalls,
         'benchmark.transport' => $transport,
+        'benchmark.security' => $tls ? 'tls' : 'h2c',
         'benchmark.cpu_source' => 'getrusage',
     ];
 }
 
 /** @param array<string, mixed> $case */
-function runWarmup(array $case, object $unaryClient, object $streamingClient, string $target, int $warmupCalls): void
+function runWarmup(array $case, object $unaryClient, object $streamingClient, string $target, array $clientOptions, int $warmupCalls): void
 {
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
-        runOneCall($case, $unaryClient, $streamingClient, $target);
+        runOneCall($case, $unaryClient, $streamingClient, $target, $clientOptions);
     }
 }
 
@@ -269,12 +281,12 @@ function runWarmup(array $case, object $unaryClient, object $streamingClient, st
  * @param array<string, mixed> $case
  * @return array<string, float|int>
  */
-function measureCase(array $case, object $unaryClient, object $streamingClient, string $target, int $calls): array
+function measureCase(array $case, object $unaryClient, object $streamingClient, string $target, array $clientOptions, int $calls): array
 {
     $usageStart = getrusage();
     $startNs = hrtime(true);
     for ($call = 0; $call < $calls; $call++) {
-        runOneCall($case, $unaryClient, $streamingClient, $target);
+        runOneCall($case, $unaryClient, $streamingClient, $target, $clientOptions);
     }
     $endNs = hrtime(true);
     $usageEnd = getrusage();
@@ -299,20 +311,41 @@ function measureCase(array $case, object $unaryClient, object $streamingClient, 
 }
 
 /** @param array<string, mixed> $case */
-function runOneCall(array $case, object $unaryClient, object $streamingClient, string $target): void
+function runOneCall(array $case, object $unaryClient, object $streamingClient, string $target, array $clientOptions): void
 {
     if ($case['call_type'] === 'unary') {
         if ($case['client_scope'] === 'per_call') {
-            $unaryClient = UnaryBenchHelper::client($target);
+            $unaryClient = UnaryBenchHelper::client($target, $clientOptions);
         }
         UnaryBenchHelper::call($unaryClient, $case['request']);
         return;
     }
 
     if ($case['client_scope'] === 'per_call') {
-        $streamingClient = StreamingBenchHelper::client($target);
+        $streamingClient = StreamingBenchHelper::client($target, $clientOptions);
     }
     StreamingBenchHelper::drain($streamingClient, $case['request']);
+}
+
+/** @return array<string, mixed> */
+function tlsClientOptions(string $suite, string $tlsRoot): array
+{
+    if (!str_starts_with($suite, 'tls-')) {
+        return [];
+    }
+    if ($tlsRoot === '') {
+        $tlsRoot = dirname(__DIR__, 2) . '/poc/test-server/certs/server.crt';
+    }
+    $root = file_get_contents($tlsRoot);
+    if ($root === false) {
+        throw new RuntimeException("TLS root certificate not found: $tlsRoot");
+    }
+    return ['credentials' => ChannelCredentials::createSsl($root)];
+}
+
+function isTlsSuite(string $suite): bool
+{
+    return str_starts_with($suite, 'tls-');
 }
 
 /** @param array<string, mixed> $usage */
@@ -325,6 +358,6 @@ function rusageTimeUs(array $usage, string $prefix): float
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/cpu-micro.php --suite=cpu-micro --implementation=php-grpc-lite [--calls=5000] [--warmup-calls=100]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/cpu-micro.php --suite=cpu-micro|tls-cpu-micro --implementation=php-grpc-lite [--calls=5000] [--warmup-calls=100] [--tls-root=...]\n");
     exit(2);
 }

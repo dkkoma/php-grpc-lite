@@ -477,6 +477,10 @@ struct _h2_connection {
     grpc_call *current_read_call;
     uint64_t current_write_deadline_abs_us;
     bool current_write_timed_out;
+    uint8_t *write_buffer;
+    size_t write_buffer_len;
+    size_t write_buffer_cap;
+    bool write_coalescing;
     uint64_t setup_deadline_abs_us;
     bool setup_timed_out;
     int last_error;
