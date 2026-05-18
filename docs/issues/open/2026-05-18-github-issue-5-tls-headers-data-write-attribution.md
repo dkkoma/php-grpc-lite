@@ -508,6 +508,52 @@ ext-grpcのoutbound TLS write sizeが大きいことは、報告者の `ext-grpc
 3. `user-agent` / `x-goog-api-client` のversion差がSpanner frontend処理に影響するかを切り分ける。ただし公式実装文字列の模倣を目的にしない。
 4. その後、FPM 45〜60秒runで `request last outbound byte -> first inbound response byte` を再測定する。
 
+## local tcpdump + strace相関 2026-05-19
+
+報告者の追加報告を軽く扱わないため、こちらでも同じ観測方向の `tcpdump` + `strace` 同時取得を実施した。
+
+実施条件:
+
+- real Spanner
+- action: `transaction_select2_update1_insert1`
+- iterations: `10`
+- ext-grpc: `1.58.0` optimized build
+- php-grpc-lite: current native extension
+- 実行形態: CLI profile action。FPM 45秒runではない
+- pcap: container内 `tcpdump -i any -nn -s 0 'tcp port 443'`
+- strace: `write,sendmsg,recvmsg,read,ppoll,epoll_pwait`
+
+この測定では、Commit streamを厳密同定するmarkerやTLS復号はまだない。そのため、報告者と同じ結論強度ではなく、TCP payload packet単位の粗い相関として扱う。
+
+集計方法:
+
+- outbound TCP payload packetから次のinbound TCP payload packetまでを計算。
+- TLS handshake付近の先頭pairを除外。
+- request候補として、outbound payload length `450B`〜`1600B`、next inbound payload `100B`以上を抽出。
+- この候補にはCommit以外のSpanner RPCも含まれ得る。
+
+結果:
+
+| variant | candidates | median | mean | p90 | p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| php-grpc-lite current | 68 | 21.452ms | 26.055ms | 34.922ms | 36.570ms |
+| ext-grpc 1.58 optimized | 62 | 20.947ms | 24.235ms | 33.723ms | 34.154ms |
+
+このローカルCLI条件では、報告された `ext-grpc 12.41ms`、`php-grpc-lite 20.65ms` のような1.6x差は再現していない。packet相関上も両者は近いレンジだった。
+
+ただし、この結果は報告者のFPM 45秒runを否定しない。
+
+- CLI実行であり、FPM worker lifecycle、session warmup、長時間run、worker stateが違う。
+- Commitだけを厳密抽出していない。
+- TLS復号/HTTP/2 stream idでrequest last byteを特定していない。
+- 報告者のn=252 / n=172に対して、こちらは10 iterationの短時間run。
+
+現時点の扱い:
+
+- 報告者の `tcpdump + strace` 観測は、調査対象として維持する。
+- こちらの短時間CLI相関では同じ差は出ていないため、差分はFPM/長時間run/worker warm state/metadata shape/Spanner backend揺れのいずれかに依存している可能性がある。
+- 次の再現には、FPM single-concurrencyで、Commit markerまたはHTTP/2復号により `Commit request last outbound byte -> first inbound response byte` を直接集計する必要がある。
+
 ## 訂正 2026-05-18
 
 GitHub issue #5へ最初に投稿したコメントは、ローカルTLS test-serverでの確認を強く解釈しすぎていた。issue #5の報告対象はreal Spanner workloadであり、ローカルで再現しないことは反証にならない。GitHub issueには訂正コメントを追加済み。
