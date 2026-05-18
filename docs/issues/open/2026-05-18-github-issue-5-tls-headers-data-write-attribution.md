@@ -554,6 +554,81 @@ ext-grpcのoutbound TLS write sizeが大きいことは、報告者の `ext-grpc
 - こちらの短時間CLI相関では同じ差は出ていないため、差分はFPM/長時間run/worker warm state/metadata shape/Spanner backend揺れのいずれかに依存している可能性がある。
 - 次の再現には、FPM single-concurrencyで、Commit markerまたはHTTP/2復号により `Commit request last outbound byte -> first inbound response byte` を直接集計する必要がある。
 
+## FPM single-concurrency再計測 2026-05-19
+
+報告者の条件に寄せるため、FPM + nginx + `hey -z 45s -c 1 -disable-keepalive` でreal Spanner `transaction_select2_update1_insert1` を再計測した。同時にFPM container内で `tcpdump -i any 'tcp port 443'` と全php-fpm workerへの `strace` attachを実施した。
+
+比較対象:
+
+- `ext-grpc 1.58.0 optimized`: `/workspace/var/official-ext-grpc-so/1.58.0-optimized/grpc.so`
+- `php-grpc-lite current`: `/workspace/ext/grpc/modules/grpc.so`
+- `php-grpc-lite 0.0.5`: `/workspace/var/tag-so/0.0.5/grpc.so`
+
+HTTP load結果:
+
+| variant | requests | rps | avg | p50 | p90 | p95 | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| php-grpc-lite current | 202 | 4.4775 | 223.3ms | 206.7ms | 318.2ms | 337.3ms | 468.0ms |
+| ext-grpc 1.58 optimized | 224 | 4.9718 | 201.1ms | 193.8ms | 215.4ms | 251.0ms | 543.9ms |
+| php-grpc-lite 0.0.5 | 235 | 5.2051 | 192.1ms | 181.8ms | 237.9ms | 257.6ms | 404.0ms |
+
+このrunでは、currentはext-grpc 1.58より約11%低いthroughput、約22ms遅い平均応答時間になった。一方で、報告対象に近い0.0.5はこのrunではext-grpc 1.58より速く、報告者の `ext n=252 / lite n=172` という大きな差は再現しなかった。
+
+この結果は、報告者の結果を否定しない。理由は以下。
+
+- こちらは1 runずつで、交互複数runではない。
+- 報告者の環境、GCP frontend/backend割当、host CPU、FPM設定、SO build条件、run順序はまだ完全には一致していない。
+- 0.0.5とcurrentで結果が逆転しており、run間揺れまたはbuild/runtime条件差が十分に残っている。
+- `strace` attachと`tcpdump`を同時に入れているため、通常負荷試験とは絶対値が変わる。
+
+tcpdump packet相関:
+
+Commitを厳密同定するmarkerやTLS復号はまだないため、ここではTCP payload packet単位の粗い候補抽出に留める。
+
+抽出条件:
+
+- outbound TCP payload packetから次のinbound TCP payload packetまでを計算。
+- request候補として、outbound payload length `450B`〜`1700B`、next inbound payload `100B`以上を抽出。
+- Commit以外のSpanner RPCを含む。
+
+| variant | candidates | median | mean | p90 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| php-grpc-lite current | 1313 | 23.703ms | 26.673ms | 38.019ms | 39.579ms | 42.659ms |
+| ext-grpc 1.58 optimized | 1034 | 23.281ms | 25.096ms | 33.997ms | 35.096ms | 37.481ms |
+| php-grpc-lite 0.0.5 | 1494 | 22.802ms | 23.530ms | 29.964ms | 30.969ms | 35.691ms |
+
+packet相関では、currentはext-grpcよりtailが悪いが、報告者の `12.41ms vs 20.65ms` ほどの大きな差はこのrunでは見えていない。0.0.5はpacket相関でもext-grpcより良い結果になった。
+
+packet length bucketの参考:
+
+- php-grpc-liteの既存wire traceでは、`Spanner/Commit` はwarm状態でTLS write sizeがおおむね `500B` 前後になる。
+- ext-grpc 1.58では、同じ `Spanner/Commit` が `1042B` 前後で観測される。
+- この対応で見ると、手元FPM runのCommit相当bucketは以下。
+
+| variant | bucket | n | median | mean | p90 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| php-grpc-lite current | `497B` | 337 | 23.008ms | 24.264ms | 24.764ms |
+| ext-grpc 1.58 optimized | `1042B` | 261 | 23.146ms | 23.332ms | 25.251ms |
+| php-grpc-lite 0.0.5 | `497B` | 389 | 23.111ms | 23.744ms | 25.518ms |
+
+このbucket対応が正しければ、手元FPM runではCommit単体の `outbound payload -> next inbound payload` はext-grpcとphp-grpc-liteでほぼ同等だった。currentのHTTP response全体が遅かった主な見え方は、Commit相当bucketではなく、`591B/592B/723B` など別RPC形状のtail悪化に出ている。
+
+ただし、これはTLS復号やmethod markerによる確定ではない。packet sizeによる推定であり、次のdiagnosticでmethod単位に確定する。
+
+現時点で言えること:
+
+- `php-grpc-lite current` では、FPM single-concurrencyのmixed transactionでext-grpc 1.58より遅いrunを手元でも観測した。
+- ただし、報告者の0.0.5に対する大きな差は、今回のFPM 45秒runでは再現していない。
+- 粗いTCP packet相関だけでは、差分が特定のCommit RPCにあるとはまだ言えない。むしろ手元runではCommit相当bucketは同等に見える。
+- 次はHTTP response全体ではなく、RPC method単位、特に `Spanner/Commit` 単位で抽出できるmarkerまたはHTTP/2復号相当が必要。
+
+次の作業:
+
+1. FPM runでRPC method名、phase、pid、時刻を出せるdiagnosticを用意し、`Commit` だけを抽出する。
+2. `request first outbound byte`、`request last outbound byte`、`first inbound response byte`、`recv syscall`、`wait end` をCommit単位で集計する。
+3. ext-grpc 1.58 / php-grpc-lite current / php-grpc-lite 0.0.5 を交互順序で複数runする。
+4. metadata差修正は重要だが、原因特定前に主因扱いしない。
+
 ## 訂正 2026-05-18
 
 GitHub issue #5へ最初に投稿したコメントは、ローカルTLS test-serverでの確認を強く解釈しすぎていた。issue #5の報告対象はreal Spanner workloadであり、ローカルで再現しないことは反証にならない。GitHub issueには訂正コメントを追加済み。
