@@ -89,26 +89,85 @@ write(4, ..., 39) = 39
 3. 分かれていないなら、ext-grpcのscatter/gatherとの差はsyscall表現差であり、latency差の主因候補からは外す。
 4. 1 TLS recordにまとまっていてもCPU差が残る場合、copy-based coalescingの追加copy costが問題になるかをCPU profileで見る。
 
+### real Spanner marker trace
+
+`SPANNER_EMULATOR_HOST` / `LARAVEL_SPANNER_EMULATOR_HOST` を空にし、`vast-falcon-165704 / bench / laravel-bench-db` のreal Spannerへ接続した。最初のemulator向きtraceと、stale session cacheで失敗したtraceは破棄した。採用したtraceでは接続先が `172.217.221.95:443` であることを確認した。
+
+`selectOneRow()` では、warmup後にstderr markerで測定対象を囲み、次の構造を確認した。
+
+```text
+===MEASURE_SELECT_BEGIN===
+read(fd)=EAGAIN
+write(fd, ..., 596) = 596
+read(fd)=EAGAIN
+ppoll(...) <0.019075>
+read(fd, ..., 16713) = 450
+write(fd, ..., 39) = 39
+read(fd)=EAGAIN
+write(fd, ..., 503) = 503
+read(fd)=EAGAIN
+ppoll(...) <0.019258>
+read(fd, ..., 16713) = 208
+write(fd, ..., 39) = 39
+===MEASURE_SELECT_END===
+```
+
+`mixedTransaction()` では、測定区間内に複数のSpanner RPCが順に発生し、各RPCのrequest送信は1つのlarge writeとして見えた。
+
+```text
+===MEASURE_MIXED_BEGIN===
+read(fd)=EAGAIN
+write(fd, ..., 665) = 665
+...
+read(fd, ..., 16713) = 278
+write(fd, ..., 39) = 39
+read(fd)=EAGAIN
+write(fd, ..., 502) = 502
+...
+read(fd, ..., 16713) = 266
+write(fd, ..., 39) = 39
+read(fd)=EAGAIN
+write(fd, ..., 603) = 603
+...
+write(fd, ..., 656) = 656
+...
+write(fd, ..., 596) = 596
+...
+write(fd, ..., 728) = 728
+...
+write(fd, ..., 502) = 502
+...
+===MEASURE_MIXED_END===
+```
+
+解釈:
+
+- markerはPHPアプリケーション側のmethod boundaryであり、HTTP/2 frame boundaryやgRPC stream boundaryではない。
+- `selectOneRow()` / `mixedTransaction()` は内部で複数RPCを順に発行するため、`read(response)` の直後に見える `write(39)` は次RPCのHEADERSである可能性を除外できない。
+- したがって、このtraceだけでは `39B write` が前RPCのHTTP/2 control frameなのか、次RPCのHEADERS frameなのかを判定できない。
+- `39B write` + `large write` のパターン自体はreal Spannerでも見えている。未解明点は報告の有無ではなく、39B recordに含まれるHTTP/2 frame typeと、large writeとのstream_id対応である。
+- frame typeは、straceだけではなく、nghttp2 frame callback診断またはTLS復号traceで直接確認する必要がある。
+
 ## 現時点の解釈
 
 - ローカルTLS test-serverでは、0.0.5 currentの測定対象RPC requestは1 `write` にまとまっていた。
-- しかしissue #5はreal Spanner workloadでの報告であり、ローカル結果だけでは不十分。
-- `write(39)` が前後のHTTP/2 control frameである可能性は仮説に留める。
-- 次は実Spannerで同じmarker付きtraceを取り、GitHub issue #5の観測そのものに対して確認する。
+- real Spannerの `selectOneRow()` / `mixedTransaction()` marker traceでは、`39B write` + `large write` のパターンが測定区間内で繰り返し見えた。
+- ただし、marker粒度が粗いため、`39B write` を前RPCのcontrol frameと断定することも、次RPCのHEADERS frameと断定することもできない。
+- ext-grpcの `sendmsg(... msg_iovlen=2)` との差を判断するには、stream_id付きのHTTP/2 frame送信ログとTLS write flush boundaryを同時に見る必要がある。
 
 ## 次の確認候補
 
-1. real Spanner workloadでrequest boundary markerをstderrなどに出し、marker前後の `write(39)` が前RPC由来か現在RPC由来か確認する。
-2. `SSLKEYLOGFILE` + Wireshark/tshark、またはnghttp2 frame callbackの一時診断で、39B recordのHTTP/2 frame typeを特定する。
+1. nghttp2 frame callbackの一時診断で、39B recordのHTTP/2 frame type、stream_id、frame lengthを特定する。
+2. `send_callback()` が受けたframe bytesと `h2_connection_flush_write_buffer()` のTLS write boundaryを対応付ける。
 3. ext-grpcのscatter/gather送信とphp-grpc-liteのcopy-based coalescingを、TLS record数・HTTP/2 frame境界・CPU copy costに分解して比較する。
-4. 39B control frameを次RPCの前ではなくresponse処理直後に必ずflushしている現状が問題になるかを確認する。ただしこれは既に現状の挙動で、request HEADERS/DATA coalescingとは別問題。
-5. real Spannerでまだlatency差が残るなら、TLS record数ではなく、preflight `SSL_peek`、poll strategy、Spanner server pacing、GAX request lifecycleを別issueで切り分ける。
+4. 39BがHEADERSなら、HEADERSとDATAが別 `nghttp2_session_send()` / 別flush boundaryに分かれる理由をコード上で特定する。
+5. 39Bがcontrol frameなら、response後flush timing、preflight `SSL_peek`、poll strategy、Spanner server pacing、GAX request lifecycleを別issueで切り分ける。
 
 ## 判断
 
 - Status: Open
-- 判断: 未完了。ローカルTLS test-serverでの確認は参考情報であり、issue #5のreal Spanner報告に対する再現確認にはならない。
-- 優先度: 最優先でreal Spanner marker付きtraceを取り直す。
+- 判断: real Spanner marker traceで `39B write` + `large write` の存在は確認したが、straceだけではframe typeを確定できない。
+- 優先度: 次は39B frame typeとTLS write boundaryの対応を直接確認する。issue #5は未解決。
 
 ## 訂正 2026-05-18
 
