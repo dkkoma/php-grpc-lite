@@ -386,6 +386,128 @@ GitHub issue #5に、real Spanner single-concurrency workloadで `Google\ApiCore
 - php-grpc-liteの「SEND batchで送信せず、RECV batchでunary全体を実行する」実装は、公式ext-grpc互換性としては弱い。latency差の主因かは未確定だが、別issueで「unary SEND batch eager send」対応を検討する価値がある。
 - poll waitの差は原因ではなく観測結果。次に見るべきは、request send完了時刻からresponse first byte到着までの差、送信HTTP/2 headers/payload shape、server側のCommit処理時間、またはGAX/Spanner request lifecycle差である。
 
+## 追加報告 2026-05-19: tcpdump + strace相関
+
+GitHub issue #5に、real Spanner FPM single-concurrency harnessで `tcpdump` とmarker付き `strace` を同時に取得した追加報告があった。
+
+報告内容:
+
+- 対象は `Spanner/Commit`。45秒run、warmup除外。
+- `ext-grpc 1.58`: n=252、`BEGIN→WAIT_END mean 13.10ms`。
+- `php-grpc-lite 0.0.5`: n=172、`BEGIN→WAIT_END mean 21.76ms`。
+- `send syscall → outbound TCP packet` は両者とも約0.03ms。
+- `inbound TCP data packet → recv syscall` は両者ともsub-ms。
+- 差分の大半は `outbound TCP packet → inbound TCP data packet` にあり、`ext-grpc 12.41ms`、`php-grpc-lite 20.65ms`。
+- `poll` syscall durationも同じ差分を示し、これはpoll syscall自体ではなく、response packet到着待ちの結果と見える。
+- outbound TLS application payloadは、`ext-grpc ~1571B`、`php-grpc-lite ~942B` と報告されている。
+
+この報告で強くなったこと:
+
+- `send syscall` 後のkernel enqueue遅延、response packet到着後のuserland wakeup / recv loop遅延は主因候補から弱くなる。
+- `ppoll` と `epoll_pwait` のsyscall実装差だけで8ms差が出ている、という見方はさらに弱くなる。
+- 差分はclientがrequest packetを出した後、serverの最初のresponse packetがclient側で観測されるまでの区間に集中している。
+
+ただし、レビュー後の扱いとして、これはまだ「wire RTT」や「serverが遅く返した」と断定できない。
+
+- `outbound TCP packet → inbound TCP data packet` は、network RTTだけでなく、Google frontend受信、TLS復号、HTTP/2/HPACK decode、metadata/auth/routing処理、Spanner Commit処理、server queueing、response生成を含む。
+- `first outbound packet` はrequest完了時刻とは限らない。requestが複数TLS record / TCP segmentに分かれる場合、serverが処理可能になる時刻は `last outbound byte` 側になる。
+- `ext-grpc ~1571B` と `php-grpc-lite ~942B` のoutbound payload差が大きい。これは単なるサイズ差ではなく、metadata set、HPACK dynamic table、`grpc-timeout`、`:authority`、`:path`、`authorization`、`x-goog-*`、`user-agent`、control frame混入、DATA payload lengthのどれかが違う可能性を示す。
+- したがって、現時点で正確に言えるのは「client-observed request-to-first-response-packet latencyに差が集中している」まで。
+
+批判レビュー:
+
+- `docs/reviews/issues/2026-05-19-issue5-wire-rtt-claim-critical-review.md`
+
+次に必要なこと:
+
+1. `first outbound packet` ではなく、対象Commit streamの `request last outbound byte → first inbound response byte` を取る。
+2. TLS key logまたはHTTP/2 frame traceで、Commit requestのHEADERS / DATA / control framesをext-grpcとphp-grpc-liteで比較する。
+3. metadata set、metadata order、重複、`grpc-timeout`、`:authority`、`:path`、`authorization`、`x-goog-*`、`user-agent`、DATA payload length、HPACK indexed/literal、dynamic table状態を表にする。
+4. request直前直後のPING / SETTINGS / WINDOW_UPDATE / ACKが、Commit streamのpacket列に混ざるか確認する。
+5. 同一connection warm state、stream id進行、Spanner session warmup、transaction shapeを揃え、複数run・交互順序・分布指標で集計する。
+
+## wire shape完全比較 2026-05-19
+
+追加報告を受けて、real Spannerの同じ `transaction_select2_update1_insert1` 経路で `Spanner/Commit` の送信shapeを比較した。
+
+比較条件:
+
+- 対象: `Spanner/Commit`
+- ext-grpc: `1.58.0` optimized build
+- php-grpc-lite: current native extension with temporary wire trace
+- 実行形態: CLI profile action。FPM 45秒runそのものではないため、latency分布の結論には使わない
+- 認証: 同じADC credentials
+- Spanner: `vast-falcon-165704 / bench / laravel-bench-db`
+
+### request body
+
+| item | ext-grpc 1.58 | php-grpc-lite | 判断 |
+| --- | ---: | ---: | --- |
+| protobuf payload | 203B | 203B | 同じ |
+| gRPC DATA payload | 203B + 5B prefix | 203B + 5B prefix | 同じ |
+| compressed flag | `0` | `0` | 同じ |
+| DATA END_STREAM | あり | あり | 同じ |
+
+Commit request body自体は一致している。payload内容やgRPC 5B framingの差でCommit latency差が出ている、という仮説は弱い。
+
+### request metadata
+
+| metadata | ext-grpc 1.58 | php-grpc-lite | 判断 |
+| --- | --- | --- | --- |
+| `:method` | `POST` | `POST` | 同じ |
+| `:scheme` | `https` | `https` | 同じ |
+| `:authority` | `spanner.googleapis.com:443` | `spanner.googleapis.com:443` | 同じ |
+| `:path` | `/google.spanner.v1.Spanner/Commit` | `/google.spanner.v1.Spanner/Commit` | 同じ |
+| `content-type` | `application/grpc` | `application/grpc` | 同じ |
+| `te` | `trailers` | `trailers` | 同じ |
+| `grpc-timeout` | trace上は `@601491ms` / `@601659ms` | `600000m` | 表記または値が異なる。ext traceの `@` はwire valueとは断定しない |
+| `user-agent` | `gcloud-php-legacy/1.104.1 grpc-php/1.58.0 grpc-c/35.0.0 (linux; chttp2)` | `gcloud-php-legacy/1.104.1 grpc-php/0.1.0` | 異なる |
+| `grpc-accept-encoding` | `identity, deflate, gzip` | なし | 異なる |
+| `x-goog-api-client` | `... grpc/1.58.0 ...` | `... grpc/0.1.0 ...` | 異なる |
+| `x-goog-api-client` duplicate | `cred-type/u` | なし | 異なる |
+| `x-goog-user-project` | あり | あり | 同じ |
+| `x-goog-request-params` | あり | あり | 同じ |
+| `x-goog-spanner-route-to-leader` | `true` | `true` | 同じ |
+| `google-cloud-resource-prefix` | あり | あり | 同じ |
+| `authorization` | あり | あり | 同じ扱い。値は記録しない |
+
+metadata shapeは一致していない。特に重要なのは、ext-grpcが `x-goog-api-client` を2値として送っている一方、php-grpc-liteはCallCredentials plugin由来の `x-goog-api-client: cred-type/u` を落としている点。
+
+php-grpc-lite側では `grpc_lite_merge_call_credentials_metadata()` が `zend_hash_merge(..., overwrite = 0)` でplugin返却metadataを既存metadataへmergeしている。PHP HashTableのstring keyは同名keyを複数保持できないため、既存の `x-goog-api-client` があるとplugin側の同名keyが追加されない。gRPC metadataは同名keyの複数値を許すため、この挙動はwire互換性上の差分として扱う。
+
+### HTTP/2 frame / TLS write shape
+
+| item | ext-grpc 1.58 | php-grpc-lite | 判断 |
+| --- | ---: | ---: | --- |
+| Commit stream id | `3`, `13` | `3`, `13` | 今回のtraceでは同じ進行 |
+| HEADERS compressed length | ext traceでは直接未取得 | `259B`, `252B` | ext側は未確定 |
+| DATA frame length | trace上はmessage len `203B` | `208B` | gRPC prefix込みなら同等 |
+| outbound TLS write size | `1100B`, `1042B` | `507B`, `500B` | ext-grpcの方が大きい |
+| request send syscall duration | sub-ms | sub-ms | 差の主因ではない |
+| first response待ち | 単発traceでは揺れ大 | 単発traceでは揺れ大 | latency結論には使わない |
+
+ext-grpcのoutbound TLS write sizeが大きいことは、報告者の `ext-grpc ~1571B` / `php-grpc-lite ~942B` という方向性と一致する。ただし、今回のtraceではext-grpc側のHEADERS compressed blockやHPACK dynamic table状態までは復元していないため、サイズ差の内訳はまだ確定しない。
+
+### 完全比較で確定したこと
+
+- Commit protobuf payloadは同じ。
+- gRPC DATA lengthも同じ。
+- `first outbound packet -> first inbound packet` の差を、payload差やrequest body差で説明する根拠は弱い。
+- request metadata shapeは同じではない。
+- php-grpc-liteはCallCredentials plugin由来のduplicate metadataを保持できていない可能性が高い。
+- `grpc-accept-encoding`、`user-agent`、`x-goog-api-client` の差も残っている。
+
+### 次の判断
+
+この時点で、`Commit` latency差の説明としてはtransport syscallやpollよりも、まずmetadata wire shape差を潰すべき。
+
+優先順:
+
+1. gRPC metadataとして同名key複数値を保持し、CallCredentials plugin由来のduplicate metadataを落とさない。
+2. `grpc-accept-encoding: identity, deflate, gzip` の送信要否を仕様・実務影響から判断する。
+3. `user-agent` / `x-goog-api-client` のversion差がSpanner frontend処理に影響するかを切り分ける。ただし公式実装文字列の模倣を目的にしない。
+4. その後、FPM 45〜60秒runで `request last outbound byte -> first inbound response byte` を再測定する。
+
 ## 訂正 2026-05-18
 
 GitHub issue #5へ最初に投稿したコメントは、ローカルTLS test-serverでの確認を強く解釈しすぎていた。issue #5の報告対象はreal Spanner workloadであり、ローカルで再現しないことは反証にならない。GitHub issueには訂正コメントを追加済み。
