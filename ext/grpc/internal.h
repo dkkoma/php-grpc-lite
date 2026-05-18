@@ -28,10 +28,12 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/file.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <time.h>
@@ -133,6 +135,7 @@ typedef struct {
     zval initial_metadata;
     zval trailing_metadata;
     zval status;
+    uint64_t trace_started_us;
     bool sent;
     bool unary_performed;
     bool server_streaming_opened;

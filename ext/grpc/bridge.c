@@ -4,6 +4,54 @@
 
 static void grpc_lite_mark_call_failed(grpc_lite_call_obj *call, int code, zend_string *details);
 
+static bool grpc_lite_trace_enabled(void)
+{
+    const char *path = getenv("GRPC_LITE_TRACE_FILE");
+    return path != NULL && path[0] != '\0';
+}
+
+static void grpc_lite_trace_record_call(grpc_lite_call_obj *call, const char *event, const char *kind, int status_code, size_t request_bytes, size_t response_bytes, int persistent_reused)
+{
+    const char *path = getenv("GRPC_LITE_TRACE_FILE");
+    FILE *fp;
+    uint64_t now_us;
+    uint64_t elapsed_us = 0;
+    const char *persistent_reused_json = "null";
+
+    if (path == NULL || path[0] == '\0' || call == NULL || call->method == NULL) {
+        return;
+    }
+    now_us = monotonic_us();
+    if (call->trace_started_us > 0 && now_us >= call->trace_started_us) {
+        elapsed_us = now_us - call->trace_started_us;
+    }
+    fp = fopen(path, "a");
+    if (fp == NULL) {
+        return;
+    }
+    if (persistent_reused >= 0) {
+        persistent_reused_json = persistent_reused ? "true" : "false";
+    }
+    flock(fileno(fp), LOCK_EX);
+    fprintf(
+        fp,
+        "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"%s\",\"transport_impl\":\"grpc-lite\",\"rpc_kind\":\"%s\",\"rpc_method\":\"%.*s\",\"elapsed_us\":%" PRIu64 ",\"status_code\":%d,\"request_bytes\":%zu,\"response_bytes\":%zu,\"persistent_reused\":%s}\n",
+        now_us,
+        (long) getpid(),
+        event,
+        kind,
+        (int) ZSTR_LEN(call->method),
+        ZSTR_VAL(call->method),
+        elapsed_us,
+        status_code,
+        request_bytes,
+        response_bytes,
+        persistent_reused_json
+    );
+    flock(fileno(fp), LOCK_UN);
+    fclose(fp);
+}
+
 static zend_long grpc_lite_call_timeout_us(grpc_lite_call_obj *call)
 {
     uint64_t now;
@@ -376,8 +424,12 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
     }
+    if (grpc_lite_trace_enabled() && call->trace_started_us == 0) {
+        call->trace_started_us = monotonic_us();
+    }
     if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
         call->unary_performed = true;
+        grpc_lite_trace_record_call(call, "rpc.end", "unary", GRPC_STATUS_UNAUTHENTICATED, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, 0);
         return SUCCESS;
     }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
@@ -429,6 +481,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
             call->unary_response_payload = NULL;
         }
         zend_string_release(details);
+        grpc_lite_trace_record_call(call, "rpc.end", "unary", code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, 0);
         return SUCCESS;
     }
     if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, channel->primary_user_agent, deadline_abs_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
@@ -472,6 +525,7 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         }
     }
     call->unary_performed = true;
+    grpc_lite_trace_record_call(call, "rpc.end", "unary", status_code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, call->unary_response_payload != NULL ? ZSTR_LEN(call->unary_response_payload) : 0, persistent_reused ? 1 : 0);
     zend_string_release(details);
     grpc_lite_unary_result_dtor(&result);
     return SUCCESS;
@@ -557,7 +611,11 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
     }
+    if (grpc_lite_trace_enabled() && call->trace_started_us == 0) {
+        call->trace_started_us = monotonic_us();
+    }
     if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
+        grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", GRPC_STATUS_UNAUTHENTICATED, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
         return SUCCESS;
     }
     if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
@@ -880,6 +938,7 @@ PHP_METHOD(Call, startBatch)
                     zval_ptr_dtor(&call->status);
                     grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
                     call->status_ready = true;
+                    grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", result.status.code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
                 }
                 grpc_lite_streaming_next_result_dtor(&result);
             } while (!call->status_ready);
@@ -899,6 +958,7 @@ PHP_METHOD(Call, startBatch)
                 zval_ptr_dtor(&call->status);
                 grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
                 call->status_ready = true;
+                grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", result.status.code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
                 grpc_lite_add_event_message(return_value, NULL);
             } else {
                 if (!call->initial_metadata_ready) {

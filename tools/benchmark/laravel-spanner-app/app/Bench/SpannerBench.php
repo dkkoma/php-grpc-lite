@@ -21,21 +21,23 @@ final class SpannerBench
     public function setupDatabase(): array
     {
         $connection = $this->connection();
-        $this->ensureInstance($connection);
+        SpannerTraceRecorder::measure('setup.ensure_instance', [], fn (): null => $this->ensureInstance($connection));
 
         if (!$connection->databaseExists()) {
-            $connection->createDatabase([$this->benchTableDdl()]);
+            SpannerTraceRecorder::measure('setup.create_database', [], fn (): mixed => $connection->createDatabase([$this->benchTableDdl()]));
         } else {
             try {
-                $connection->runDdlBatch([$this->benchTableDdl()]);
+                SpannerTraceRecorder::measure('setup.run_ddl_batch', [], fn (): mixed => $connection->runDdlBatch([$this->benchTableDdl()]));
             } catch (Throwable) {
                 // Duplicate table DDL is expected after the first setup request.
             }
         }
 
-        $connection->transaction(function (Connection $connection): void {
-            $connection->statement('DELETE FROM ' . self::TABLE . ' WHERE Id >= 1');
-            $connection->statement($this->insertSql(1));
+        SpannerTraceRecorder::measure('setup.seed_transaction', [], function () use ($connection): void {
+            $connection->transaction(function (Connection $connection): void {
+                SpannerTraceRecorder::measure('setup.seed_delete', [], fn (): bool => $connection->statement('DELETE FROM ' . self::TABLE . ' WHERE Id >= 1'));
+                SpannerTraceRecorder::measure('setup.seed_insert', [], fn (): bool => $connection->statement($this->insertSql(1)));
+            });
         });
 
         return ['setup' => true];
@@ -44,14 +46,24 @@ final class SpannerBench
     public function warmupSessionPool(): array
     {
         $connection = $this->connection();
-        $connection->clearSessionPool();
-        $created = $connection->warmupSessionPool();
+        SpannerTraceRecorder::measure('session_pool.clear', [], fn (): null => $connection->clearSessionPool());
+        $created = SpannerTraceRecorder::measure('session_pool.warmup', [], fn (): int => $connection->warmupSessionPool());
         return ['created_sessions' => $created];
     }
 
     public function selectOneRow(): array
     {
-        $rows = $this->connection()->transaction(fn(Connection $connection): array => $this->selectRowsById($connection, 1));
+        $rows = SpannerTraceRecorder::measure(
+            'select_1row_10col.transaction',
+            [],
+            fn (): array => $this->connection()->transaction(
+                fn(Connection $connection): array => SpannerTraceRecorder::measure(
+                    'select_1row_10col.select',
+                    ['row_id' => 1],
+                    fn (): array => $this->selectRowsById($connection, 1),
+                ),
+            ),
+        );
         $this->assertRowCount($rows, 1);
         return ['rows' => count($rows)];
     }
@@ -62,29 +74,69 @@ final class SpannerBench
         $insertedId = random_int(2_000_000_001, PHP_INT_MAX);
         $connection = $this->connection();
 
-        $preInserted = $connection->transaction(fn(Connection $connection): int => $connection->affectingStatement($this->insertSql($selectedId)));
+        SpannerTraceRecorder::record('mixed.ids', [
+            'selected_id' => $selectedId,
+            'inserted_id' => $insertedId,
+        ]);
+
+        $preInserted = SpannerTraceRecorder::measure(
+            'mixed.pre_insert.transaction',
+            ['row_id' => $selectedId],
+            fn (): int => $connection->transaction(
+                fn(Connection $connection): int => SpannerTraceRecorder::measure(
+                    'mixed.pre_insert.dml',
+                    ['row_id' => $selectedId],
+                    fn (): int => $connection->affectingStatement($this->insertSql($selectedId)),
+                ),
+            ),
+        );
         $this->assertAffected($preInserted);
 
-        $result = $connection->transaction(function (Connection $connection) use ($selectedId, $insertedId): array {
-            $firstRows = $this->selectRowsById($connection, $selectedId);
-            $this->assertRowCount($firstRows, 1);
+        $result = SpannerTraceRecorder::measure(
+            'mixed.main_transaction',
+            [
+                'selected_id' => $selectedId,
+                'inserted_id' => $insertedId,
+            ],
+            function () use ($connection, $selectedId, $insertedId): array {
+                return $connection->transaction(function (Connection $connection) use ($selectedId, $insertedId): array {
+                    $firstRows = SpannerTraceRecorder::measure(
+                        'mixed.select_1',
+                        ['row_id' => $selectedId],
+                        fn (): array => $this->selectRowsById($connection, $selectedId),
+                    );
+                    $this->assertRowCount($firstRows, 1);
 
-            $secondRows = $this->selectRowsById($connection, $selectedId);
-            $this->assertRowCount($secondRows, 1);
+                    $secondRows = SpannerTraceRecorder::measure(
+                        'mixed.select_2',
+                        ['row_id' => $selectedId],
+                        fn (): array => $this->selectRowsById($connection, $selectedId),
+                    );
+                    $this->assertRowCount($secondRows, 1);
 
-            $updated = $connection->affectingStatement($this->updateSql($selectedId));
-            $this->assertAffected($updated);
+                    $updated = SpannerTraceRecorder::measure(
+                        'mixed.update',
+                        ['row_id' => $selectedId],
+                        fn (): int => $connection->affectingStatement($this->updateSql($selectedId)),
+                    );
+                    $this->assertAffected($updated);
 
-            $inserted = $connection->affectingStatement($this->insertSql($insertedId));
-            $this->assertAffected($inserted);
+                    $inserted = SpannerTraceRecorder::measure(
+                        'mixed.insert',
+                        ['row_id' => $insertedId],
+                        fn (): int => $connection->affectingStatement($this->insertSql($insertedId)),
+                    );
+                    $this->assertAffected($inserted);
 
-            return [
-                'selects' => 2,
-                'selected_rows' => count($firstRows) + count($secondRows),
-                'updated' => $updated,
-                'inserted' => $inserted,
-            ];
-        });
+                    return [
+                        'selects' => 2,
+                        'selected_rows' => count($firstRows) + count($secondRows),
+                        'updated' => $updated,
+                        'inserted' => $inserted,
+                    ];
+                });
+            },
+        );
 
         return ['pre_inserted' => $preInserted] + $result;
     }
@@ -92,7 +144,17 @@ final class SpannerBench
     public function dmlInsert(): array
     {
         $id = random_int(1_000_000, 2_000_000_000);
-        $affected = $this->connection()->transaction(fn(Connection $connection): int => $connection->affectingStatement($this->insertSql($id)));
+        $affected = SpannerTraceRecorder::measure(
+            'dml_insert_10col.transaction',
+            ['row_id' => $id],
+            fn (): int => $this->connection()->transaction(
+                fn(Connection $connection): int => SpannerTraceRecorder::measure(
+                    'dml_insert_10col.dml',
+                    ['row_id' => $id],
+                    fn (): int => $connection->affectingStatement($this->insertSql($id)),
+                ),
+            ),
+        );
         $this->assertAffected($affected);
         return ['affected' => $affected];
     }
@@ -101,8 +163,28 @@ final class SpannerBench
     {
         $id = random_int(1_000_000, 2_000_000_000);
         $connection = $this->connection();
-        $connection->transaction(fn(Connection $connection): bool => $connection->statement($this->insertSql($id)));
-        $affected = $connection->transaction(fn(Connection $connection): int => $connection->affectingStatement($this->updateSql($id)));
+        SpannerTraceRecorder::measure(
+            'dml_update_10col.seed_transaction',
+            ['row_id' => $id],
+            fn (): bool => $connection->transaction(
+                fn(Connection $connection): bool => SpannerTraceRecorder::measure(
+                    'dml_update_10col.seed_insert',
+                    ['row_id' => $id],
+                    fn (): bool => $connection->statement($this->insertSql($id)),
+                ),
+            ),
+        );
+        $affected = SpannerTraceRecorder::measure(
+            'dml_update_10col.transaction',
+            ['row_id' => $id],
+            fn (): int => $connection->transaction(
+                fn(Connection $connection): int => SpannerTraceRecorder::measure(
+                    'dml_update_10col.dml',
+                    ['row_id' => $id],
+                    fn (): int => $connection->affectingStatement($this->updateSql($id)),
+                ),
+            ),
+        );
         $this->assertAffected($affected);
         return ['affected' => $affected];
     }
@@ -111,8 +193,28 @@ final class SpannerBench
     {
         $id = random_int(1_000_000, 2_000_000_000);
         $connection = $this->connection();
-        $connection->transaction(fn(Connection $connection): bool => $connection->statement($this->insertSql($id)));
-        $affected = $connection->transaction(fn(Connection $connection): int => $connection->affectingStatement($this->deleteSql($id)));
+        SpannerTraceRecorder::measure(
+            'dml_delete_10col.seed_transaction',
+            ['row_id' => $id],
+            fn (): bool => $connection->transaction(
+                fn(Connection $connection): bool => SpannerTraceRecorder::measure(
+                    'dml_delete_10col.seed_insert',
+                    ['row_id' => $id],
+                    fn (): bool => $connection->statement($this->insertSql($id)),
+                ),
+            ),
+        );
+        $affected = SpannerTraceRecorder::measure(
+            'dml_delete_10col.transaction',
+            ['row_id' => $id],
+            fn (): int => $connection->transaction(
+                fn(Connection $connection): int => SpannerTraceRecorder::measure(
+                    'dml_delete_10col.dml',
+                    ['row_id' => $id],
+                    fn (): int => $connection->affectingStatement($this->deleteSql($id)),
+                ),
+            ),
+        );
         $this->assertAffected($affected);
         return ['affected' => $affected];
     }

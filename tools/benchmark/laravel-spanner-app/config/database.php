@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use BenchApp\Bench\SpannerTraceLogger;
+
 $target = getenv('SPANNER_EMULATOR_HOST') ?: null;
 $minSessions = max(1, (int) (getenv('LARAVEL_SPANNER_MIN_SESSIONS') ?: 1));
 $client = [
@@ -11,6 +13,9 @@ $client = [
 ];
 if ($target !== null && $target !== '') {
     $client['apiEndpoint'] = $target;
+}
+if ((getenv('LARAVEL_SPANNER_TRACE') ?: '') !== '' && getenv('LARAVEL_SPANNER_TRACE') !== '0') {
+    $client['transportConfig']['grpc']['logger'] = new SpannerTraceLogger();
 }
 
 return [
