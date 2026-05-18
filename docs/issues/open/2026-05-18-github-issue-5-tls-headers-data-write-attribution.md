@@ -225,26 +225,98 @@ write(TLS socket, ..., 496) = 496
 - issue #5で報告された `39B write` + `large write` の観測自体は正しい。ただし、39Bを「同一RPCのHEADERS」と解釈するのは今回のframe traceでは支持されない。
 - 現時点の問題候補は、HEADERS/DATA splitではなく、Spanner serverからのPINGに対するACKがresponse後に単独TLS recordとして出ること、またはそのACK schedulingがext-grpcと異なること。
 
+### ext-grpc 1.58.0 optimized real Spanner strace
+
+報告条件に近づけるため、既にビルド済みの `var/official-ext-grpc-so/1.58.0-optimized/grpc.so` を `php -n -d extension=protobuf.so -d extension=/workspace/var/official-ext-grpc-so/1.58.0-optimized/grpc.so` で明示ロードし、同じreal Spanner Laravel経路をstraceした。profileは `-O3 -flto -fno-semantic-interposition`。
+
+`selectOneRow()` 測定区間では、2つのoutbound requestに対してlarge sendが2回、そのresponse後にsmall sendが2回見えた。
+
+```text
+===MEASURE_SELECT_BEGIN===
+sendmsg(..., iov_len=1094) = 1094
+recvmsg(...)=464
+sendmsg(..., iov_len=52) = 52
+sendmsg(..., iov_len=1011) = 1011
+recvmsg(...)=208
+sendmsg(..., iov_len=52) = 52
+===MEASURE_SELECT_END===
+```
+
+`mixedTransaction()` 測定区間では、複数outbound requestの間にsmall sendが継続して見えた。サイズは主に52Bで、一部48B/39Bだった。
+
+```text
+===MEASURE_MIXED_BEGIN===
+sendmsg(..., iov_len=1164) = 1164
+recvmsg(...)=247
+sendmsg(..., iov_len=52) = 52
+sendmsg(..., iov_len=1011) = 1011
+recvmsg(...)=189
+sendmsg(..., iov_len=52) = 52
+sendmsg(..., iov_len=1102) = 1102
+recvmsg(...)=56
+recvmsg(...)=402
+sendmsg(..., iov_len=52) = 52
+sendmsg(..., iov_len=1155) = 1155
+recvmsg(...)=335
+sendmsg(..., iov_len=48) = 48
+recvmsg(...)=97
+sendmsg(..., iov_len=39) = 39
+sendmsg(..., iov_len=1095) = 1095
+...
+===MEASURE_MIXED_END===
+```
+
+php-grpc-liteの同じ測定区間では、small sendは全て39Bだった。
+
+```text
+select: write sizes = 589, 39, 496, 39
+mixed:  write sizes = 660, 39, 496, 39, 598, 39, 651, 39, 591, 39, 721, 39, 496, 39
+```
+
+この比較から言えること:
+
+- ext-grpc 1.58.0 optimizedでも、real Spannerのresponse後にsmall TLS sendは単独で発生している。
+- したがって、small TLS recordが単独で出ること自体はphp-grpc-lite固有ではない。
+- php-grpc-liteではframe traceによりsmall 39Bが `PING ACK` だと確認済みだが、ext-grpc側はTLS復号やC-core frame traceを取っていないため、52B/48B/39Bのframe typeは未確定。
+- ext-grpc側のlarge sendは `sendmsg` として見えるが、今回の1.58.0 optimized traceではsyscall上の `msg_iovlen` は1だった。issue報告の `iovlen=2` は別条件または別RPC形状で発生している可能性がある。
+- ext-grpcはbackground transport thread上でsend/recvしており、php-grpc-liteのPHP request thread同期I/Oとはscheduling modelが異なる。この差はCPU/latencyには効き得るが、今回のtraceだけでsmall sendを「php-grpc-lite固有の余計なwrite」とは言えない。
+
 ## 現時点の解釈
 
 - ローカルTLS test-server結果は判断材料から外す。
 - real Spannerで `39B write` + `large write` のパターンは実在する。
 - frame/TLS write対応を直接確認した結果、今回の測定対象では39B writeは `PING ACK` であり、HEADERS/DATA splitではなかった。
 - request HEADERSとDATAは同一stream_idで同じflushにまとまっていた。
-- ext-grpcの `sendmsg(... msg_iovlen=2)` との差を論じるなら、HEADERS/DATA coalescingではなく、PING ACK scheduling、TLS record flush、またはC-core側のHTTP/2 keepalive/control-frame処理との違いとして扱うべき。
+- ext-grpc 1.58.0 optimizedでもsmall sendは単独で出るため、small TLS recordそのものはphp-grpc-lite固有の欠陥とは言えない。
+- ext-grpcとの差を論じるなら、HEADERS/DATA coalescingではなく、PING ACK/control frame scheduling、threaded transport model、TLS record sizing、またはC-core側のHTTP/2 keepalive/control-frame処理との違いとして扱うべき。
 
 ## 次の確認候補
 
-1. ext-grpc 1.58.0でも同じreal Spanner workloadで、PING ACK相当の小writeが単独で出るか、次requestと合流するかを確認する。
-2. php-grpc-lite側で、unary receive loopの `nghttp2_session_mem_recv()` 後に毎回 `send_pending_h2_frames()` を呼ぶ現状を、server streaming同様 `nghttp2_session_want_write()` gateへ寄せられるか確認する。これは空の `session_send` 呼び出し削減であり、PING ACKそのものは残る。
-3. PING ACKを次requestとcoalesceする設計がHTTP/2の「ACK without delay」に反しないか確認する。反するなら採用しない。
-4. CPU差が残る場合は、PING ACK単独writeのsyscall/TLS overhead、preflight read、poll strategy、GAX request lifecycleを別issueで切り分ける。
+1. php-grpc-lite側で、unary receive loopの `nghttp2_session_mem_recv()` 後に毎回 `send_pending_h2_frames()` を呼ぶ現状を、server streaming同様 `nghttp2_session_want_write()` gateへ寄せられるか確認する。これは空の `session_send` 呼び出し削減であり、PING ACKそのものは残る。
+2. PING ACKを次requestとcoalesceする設計がHTTP/2の「ACK without delay」に反しないか確認する。反するなら採用しない。
+3. CPU差が残る場合は、PING ACK単独writeのsyscall/TLS overhead、preflight read、poll strategy、GAX request lifecycleを別issueで切り分ける。
 
 ## 判断
 
 - Status: Open
-- 判断: `39B write` のframe type確認は完了。今回のreal Spanner traceでは `PING ACK` だった。HEADERS/DATA splitとしては再現していない。
-- 優先度: 次はext-grpc側で同じPING ACK schedulingが見えるか、php-grpc-lite側の不要な空 `session_send` を削れるかを確認する。issue #5は未解決だが、解決対象はHEADERS/DATA splitではなくPING ACK / control frame schedulingへ移す。
+- 判断: `39B write` のframe type確認は完了。今回のreal Spanner traceでは `PING ACK` だった。HEADERS/DATA splitとしては再現していない。ext-grpc 1.58.0 optimizedでもsmall sendは単独で発生しており、small write単独発生だけをphp-grpc-lite固有問題とは扱わない。
+- 優先度: 次はphp-grpc-lite側の不要な空 `session_send` を削れるかを確認する。issue #5は未解決だが、解決対象はHEADERS/DATA splitではなくPING ACK / control frame scheduling / receive loop fixed costへ移す。
+
+## 修正 2026-05-18
+
+unary receive loopで `nghttp2_session_mem_recv()` 後に無条件で `send_pending_h2_frames()` を呼んでいた箇所を、server streamingと同様に `nghttp2_session_want_write()` がtrueの場合だけ呼ぶ形へ変更した。
+
+この修正の意味:
+
+- HTTP/2 control frameがpendingの場合は従来通りflushする。
+- pending outbound frameがない場合は空の `nghttp2_session_send()` を呼ばない。
+- `PING ACK` そのものを遅延・削除・coalesceする修正ではない。
+- issue #5で確認した39B small writeを消す修正ではなく、receive loop fixed costを減らす修正である。
+
+検証:
+
+- `./tools/test/check-phpt.sh && ./tools/test/check-c-static-analysis.sh`: PASS
+- Domain model self review: `docs/reviews/issues/2026-05-18-issue5-unary-want-write-domain-self-review.md`
 
 ## 訂正 2026-05-18
 
