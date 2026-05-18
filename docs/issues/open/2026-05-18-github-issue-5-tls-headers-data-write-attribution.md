@@ -318,6 +318,74 @@ unary receive loopで `nghttp2_session_mem_recv()` 後に無条件で `send_pend
 - `./tools/test/check-phpt.sh && ./tools/test/check-c-static-analysis.sh`: PASS
 - Domain model self review: `docs/reviews/issues/2026-05-18-issue5-unary-want-write-domain-self-review.md`
 
+## 追加報告 2026-05-19: method-level wait latency
+
+GitHub issue #5に、real Spanner single-concurrency workloadで `Google\ApiCore\Transport\GrpcTransport::startUnaryCall()` に `BEGIN` / `WAIT_BEGIN` / `WAIT_END` markerを入れた追加報告があった。
+
+報告内容:
+
+- `Spanner/Commit` のwait latencyが `ext-grpc 1.58: 13.54ms`、`php-grpc-lite 0.0.5: 22.54ms` で1.66x。
+- 60秒のsingle-concurrency harnessで、差はほぼ `Commit` に集中。
+- 1 RPC syscall breakdownでは、どちらもsend 1回、recv 1回で、HEADERS/DATA splitはない。
+- ext-grpcは `_simpleRequest` / `UnaryCall::start()` 側で同期sendし、php-grpc-liteは `UnaryCall::wait()` のrecv batch側で初めて同期sendする。
+- poll waitが `ext-grpc: epoll_pwait 12.4ms`、`php-grpc-lite: ppoll 20.2ms` で、差分はpoll中の待ち時間に見える。
+
+この報告の重要点:
+
+- `39B write` / HEADERS splitの問題ではない。
+- CPU fixed costではなく、server responseがclient socket readableになるまでの時間差として観測されている。
+- `poll syscallが遅い` というより、pollが待っている対象イベントの発生時刻が違う。`epoll_pwait` vs `ppoll` のsyscall実装差だけで8ms差が出たとは解釈しない。
+- ext-grpcとphp-grpc-liteでsend timingが違うことは事実。php-grpc-liteの `Call::startBatch()` はSEND opsを保存するだけで、RECV_STATUS batch時にunary RPC全体を実行している。これは公式ext-grpcの「SEND batchで送信開始する」モデルとは異なる。
+
+### こちらの再計測
+
+同じLaravel Spanner fixtureに一時的に `GRPC_ISSUE5` markerを入れ、real Spanner `transaction_select2_update1_insert1` を10 iteration実行した。Commit windowは各iterationで2回、合計20件。
+
+条件:
+
+- real Spanner: `vast-falcon-165704 / bench / laravel-bench-db`
+- action: `transaction_select2_update1_insert1`
+- iterations: 10
+- native current: `ext/grpc/modules/grpc.so`
+- native 0.0.5: `var/tag-so/0.0.5/grpc.so`
+- ext-grpc: `var/official-ext-grpc-so/1.58.0-optimized/grpc.so`
+- trace: `strace -f -tt -T -yy -e trace=ppoll,poll,epoll_pwait,sendmsg,sendto,write,recvmsg,recvfrom,read`
+
+集計:
+
+| variant | n | BEGIN→WAIT_END mean | WAIT_BEGIN→WAIT_END mean | BEGIN→WAIT_BEGIN mean | poll wait mean | large send |
+|---|---:|---:|---:|---:|---:|---|
+| php-grpc-lite 0.0.5 | 20 | 24.38ms | 24.20ms | 0.18ms | 23.13ms | 496B mostly |
+| php-grpc-lite current | 20 | 24.59ms | 24.42ms | 0.18ms | 23.22ms | 496B mostly |
+| ext-grpc 1.58 optimized | 20 | 24.60ms | 21.80ms | 2.80ms | 19.24ms | 1042B mostly |
+
+この再計測では、報告された `BEGIN→WAIT_END` の1.66x差は再現していない。currentと0.0.5も同等だったため、`b482868` の `want_write` gateはこのCommit wait差を説明しない。
+
+一方で、次の差分は再確認できた。
+
+- php-grpc-liteは `BEGIN→WAIT_BEGIN` が非常に短い。これは `Grpc\UnaryCall::start()` / SEND batchではnetwork sendせず、`wait()` 側でsendしているため。
+- ext-grpcは `BEGIN→WAIT_BEGIN` が長い。これは `_simpleRequest()` 内の `start()` / SEND batchでnetwork sendを済ませてからPromise wait closureへ入るため。
+- ext-grpcの `WAIT_BEGIN→WAIT_END` だけを見ると短く見えるが、`BEGIN→WAIT_END` では今回の環境ではphp-grpc-liteと同等だった。
+- php-grpc-liteのCommit large sendはext-grpcより小さい。これはTLS/syscall上の観測であり、HPACK dynamic table / metadata encoding / ext-grpcのTLS record composition差が疑われる。ただし `authorization` metadataを一時的に `NGHTTP2_NV_FLAG_NO_INDEX` にしてもsend sizeやlatencyは変わらなかったため、authorization indexing単独では説明できない。
+
+### socket option確認
+
+同じreal Spanner pathで `setsockopt` / `getsockopt` をtraceした。
+
+- php-grpc-lite: Spanner TLS fdに `TCP_NODELAY` を設定。
+- ext-grpc 1.58: `TCP_NODELAY`、`SO_REUSEADDR`、`TCP_INQ` を設定。
+- どちらのtraceにも `TCP_QUICKACK` は出ていない。
+
+`TCP_INQ` は受信可能byte数の取得用途であり、response到着時刻そのものを早める説明にはなりにくい。現時点でsocket option差だけを主因とは見ない。
+
+## 現時点の更新解釈 2026-05-19
+
+- issue #5の焦点は、HEADERS/DATA splitから外れた。
+- 追加報告の `Commit` 差は重要だが、こちらの同一fixture 10 iterationでは `BEGIN→WAIT_END` の1.66x差は再現しなかった。
+- `WAIT_BEGIN→WAIT_END` だけを比較するとext-grpcが短く見えるが、ext-grpcはSEND batchで先に送信しているため、`wait()` 区間だけの比較は実装モデル差を含む。
+- php-grpc-liteの「SEND batchで送信せず、RECV batchでunary全体を実行する」実装は、公式ext-grpc互換性としては弱い。latency差の主因かは未確定だが、別issueで「unary SEND batch eager send」対応を検討する価値がある。
+- poll waitの差は原因ではなく観測結果。次に見るべきは、request send完了時刻からresponse first byte到着までの差、送信HTTP/2 headers/payload shape、server側のCommit処理時間、またはGAX/Spanner request lifecycle差である。
+
 ## 訂正 2026-05-18
 
 GitHub issue #5へ最初に投稿したコメントは、ローカルTLS test-serverでの確認を強く解釈しすぎていた。issue #5の報告対象はreal Spanner workloadであり、ローカルで再現しないことは反証にならない。GitHub issueには訂正コメントを追加済み。
