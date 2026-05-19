@@ -169,13 +169,70 @@ static void grpc_lite_append_metadata_zval(zval *metadata, zend_string *key, zva
     add_next_index_zval(existing, &copy);
 }
 
+static bool grpc_lite_append_x_goog_api_client_part(smart_str *buffer, zval *value)
+{
+    if (Z_TYPE_P(value) != IS_STRING) {
+        return false;
+    }
+    if (buffer->s != NULL && ZSTR_LEN(buffer->s) > 0) {
+        smart_str_appendc(buffer, ' ');
+    }
+    smart_str_appendl(buffer, Z_STRVAL_P(value), Z_STRLEN_P(value));
+    return true;
+}
+
+static bool grpc_lite_append_x_goog_api_client_parts(smart_str *buffer, zval *value)
+{
+    zval *nested;
+
+    if (Z_TYPE_P(value) != IS_ARRAY) {
+        return grpc_lite_append_x_goog_api_client_part(buffer, value);
+    }
+
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), nested) {
+        if (!grpc_lite_append_x_goog_api_client_part(buffer, nested)) {
+            return false;
+        }
+    } ZEND_HASH_FOREACH_END();
+    return true;
+}
+
+static bool grpc_lite_fold_x_goog_api_client(zval *metadata, zend_string *key, zval *value)
+{
+    zval *existing;
+    zval folded;
+    smart_str buffer = {0};
+
+    if (key == NULL || !zend_string_equals_literal(key, "x-goog-api-client")) {
+        return false;
+    }
+
+    existing = zend_hash_find(Z_ARRVAL_P(metadata), key);
+    if (existing != NULL && !grpc_lite_append_x_goog_api_client_parts(&buffer, existing)) {
+        smart_str_free(&buffer);
+        return false;
+    }
+    if (!grpc_lite_append_x_goog_api_client_parts(&buffer, value)) {
+        smart_str_free(&buffer);
+        return false;
+    }
+    smart_str_0(&buffer);
+
+    array_init(&folded);
+    add_next_index_str(&folded, buffer.s);
+    zend_hash_update(Z_ARRVAL_P(metadata), key, &folded);
+    return true;
+}
+
 static void grpc_lite_merge_metadata_append_values(zval *metadata, zval *source)
 {
     zend_string *key;
     zval *value;
 
     ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(source), key, value) {
-        grpc_lite_append_metadata_zval(metadata, key, value);
+        if (!grpc_lite_fold_x_goog_api_client(metadata, key, value)) {
+            grpc_lite_append_metadata_zval(metadata, key, value);
+        }
     } ZEND_HASH_FOREACH_END();
 }
 

@@ -807,3 +807,22 @@ real Spanner smoke:
 
 - これでphp-grpc-lite側は、GAX layerではなくgRPC binding後のactual header list、HTTP/2 frame sequence、HPACK header block lengthまで観測できる。
 - ext-grpc側の同等plaintext/HPACK取得は引き続き難しいが、報告者環境でgrpc-liteのwire traceを取れば、少なくともgrpc-lite request shapeの異常、重複metadata、sensitive header length/digest、header order、frame length、control frame混入は確認できる。
+
+### x-goog-api-client fold修正 2026-05-19
+
+0.0.7 wire traceで見えた `x-goog-api-client` 2値化について、ローカルTLS test-serverの統合PHPTで再現テストを追加した。
+
+確認した構造:
+
+- GAX / request metadata由来: `x-goog-api-client: gl-php/test gax/test grpc/test`
+- CallCredentials / Google Auth callback由来: `x-goog-api-client: cred-type/u`
+
+テスト追加直後は、サーバ観測metadataが2値になりRedになることを確認した。修正後はCallCredentials merge時に `x-goog-api-client` だけGoogle client metrics headerとして空白区切りにfoldし、サーバ観測値が1値 `gl-php/test gax/test grpc/test cred-type/u` になることを確認した。
+
+一般gRPC metadataのduplicate key許容は維持しており、`x-bench-echo-ascii` などは引き続き複数値として送信される。
+
+検証:
+
+- Red確認: `./tools/test/check-phpt.sh ext/grpc/tests/023-metadata-and-call-credentials.phpt`
+- Green確認: `./tools/test/check-phpt.sh ext/grpc/tests/023-metadata-and-call-credentials.phpt ext/grpc/tests/020-request-metadata-control.phpt`
+- 静的解析: `./tools/test/check-c-static-analysis.sh`

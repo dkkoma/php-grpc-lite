@@ -77,6 +77,19 @@ grpc_lite_phpt_assert_true($tlsCallbackCalled, 'TLS call credentials callback mu
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $tlsStatus->code, 'TLS call credentials status');
 grpc_lite_phpt_assert_same(['from-plugin'], $tlsCall->getMetadata()['x-bench-initial-ascii'] ?? null, 'TLS call credentials metadata');
 
+$apiClientMetricsCall = $tlsClient->BenchUnary(new BenchRequest(), [
+    'x-bench-observe-metadata-key' => ['x-goog-api-client'],
+    'x-goog-api-client' => ['gl-php/test gax/test grpc/test'],
+], [
+    'call_credentials_callback' => static fn (): array => ['x-goog-api-client' => ['cred-type/u']],
+]);
+[, $apiClientMetricsStatus] = $apiClientMetricsCall->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $apiClientMetricsStatus->code, 'x-goog-api-client call credentials status');
+$apiClientMetricsMetadata = $apiClientMetricsCall->getMetadata();
+grpc_lite_phpt_assert_same('x-goog-api-client', $apiClientMetricsMetadata['x-bench-seen-000-key-bin'][0] ?? null, 'x-goog-api-client observed key');
+grpc_lite_phpt_assert_same('1', $apiClientMetricsMetadata['x-bench-seen-000-count'][0] ?? null, 'x-goog-api-client must be folded to one metadata value');
+grpc_lite_phpt_assert_same('gl-php/test gax/test grpc/test cred-type/u', $apiClientMetricsMetadata['x-bench-seen-000-value-000-bin'][0] ?? null, 'x-goog-api-client folded value');
+
 $duplicateCredentialsCallbackCalled = false;
 $duplicateCredentialsCall = $tlsClient->BenchUnary(new BenchRequest(), [
     'x-bench-echo-ascii' => ['from-request'],
