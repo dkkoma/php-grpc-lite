@@ -829,6 +829,10 @@ fixture:
 production候補:
 
 - 無制限のper-DATA Pingは採用しない。
-- `BDP probe outstanding` をconnection stateに持ち、response DATA受信で未probeなら1回だけPINGをqueueする。
-- ACK受信でoutstandingを解除する。
-- まずはwindow size自動変更までは入れず、active PING有無によるSpanner frontend応答差の再現を目的にする。
+- これは完全なBDP estimatorではなく、まずは `active BDP probe PING` として扱う。目的は、response DATA受信後にclient-origin active PINGを出すconnection behaviorがSpanner frontend応答差に効くかをproduction-safeに再現すること。
+- `BDP probe outstanding`、`BDP probe opaque`、`BDP probe sent_at` をconnection stateに持つ。
+- response DATA受信でprobe eligibleにし、未outstandingかつre-arm条件を満たす場合だけPINGをqueueする。
+- ACK受信でoutstandingを解除する。ただし、解除するのはclient-origin probeの8-byte opaqueと一致するACKだけ。server-origin PINGや無関係なPING ACKはBDP probe stateを変更しない。
+- PINGはDATA callback内で `nghttp2_submit_ping()` するが、ACKをinline waitしない。queued control frameは既存のnonblocking send pathで速やかにflushできるようにし、PING submit時刻、wire write時刻、ACK時刻をtraceで確認する。
+- 初期re-arm policyは保守的にする。候補は「connection generationごとに1回」または「最小intervalあり」。継続streamingでRTTごとに投げ続ける設計にはしない。
+- まずはwindow size自動変更までは入れず、fixed 8MiB windowのままactive PING有無によるSpanner frontend応答差の再現を目的にする。adaptive flow-controlは別issueで扱う。
