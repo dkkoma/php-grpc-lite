@@ -777,3 +777,58 @@ BDP estimatorの意味はPING送信そのものではなく、ACK完了後にcon
 - `after_recv_wait once` はtailが良いrunもあるが、p50改善は安定しない。
 - BDP Pingが関係している可能性は残る。ただし「任意の場所にPINGを1回入れる」だけでは、official ext-grpcの約10〜11ms p50には近づかない。
 - 次に見るなら、単純PINGではなく、C-coreに近い `incoming bytes accumulator`、`one outstanding ping`、`ACK completion`、`next probe delay`、`flow-control target update` を分けて実装したBDP estimatorとして検証する。
+
+### SELECT 1: reporter BDP Ping差分の再現確認
+
+GitHub issue #5 の報告者から、`Spanner/ExecuteStreamingSql SELECT 1` でBDP-style active PINGにより `grpc-lite 0.0.8` のmean/p50が大きく改善するという追加報告があった。
+
+前節のこちらの検証は、reporter差分を正確に再現していなかった。特に以下が違う。
+
+- reporter差分の主効果は `on_data_chunk_recv_callback()` 内でresponse DATA chunk受信ごとに `nghttp2_submit_ping()` をqueueする点。
+- 前節の検証はrecv loop外側のbefore/afterでPINGを入れており、DATA callback境界ではない。
+- 前節の一部variantはPING送信後に即flush/waitする形で、reporter差分の「nghttp2 queueへ積み、既存のsend cycleに乗せる」形と違う。
+
+そのため、前節の「単純PINGでは近づかない」という判断は、reporter方式の否定としては扱わない。
+
+#### 実装した診断variant
+
+同一imageで切り替えられるように、以下のenv flag付き診断variantを一時実装した。
+
+- `GRPC_LITE_ISSUE5_BDP_DATA_PING=1`: `on_data_chunk_recv_callback()` でresponse DATA chunk受信時にtimestamp opaqueのPINGをqueueする。
+- `GRPC_LITE_ISSUE5_BDP_SETUP_PING=1`: connection setup時、SETTINGS / WINDOW_UPDATE submit後、初回 `send_pending_h2_frames()` 前に固定opaqueのPINGをqueueする。
+- `GRPC_LITE_ISSUE5_BDP_PRE_REQUEST_PING=1`: `nghttp2_submit_request()` 直前にtimestamp opaqueのPINGをqueueする。`ExecuteStreamingSql` はserver streaming経路なので `server_streaming_call.c` 側にも入れた。
+
+いずれも `nghttp2_submit_ping()` だけを行い、その場で追加flush/waitはしない。
+
+#### 計測結果
+
+fixture:
+
+- script: `tools/diagnostics/issue5-spanner-repro/select1-bench.php`
+- image: `spanner-repro:lite-local-issue5-bdp`
+- target: real Cloud Spanner `bench/laravel-bench-db`
+- credentials: service account JSON via `GOOGLE_APPLICATION_CREDENTIALS=/sa.json`
+- iterations: 500
+
+| variant | iter | mean | p50 | p90 | p99 | 備考 |
+|---|---:|---:|---:|---:|---:|---|
+| official ext-grpc 1.58 | 500 | 11.453ms | 10.749ms | 14.257ms | 24.158ms | 既存 `spanner-repro:official-select1` |
+| lite local, no BDP Ping | 500 | 28.673ms | 23.240ms | 30.923ms | 112.108ms | 同一image、envなし |
+| lite local, DATA Ping | 500 | 17.170ms | 16.001ms | 18.885ms | 27.898ms | 主効果あり |
+| lite local, setup + DATA + pre-request Ping | 500 | 16.857ms | 16.173ms | 19.030ms | 26.421ms | DATA単独からの追加効果は小さい |
+
+200 iterationの初回確認でも、DATA Ping単独は `mean=16.210ms / p50=15.557ms` で、no BDP Pingの `mean=20.479ms / p50=20.222ms` から明確に改善した。
+
+#### 判断
+
+- issue #5 reporterの「BDP-style active PINGでgapの大半が縮む」という報告は、こちらのreal Spanner環境でも再現した。
+- とくに `on_data_chunk_recv_callback()` でresponse DATA受信時にPINGをqueueする経路が主効果。
+- setup PING / pre-request PINGは、この環境ではDATA Ping単独に比べた追加効果が小さい。tailを悪化させるrunもあり、production実装にそのまま入れる根拠は弱い。
+- official ext-grpc 1.58とはまだp50で約5.4ms差が残るため、BDP Pingだけで完全説明ではない。
+
+production候補:
+
+- 無制限のper-DATA Pingは採用しない。
+- `BDP probe outstanding` をconnection stateに持ち、response DATA受信で未probeなら1回だけPINGをqueueする。
+- ACK受信でoutstandingを解除する。
+- まずはwindow size自動変更までは入れず、active PING有無によるSpanner frontend応答差の再現を目的にする。
