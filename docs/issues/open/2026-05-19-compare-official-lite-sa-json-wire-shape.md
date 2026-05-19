@@ -882,3 +882,95 @@ fixture:
 - 1回/connectionや1000ms intervalでは、reporterが見た改善幅に近づかない。
 - 現時点では、`active_bdp_probe_min_interval_ms=0` を既定値にして性能変化を見る価値がある。
 - official ext-grpcとの差はまだp50で約4.3ms残るため、BDP probeだけで完全解決ではない。
+
+### 主要ベンチ再計測: default on の副作用
+
+`active BDP probe` を既定有効にした状態で主要ベンチを再計測した。
+
+run ids:
+
+- `active-bdp-major-20260519`: `spanner-shape`
+- `active-bdp-real-client-20260519`: `spanner-real-client`
+- `active-bdp-rtt-20260519`: `rtt-unary`
+- `active-bdp-streaming-20260519`: `throughput-streaming`
+- `active-bdp-unary-20260519`: `throughput-unary`
+- `active-bdp-tls-spanner-shape-20260519`: `tls-spanner-shape`
+
+#### spanner-shape
+
+| measurement | native p50 | native p99 | ext-grpc p50 | ext-grpc p99 | 判断 |
+|---|---:|---:|---:|---:|---|
+| begin_txn_unary | 59.6µs | 940.2µs | 162.9µs | 665.5µs | native p50優位、p99劣後 |
+| commit_txn_unary | 54.1µs | 984.5µs | 116.5µs | 468.3µs | native p50優位、p99劣後 |
+| select_1row_10col_streaming | 63.0µs | 938.7µs | 148.1µs | 506.0µs | native p50優位、p99劣後 |
+| dml_insert_10col_streaming | 62.5µs | 780.9µs | 156.6µs | 407.5µs | native p50優位、p99劣後 |
+| dml_update_10col_streaming | 62.3µs | 1013.3µs | 88.6µs | 544.1µs | native p50優位、p99劣後 |
+| dml_delete_10col_streaming | 58.4µs | 872.3µs | 165.1µs | 402.3µs | native p50優位、p99劣後 |
+
+同一コードで `grpc_lite.active_bdp_probe=0` にした切り分け:
+
+| measurement | native off p50 | native off p99 | default on p50 | default on p99 |
+|---|---:|---:|---:|---:|
+| begin_txn_unary | 68.1µs | 747.8µs | 59.6µs | 940.2µs |
+| commit_txn_unary | 56.3µs | 492.9µs | 54.1µs | 984.5µs |
+| select_1row_10col_streaming | 51.3µs | 417.6µs | 63.0µs | 938.7µs |
+| dml_insert_10col_streaming | 48.9µs | 327.8µs | 62.5µs | 780.9µs |
+| dml_update_10col_streaming | 47.4µs | 251.3µs | 62.3µs | 1013.3µs |
+| dml_delete_10col_streaming | 47.1µs | 256.8µs | 58.4µs | 872.3µs |
+
+判断:
+
+- Go test-serverの低RTT synthetic Spanner shapeでは、active BDP probe default onは特にstreaming系p99を悪化させる。
+- この悪化は同一コードでINI無効にすると大きく戻るため、probe由来と見てよい。
+
+#### tls-spanner-shape
+
+| measurement | native p50 | native p99 | ext-grpc p50 | ext-grpc p99 | 判断 |
+|---|---:|---:|---:|---:|---|
+| begin_txn_unary | 64.7µs | 3845.1µs | 131.8µs | 485.8µs | native p50優位、p99大幅劣後 |
+| commit_txn_unary | 53.0µs | 2837.4µs | 108.4µs | 490.0µs | native p50優位、p99大幅劣後 |
+| select_1row_10col_streaming | 65.1µs | 2932.6µs | 164.0µs | 497.2µs | native p50優位、p99大幅劣後 |
+| dml_insert_10col_streaming | 72.3µs | 3145.6µs | 133.3µs | 455.5µs | native p50優位、p99大幅劣後 |
+| dml_update_10col_streaming | 48.3µs | 2730.8µs | 154.5µs | 529.6µs | native p50優位、p99大幅劣後 |
+| dml_delete_10col_streaming | 55.1µs | 2903.0µs | 136.0µs | 559.5µs | native p50優位、p99大幅劣後 |
+
+#### spanner-real-client
+
+| measurement | native p50 | native p99 | ext-grpc p50 | ext-grpc p99 | 判断 |
+|---|---:|---:|---:|---:|---|
+| small_select_1row_10col | 2167.6µs | 3462.5µs | 1977.6µs | 3553.1µs | p50 native劣後、p99同等 |
+| dml_insert_10col | 2342.5µs | 6951.7µs | 1873.1µs | 3194.9µs | native劣後 |
+| dml_update_10col | 2550.4µs | 4849.6µs | 2259.2µs | 3160.6µs | native劣後 |
+| dml_delete_10col | 2848.8µs | 4888.4µs | 2588.7µs | 3552.2µs | native劣後 |
+
+同一コードで `grpc_lite.active_bdp_probe=0` にした切り分け:
+
+| measurement | native off p50 | native off p99 | default on p50 | default on p99 |
+|---|---:|---:|---:|---:|
+| small_select_1row_10col | 1698.9µs | 4512.9µs | 2167.6µs | 3462.5µs |
+| dml_insert_10col | 1725.1µs | 2885.5µs | 2342.5µs | 6951.7µs |
+| dml_update_10col | 2051.9µs | 2584.3µs | 2550.4µs | 4849.6µs |
+| dml_delete_10col | 2356.9µs | 3737.0µs | 2848.8µs | 4888.4µs |
+
+判断:
+
+- emulator高レベル実経路でもdefault onはp50を悪化させる。
+- Real Cloud Spanner `SELECT 1` では大きく改善する一方、local/emulatorとGo test-serverでは副作用が大きい。
+
+#### throughput / rtt
+
+| suite | measurement | native p50 | native p99 | ext-grpc p50 | ext-grpc p99 | 判断 |
+|---|---|---:|---:|---:|---:|---|
+| throughput-unary | payload=100 | 50.4µs | 835.7µs | 112.4µs | 469.2µs | native p50優位、p99劣後 |
+| throughput-streaming | payload=100 | 1605.6µs | 4906.7µs | 4489.3µs | 7379.3µs | native優位 |
+| rtt-unary | warm direct | 160.0µs | 1220.0µs | 182.5µs | 265.0µs | p50同等、native p99劣後 |
+
+#### 方針判断
+
+`active BDP probe` はReal Cloud Spannerでは有効だが、低RTT synthetic / emulatorでは明確な副作用がある。したがって、現時点でdefault onのまま進めるのは危険。
+
+次の候補:
+
+1. `grpc_lite.active_bdp_probe` の既定値を `0` に戻し、Cloud Spanner向けのopt-in機能にする。
+2. default onを維持するなら、少なくとも低RTT/localhost/emulatorで自動抑制するre-arm policyが必要。
+3. provider/domain-specific auto enableは責務が重いため、まずはopt-inが安全。
