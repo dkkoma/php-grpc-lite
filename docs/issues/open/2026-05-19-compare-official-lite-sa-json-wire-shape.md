@@ -510,6 +510,22 @@ protobuf拡張なしのlite traceから算出した `request TLS write -> first 
 - liteのwireは1 TLS writeにcoalesce済みなので、単純な「write分割」ではない。
 - official C-coreのHTTP/2 scheduler / HPACK state / TLS record / stream lifecycleのどれがSpanner frontendの応答開始に効いているか。
 
+### SELECT 1: HPACK / grpc-timeout single-factor variants
+
+server-visible metadata値だけでは改善しなかったため、wire表現に近い単独要素を追加で切った。
+
+| variant | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| lite source-build baseline相当 | 50 | 21.891ms | 21.672ms | 24.590ms | 26.797ms | protobuf拡張なしtrace image |
+| HPACK deflate dynamic table size 0 | 200 | 22.240ms | 21.942ms | 25.067ms | 29.120ms | 改善なし |
+| `grpc-timeout: 3600S` 固定 | 200 | 22.331ms | 21.731ms | 24.819ms | 39.356ms | 改善なし |
+
+判断:
+
+- request headerのHPACK dynamic table利用有無だけでは、official SA JSONのp50約10〜11msには近づかない。
+- `grpc-timeout` の単位表現差だけでもない。
+- 残る候補は、接続先frontend/IP、connection preface/settings/control lifecycle、C-core transport scheduler、またはSpanner frontendがそれらを組み合わせて扱う部分。
+
 ### Pub/Sub ListTopics cross-check
 
 Spanner固有の現象か、Google API gRPC全般で起きる現象かを切り分けるため、同じSA JSONでPub/Sub `ListTopics` の最小reproを追加した。
@@ -617,3 +633,68 @@ lite trace上の `GetSecret` `rpc.end` は、`n=202 / min=78.477ms / p50=164.132
 - したがって、SA JSON + Google public API gRPC + 軽量unary一般でliteが一貫して遅い、という仮説は支持しない。
 - Spanner `ExecuteStreamingSql` / `Commit` で見えている差は、Spanner data plane / session / Spanner向けmetadata / frontend schedulingとの相互作用として扱うのが妥当。
 - Resource ManagerはAPI無効のため、現状態では候補から外す。
+
+### SELECT 1 fine-grained follow-up
+
+Spanner固有の差分に戻し、`ExecuteStreamingSql SELECT 1` 単体で未分解候補を追加で切った。
+
+#### 同一条件の再計測
+
+SA JSON / `ExecuteStreamingSql SELECT 1` / 20 iterations:
+
+| variant | mean | p50 | p90 | p99 | 備考 |
+|---|---:|---:|---:|---:|---|
+| official ext-grpc 1.58.0 | 11.554ms | 11.294ms | 12.842ms | 15.144ms | `spanner-repro:official-select1-strace` |
+| php-grpc-lite source build | 22.044ms | 21.535ms | 24.768ms | 31.329ms | `spanner-repro:lite-local-peertrace` |
+
+`strace -f -ttt -T -yy -e trace=read,write,network` で、request送信後のfirst response read/recvを見た。
+
+| variant | request send size | send -> next recv/read p50目安 | 観察 |
+|---|---:|---:|---|
+| official ext-grpc | 約1400B | 約10ms | `sendmsg` で送信、`recvmsg` で受信 |
+| php-grpc-lite | 約850B | 約21ms | `SSL_write` 経由の `write`、`SSL_read` 経由の `read` |
+
+判断:
+
+- 差分は引き続き、request write完了後からfirst response到着までに集中している。
+- PHP wrapper後段やresponse decodeではなく、Spanner frontendが応答を開始するまでのtransport/wire shape差として見る。
+
+#### 接続先frontend / socket family
+
+official/liteを同時期に `strace` すると、どちらも同じIPv4 frontend `142.250.23.95:443` に到達するrunがある。その状態でもp50差は残る。
+
+追加で、liteをofficialに寄せてIPv4-mapped IPv6 socketで接続するvariantを作った。
+
+| variant | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| lite IPv4-mapped IPv6 socket | 200 | 22.253ms | 21.679ms | 25.252ms | 31.384ms | 改善なし |
+
+判断:
+
+- 接続先Google frontend IP差だけではない。
+- officialがIPv4-mapped IPv6 socketを使う点も主因ではない。
+
+#### HPACK / grpc-timeout / header order
+
+server-visible metadataやHPACK表現をさらに切った。
+
+| variant | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| HPACK deflate dynamic table size 0 | 200 | 22.240ms | 21.942ms | 25.067ms | 29.120ms | 改善なし |
+| `grpc-timeout: 3600S` 固定 | 200 | 22.331ms | 21.731ms | 24.819ms | 39.356ms | 改善なし |
+| server-streaming regular header order official寄せ | 200 | 22.521ms | 22.283ms | 25.275ms | 32.920ms | 改善なし |
+
+HPACK dynamic table size 0 variantでは、`ExecuteStreamingSql` のHEADERS frame payloadは通常の約638Bから1022Bに増えた。それでもlatencyは改善しない。
+
+判断:
+
+- HPACK dynamic table利用有無だけではない。
+- `grpc-timeout` の単位表現差だけではない。
+- header orderだけでもない。
+- officialのper-RPC送信サイズが約1400Bである点は残るが、lite側でHEADERSを大きくしても改善しないため、「小さく圧縮されているから遅い」という単純な説明は成り立たない。
+
+#### 現時点の未解決点
+
+- officialの約1400B送信が、HTTP/2 frame列、TLS record、C-core scheduler/control frameのどの組み合わせから来ているか。
+- officialとliteで、Spanner frontendがresponseを開始する条件に効くwire/control stateが何か。
+- 単純なmetadata同一化、HPACK無効化、socket family同一化、BDP probe off、PING追加では説明できていない。
