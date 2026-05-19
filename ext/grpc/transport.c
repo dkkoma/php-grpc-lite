@@ -53,9 +53,11 @@ static void grpc_lite_trace_hex(FILE *fp, const uint8_t *bytes, size_t len);
 static void grpc_lite_trace_sha256_hex(FILE *fp, const uint8_t *bytes, size_t len);
 static bool grpc_lite_trace_header_value_is_sensitive(const uint8_t *name, size_t namelen);
 static const char *grpc_lite_h2_frame_type_name(uint8_t type);
+static const char *grpc_lite_h2_setting_name(uint32_t id);
 static void grpc_lite_trace_open_and_lock(FILE **fp);
 static void grpc_lite_trace_unlock_and_close(FILE *fp);
 static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length);
+static void grpc_lite_trace_inbound_control_frame(h2_connection *connection, const nghttp2_frame *frame);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 static size_t remaining_request_bytes(grpc_call *call);
 static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
@@ -450,6 +452,26 @@ static const char *grpc_lite_h2_frame_type_name(uint8_t type)
     }
 }
 
+static const char *grpc_lite_h2_setting_name(uint32_t id)
+{
+    switch (id) {
+        case NGHTTP2_SETTINGS_HEADER_TABLE_SIZE:
+            return "HEADER_TABLE_SIZE";
+        case NGHTTP2_SETTINGS_ENABLE_PUSH:
+            return "ENABLE_PUSH";
+        case NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS:
+            return "MAX_CONCURRENT_STREAMS";
+        case NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE:
+            return "INITIAL_WINDOW_SIZE";
+        case NGHTTP2_SETTINGS_MAX_FRAME_SIZE:
+            return "MAX_FRAME_SIZE";
+        case NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE:
+            return "MAX_HEADER_LIST_SIZE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 static void grpc_lite_trace_open_and_lock(FILE **fp)
 {
     const char *path = grpc_lite_trace_file_path();
@@ -472,7 +494,64 @@ static void grpc_lite_trace_unlock_and_close(FILE *fp)
     fclose(fp);
 }
 
-static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length)
+static uint32_t grpc_lite_read_be32(const uint8_t *bytes)
+{
+    return ((uint32_t) bytes[0] << 24)
+        | ((uint32_t) bytes[1] << 16)
+        | ((uint32_t) bytes[2] << 8)
+        | (uint32_t) bytes[3];
+}
+
+static uint16_t grpc_lite_read_be16(const uint8_t *bytes)
+{
+    return (uint16_t) (((uint16_t) bytes[0] << 8) | (uint16_t) bytes[1]);
+}
+
+static void grpc_lite_trace_settings_entries_from_payload(FILE *fp, const uint8_t *payload, uint32_t payload_len)
+{
+    uint32_t count;
+    uint32_t index;
+
+    if (payload == NULL || payload_len % 6 != 0) {
+        return;
+    }
+    count = payload_len / 6;
+    fprintf(fp, ",\"settings_count\":%u,\"settings\":[", count);
+    for (index = 0; index < count; index++) {
+        const uint8_t *entry = payload + (index * 6);
+        uint32_t id = grpc_lite_read_be16(entry);
+        uint32_t value = grpc_lite_read_be32(entry + 2);
+        if (index > 0) {
+            fputc(',', fp);
+        }
+        fprintf(fp, "{\"id\":%u,\"name\":", id);
+        grpc_lite_trace_json_string(fp, grpc_lite_h2_setting_name(id), strlen(grpc_lite_h2_setting_name(id)));
+        fprintf(fp, ",\"value\":%u}", value);
+    }
+    fputc(']', fp);
+}
+
+static void grpc_lite_trace_settings_entries_from_frame(FILE *fp, const nghttp2_settings *settings)
+{
+    size_t index;
+
+    if (settings == NULL) {
+        return;
+    }
+    fprintf(fp, ",\"settings_count\":%zu,\"settings\":[", settings->niv);
+    for (index = 0; index < settings->niv; index++) {
+        uint32_t id = (uint32_t) settings->iv[index].settings_id;
+        if (index > 0) {
+            fputc(',', fp);
+        }
+        fprintf(fp, "{\"id\":%u,\"name\":", id);
+        grpc_lite_trace_json_string(fp, grpc_lite_h2_setting_name(id), strlen(grpc_lite_h2_setting_name(id)));
+        fprintf(fp, ",\"value\":%u}", settings->iv[index].value);
+    }
+    fputc(']', fp);
+}
+
+static void grpc_lite_trace_outbound_frame_record(h2_connection *connection, const uint8_t *data, size_t length)
 {
     FILE *fp;
     uint32_t frame_len;
@@ -485,15 +564,6 @@ static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint
     if (connection == NULL || data == NULL || grpc_lite_trace_file_path() == NULL) {
         return;
     }
-    if (length == 24 && memcmp(data, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", 24) == 0) {
-        grpc_lite_trace_open_and_lock(&fp);
-        if (fp == NULL) {
-            return;
-        }
-        fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.connection_preface\",\"chunk_len\":%zu}\n", monotonic_us(), (long) getpid(), length);
-        grpc_lite_trace_unlock_and_close(fp);
-        return;
-    }
     if (length < 9) {
         return;
     }
@@ -502,7 +572,7 @@ static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint
     type = data[3];
     flags = data[4];
     stream_id = (int32_t) ((((uint32_t) data[5] & 0x7f) << 24) | ((uint32_t) data[6] << 16) | ((uint32_t) data[7] << 8) | (uint32_t) data[8]);
-    call = connection->current_io_call;
+    call = grpc_call_from_stream_id(connection, stream_id);
     frame_type_name = grpc_lite_h2_frame_type_name(type);
 
     grpc_lite_trace_open_and_lock(&fp);
@@ -512,9 +582,14 @@ static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint
     fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.frame_out\",\"stream_id\":%d,\"frame_type\":", monotonic_us(), (long) getpid(), stream_id);
     grpc_lite_trace_json_string(fp, frame_type_name, strlen(frame_type_name));
     fprintf(fp, ",\"frame_type_id\":%u,\"flags\":%u,\"frame_payload_len\":%u,\"chunk_len\":%zu", (unsigned) type, (unsigned) flags, frame_len, length);
-    if (call != NULL && call->method_path != NULL) {
+    if (stream_id > 0 && call != NULL && call->method_path != NULL) {
         fprintf(fp, ",\"rpc_method\":");
         grpc_lite_trace_json_string(fp, ZSTR_VAL(call->method_path), ZSTR_LEN(call->method_path));
+    }
+    if (type == NGHTTP2_SETTINGS && length >= 9 + frame_len) {
+        grpc_lite_trace_settings_entries_from_payload(fp, data + 9, frame_len);
+    } else if (type == NGHTTP2_WINDOW_UPDATE && length >= 13 && frame_len == 4) {
+        fprintf(fp, ",\"window_size_increment\":%u", grpc_lite_read_be32(data + 9) & 0x7fffffffU);
     }
     if (type == NGHTTP2_HEADERS) {
         fprintf(fp, ",\"header_block_len\":%u", frame_len);
@@ -524,6 +599,91 @@ static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint
             fprintf(fp, ",\"header_block_hex\":");
             grpc_lite_trace_hex(fp, data + 9, header_bytes);
         }
+    } else if (grpc_lite_trace_wire_bytes_enabled()
+        && (type == NGHTTP2_SETTINGS || type == NGHTTP2_WINDOW_UPDATE || type == NGHTTP2_PING || type == NGHTTP2_GOAWAY)
+        && length >= 9 + frame_len) {
+        fprintf(fp, ",\"payload_hex\":");
+        grpc_lite_trace_hex(fp, data + 9, frame_len);
+    }
+    fputs("}\n", fp);
+    grpc_lite_trace_unlock_and_close(fp);
+}
+
+static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length)
+{
+    FILE *fp;
+    size_t offset = 0;
+
+    if (connection == NULL || data == NULL || grpc_lite_trace_file_path() == NULL) {
+        return;
+    }
+    if (length >= 24 && memcmp(data, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", 24) == 0) {
+        grpc_lite_trace_open_and_lock(&fp);
+        if (fp == NULL) {
+            return;
+        }
+        fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.connection_preface\",\"chunk_len\":24}\n", monotonic_us(), (long) getpid());
+        grpc_lite_trace_unlock_and_close(fp);
+        offset = 24;
+    }
+    while (offset + 9 <= length) {
+        uint32_t frame_len = ((uint32_t) data[offset] << 16) | ((uint32_t) data[offset + 1] << 8) | (uint32_t) data[offset + 2];
+        size_t frame_total_len = (size_t) frame_len + 9;
+        if (frame_total_len < 9 || offset + frame_total_len > length) {
+            break;
+        }
+        grpc_lite_trace_outbound_frame_record(connection, data + offset, frame_total_len);
+        offset += frame_total_len;
+    }
+    if (offset < length) {
+        grpc_lite_trace_open_and_lock(&fp);
+        if (fp == NULL) {
+            return;
+        }
+        fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.chunk_unparsed\",\"chunk_len\":%zu,\"offset\":%zu,\"remaining_len\":%zu}\n", monotonic_us(), (long) getpid(), length, offset, length - offset);
+        grpc_lite_trace_unlock_and_close(fp);
+    }
+}
+
+static void grpc_lite_trace_inbound_control_frame(h2_connection *connection, const nghttp2_frame *frame)
+{
+    FILE *fp;
+    grpc_call *call;
+
+    if (connection == NULL || frame == NULL || grpc_lite_trace_file_path() == NULL) {
+        return;
+    }
+    switch (frame->hd.type) {
+        case NGHTTP2_SETTINGS:
+        case NGHTTP2_WINDOW_UPDATE:
+        case NGHTTP2_PING:
+        case NGHTTP2_GOAWAY:
+        case NGHTTP2_RST_STREAM:
+            break;
+        default:
+            return;
+    }
+
+    call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    grpc_lite_trace_open_and_lock(&fp);
+    if (fp == NULL) {
+        return;
+    }
+    fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.frame_in\",\"stream_id\":%d,\"frame_type\":", monotonic_us(), (long) getpid(), frame->hd.stream_id);
+    grpc_lite_trace_json_string(fp, grpc_lite_h2_frame_type_name(frame->hd.type), strlen(grpc_lite_h2_frame_type_name(frame->hd.type)));
+    fprintf(fp, ",\"frame_type_id\":%u,\"flags\":%u,\"frame_payload_len\":%zu", (unsigned) frame->hd.type, (unsigned) frame->hd.flags, frame->hd.length);
+    if (call != NULL && call->method_path != NULL) {
+        fprintf(fp, ",\"rpc_method\":");
+        grpc_lite_trace_json_string(fp, ZSTR_VAL(call->method_path), ZSTR_LEN(call->method_path));
+    }
+    if (frame->hd.type == NGHTTP2_SETTINGS) {
+        grpc_lite_trace_settings_entries_from_frame(fp, &frame->settings);
+    } else if (frame->hd.type == NGHTTP2_WINDOW_UPDATE) {
+        fprintf(fp, ",\"window_size_increment\":%d", frame->window_update.window_size_increment);
+    } else if (frame->hd.type == NGHTTP2_GOAWAY) {
+        fprintf(fp, ",\"last_stream_id\":%d,\"error_code\":%u", frame->goaway.last_stream_id, frame->goaway.error_code);
+    } else if (frame->hd.type == NGHTTP2_RST_STREAM) {
+        fprintf(fp, ",\"error_code\":%u", frame->rst_stream.error_code);
     }
     fputs("}\n", fp);
     grpc_lite_trace_unlock_and_close(fp);
@@ -1766,6 +1926,9 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     (void) session;
+
+    grpc_lite_trace_inbound_control_frame(connection, frame);
+
     if (frame->hd.type == NGHTTP2_GOAWAY) {
         if (connection != NULL) {
             grpc_call *active_stream = connection->active_streams;

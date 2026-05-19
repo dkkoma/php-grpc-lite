@@ -826,3 +826,48 @@ real Spanner smoke:
 - Red確認: `./tools/test/check-phpt.sh ext/grpc/tests/023-metadata-and-call-credentials.phpt`
 - Green確認: `./tools/test/check-phpt.sh ext/grpc/tests/023-metadata-and-call-credentials.phpt ext/grpc/tests/020-request-metadata-control.phpt`
 - 静的解析: `./tools/test/check-c-static-analysis.sh`
+
+### HTTP/2 control trace拡張とpure CLI再現 2026-05-19
+
+報告者の追加コメントを受け、`x-goog-api-client` 以外の本筋として、connection-level HTTP/2 shapeを比較できるようwire diagnosticを拡張した。
+
+追加した観測:
+
+- outbound `wire.frame_out` の `SETTINGS` decoded entries。
+- outbound `wire.frame_out` の `WINDOW_UPDATE.window_size_increment`。
+- `GRPC_LITE_TRACE_WIRE_BYTES=1` 時の `SETTINGS` / `WINDOW_UPDATE` / `PING` / `GOAWAY` payload hex。
+- inbound `wire.frame_in` の `SETTINGS` / `WINDOW_UPDATE` / `PING` / `GOAWAY` / `RST_STREAM`。
+- `stream_id == 0` のconnection-level control frameには `rpc_method` を付けない。RPC stream ownerとI/O driverを混同しないため。
+- outbound traceはsend callback chunkをHTTP/2 frame列としてparseし、chunk内に複数frameがある場合も各frameを個別recordにする。不完全chunkは `wire.chunk_unparsed` として記録する。
+
+local smokeで確認したgrpc-liteのconnection開始shape:
+
+```json
+{"event":"wire.frame_out","frame_type":"SETTINGS","settings":[{"id":2,"name":"ENABLE_PUSH","value":0},{"id":4,"name":"INITIAL_WINDOW_SIZE","value":8388608}],"payload_hex":"000200000000000400800000"}
+{"event":"wire.frame_out","frame_type":"WINDOW_UPDATE","window_size_increment":8323073,"payload_hex":"007f0001"}
+{"event":"wire.frame_in","frame_type":"SETTINGS","settings":[{"id":3,"name":"MAX_CONCURRENT_STREAMS","value":100},{"id":4,"name":"INITIAL_WINDOW_SIZE","value":1048576},{"id":6,"name":"MAX_HEADER_LIST_SIZE","value":65536}]}
+{"event":"wire.frame_in","frame_type":"WINDOW_UPDATE","window_size_increment":983041}
+```
+
+また、報告者のpure CLI repro相当として `tools/diagnostics/spanner-transaction-cli.php` を追加した。これは標準benchmarkではなくissue #5用の診断fixtureであり、1 iterationのwall timeは `runTransaction()` 全体で、Commit RPC単体ではない。Commit単体は `GRPC_LITE_TRACE_FILE` の `rpc.end` / `wire.*` で見る。
+
+こちらのreal Spanner環境 `vast-falcon-165704 / bench / laravel-bench-db` で実行した結果:
+
+| variant | trace | iterations | mean | p50 | p90 | p99 | note |
+|---|---|---:|---:|---:|---:|---:|---|
+| grpc-lite current | off | 100 | 60.9ms | 60.5ms | 64.1ms | 86.7ms | fold後、traceなし |
+| ext-grpc 1.58 optimized | off | 100 | 60.9ms | 60.5ms | 64.1ms | 67.7ms | `-O3 -flto -fno-semantic-interposition` build |
+| grpc-lite current | on | 100 | 102.4ms | 101.7ms | 123.0ms | 149.6ms | `GRPC_LITE_TRACE_FILE` enabled; diagnostic file I/O overheadあり |
+
+trace有効runのgrpc-lite内訳:
+
+- `CreateSession`: n=1, avg 541.6ms。
+- `ExecuteStreamingSql`: n=101, avg 36.1ms, p50 36.1ms。
+- `Commit`: n=200, avg 32.8ms, p50 32.5ms。
+- `x-goog-api-client` は各RPCで1値になっている。CreateSessionでは `... pb/5.34.1+c cred-type/u` にfoldされ、ExecuteStreamingSql / Commitではこの環境では `cred-type/...` が付かない。
+
+判断:
+
+- こちらの環境では、traceなしのcurrent grpc-liteはext-grpc 1.58 optimizedとほぼ同等で、報告者のpure CLI 1.79x gapは再現しなかった。
+- `GRPC_LITE_TRACE_FILE` はheader/frameごとにfile append/lockを行うため、latency比較には使わない。wire shape確認用のdiagnosticとして扱う。
+- 報告者環境でfold後buildを再実行してもらい、gapが消えるか確認する必要がある。

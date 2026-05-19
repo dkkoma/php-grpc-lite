@@ -60,6 +60,9 @@ $streamingEnd = null;
 $unaryPathHeader = null;
 $unaryHeadersFrame = null;
 $unaryDataFrame = null;
+$settingsFrame = null;
+$connectionWindowUpdateFrame = null;
+$inboundSettingsFrame = null;
 foreach ($records as $record) {
     if (($record['event'] ?? null) === 'rpc.end' && ($record['rpc_kind'] ?? null) === 'unary') {
         $unaryEnd = $record;
@@ -82,6 +85,23 @@ foreach ($records as $record) {
         && ($record['frame_type'] ?? null) === 'DATA') {
         $unaryDataFrame = $record;
     }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['stream_id'] ?? null) === 0
+        && ($record['frame_type'] ?? null) === 'SETTINGS'
+        && ($record['flags'] ?? null) === 0) {
+        $settingsFrame = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['stream_id'] ?? null) === 0
+        && ($record['frame_type'] ?? null) === 'WINDOW_UPDATE') {
+        $connectionWindowUpdateFrame = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_in'
+        && ($record['stream_id'] ?? null) === 0
+        && ($record['frame_type'] ?? null) === 'SETTINGS'
+        && ($record['flags'] ?? null) === 0) {
+        $inboundSettingsFrame = $record;
+    }
 }
 
 grpc_lite_phpt_assert_true(is_array($unaryEnd), 'unary rpc.end exists');
@@ -102,6 +122,16 @@ grpc_lite_phpt_assert_true(is_array($unaryHeadersFrame), 'unary HEADERS frame tr
 grpc_lite_phpt_assert_true(($unaryHeadersFrame['header_block_len'] ?? 0) > 0, 'unary HEADERS block length');
 grpc_lite_phpt_assert_true(is_array($unaryDataFrame), 'unary DATA frame trace exists');
 grpc_lite_phpt_assert_true(($unaryDataFrame['frame_payload_len'] ?? 0) > 5, 'unary DATA frame length');
+grpc_lite_phpt_assert_true(is_array($settingsFrame), 'outbound SETTINGS trace exists');
+grpc_lite_phpt_assert_same(2, $settingsFrame['settings_count'] ?? null, 'outbound SETTINGS count');
+grpc_lite_phpt_assert_same('ENABLE_PUSH', $settingsFrame['settings'][0]['name'] ?? null, 'outbound SETTINGS enable push');
+grpc_lite_phpt_assert_same('INITIAL_WINDOW_SIZE', $settingsFrame['settings'][1]['name'] ?? null, 'outbound SETTINGS initial window');
+grpc_lite_phpt_assert_true(!array_key_exists('rpc_method', $settingsFrame), 'connection-level SETTINGS must not be attributed to an RPC');
+grpc_lite_phpt_assert_true(is_array($connectionWindowUpdateFrame), 'outbound connection WINDOW_UPDATE trace exists');
+grpc_lite_phpt_assert_true(($connectionWindowUpdateFrame['window_size_increment'] ?? 0) > 0, 'outbound connection WINDOW_UPDATE increment');
+grpc_lite_phpt_assert_true(!array_key_exists('rpc_method', $connectionWindowUpdateFrame), 'connection-level WINDOW_UPDATE must not be attributed to an RPC');
+grpc_lite_phpt_assert_true(is_array($inboundSettingsFrame), 'inbound SETTINGS trace exists');
+grpc_lite_phpt_assert_true(array_key_exists('settings', $inboundSettingsFrame), 'inbound SETTINGS entries exist');
 
 echo "OK\n";
 ?>
