@@ -721,3 +721,43 @@ app step比較の代表値:
 - 報告者環境の差をこちらで再現した、とは言えない。
 - ただし、こちらで実施可能な範囲では、real Spanner/FPM/official ext-grpc 1.58 optimized/current/0.0.5の同一endpoint比較と、currentのRPC method-level traceは取得できた。
 - 次に必要なのは、同じ0.0.6 trace buildを報告者環境で実行してもらい、こちらと同じ観測点で差が出るか確認すること。
+
+## Reporter follow-up after 0.0.6 trace request 2026-05-19
+
+GitHub issue #5に、報告者側で0.0.6を使った追加調査結果が返信された。
+
+報告内容:
+
+1. GAX levelの `$options['headers']` はext-grpc 1.58とphp-grpc-lite 0.0.6で同一。
+   - `x-goog-api-client`
+   - `User-Agent`
+   - `x-goog-request-params`
+   - `x-goog-spanner-route-to-leader`
+   - `google-cloud-resource-prefix`
+2. `ss -tipn` で見たkernel TCP RTT / minrtt / mss / cwndは両者で同等。
+   - TCP RTTは数十〜数百µsで、Commitの8ms差とは桁が違う。
+3. gdbでphp-grpc-lite側の `SSL_write` plaintextを見た結果、HEADERS + DATAは同一 `SSL_write` にcoalesceされている。
+   - 例: HEADERS frame `length=671, type=HEADERS, END_HEADERS, stream=0x427`
+   - 残りが同じcallのDATA frame。
+4. `send_syscall -> outbound packet` と `inbound packet -> recv syscall` は両者で同等。
+5. 残る差分は `outbound packet -> server first response packet` に集中しており、報告者環境ではext-grpcが約12ms、php-grpc-liteが約20ms。
+
+報告者の暫定結論:
+
+- PHP layer、syscall set、kernel TCP path、HEADERS/DATA splitでは説明できない。
+- Spanner serverがphp-grpc-liteのCommit requestに対して約8ms遅くfirst response packetを返しているように見える。
+- 未確認の残差は、実際にwireへ出ているHTTP/2/HPACK encoded HEADERSやframe bytesの構造差。
+
+こちらの更新解釈:
+
+- GAX layer metadata差は主因候補から弱くなった。ただしgRPC binding layerで追加されるmetadata、HPACK indexing、header order、dynamic table state、control frame混入はまだ未比較。
+- TCP network RTTやclient wakeupは主因候補からさらに弱くなった。
+- HEADERS/DATA splitはほぼ否定された。
+- 次に見るべき一次データは、Commit requestのHTTP/2 frame sequenceとHPACK-encoded HEADERS blockである。
+
+次の対応候補:
+
+1. php-grpc-liteにopt-inのwire diagnosticを追加し、outbound HTTP/2 frame metadataとHEADERS block bytesをbase64またはhexでtraceできるようにする。
+2. ext-grpc側は同等traceが直接取れないため、報告者側で `GRPC_TRACE=http,api,transport_security` 等が有効か確認してもらう。ただしC-core/BoringSSL静的リンクのため、完全なplaintext frame bytes取得は再ビルドなしでは難しい可能性がある。
+3. 比較対象を「GAX headers」ではなく「gRPC binding後のactual HTTP/2 request」に移す。
+4. もしgrpc-liteのwire bytesしか取れない場合でも、Commit requestに含まれるpseudo headers、regular metadata、HPACK flags、DATA length、control framesの自明な異常がないかを確認する。
