@@ -1,0 +1,11 @@
+{
+    "require": {
+        "php": "^8.4",
+        "google/cloud-spanner": "^1.104.1"
+    },
+    "config": {
+        "platform": {
+            "ext-grpc": "1.58.0"
+        }
+    }
+}

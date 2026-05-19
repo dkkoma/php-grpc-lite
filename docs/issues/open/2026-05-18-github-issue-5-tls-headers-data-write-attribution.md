@@ -871,3 +871,66 @@ trace有効runのgrpc-lite内訳:
 - こちらの環境では、traceなしのcurrent grpc-liteはext-grpc 1.58 optimizedとほぼ同等で、報告者のpure CLI 1.79x gapは再現しなかった。
 - `GRPC_LITE_TRACE_FILE` はheader/frameごとにfile append/lockを行うため、latency比較には使わない。wire shape確認用のdiagnosticとして扱う。
 - 報告者環境でfold後buildを再実行してもらい、gapが消えるか確認する必要がある。
+
+## Reporter-provided runnable repro 2026-05-19
+
+GitHub issue #5に、報告者から完全に動作するDockerベースのminimal reproが提供された。
+
+提供条件:
+
+- base image: `php:8.4-cli-bookworm`。こちらではtrixie環境に合わせ `php:8.4-cli-trixie` に読み替える。
+- official variant: `pecl install grpc-1.58.0`。
+- lite variant: `pie install --auto-install-system-dependencies dkkoma/php-grpc-lite:0.0.8`。
+- PHP app: `google/cloud-spanner:^1.104.1`。
+- workload: CLI only。`SELECT 1` warmup後、`runTransaction(BeginTransaction -> ExecuteSql 'SELECT @i' -> Commit)` を200 iteration。
+- auth: service-account JSON key file。報告者環境ではdefault JWT credential pathで `cred-type/jwt`。
+- Spanner: real Cloud Spanner、報告者環境は `asia-northeast1`。
+
+報告者環境の結果:
+
+| variant | ext.grpc | ext.spanner | iter | mean | p50 | p90 | p99 | min | max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| official | 1.58.0 | 1.106.0.0 | 200 | 26.215ms | 25.717ms | 28.395ms | 43.421ms | 22.379ms | 49.021ms |
+| lite | 0.1.0 | 1.106.0.0 | 200 | 45.987ms | 45.629ms | 49.121ms | 60.228ms | 34.258ms | 77.172ms |
+
+ratioは約1.75x。0.0.8の `x-goog-api-client` fold後も差は残る。
+
+このreproを `tools/diagnostics/issue5-spanner-repro/` に取り込み、こちらでも同じ構造で実行して差分を確認する。標準benchmarkではなく、issue #5原因調査用の診断fixtureとして扱う。
+
+### local execution of reporter repro 2026-05-19
+
+報告者提供reproをtrixie読み替えで `tools/diagnostics/issue5-spanner-repro/` に取り込み、Docker imageをビルドした。
+
+注意点:
+
+- official imageは報告者提供Dockerfileどおり `pecl install grpc-1.58.0` であり、以前こちらで使っていた `var/official-ext-grpc-so/1.58.0-optimized/grpc.so` とは異なる。ビルドログ上は `-g -O2`。
+- lite imageは `pie install --auto-install-system-dependencies dkkoma/php-grpc-lite:0.0.8`。
+- composerはlock fileなしで解決され、報告者と同じ `google/cloud-spanner v1.106.0` / `grpc/grpc 1.80.0` / `google/gax v1.42.4` / `google/protobuf v5.34.1` になった。
+- 手元には報告者と同じservice-account JSON key pathがないため、既存のgcloud ADCをmountして実行した。したがってcredential pathは報告者の `cred-type/jwt` と完全一致しない。
+
+手元real Spanner + gcloud ADCでの実行結果:
+
+| variant | ext.grpc | ext.spanner | iter | mean | p50 | p90 | p99 | min | max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| official | 1.58.0 | 1.106.0.0 | 200 | 46.211ms | 44.962ms | 52.098ms | 61.818ms | 36.157ms | 90.359ms |
+| lite | 0.1.0 | 1.106.0.0 | 200 | 46.200ms | 44.846ms | 50.694ms | 68.745ms | 32.851ms | 91.686ms |
+
+この条件では報告者の `official 26.2ms` vs `lite 46.0ms` は再現せず、両者はほぼ同等だった。特にliteの値は報告者のliteと近く、officialだけが報告者より遅い。
+
+lite traceを5 iterationだけ取得したところ、手元ADCでは `CreateSession` のみ `cred-type/u` がfoldされ、`ExecuteStreamingSql` / `Commit` では `cred-type/...` が付かなかった。
+
+例:
+
+```text
+CreateSession x-goog-api-client: ... pb/+n cred-type/u
+ExecuteStreamingSql x-goog-api-client: ... pb/+n
+Commit x-goog-api-client: ... pb/+n
+```
+
+このため、報告者環境との差分候補として、少なくとも以下は残る。
+
+- service-account JSON key / JWT credential pathと、手元gcloud ADC credential pathの差。
+- Spanner region / instance / database / client locationの差。手元ではofficialも約46msで、報告者officialの約26msに届いていない。
+- Dockerfileは同じ構造だが、報告者はbookworm、手元はtrixie読み替え。
+
+次に完全一致させるには、報告者と同じcredential typeを作るためservice-account JSON keyで実行する必要がある。
