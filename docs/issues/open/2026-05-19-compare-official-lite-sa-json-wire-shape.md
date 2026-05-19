@@ -168,6 +168,8 @@ GAX入口では、officialとliteのmetadata差は小さい。代表Commit:
 
 ### strace summary
 
+前提: syscall / tcpdump / markerによる切り分けは、先方がissue #5で先に詳細に実施している。この節は新発見ではなく、同じreproをこちらの環境で動かして、以降のlocal診断の基準点を作るための確認である。
+
 同じSA JSON、同じDocker repro、20 iterationsで `strace -f -c` を取得した。strace自体のoverheadが大きいためlatency絶対値ではなく、syscall shapeの比較として扱う。
 
 | item | official ext-grpc 1.58 | lite 0.0.8 | 判断 |
@@ -178,12 +180,59 @@ GAX入口では、officialとliteのmetadata差は小さい。代表Commit:
 | read path | `recvmsg` 56 + `read` 358 | `read` 547, error 89 | liteはOpenSSL BIO/file/read系に寄っている |
 | write path | `sendmsg` 93 + `sendmmsg` 1 | `write` 91 + `sendmmsg` 1 | officialはsendmsg中心、liteはwrite中心 |
 
-これは「内部syscall差がない」という結果ではない。むしろ、officialとliteではtransport scheduler / socket I/O primitiveの形が明確に違う。
+これは「内部syscall差がない」という結果ではない。先方報告どおり、officialとliteではtransport scheduler / socket I/O primitiveの形が違う。
 
-ただし、現時点の `strace -c` は集計であり、どのRPCのどの区間で差が出たかまでは説明しない。次は `Commit` / `ExecuteStreamingSql` の単位で、send completionからresponse first byte / trailersまでを時系列で比較する必要がある。
+ただし、現時点の `strace -c` は集計であり、どのRPCのどの区間で差が出たかまでは説明しない。先方報告では `Commit` の送信後から最初の応答までのwire RTT差が主対象になっているため、こちらでも同じ粒度で確認する。
+
+### Commit marker + strace
+
+`Google\ApiCore\Transport\GrpcTransport::startUnaryCall()` に一時markerを入れ、`Spanner/Commit` の `BEGIN` / `_simpleRequest` 後 / `wait()` 開始 / `wait()` 終了をstraceと相関した。20 iterations、SA JSON、同じrepro。
+
+初回Commitはclass loadや揺れを含むため除外して平均した。
+
+| item | official ext-grpc 1.58 | lite 0.0.8 | 判断 |
+|---|---:|---:|---|
+| `BEGIN -> WAIT_END` | 12.3ms | 20.5ms | こちらでもCommit gapは再現 |
+| `BEGIN -> WAIT_BEGIN` | 0.37ms | 0.20ms | PHP/GAX前段では説明不可 |
+| wait区間 | 12.0ms | 20.3ms | gapの大半 |
+| first request send | +0.25ms | +0.38ms | send開始差では説明不可 |
+| first successful response read | +11.94ms | +20ms級 | response arrival待ちが差分 |
+| request TLS write | `sendmsg` 約1476B + post-response 52B | `write` 約877B + post-response 39B | wire shape差は残る |
+
+この結果は、先方の「gapはPHP CPUやsend syscall完了後のkernel handoffではなく、client outbound後からserver first responseまでに見えている」という報告と整合する。
+
+重要: 39B/52Bのsmall writeは measured request HEADERS ではなく、response後のcontrol frameである。HEADERS/DATA splitを主因として扱わない。
+
+### Diagnostic variants
+
+server-visible metadataやHPACK/windowが主因かを切るため、ローカルソースから診断variantを作って同じSA JSON reproで100 iterations測定した。
+
+| variant | mean | p50 | p90 | 判断 |
+|---|---:|---:|---:|---|
+| official ext-grpc 1.58 | 23.2ms | 22.3ms | 27.4ms | 比較対象 |
+| lite 0.0.8 pie | 46.1ms | 44.6ms | 52.6ms | gap再現 |
+| local source base | 42.6ms | 41.5ms | 47.3ms | local buildでもgap残存 |
+| add `grpc-accept-encoding` | 43.0ms | 42.3ms | 47.2ms | 効果なし |
+| official-like `user-agent` | 43.2ms | 41.6ms | 47.3ms | 効果なし |
+| both | 47.4ms | 42.3ms | 48.3ms | 改善なし |
+| sensitive headers `NO_INDEX` | 42.9ms | 42.2ms | 46.5ms | 効果なし |
+| all headers `NO_INDEX` | 46.0ms | 45.1ms | 53.2ms | 改善なし |
+| server-visible metadata official寄せ | 43.4ms | 42.4ms | 49.4ms | 改善なし |
+| HTTP/2 window 65KiB | 47.0ms | 46.0ms | 53.5ms | 悪化 |
+
+ここから、少なくとも以下は主因として弱い。
+
+- `x-goog-api-client` duplicate/fold
+- `grpc-accept-encoding` の有無
+- `user-agent` 文字列
+- `x-goog-api-client` の `grpc/0.1.0` / `grpc/1.58.0`
+- sensitive metadata / all metadata のHPACK indexing
+- 8MiB receive window設定
+
+残る有力候補は、server-visible metadataそのものではなく、HTTP/2 connection / control scheduling、TLS record / frame packing、またはgRPC C-coreとnghttp2直接利用の間にある送受信lifecycle差。
 
 ## 次の作業
 
-1. `Commit` / `ExecuteStreamingSql` のsyscall時系列を取り、send完了、poll wait、read/recv完了の差を見る。
-2. tcpdumpまたはSSL key logが使える範囲で、wire上のrequest completion / response arrivalを確認する。
-3. transport差で説明できない場合に限り、`grpc-accept-encoding`、`user-agent`、HPACK/header order/dynamic tableを診断variantとして試す。
+1. SSL key logまたはnghttp2 frame callback traceで、liteのCommit request/response/control frame sequenceをpayload levelで確定する。
+2. official側は `GRPC_TRACE=http` で得られるC-core frame/control sequenceと、straceのTLS write/read sizeを対応付ける。
+3. まだ差分が残る場合、lite側でC-coreに近いcontrol scheduling variantを作る。
