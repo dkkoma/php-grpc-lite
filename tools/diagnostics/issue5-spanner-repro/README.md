@@ -23,6 +23,8 @@ Pub/Sub `ListTopics` cross-check:
 ```sh
 docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=list-topics-bench.php -t pubsub-repro:official-listtopics .
 docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=list-topics-bench.php -t pubsub-repro:lite-listtopics .
+docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=get-topic-bench.php -t pubsub-repro:official-gettopic .
+docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=get-topic-bench.php -t pubsub-repro:lite-gettopic .
 ```
 
 ## Run with service account key
@@ -53,6 +55,19 @@ for tag in official lite; do
     -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
     -e GOOGLE_CLOUD_PROJECT="$PROJECT" \
     pubsub-repro:$tag-listtopics 200
+done
+```
+
+For `GetTopic`, set `PUBSUB_TOPIC` to an existing topic id. It defaults to `test`.
+
+```sh
+for tag in official lite; do
+  docker run --rm \
+    -v "$SA_KEY":/sa.json:ro \
+    -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
+    -e GOOGLE_CLOUD_PROJECT="$PROJECT" \
+    -e PUBSUB_TOPIC=test \
+    pubsub-repro:$tag-gettopic 200
 done
 ```
 

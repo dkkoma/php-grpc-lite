@@ -32,6 +32,7 @@ RUN composer install --no-progress --no-interaction --prefer-dist
 COPY cli-bench.php /app/cli-bench.php
 COPY select1-bench.php /app/select1-bench.php
 COPY list-topics-bench.php /app/list-topics-bench.php
+COPY get-topic-bench.php /app/get-topic-bench.php
 RUN ln -s "/app/${BENCH_SCRIPT}" /app/bench.php
 ENTRYPOINT ["php", "/app/bench.php"]
 CMD ["200"]
