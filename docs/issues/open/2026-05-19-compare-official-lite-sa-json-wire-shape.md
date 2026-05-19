@@ -698,3 +698,82 @@ HPACK dynamic table size 0 variantでは、`ExecuteStreamingSql` のHEADERS fram
 - officialの約1400B送信が、HTTP/2 frame列、TLS record、C-core scheduler/control frameのどの組み合わせから来ているか。
 - officialとliteで、Spanner frontendがresponseを開始する条件に効くwire/control stateが何か。
 - 単純なmetadata同一化、HPACK無効化、socket family同一化、BDP probe off、PING追加では説明できていない。
+
+### SELECT 1: BDP Ping再検証
+
+別口の調査でBDP Pingが効く可能性が出たため、`ExecuteStreamingSql SELECT 1` で改めて診断variantを作り、request/recv前後にPINGを入れる形を試した。
+
+#### 各RPCごとにPING
+
+最初に、request送信前後・recv前後へ各RPCごとにPINGを入れた。
+
+| point | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| before_request | 200 | 24.466ms | 23.168ms | 30.008ms | 43.938ms | 悪化 |
+| after_request | 200 | 21.997ms | 21.369ms | 25.526ms | 30.070ms | baseline相当 |
+| before_recv | 200 | 50.683ms | 45.886ms | 112.442ms | 133.296ms | 悪化 |
+| after_recv | 200 | 89.868ms | 46.050ms | 69.526ms | 4054.828ms | tail破壊 |
+| all | - | - | - | - | - | `SSL_read failed: SSL_get_error=1` |
+
+判断:
+
+- 各RPCごとの単純PINGは過剰で、特にrecv側はtailを壊す。
+- これはC-coreのBDP estimatorのような「outstandingを制御し、ACK完了後に次回probe時刻を調整する」動きとは違う。
+
+#### connectionごとに各point 1回だけPING
+
+次に、connectionごとに各point 1回だけPINGを入れた。
+
+| point | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| all once | 200 | 23.906ms | 22.089ms | 27.604ms | 60.106ms | tail悪化 |
+| before_request once | 200 | 21.263ms | 21.018ms | 23.488ms | 29.198ms | 小改善だが不安定 |
+| after_request once | 200 | 21.962ms | 21.445ms | 24.192ms | 28.978ms | baseline相当 |
+| before_recv once | 200 | 20.743ms | 20.480ms | 22.317ms | 27.116ms | 小改善 |
+| after_recv once | 200 | 21.948ms | 21.147ms | 24.846ms | 39.131ms | baseline相当〜tail悪化 |
+
+交互run:
+
+| run | point | mean | p50 | p90 | p99 |
+|---:|---|---:|---:|---:|---:|
+| 1 | baseline | 20.367ms | 20.008ms | 22.185ms | 26.141ms |
+| 1 | before_recv once | 20.339ms | 20.033ms | 22.089ms | 26.001ms |
+| 1 | before_request once | 21.704ms | 20.939ms | 24.559ms | 36.783ms |
+| 2 | baseline | 19.888ms | 19.667ms | 21.758ms | 26.161ms |
+| 2 | before_recv once | 21.357ms | 20.839ms | 24.183ms | 30.637ms |
+| 2 | before_request once | 21.959ms | 21.299ms | 25.530ms | 32.502ms |
+| 3 | baseline | 21.118ms | 20.501ms | 23.723ms | 45.306ms |
+| 3 | before_recv once | 20.539ms | 20.124ms | 23.616ms | 30.182ms |
+| 3 | before_request once | 21.316ms | 20.587ms | 23.668ms | 39.047ms |
+
+判断:
+
+- `before_recv once` は一部runで小さく良いが、baselineとの差はノイズ域に近い。
+- `before_request once` は安定改善ではない。
+
+#### after_recvでPING ACKまで待つ
+
+BDP estimatorの意味はPING送信そのものではなく、ACK完了後にconnection stateを更新する点にあるため、`after_recv` でPINGを送りACK受信まで待つvariantを試した。
+
+| point | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| baseline | 200 | 22.521ms | 21.781ms | 24.176ms | 47.190ms | 同一imageのno ping |
+| after_recv_wait once | 200 | 21.283ms | 20.888ms | 24.013ms | 28.651ms | tail改善気味 |
+| before_recv_wait once | 200 | 22.185ms | 21.315ms | 25.505ms | 40.057ms | baseline相当 |
+
+交互run:
+
+| run | point | mean | p50 | p90 | p99 |
+|---:|---|---:|---:|---:|---:|
+| 1 | baseline | 20.849ms | 20.571ms | 23.749ms | 28.793ms |
+| 1 | after_recv_wait once | 21.422ms | 21.035ms | 24.004ms | 30.909ms |
+| 2 | baseline | 23.437ms | 22.833ms | 27.158ms | 38.394ms |
+| 2 | after_recv_wait once | 21.139ms | 20.678ms | 23.718ms | 30.187ms |
+| 3 | baseline | 20.969ms | 20.669ms | 24.251ms | 31.648ms |
+| 3 | after_recv_wait once | 23.582ms | 23.281ms | 26.436ms | 36.378ms |
+
+判断:
+
+- `after_recv_wait once` はtailが良いrunもあるが、p50改善は安定しない。
+- BDP Pingが関係している可能性は残る。ただし「任意の場所にPINGを1回入れる」だけでは、official ext-grpcの約10〜11ms p50には近づかない。
+- 次に見るなら、単純PINGではなく、C-coreに近い `incoming bytes accumulator`、`one outstanding ping`、`ACK completion`、`next probe delay`、`flow-control target update` を分けて実装したBDP estimatorとして検証する。
