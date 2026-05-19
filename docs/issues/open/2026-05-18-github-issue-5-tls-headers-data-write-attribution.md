@@ -761,3 +761,49 @@ GitHub issue #5に、報告者側で0.0.6を使った追加調査結果が返信
 2. ext-grpc側は同等traceが直接取れないため、報告者側で `GRPC_TRACE=http,api,transport_security` 等が有効か確認してもらう。ただしC-core/BoringSSL静的リンクのため、完全なplaintext frame bytes取得は再ビルドなしでは難しい可能性がある。
 3. 比較対象を「GAX headers」ではなく「gRPC binding後のactual HTTP/2 request」に移す。
 4. もしgrpc-liteのwire bytesしか取れない場合でも、Commit requestに含まれるpseudo headers、regular metadata、HPACK flags、DATA length、control framesの自明な異常がないかを確認する。
+
+## php-grpc-lite wire diagnostic追加 2026-05-19
+
+報告者側の追加調査で残差がactual HTTP/2/HPACK wire shapeに絞られたため、php-grpc-lite側でopt-inのwire diagnosticを追加した。
+
+有効化:
+
+```sh
+GRPC_LITE_TRACE_FILE=/path/to/grpc-lite-trace.ndjson
+```
+
+追加されるevent:
+
+- `wire.connection_preface`
+  - HTTP/2 client connection preface送信。
+- `wire.request_header`
+  - `nghttp2_submit_request()` に渡すgRPC binding後のactual request header list。
+  - `stream_id`, `rpc_method`, `index`, `name`, `value_len`, `flags`, `sensitive` を記録。
+  - `authorization`, `x-goog-user-project`, `x-goog-request-params`, `google-cloud-resource-prefix` は値を出さず `value_sha256` のみ記録。
+- `wire.frame_out`
+  - `send_callback()` に出たoutbound HTTP/2 frame単位のmetadata。
+  - `stream_id`, `frame_type`, `frame_type_id`, `flags`, `frame_payload_len`, `chunk_len`, `rpc_method` を記録。
+  - HEADERSでは `header_block_len` も記録。
+
+追加option:
+
+```sh
+GRPC_LITE_TRACE_WIRE_BYTES=1
+```
+
+- HEADERS frame payloadのHPACK encoded header blockを `header_block_hex` として出す。
+- これはauthorization等のliteral valueをHPACK block内に含む可能性があるため、公開issueへ貼らない。必要な場合だけprivate共有またはlocal解析に使う。
+
+real Spanner smoke:
+
+- endpoint: `transaction_select2_update1_insert1`
+- 1 request, HTTP 200。
+- `Spanner/Commit` 2件で `wire.request_header` と `wire.frame_out` を確認。
+- Commit request header listには `x-goog-api-client` のbase valueと `cred-type/u` のduplicate valueが両方出ている。
+- Commit frameは `HEADERS` と `DATA` が同じRPC method / stream_idで記録された。
+- 例: `Spanner/Commit` stream 3で `HEADERS frame_payload_len=259`, `DATA frame_payload_len=208`。
+
+判断:
+
+- これでphp-grpc-lite側は、GAX layerではなくgRPC binding後のactual header list、HTTP/2 frame sequence、HPACK header block lengthまで観測できる。
+- ext-grpc側の同等plaintext/HPACK取得は引き続き難しいが、報告者環境でgrpc-liteのwire traceを取れば、少なくともgrpc-lite request shapeの異常、重複metadata、sensitive header length/digest、header order、frame length、control frame混入は確認できる。

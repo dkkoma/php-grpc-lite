@@ -81,6 +81,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     call.request_len = request_len;
     call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     call.max_response_metadata_bytes = max_response_metadata_bytes;
+    call.method_path = zend_string_init(path, path_len, 0);
     grpc_protocol_set_message_header(&call, call.request_len);
     call.deadline_abs_us = deadline_abs_us;
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
@@ -127,6 +128,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }
+    grpc_lite_trace_request_headers(&call, request_headers.nva, request_headers.len);
     if (register_grpc_call_stream(connection, &call) != SUCCESS) {
         mark_grpc_call_stream_registration_failed(connection, &call);
         clear_connection_call_owner(connection, &call);

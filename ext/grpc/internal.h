@@ -361,6 +361,7 @@ struct _grpc_call {
 #endif
     h2_connection *connection;
     grpc_call *next_active_stream;
+    zend_string *method_path;
     int32_t stream_id;
     bool stream_registered;
     bool connection_owned;
@@ -525,6 +526,7 @@ static void clear_connection_call_owner(h2_connection *connection, grpc_call *ca
 static void destroy_detached_connection_if_unowned(h2_connection *connection);
 static void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call);
 static int send_pending_h2_frames(h2_connection *connection, grpc_call *call);
+static void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count);
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
 static void destroy_server_streaming_call_state(server_streaming_call_state *state);
 static void server_streaming_call_state_dtor(zend_resource *rsrc);

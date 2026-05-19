@@ -48,7 +48,6 @@ putenv('GRPC_LITE_TRACE_FILE');
 
 $lines = array_values(array_filter(explode("\n", trim((string) file_get_contents($traceFile)))));
 unlink($traceFile);
-grpc_lite_phpt_assert_same(2, count($lines), 'trace line count');
 
 $records = array_map(static function (string $line): array {
     $record = json_decode($line, true);
@@ -56,19 +55,53 @@ $records = array_map(static function (string $line): array {
     return $record;
 }, $lines);
 
-grpc_lite_phpt_assert_same('rpc.end', $records[0]['event'] ?? null, 'unary trace event');
-grpc_lite_phpt_assert_same('grpc-lite', $records[0]['transport_impl'] ?? null, 'unary trace transport');
-grpc_lite_phpt_assert_same('unary', $records[0]['rpc_kind'] ?? null, 'unary trace kind');
-grpc_lite_phpt_assert_same('/helloworld.Greeter/SayHello', $records[0]['rpc_method'] ?? null, 'unary trace method');
-grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $records[0]['status_code'] ?? null, 'unary trace status');
-grpc_lite_phpt_assert_true(($records[0]['elapsed_us'] ?? 0) > 0, 'unary trace elapsed');
+$unaryEnd = null;
+$streamingEnd = null;
+$unaryPathHeader = null;
+$unaryHeadersFrame = null;
+$unaryDataFrame = null;
+foreach ($records as $record) {
+    if (($record['event'] ?? null) === 'rpc.end' && ($record['rpc_kind'] ?? null) === 'unary') {
+        $unaryEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'rpc.end' && ($record['rpc_kind'] ?? null) === 'server_streaming') {
+        $streamingEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.request_header'
+        && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/SayHello'
+        && ($record['name'] ?? null) === ':path') {
+        $unaryPathHeader = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/SayHello'
+        && ($record['frame_type'] ?? null) === 'HEADERS') {
+        $unaryHeadersFrame = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/SayHello'
+        && ($record['frame_type'] ?? null) === 'DATA') {
+        $unaryDataFrame = $record;
+    }
+}
 
-grpc_lite_phpt_assert_same('rpc.end', $records[1]['event'] ?? null, 'streaming trace event');
-grpc_lite_phpt_assert_same('server_streaming', $records[1]['rpc_kind'] ?? null, 'streaming trace kind');
-grpc_lite_phpt_assert_same('/helloworld.Greeter/SayManyHellos', $records[1]['rpc_method'] ?? null, 'streaming trace method');
-grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $records[1]['status_code'] ?? null, 'streaming trace status');
-grpc_lite_phpt_assert_true(array_key_exists('persistent_reused', $records[1]), 'streaming persistent reuse field exists');
-grpc_lite_phpt_assert_same(null, $records[1]['persistent_reused'], 'streaming persistent reuse is unknown');
+grpc_lite_phpt_assert_true(is_array($unaryEnd), 'unary rpc.end exists');
+grpc_lite_phpt_assert_same('grpc-lite', $unaryEnd['transport_impl'] ?? null, 'unary trace transport');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/SayHello', $unaryEnd['rpc_method'] ?? null, 'unary trace method');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $unaryEnd['status_code'] ?? null, 'unary trace status');
+grpc_lite_phpt_assert_true(($unaryEnd['elapsed_us'] ?? 0) > 0, 'unary trace elapsed');
+
+grpc_lite_phpt_assert_true(is_array($streamingEnd), 'streaming rpc.end exists');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/SayManyHellos', $streamingEnd['rpc_method'] ?? null, 'streaming trace method');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $streamingEnd['status_code'] ?? null, 'streaming trace status');
+grpc_lite_phpt_assert_true(array_key_exists('persistent_reused', $streamingEnd), 'streaming persistent reuse field exists');
+grpc_lite_phpt_assert_same(null, $streamingEnd['persistent_reused'], 'streaming persistent reuse is unknown');
+
+grpc_lite_phpt_assert_true(is_array($unaryPathHeader), 'unary request :path header trace exists');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/SayHello', $unaryPathHeader['value'] ?? null, 'unary request :path value');
+grpc_lite_phpt_assert_true(is_array($unaryHeadersFrame), 'unary HEADERS frame trace exists');
+grpc_lite_phpt_assert_true(($unaryHeadersFrame['header_block_len'] ?? 0) > 0, 'unary HEADERS block length');
+grpc_lite_phpt_assert_true(is_array($unaryDataFrame), 'unary DATA frame trace exists');
+grpc_lite_phpt_assert_true(($unaryDataFrame['frame_payload_len'] ?? 0) > 5, 'unary DATA frame length');
 
 echo "OK\n";
 ?>

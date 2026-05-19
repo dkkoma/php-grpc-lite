@@ -94,6 +94,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
     state->call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
     state->call.max_response_metadata_bytes = max_response_metadata_bytes;
     state->call.deadline_abs_us = deadline_abs_us > 0 ? deadline_abs_us : 0;
+    state->call.method_path = zend_string_init(path, path_len, 0);
     state->call.decode_response_incrementally = true;
     state->call.direct_response_payload = true;
     state->call.queue_response_payloads = true;
@@ -150,6 +151,7 @@ static int server_streaming_call_open_resource(const char *key, size_t key_len, 
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }
+    grpc_lite_trace_request_headers(&state->call, request_headers.nva, request_headers.len);
     if (register_grpc_call_stream(connection, &state->call) != SUCCESS) {
         mark_grpc_call_stream_registration_failed(connection, &state->call);
         if (setup_failure != NULL) {
