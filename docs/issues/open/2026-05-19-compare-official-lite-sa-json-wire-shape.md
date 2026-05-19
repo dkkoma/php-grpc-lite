@@ -166,6 +166,30 @@ GAX入口では、officialとliteのmetadata差は小さい。代表Commit:
 - officialは `x-goog-api-client: cred-type/jwt` をduplicate headerとして送っているが、lite 0.0.7もduplicateで遅かったため、これ単独は主因ではない。
 - 次の有力候補は、server visible metadata shapeのうち `grpc-accept-encoding`、`user-agent`、HPACK/header order/dynamic table、またはofficial C-coreのHTTP/2 connection settings/control behavior。
 
+### credential path から transport state へつながる仮説
+
+`ADC vs SA JSON` は最初の再現条件だが、コード上はcredential providerが直接HTTP/2 transportを選ぶわけではない。
+
+ただし、SA JSON/JWT経路では以下の差が発生する。
+
+1. `Google\ApiCore\CredentialsWrapper::getAuthorizationHeaderCallback()` は、tokenがexpired扱いのとき `UpdateMetadataInterface::updateMetadata()` を呼ぶ。
+2. `Google\Auth\Credentials\ServiceAccountCredentials::updateMetadata()` は、self-signed JWTを使える場合に `ServiceAccountJwtAccessCredentials` へ委譲する。
+3. `Google\Auth\MetricsTrait::applyServiceApiUsageMetrics()` は `x-goog-api-client` に `cred-type/jwt` を付与する。
+4. 結果としてSA JSON/JWTでは、Commit requestの `authorization` が大きくなり、`x-goog-api-client` もJWT markerを含む。
+
+一方、ADC/gcloud user credentialでは `authorization` が短く、CreateSession以外のCommit/ExecuteStreamingSqlではJWT markerも付かない。このため、credential pathは少なくとも以下を変える。
+
+- request HEADERS payload size
+- HPACK dynamic table state
+- Spanner frontendから見える credential type marker
+- 同一HTTP/2 connection上で、Commit直前までに通過したstreamのheader/control state
+
+ここまでの実測では、lite単体のSA JSON/ADC差は小さいため、credential path単独では説明しない。問題は「SA JSON/JWT条件でofficialだけが速い」ことであり、仮説は次の形に絞る。
+
+> SA JSON/JWTによってrequest/header stateは変わるが、official C-coreはDATA受信後のBDP probe/control schedulingを持つため、そのconnection stateでCommitを開始する。liteは同じJWT requestを送っても、その前段のcontrol/BDP stateがofficialと異なるため、Spanner frontendのCommit応答タイミングが遅い。
+
+この仮説は、credential差を無視してPINGへ飛ぶものではない。credential pathが変えるmetadata/header stateを入口として、official C-coreだけが持つHTTP/2 connection state更新が効いている可能性を見るものとして扱う。
+
 ### strace summary
 
 前提: syscall / tcpdump / markerによる切り分けは、先方がissue #5で先に詳細に実施している。この節は新発見ではなく、同じreproをこちらの環境で動かして、以降のlocal診断の基準点を作るための確認である。
@@ -230,6 +254,40 @@ server-visible metadataやHPACK/windowが主因かを切るため、ローカル
 - 8MiB receive window設定
 
 残る有力候補は、server-visible metadataそのものではなく、HTTP/2 connection / control scheduling、TLS record / frame packing、またはgRPC C-coreとnghttp2直接利用の間にある送受信lifecycle差。
+
+### BDP PING診断variant
+
+official ext-grpc 1.58.0 の `GRPC_TRACE=http` には、SA JSON条件でも `BDP_PING` の開始/完了が出ている。gRPC Core側の実装でも、DATA frame受信時に `BdpEstimator` へincoming bytesを加算し、必要に応じて `schedule_bdp_ping_locked()` でclient-origin PINGを送る。
+
+ただし、診断variantの結果は「BDP PINGを入れれば解決」とまでは言えない。
+
+| variant | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| base | 200 | 41.8ms | 41.1ms | 45.6ms | 53.9ms | 比較基準 |
+| server-streaming DATA後だけPING | 200 | 40.3ms | 38.9ms | 43.3ms | 84.6ms | p50は小改善、tail悪化 |
+| 全DATA後PING | 200 | 42.9ms | 33.8ms | 40.7ms | 377.9ms | p50は改善するが過剰PINGでtailが壊れる |
+| official ext-grpc 1.58 | 200 | 27.1ms | 25.7ms | 32.1ms | 49.7ms | まだ大きな差あり |
+
+追加の100 iteration反復でも同傾向。
+
+| round | variant | mean | p50 | p90 | p99 |
+|---:|---|---:|---:|---:|---:|
+| 1 | base | 44.6ms | 44.1ms | 48.8ms | 79.3ms |
+| 1 | server-streaming DATA後だけPING | 43.4ms | 40.0ms | 47.9ms | 166.6ms |
+| 1 | 全DATA後PING | 35.5ms | 34.3ms | 39.1ms | 88.4ms |
+| 1 | official ext-grpc 1.58 | 25.7ms | 24.7ms | 30.6ms | 66.2ms |
+| 2 | base | 43.0ms | 42.4ms | 47.0ms | 55.5ms |
+| 2 | server-streaming DATA後だけPING | 42.0ms | 39.7ms | 49.2ms | 165.9ms |
+| 2 | 全DATA後PING | 42.5ms | 38.4ms | 49.9ms | 206.6ms |
+| 2 | official ext-grpc 1.58 | 30.6ms | 27.7ms | 38.5ms | 105.9ms |
+
+この結果から、次のように扱う。
+
+- ext-grpcがBDP PINGを送ること自体は事実。
+- grpc-liteにBDP/control scheduling系がないことも事実。
+- しかし、単純なPING追加はtailを悪化させるため、そのまま修正候補にしない。
+- `server-streaming response DATA後だけ` では改善が小さいため、Commit直前の1要素だけでなく、C-coreのtransport scheduler / flow-control periodic update / ping outstanding管理を含むconnection lifecycle差として見る。
+- credential pathはこのtransport差と独立ではない。SA JSON/JWTはHEADERS size、HPACK state、`cred-type/jwt`、authorization token shapeを変えるため、その状態でC-core transportだけが速い応答を得ている可能性を調べる。
 
 ## 次の作業
 
