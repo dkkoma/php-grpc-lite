@@ -2,6 +2,8 @@
 grpc-lite trace file records unary and server streaming RPC completion
 --INI--
 grpc_lite.http2_stream_window_size=1048576
+grpc_lite.active_bdp_probe=1
+grpc_lite.active_bdp_probe_min_interval_ms=0
 grpc_lite.active_bdp_update_settings=1
 grpc_lite.active_bdp_update_max_frame_size=1
 --SKIPIF--

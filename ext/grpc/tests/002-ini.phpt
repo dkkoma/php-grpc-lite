@@ -14,8 +14,8 @@ require __DIR__ . '/helpers.inc';
 
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_stream_window_size'), 'stream window ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_connection_window_size'), 'connection window ini');
-grpc_lite_phpt_assert_same('1', ini_get('grpc_lite.active_bdp_probe'), 'active BDP probe ini');
-grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.active_bdp_probe_min_interval_ms'), 'active BDP probe interval ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.active_bdp_probe'), 'active BDP probe ini');
+grpc_lite_phpt_assert_same('100', ini_get('grpc_lite.active_bdp_probe_min_interval_ms'), 'active BDP probe interval ini');
 grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.active_bdp_update_settings'), 'active BDP settings update ini');
 grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.active_bdp_update_max_frame_size'), 'active BDP max frame update ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.active_bdp_settings_initial_window_size'), 'active BDP settings initial window ini');

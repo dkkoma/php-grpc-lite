@@ -134,3 +134,12 @@
 - Medium: `3`
 - Low: `1`
 - Design Decision: `none`
+
+## Resolution Update 2026-05-20
+
+- REVIEW-20260520-002 is addressed by changing `grpc_lite.active_bdp_probe` default to `0` and treating active PING as opt-in diagnostics.
+- REVIEW-20260520-003 is addressed for default production behavior by changing default off and changing the opt-in default interval to 100ms, aligned with gRPC Core's initial BDP inter-ping delay. `0ms` remains an explicit issue #5 diagnostic override.
+- REVIEW-20260520-007 is addressed by adding `ext/grpc/tests/030-active-bdp-disabled.phpt`, which asserts disabled active PING emits no client-origin PING and no ACK-triggered SETTINGS update.
+- REVIEW-20260520-001 is partially addressed by documenting active PING as a cross-RPC connection-state experiment rather than same-RPC first-response causality. Pre-probe/post-ACK Spanner phase analysis remains open.
+- REVIEW-20260520-004/005/006 remain open validation-quality items for the next investigation pass.
+- Verification: `./tools/test/check-phpt.sh` PASS 17/17, `./tools/test/check-c-unit.sh` PASS, `./tools/test/check-c-static-analysis.sh` PASS.

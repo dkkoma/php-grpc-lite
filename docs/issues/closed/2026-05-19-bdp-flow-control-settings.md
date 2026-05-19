@@ -13,16 +13,16 @@ Cloud Spanner real endpointで観測されている `ext-grpc 1.58.0` と `php-g
 
 ## 背景
 
-既存調査では、SA JSON + real Cloud Spanner `ExecuteStreamingSql SELECT 1` において、BDPなしのgrpc-liteは `request write -> first response` が `ext-grpc 1.58.0` より遅い。response DATA受信後にclient-origin PINGを送る active probe で差は縮むが、まだext-grpcとの差が残っている。
+既存調査では、SA JSON + real Cloud Spanner `ExecuteStreamingSql SELECT 1` において、active PINGなしのgrpc-liteは `request write -> first response` が `ext-grpc 1.58.0` より遅い。response DATA受信後にclient-origin PINGを送る active probe で差は縮むが、まだext-grpcとの差が残っている。
 
 `ext-grpc 1.58.0` が使う gRPC Core v1.58.0 では、`GRPC_ARG_HTTP2_BDP_PROBE` が未指定なら有効で、DATA frame受信時にBDP PINGをscheduleし、ACK完了後にBDP estimateを更新して `flow_control.PeriodicUpdate()` を実行する。その中で `SETTINGS_INITIAL_WINDOW_SIZE` と `SETTINGS_MAX_FRAME_SIZE` の更新候補が生成される。
 
-grpc-liteの現行実装は、response DATA後にPINGを送ってACKを照合するだけで、incoming bytes accumulator、BDP estimate、window / max frame size更新を持たない。
+grpc-liteの現行実装は、response DATA後にPINGを送ってACKを照合するだけで、incoming bytes accumulator、BDP estimate、adaptive re-arm、window / max frame size更新を持たない。したがってこれはgRPC Core BDP estimator parityではなく、active PINGによるconnection-level control実験である。
 
 ## スコープ
 
 - gRPC Core v1.58.0のBDP estimator / flow-control updateモデルを確認する。
-- grpc-liteにproduction-safeなopt-in実験として、BDP probe ACK後にHTTP/2 SETTINGS updateを送る経路を追加する。
+- grpc-liteにopt-in実験として、active PING ACK後にHTTP/2 SETTINGS updateを送る経路を追加する。
 - real Cloud Spanner `SELECT 1` を中心に、active PINGのみとの差分を計測する。
 - 低RTT synthetic / emulatorで副作用が出ないか主要ベンチで確認する。
 
@@ -142,4 +142,4 @@ fixture:
 
 ## 完了判断
 
-2026-05-19に完了。ACK後SETTINGS updateは実装・検証・計測済みだが、real Cloud Spanner `SELECT 1` ではactive PING単独からの追加改善は見えなかった。したがってdefault offのopt-in実験機能として残し、Cloud Spanner性能改善の主対策とは扱わない。
+2026-05-19に完了。ACK後SETTINGS updateは実装・検証・計測済みだが、real Cloud Spanner `SELECT 1` ではactive PING単独からの追加改善は見えなかった。したがってdefault offのopt-in実験機能として残し、Cloud Spanner性能改善の主対策とは扱わない。active PING自体もPR #6レビュー後はdefault offの診断・opt-in機能として扱う。

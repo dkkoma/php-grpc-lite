@@ -12,8 +12,8 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("grpc_lite.backend", "auto", PHP_INI_SYSTEM, OnUpdateString, backend, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.http2_stream_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_stream_window_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.http2_connection_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_connection_window_size, zend_grpc_lite_globals, grpc_lite_globals)
-    STD_PHP_INI_BOOLEAN("grpc_lite.active_bdp_probe", "1", PHP_INI_SYSTEM, OnUpdateBool, active_bdp_probe, zend_grpc_lite_globals, grpc_lite_globals)
-    STD_PHP_INI_ENTRY("grpc_lite.active_bdp_probe_min_interval_ms", "0", PHP_INI_SYSTEM, OnUpdateLong, active_bdp_probe_min_interval_ms, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.active_bdp_probe", "0", PHP_INI_SYSTEM, OnUpdateBool, active_bdp_probe, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_ENTRY("grpc_lite.active_bdp_probe_min_interval_ms", "100", PHP_INI_SYSTEM, OnUpdateLong, active_bdp_probe_min_interval_ms, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_BOOLEAN("grpc_lite.active_bdp_update_settings", "0", PHP_INI_SYSTEM, OnUpdateBool, active_bdp_update_settings, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_BOOLEAN("grpc_lite.active_bdp_update_max_frame_size", "0", PHP_INI_SYSTEM, OnUpdateBool, active_bdp_update_max_frame_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.active_bdp_settings_initial_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, active_bdp_settings_initial_window_size, zend_grpc_lite_globals, grpc_lite_globals)
@@ -50,8 +50,8 @@ PHP_GINIT_FUNCTION(grpc_lite)
     grpc_lite_globals->default_roots_pem = NULL;
     grpc_lite_globals->http2_stream_window_size = 8 * 1024 * 1024;
     grpc_lite_globals->http2_connection_window_size = 8 * 1024 * 1024;
-    grpc_lite_globals->active_bdp_probe = true;
-    grpc_lite_globals->active_bdp_probe_min_interval_ms = 0;
+    grpc_lite_globals->active_bdp_probe = false;
+    grpc_lite_globals->active_bdp_probe_min_interval_ms = 100;
     grpc_lite_globals->active_bdp_update_settings = false;
     grpc_lite_globals->active_bdp_update_max_frame_size = false;
     grpc_lite_globals->active_bdp_settings_initial_window_size = 8 * 1024 * 1024;

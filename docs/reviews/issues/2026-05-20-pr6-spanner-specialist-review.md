@@ -126,3 +126,10 @@
 - Low: `1`
 - Design Decision: `none`
 
+
+## Resolution Update 2026-05-20
+
+- REVIEW-20260520-001 is addressed by changing `grpc_lite.active_bdp_probe` default to `0` and documenting active PING as a Cloud Spanner issue #5 opt-in diagnostic path, not a global default behavior.
+- REVIEW-20260520-002 is partially addressed by rewording the issue docs so BDP/GFE/server scheduling remains a hypothesis rather than a proven root cause.
+- REVIEW-20260520-003/004/005/006 remain open validation-quality items for the next reporter/local matrix pass.
+- Verification: `./tools/test/check-phpt.sh` PASS 17/17, `./tools/test/check-c-unit.sh` PASS, `./tools/test/check-c-static-analysis.sh` PASS.

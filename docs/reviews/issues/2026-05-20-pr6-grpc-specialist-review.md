@@ -127,3 +127,12 @@
 - Medium: `2`
 - Low: `1`
 - Design Decision: `none`
+
+## Resolution Update 2026-05-20
+
+- REVIEW-20260520-001 is addressed by changing `grpc_lite.active_bdp_probe` default to `0`, documenting it as opt-in diagnostics, and adding disabled/no-op PHPT coverage.
+- REVIEW-20260520-002 is partially addressed by changing the opt-in default interval from `0ms` to `100ms`, matching gRPC Core's initial BDP inter-ping delay. The implementation remains intentionally not a full BDP estimator; `0ms` remains only as explicit issue #5 diagnostic override.
+- REVIEW-20260520-003 is partially addressed in docs by separating observed active PING improvement from BDP/Core root-cause claims. Further ADC/SSJWT and `grpc.http2.bdp_probe=0` matrix work remains open.
+- REVIEW-20260520-004 drops in severity for default production behavior because active PING is now default off; peer ping enforcement tests remain future hardening if opt-in use is promoted.
+- REVIEW-20260520-005/006 remain open validation-quality items.
+- Verification: `./tools/test/check-phpt.sh` PASS 17/17, `./tools/test/check-c-unit.sh` PASS, `./tools/test/check-c-static-analysis.sh` PASS.

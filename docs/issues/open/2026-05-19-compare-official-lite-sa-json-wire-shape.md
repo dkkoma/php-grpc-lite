@@ -837,14 +837,17 @@ production候補:
 - 初期re-arm policyは保守的にする。候補は「connection generationごとに1回」または「最小intervalあり」。継続streamingでRTTごとに投げ続ける設計にはしない。
 - まずはwindow size自動変更までは入れず、fixed 8MiB windowのままactive PING有無によるSpanner frontend応答差の再現を目的にする。adaptive flow-controlは別issueで扱う。
 
-### SELECT 1: production-safe active BDP probe 実装後の比較
+### SELECT 1: active PING probe 実装後の比較
 
-上記方針に沿って、production経路に `active BDP probe PING` を小さく実装した。
+上記方針に沿って、production経路にopt-inの `active BDP probe PING` を小さく実装した。
+
+注意: この実装はgRPC CoreのBDP estimator parityではない。DATA受信後にclient-origin PINGをqueueし、ACKを照合するconnection-level active PING実験である。したがって、同一RPCのfirst responseを直接速くするものではなく、効果がある場合は同一HTTP/2 connection上の後続RPCに対するconnection state / peer schedulingの変化として解釈する。
 
 実装:
 
-- `grpc_lite.active_bdp_probe=1` を既定値として追加。
-- `grpc_lite.active_bdp_probe_min_interval_ms=0` を追加。`0` はmin intervalなし。ただしconnection単位でoutstanding PINGは1つまで。
+- `grpc_lite.active_bdp_probe=0` を既定値として追加。Cloud Spanner issue #5向けの診断・opt-in機能として扱う。
+- `grpc_lite.active_bdp_probe_min_interval_ms=100` を既定値として追加。gRPC Core v1.58.0のBDP estimatorは初期inter-ping delay 100msから始めるため、opt-in既定値はこれに寄せる。
+- `grpc_lite.active_bdp_probe_min_interval_ms=0` はmin intervalなし。ただしconnection単位でoutstanding PINGは1つまで。これはissue #5の再現確認用overrideとして残す。
 - response DATA chunk受信時に `maybe_submit_active_bdp_probe()` を呼ぶ。
 - `active_bdp_probe_outstanding`、`active_bdp_probe_opaque`、`active_bdp_probe_sent_at_us` をHTTP/2 connection stateに保持する。
 - inbound PING ACKのopaqueが現在のclient-origin probe opaqueと一致した場合だけoutstandingを解除する。
@@ -880,7 +883,7 @@ fixture:
 
 - `one outstanding` 制約だけで重複PINGは避けつつ、ACK後に再armする形がSpanner SELECT 1では最も効く。
 - 1回/connectionや1000ms intervalでは、reporterが見た改善幅に近づかない。
-- 現時点では、`active_bdp_probe_min_interval_ms=0` を既定値にして性能変化を見る価値がある。
+- 現時点では、`active_bdp_probe_min_interval_ms=0` はissue #5の診断overrideとして価値がある。ただしdefault-onにする根拠はなく、production defaultはoffに戻す。
 - official ext-grpcとの差はまだp50で約4.3ms残るため、BDP probeだけで完全解決ではない。
 
 ### 主要ベンチ再計測: default on の副作用
