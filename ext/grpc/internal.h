@@ -495,6 +495,9 @@ struct _h2_connection {
     char negotiated_protocol[16];
     uint32_t last_goaway_error_code;
     int32_t last_goaway_stream_id;
+    bool active_bdp_probe_outstanding;
+    uint8_t active_bdp_probe_opaque[8];
+    uint64_t active_bdp_probe_sent_at_us;
 };
 
 struct persistent_connection_entry {
@@ -564,6 +567,8 @@ static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
 static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+static void maybe_submit_active_bdp_probe(h2_connection *connection);
+static void complete_active_bdp_probe_if_matching(h2_connection *connection, const nghttp2_frame *frame);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
@@ -622,6 +627,8 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     zend_string *default_roots_pem;
     zend_long http2_stream_window_size;
     zend_long http2_connection_window_size;
+    bool active_bdp_probe;
+    zend_long active_bdp_probe_min_interval_ms;
     zend_long server_streaming_read_ahead_max_messages;
     zend_long server_streaming_read_ahead_max_bytes;
     char *backend;

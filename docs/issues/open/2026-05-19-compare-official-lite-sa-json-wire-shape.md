@@ -836,3 +836,49 @@ production候補:
 - PINGはDATA callback内で `nghttp2_submit_ping()` するが、ACKをinline waitしない。queued control frameは既存のnonblocking send pathで速やかにflushできるようにし、PING submit時刻、wire write時刻、ACK時刻をtraceで確認する。
 - 初期re-arm policyは保守的にする。候補は「connection generationごとに1回」または「最小intervalあり」。継続streamingでRTTごとに投げ続ける設計にはしない。
 - まずはwindow size自動変更までは入れず、fixed 8MiB windowのままactive PING有無によるSpanner frontend応答差の再現を目的にする。adaptive flow-controlは別issueで扱う。
+
+### SELECT 1: production-safe active BDP probe 実装後の比較
+
+上記方針に沿って、production経路に `active BDP probe PING` を小さく実装した。
+
+実装:
+
+- `grpc_lite.active_bdp_probe=1` を既定値として追加。
+- `grpc_lite.active_bdp_probe_min_interval_ms=0` を追加。`0` はmin intervalなし。ただしconnection単位でoutstanding PINGは1つまで。
+- response DATA chunk受信時に `maybe_submit_active_bdp_probe()` を呼ぶ。
+- `active_bdp_probe_outstanding`、`active_bdp_probe_opaque`、`active_bdp_probe_sent_at_us` をHTTP/2 connection stateに保持する。
+- inbound PING ACKのopaqueが現在のclient-origin probe opaqueと一致した場合だけoutstandingを解除する。
+- DATA callback内では `nghttp2_submit_ping()` だけ行い、inline waitしない。既存の `nghttp2_session_want_write()` / `send_pending_h2_frames()` に乗せてflushする。
+- window size自動変更は入れない。
+
+検証:
+
+- PHPT: `./tools/test/check-phpt.sh` pass
+- C static analysis: `./tools/test/check-c-static-analysis.sh` pass
+- trace: `GRPC_LITE_TRACE_FILE` で outbound PING、server-origin PING、PING ACKの往復を確認
+
+#### 計測結果
+
+fixture:
+
+- script: `tools/diagnostics/issue5-spanner-repro/select1-bench.php`
+- image: `spanner-repro:lite-local-active-bdp-probe`
+- target: real Cloud Spanner `bench/laravel-bench-db`
+- credentials: service account JSON via `GOOGLE_APPLICATION_CREDENTIALS=/sa.json`
+- iterations: 500
+
+| variant | iter | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---:|---|
+| official ext-grpc 1.58 | 500 | 11.047ms | 10.387ms | 13.671ms | 19.268ms | 同時期基準 |
+| lite active BDP probe off | 500 | 22.974ms | 21.485ms | 28.462ms | 39.604ms | 同一imageでINI無効 |
+| lite active BDP probe on, min interval 0ms | 500 | 15.173ms | 14.706ms | 17.308ms | 22.592ms | 大きく改善 |
+| lite active BDP probe on, min interval 1000ms | 500 | 24.238ms | 21.845ms | 31.322ms | 64.248ms | 改善なし |
+
+参考: 最初に試した「connectionごとに1回だけprobe」は `mean=19.953ms / p50=19.439ms / p90=21.988ms / p99=29.105ms` で、改善はあるが効果が弱かった。
+
+判断:
+
+- `one outstanding` 制約だけで重複PINGは避けつつ、ACK後に再armする形がSpanner SELECT 1では最も効く。
+- 1回/connectionや1000ms intervalでは、reporterが見た改善幅に近づかない。
+- 現時点では、`active_bdp_probe_min_interval_ms=0` を既定値にして性能変化を見る価値がある。
+- official ext-grpcとの差はまだp50で約4.3ms残るため、BDP probeだけで完全解決ではない。

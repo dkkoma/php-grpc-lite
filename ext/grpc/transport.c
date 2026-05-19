@@ -350,6 +350,56 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks)
     return 0;
 }
 
+static void maybe_submit_active_bdp_probe(h2_connection *connection)
+{
+    uint64_t timestamp;
+    uint64_t now;
+    zend_long min_interval_ms;
+
+    if (connection == NULL || connection->session == NULL || !PHP_GRPC_LITE_G(active_bdp_probe)) {
+        return;
+    }
+    if (connection->active_bdp_probe_outstanding) {
+        return;
+    }
+
+    now = monotonic_us();
+    min_interval_ms = PHP_GRPC_LITE_G(active_bdp_probe_min_interval_ms);
+    if (min_interval_ms > (zend_long) (UINT64_MAX / 1000ULL)) {
+        return;
+    }
+    if (min_interval_ms > 0
+        && connection->active_bdp_probe_sent_at_us > 0
+        && now < connection->active_bdp_probe_sent_at_us + ((uint64_t) min_interval_ms * 1000ULL)) {
+        return;
+    }
+
+    timestamp = now;
+    for (int index = 7; index >= 0; --index) {
+        connection->active_bdp_probe_opaque[index] = (uint8_t) (timestamp & 0xff);
+        timestamp >>= 8;
+    }
+    if (nghttp2_submit_ping(connection->session, NGHTTP2_FLAG_NONE, connection->active_bdp_probe_opaque) == 0) {
+        connection->active_bdp_probe_outstanding = true;
+        connection->active_bdp_probe_sent_at_us = now;
+    }
+}
+
+static void complete_active_bdp_probe_if_matching(h2_connection *connection, const nghttp2_frame *frame)
+{
+    if (connection == NULL || frame == NULL || !connection->active_bdp_probe_outstanding) {
+        return;
+    }
+    if (frame->hd.type != NGHTTP2_PING || (frame->hd.flags & NGHTTP2_FLAG_ACK) == 0) {
+        return;
+    }
+    if (memcmp(frame->ping.opaque_data, connection->active_bdp_probe_opaque, sizeof(connection->active_bdp_probe_opaque)) != 0) {
+        return;
+    }
+
+    connection->active_bdp_probe_outstanding = false;
+}
+
 static const char *grpc_lite_trace_file_path(void)
 {
     const char *path = getenv("GRPC_LITE_TRACE_FILE");
@@ -678,6 +728,9 @@ static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghtt
         fprintf(fp, ",\"last_stream_id\":%d,\"error_code\":%u", frame->goaway.last_stream_id, frame->goaway.error_code);
     } else if (frame->hd.type == NGHTTP2_RST_STREAM) {
         fprintf(fp, ",\"error_code\":%u", frame->rst_stream.error_code);
+    } else if (frame->hd.type == NGHTTP2_PING && grpc_lite_trace_wire_bytes_enabled()) {
+        fprintf(fp, ",\"payload_hex\":");
+        grpc_lite_trace_hex(fp, frame->ping.opaque_data, sizeof(frame->ping.opaque_data));
     }
     fputs("}\n", fp);
     grpc_lite_trace_unlock_and_close(fp);
@@ -1941,6 +1994,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
             }
             smart_str_appendl(&call->body, (const char *) data, len);
         }
+        maybe_submit_active_bdp_probe(connection);
     }
     return 0;
 }
@@ -2048,6 +2102,7 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     (void) session;
 
     grpc_lite_trace_inbound_frame(connection, frame);
+    complete_active_bdp_probe_if_matching(connection, frame);
 
     if (frame->hd.type == NGHTTP2_GOAWAY) {
         if (connection != NULL) {

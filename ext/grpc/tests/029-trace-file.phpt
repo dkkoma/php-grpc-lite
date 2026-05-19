@@ -26,6 +26,7 @@ if ($traceFile === false) {
 }
 file_put_contents($traceFile, '');
 putenv('GRPC_LITE_TRACE_FILE=' . $traceFile);
+putenv('GRPC_LITE_TRACE_WIRE_BYTES=1');
 
 $opts = ['credentials' => ChannelCredentials::createInsecure()];
 $channel = new Channel('test-server:50051', $opts);
@@ -44,7 +45,11 @@ foreach ($stream->responses() as $_reply) {
 $streamStatus = $stream->getStatus();
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $streamStatus->code, 'streaming status');
 
+[$followupResponse, $followupStatus] = $client->SayHello($request)->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followupStatus->code, 'follow-up unary status');
+
 putenv('GRPC_LITE_TRACE_FILE');
+putenv('GRPC_LITE_TRACE_WIRE_BYTES');
 
 $lines = array_values(array_filter(explode("\n", trim((string) file_get_contents($traceFile)))));
 unlink($traceFile);
@@ -63,6 +68,8 @@ $unaryDataFrame = null;
 $settingsFrame = null;
 $connectionWindowUpdateFrame = null;
 $inboundSettingsFrame = null;
+$outboundPingPayloads = [];
+$inboundPingAckPayloads = [];
 foreach ($records as $record) {
     if (($record['event'] ?? null) === 'rpc.end' && ($record['rpc_kind'] ?? null) === 'unary') {
         $unaryEnd = $record;
@@ -102,6 +109,20 @@ foreach ($records as $record) {
         && ($record['flags'] ?? null) === 0) {
         $inboundSettingsFrame = $record;
     }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['stream_id'] ?? null) === 0
+        && ($record['frame_type'] ?? null) === 'PING'
+        && ($record['flags'] ?? null) === 0
+        && isset($record['payload_hex'])) {
+        $outboundPingPayloads[] = $record['payload_hex'];
+    }
+    if (($record['event'] ?? null) === 'wire.frame_in'
+        && ($record['stream_id'] ?? null) === 0
+        && ($record['frame_type'] ?? null) === 'PING'
+        && ($record['flags'] ?? null) === 1
+        && isset($record['payload_hex'])) {
+        $inboundPingAckPayloads[] = $record['payload_hex'];
+    }
 }
 
 grpc_lite_phpt_assert_true(is_array($unaryEnd), 'unary rpc.end exists');
@@ -132,6 +153,8 @@ grpc_lite_phpt_assert_true(($connectionWindowUpdateFrame['window_size_increment'
 grpc_lite_phpt_assert_true(!array_key_exists('rpc_method', $connectionWindowUpdateFrame), 'connection-level WINDOW_UPDATE must not be attributed to an RPC');
 grpc_lite_phpt_assert_true(is_array($inboundSettingsFrame), 'inbound SETTINGS trace exists');
 grpc_lite_phpt_assert_true(array_key_exists('settings', $inboundSettingsFrame), 'inbound SETTINGS entries exist');
+grpc_lite_phpt_assert_true($outboundPingPayloads !== [], 'active BDP probe outbound PING exists');
+grpc_lite_phpt_assert_true(array_intersect($outboundPingPayloads, $inboundPingAckPayloads) !== [], 'active BDP probe ACK payload matches outbound PING');
 
 echo "OK\n";
 ?>
