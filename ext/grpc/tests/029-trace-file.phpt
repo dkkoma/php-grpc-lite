@@ -1,5 +1,9 @@
 --TEST--
 grpc-lite trace file records unary and server streaming RPC completion
+--INI--
+grpc_lite.http2_stream_window_size=1048576
+grpc_lite.active_bdp_update_settings=1
+grpc_lite.active_bdp_update_max_frame_size=1
 --SKIPIF--
 <?php
 if (!extension_loaded('grpc')) {
@@ -66,6 +70,9 @@ $unaryPathHeader = null;
 $unaryHeadersFrame = null;
 $unaryDataFrame = null;
 $settingsFrame = null;
+$bdpSettingsFrame = null;
+$bdpInitialWindowSettingsCount = 0;
+$bdpMaxFrameSettingsCount = 0;
 $connectionWindowUpdateFrame = null;
 $inboundSettingsFrame = null;
 $outboundPingPayloads = [];
@@ -96,7 +103,19 @@ foreach ($records as $record) {
         && ($record['stream_id'] ?? null) === 0
         && ($record['frame_type'] ?? null) === 'SETTINGS'
         && ($record['flags'] ?? null) === 0) {
-        $settingsFrame = $record;
+        if ($settingsFrame === null) {
+            $settingsFrame = $record;
+        }
+        foreach ($record['settings'] ?? [] as $setting) {
+            if (($setting['name'] ?? null) === 'INITIAL_WINDOW_SIZE' && ($setting['value'] ?? null) === 8388608) {
+                $bdpSettingsFrame = $record;
+                $bdpInitialWindowSettingsCount++;
+            }
+            if (($setting['name'] ?? null) === 'MAX_FRAME_SIZE') {
+                $bdpSettingsFrame = $record;
+                $bdpMaxFrameSettingsCount++;
+            }
+        }
     }
     if (($record['event'] ?? null) === 'wire.frame_out'
         && ($record['stream_id'] ?? null) === 0
@@ -147,6 +166,7 @@ grpc_lite_phpt_assert_true(is_array($settingsFrame), 'outbound SETTINGS trace ex
 grpc_lite_phpt_assert_same(2, $settingsFrame['settings_count'] ?? null, 'outbound SETTINGS count');
 grpc_lite_phpt_assert_same('ENABLE_PUSH', $settingsFrame['settings'][0]['name'] ?? null, 'outbound SETTINGS enable push');
 grpc_lite_phpt_assert_same('INITIAL_WINDOW_SIZE', $settingsFrame['settings'][1]['name'] ?? null, 'outbound SETTINGS initial window');
+grpc_lite_phpt_assert_same(1048576, $settingsFrame['settings'][1]['value'] ?? null, 'outbound initial SETTINGS uses overridden stream window');
 grpc_lite_phpt_assert_true(!array_key_exists('rpc_method', $settingsFrame), 'connection-level SETTINGS must not be attributed to an RPC');
 grpc_lite_phpt_assert_true(is_array($connectionWindowUpdateFrame), 'outbound connection WINDOW_UPDATE trace exists');
 grpc_lite_phpt_assert_true(($connectionWindowUpdateFrame['window_size_increment'] ?? 0) > 0, 'outbound connection WINDOW_UPDATE increment');
@@ -155,6 +175,24 @@ grpc_lite_phpt_assert_true(is_array($inboundSettingsFrame), 'inbound SETTINGS tr
 grpc_lite_phpt_assert_true(array_key_exists('settings', $inboundSettingsFrame), 'inbound SETTINGS entries exist');
 grpc_lite_phpt_assert_true($outboundPingPayloads !== [], 'active BDP probe outbound PING exists');
 grpc_lite_phpt_assert_true(array_intersect($outboundPingPayloads, $inboundPingAckPayloads) !== [], 'active BDP probe ACK payload matches outbound PING');
+grpc_lite_phpt_assert_true(is_array($bdpSettingsFrame), 'active BDP SETTINGS update frame exists');
+grpc_lite_phpt_assert_true(!array_key_exists('rpc_method', $bdpSettingsFrame), 'active BDP SETTINGS must not be attributed to an RPC');
+$initialWindowSetting = null;
+$maxFrameSetting = null;
+foreach ($bdpSettingsFrame['settings'] ?? [] as $setting) {
+    if (($setting['name'] ?? null) === 'INITIAL_WINDOW_SIZE') {
+        $initialWindowSetting = $setting;
+    }
+    if (($setting['name'] ?? null) === 'MAX_FRAME_SIZE') {
+        $maxFrameSetting = $setting;
+    }
+}
+grpc_lite_phpt_assert_true(is_array($initialWindowSetting), 'active BDP INITIAL_WINDOW_SIZE setting exists');
+grpc_lite_phpt_assert_same(8388608, $initialWindowSetting['value'] ?? null, 'active BDP INITIAL_WINDOW_SIZE value');
+grpc_lite_phpt_assert_true(is_array($maxFrameSetting), 'active BDP MAX_FRAME_SIZE setting exists');
+grpc_lite_phpt_assert_same(262144, $maxFrameSetting['value'] ?? null, 'active BDP MAX_FRAME_SIZE value');
+grpc_lite_phpt_assert_same(1, $bdpInitialWindowSettingsCount, 'active BDP INITIAL_WINDOW_SIZE setting is sent once for unchanged target');
+grpc_lite_phpt_assert_same(1, $bdpMaxFrameSettingsCount, 'active BDP MAX_FRAME_SIZE setting is sent once for unchanged target');
 
 echo "OK\n";
 ?>

@@ -14,6 +14,10 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("grpc_lite.http2_connection_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_connection_window_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_BOOLEAN("grpc_lite.active_bdp_probe", "1", PHP_INI_SYSTEM, OnUpdateBool, active_bdp_probe, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.active_bdp_probe_min_interval_ms", "0", PHP_INI_SYSTEM, OnUpdateLong, active_bdp_probe_min_interval_ms, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.active_bdp_update_settings", "0", PHP_INI_SYSTEM, OnUpdateBool, active_bdp_update_settings, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.active_bdp_update_max_frame_size", "0", PHP_INI_SYSTEM, OnUpdateBool, active_bdp_update_max_frame_size, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_ENTRY("grpc_lite.active_bdp_settings_initial_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, active_bdp_settings_initial_window_size, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_ENTRY("grpc_lite.active_bdp_settings_max_frame_size", "262144", PHP_INI_SYSTEM, OnUpdateLong, active_bdp_settings_max_frame_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.server_streaming_read_ahead_max_messages", "32", PHP_INI_ALL, OnUpdateLong, server_streaming_read_ahead_max_messages, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.server_streaming_read_ahead_max_bytes", "8388608", PHP_INI_ALL, OnUpdateLong, server_streaming_read_ahead_max_bytes, zend_grpc_lite_globals, grpc_lite_globals)
 PHP_INI_END()
@@ -48,6 +52,10 @@ PHP_GINIT_FUNCTION(grpc_lite)
     grpc_lite_globals->http2_connection_window_size = 8 * 1024 * 1024;
     grpc_lite_globals->active_bdp_probe = true;
     grpc_lite_globals->active_bdp_probe_min_interval_ms = 0;
+    grpc_lite_globals->active_bdp_update_settings = false;
+    grpc_lite_globals->active_bdp_update_max_frame_size = false;
+    grpc_lite_globals->active_bdp_settings_initial_window_size = 8 * 1024 * 1024;
+    grpc_lite_globals->active_bdp_settings_max_frame_size = 256 * 1024;
     grpc_lite_globals->server_streaming_read_ahead_max_messages = 32;
     grpc_lite_globals->server_streaming_read_ahead_max_bytes = 8 * 1024 * 1024;
     grpc_lite_globals->backend = NULL;
@@ -186,6 +194,10 @@ PHP_MINFO_FUNCTION(grpc_lite)
     php_info_print_table_row(2, "grpc_lite.http2_connection_window_size", INI_STR("grpc_lite.http2_connection_window_size"));
     php_info_print_table_row(2, "grpc_lite.active_bdp_probe", INI_STR("grpc_lite.active_bdp_probe"));
     php_info_print_table_row(2, "grpc_lite.active_bdp_probe_min_interval_ms", INI_STR("grpc_lite.active_bdp_probe_min_interval_ms"));
+    php_info_print_table_row(2, "grpc_lite.active_bdp_update_settings", INI_STR("grpc_lite.active_bdp_update_settings"));
+    php_info_print_table_row(2, "grpc_lite.active_bdp_update_max_frame_size", INI_STR("grpc_lite.active_bdp_update_max_frame_size"));
+    php_info_print_table_row(2, "grpc_lite.active_bdp_settings_initial_window_size", INI_STR("grpc_lite.active_bdp_settings_initial_window_size"));
+    php_info_print_table_row(2, "grpc_lite.active_bdp_settings_max_frame_size", INI_STR("grpc_lite.active_bdp_settings_max_frame_size"));
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_messages", INI_STR("grpc_lite.server_streaming_read_ahead_max_messages"));
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_bytes", INI_STR("grpc_lite.server_streaming_read_ahead_max_bytes"));
     php_info_print_table_end();
