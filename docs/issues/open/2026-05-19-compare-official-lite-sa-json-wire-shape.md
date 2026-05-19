@@ -38,7 +38,8 @@ service-account JSON / JWT credential pathで、報告者提供Spanner CLI repro
 
 - [x] trace上のRPC sequence比較
 - [x] GAX metadata比較
-- [ ] strace/tcpdump比較
+- [x] strace概要比較
+- [ ] tcpdump比較
 - [x] GRPC_TRACE確認
 - [x] 差分仮説整理
 
@@ -165,8 +166,24 @@ GAX入口では、officialとliteのmetadata差は小さい。代表Commit:
 - officialは `x-goog-api-client: cred-type/jwt` をduplicate headerとして送っているが、lite 0.0.7もduplicateで遅かったため、これ単独は主因ではない。
 - 次の有力候補は、server visible metadata shapeのうち `grpc-accept-encoding`、`user-agent`、HPACK/header order/dynamic table、またはofficial C-coreのHTTP/2 connection settings/control behavior。
 
+### strace summary
+
+同じSA JSON、同じDocker repro、20 iterationsで `strace -f -c` を取得した。strace自体のoverheadが大きいためlatency絶対値ではなく、syscall shapeの比較として扱う。
+
+| item | official ext-grpc 1.58 | lite 0.0.8 | 判断 |
+|---|---:|---:|---|
+| latency mean | 27.4ms | 43.8ms | strace下でも差は残る |
+| total syscalls | 3354 | 2879 | total数だけでは説明不可 |
+| wait primitive | `epoll_pwait` 55, `futex` 120 | `ppoll` 51, `futex` 29 | officialはC-core pollset/thread寄り、liteは同期ppoll寄り |
+| read path | `recvmsg` 56 + `read` 358 | `read` 547, error 89 | liteはOpenSSL BIO/file/read系に寄っている |
+| write path | `sendmsg` 93 + `sendmmsg` 1 | `write` 91 + `sendmmsg` 1 | officialはsendmsg中心、liteはwrite中心 |
+
+これは「内部syscall差がない」という結果ではない。むしろ、officialとliteではtransport scheduler / socket I/O primitiveの形が明確に違う。
+
+ただし、現時点の `strace -c` は集計であり、どのRPCのどの区間で差が出たかまでは説明しない。次は `Commit` / `ExecuteStreamingSql` の単位で、send completionからresponse first byte / trailersまでを時系列で比較する必要がある。
+
 ## 次の作業
 
-1. lite側で `grpc-accept-encoding` を診断variantとして送る。ただしresponse compression未対応のproduction採用とは分ける。
-2. lite側の `user-agent` をofficial相当に寄せる診断variantを作る。
-3. それでも差が残る場合、HPACK/header order/dynamic tableまたはHTTP/2 connection settingsを掘る。
+1. `Commit` / `ExecuteStreamingSql` のsyscall時系列を取り、send完了、poll wait、read/recv完了の差を見る。
+2. tcpdumpまたはSSL key logが使える範囲で、wire上のrequest completion / response arrivalを確認する。
+3. transport差で説明できない場合に限り、`grpc-accept-encoding`、`user-agent`、HPACK/header order/dynamic tableを診断variantとして試す。
