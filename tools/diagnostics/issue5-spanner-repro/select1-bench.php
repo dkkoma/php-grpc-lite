@@ -3,9 +3,21 @@ require __DIR__ . '/vendor/autoload.php';
 
 $iter = (int)($argv[1] ?? 200);
 
-$spanner = new Google\Cloud\Spanner\SpannerClient([
+$clientOptions = [
     'projectId' => getenv('GOOGLE_CLOUD_PROJECT'),
-]);
+];
+
+$bdpProbe = getenv('SPANNER_GRPC_BDP_PROBE');
+if ($bdpProbe !== false && $bdpProbe !== '') {
+    $clientOptions['transportConfig']['grpc']['stubOpts']['grpc.http2.bdp_probe'] = (int) $bdpProbe;
+}
+
+$primaryUserAgent = getenv('SPANNER_GRPC_PRIMARY_USER_AGENT');
+if ($primaryUserAgent !== false && $primaryUserAgent !== '') {
+    $clientOptions['transportConfig']['grpc']['stubOpts']['grpc.primary_user_agent'] = $primaryUserAgent;
+}
+
+$spanner = new Google\Cloud\Spanner\SpannerClient($clientOptions);
 $db = $spanner
     ->instance(getenv('DB_SPANNER_INSTANCE'))
     ->database(getenv('DB_SPANNER_DATABASE'));

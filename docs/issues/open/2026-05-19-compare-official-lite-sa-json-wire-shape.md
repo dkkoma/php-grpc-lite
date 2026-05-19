@@ -325,3 +325,53 @@ official ext-grpc 1.58.0 の `GRPC_TRACE=http` には、SA JSON条件でも `BDP
 1. SSL key logまたはnghttp2 frame callback traceで、liteのCommit request/response/control frame sequenceをpayload levelで確定する。
 2. official側は `GRPC_TRACE=http` で得られるC-core frame/control sequenceと、straceのTLS write/read sizeを対応付ける。
 3. まだ差分が残る場合、lite側でC-coreに近いcontrol scheduling variantを作る。
+
+### minimal SELECT 1 follow-up: ADC strace and single-factor checks
+
+`ExecuteStreamingSql SELECT 1` の最小reproで、SA JSONだけでなくADC条件も同じ `strace -f -ttt -T -yy` 粒度で取得した。20 iterationsのため絶対値は参考だが、4条件の相対形状は安定している。
+
+| condition | variant | mean | p50 | repeated request TLS write | request write -> first response read |
+|---|---|---:|---:|---:|---:|
+| SA JSON | official ext-grpc 1.58 | 11.98ms | 12.32ms | `sendmsg` 1400B | mean 10.26ms / p50 11.23ms |
+| SA JSON | grpc-lite 0.0.8 | 20.67ms | 20.59ms | `write` 852B | mean 19.35ms / p50 19.12ms |
+| ADC | official ext-grpc 1.58 | 21.05ms | 21.37ms | `sendmsg` 929B | mean 19.42ms / p50 20.26ms |
+| ADC | grpc-lite 0.0.8 | 19.88ms | 20.06ms | `write` 467B | mean 18.75ms / p50 18.76ms |
+
+ここで見えている事実は次の通り。
+
+- 差分は `SELECT 1` のrequest write後からfirst response readまでに出ている。
+- official SA JSONだけが速い。official ADCはliteと同レンジ。
+- liteはSA JSON/ADCでほぼ同レンジ。つまり、credential処理のPHP CPUやtoken生成だけでは説明しない。
+- repeated request TLS write sizeはofficial/liteで違うが、official ADCは大きいwriteでも速くないため、write size単独でも説明しない。
+
+追加で、単独差分を小さく潰した。
+
+| check | result | 判断 |
+|---|---:|---|
+| official ext-grpc `grpc.http2.bdp_probe=0` | mean 11.9ms / p50 11.1ms | BDP probe offでもofficial SA JSONは速い。BDP単独ではない |
+| lite `grpc.primary_user_agent` official寄せ | mean 20.9ms / p50 20.7ms | user-agent文字列差ではない |
+| lite `grpc-accept-encoding: identity, deflate, gzip` 診断追加 | mean 22.0ms / p50 21.4ms | accept-encoding有無ではない |
+| lite user-agent + accept-encoding | mean 21.2ms / p50 20.6ms | 複合でも改善なし |
+| lite authorization `NO_INDEX` | mean 20.5ms / p50 19.9ms under strace; normal runは揺れ大 | HPACK indexing単独ではない |
+| lite `x-goog-api-client` duplicate化 | mean 20.8ms / p50 20.8ms | duplicate/foldではない |
+| lite `phpversion('grpc') = 1.58.0` | mean 20.8ms / p50 20.6ms | `x-goog-api-client`のgrpc version差ではない |
+| lite HTTP/2 receive window 1MiB | mean 22.1ms / p50 21.8ms | 8MiB window設定ではない |
+| lite HTTP/2 receive window 64KiB | mean 22.3ms / p50 21.7ms | window縮小は改善しない |
+
+この段階で、次の候補は主因から外す。
+
+- `x-goog-api-client` duplicate/fold
+- `x-goog-api-client` 内の `grpc/0.1.0` vs `grpc/1.58.0`
+- `grpc-accept-encoding`
+- `user-agent`
+- authorization headerのHPACK no-index指定
+- liteの8MiB receive window
+- BDP probe単独
+
+残る調査対象は、個別metadata値ではなく、official C-core と lite nghttp2 direct transport の wire/control lifecycle 差分。
+具体的には以下を次に見る。
+
+1. official SA JSONとlite SA JSONのHTTP/2 frame sequenceを、request HEADERS/DATA、server PING、client PING ACK、response HEADERS/DATA/TRAILERSの順序と時刻で比較する。
+2. official側は `GRPC_TRACE=http` とstrace TLS write/readを相関する。raw traceにはauthorization tokenが含まれるため、共有する場合は必ずredactする。
+3. lite側は `GRPC_LITE_TRACE_FILE` のframe traceを一次ソースにする。
+4. 必要ならSSL key log + decrypted HTTP/2 captureで、HPACK後のwire frameを直接比較する。
