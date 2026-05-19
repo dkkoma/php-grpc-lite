@@ -451,7 +451,9 @@ PHPT:
 - `./tools/test/check-phpt.sh`: 16/16 PASS
 - `./tools/test/check-c-static-analysis.sh`: PASS
 
-`SELECT 1` / SA JSON / 20 iterationsのsource-build traceでは、`ExecuteStreamingSql` のrequest HEADERS/DATAは1回のTLS writeにcoalesceされている。つまり、liteがHEADERSとDATAを別TLS writeで送っているわけではない。
+最初のsource-build trace imageには `pecl protobuf` が入っており、公式/lite release repro imageと `x-goog-api-client` の `pb/...` が変わっていた。そのため、protobuf拡張なしのsource-build imageを作り直して、release repro環境と同じ `pb/+n` 条件で測り直した。
+
+`SELECT 1` / SA JSON / protobuf拡張なし / 50 iterationsのtraceでは、`ExecuteStreamingSql` のrequest HEADERS/DATAは1回のTLS writeにcoalesceされている。つまり、liteがHEADERSとDATAを別TLS writeで送っているわけではない。
 
 代表形状:
 
@@ -465,11 +467,11 @@ PHPT:
 | `wire.frame_in` HEADERS/DATA/trailing HEADERS | nghttp2がresponseを処理 |
 | `wire.frame_in` PING → `wire.tls_write` 17B | server PING ACK |
 
-lite traceから算出した `request TLS write -> first TLS read`:
+protobuf拡張なしのlite traceから算出した `request TLS write -> first TLS read`:
 
 | source | n | min | p50 | p90 | p99 | max |
 |---|---:|---:|---:|---:|---:|---:|
-| lite `GRPC_LITE_TRACE_FILE` | 21 | 18.8ms | 23.0ms | 35.1ms | 43.6ms | 45.4ms |
+| lite `GRPC_LITE_TRACE_FILE` | 51 | 12.4ms | 18.8ms | 20.7ms | 22.5ms | 34.1ms |
 
 同じ見方を既存straceへ適用した結果:
 
@@ -485,6 +487,22 @@ lite traceから算出した `request TLS write -> first TLS read`:
 - liteの主な待ちは `SSL_ERROR_WANT_READ` 後のpoll待ちであり、first TLS readが来るまでの時間として観測される。
 - responseが到着した後のnghttp2処理、protobuf decode、PHP deliveryは今回の差分の主因ではない。
 - server PING ACKはresponse後に即座に出ており、response開始前のブロッカーではない。
+
+追加で、lite source-buildに一時的な公式寄せvariantを入れて測った。内容は `grpc-accept-encoding: identity, deflate, gzip` の追加、`user-agent: grpc-php/1.58.0`、`x-goog-api-client` のfold無効化による `cred-type/jwt` 分離である。これは診断用の一時差分であり、本実装には残さない。
+
+`SELECT 1` / SA JSON / protobuf拡張なし / 200 iterations:
+
+| variant | mean | p50 | p90 | p99 | min | max |
+|---|---:|---:|---:|---:|---:|---:|
+| lite official-ish metadata | 21.142ms | 20.494ms | 23.636ms | 37.580ms | 17.400ms | 37.961ms |
+
+同traceの `request TLS write -> first TLS read`:
+
+| source | n | min | p50 | p90 | p99 | max |
+|---|---:|---:|---:|---:|---:|---:|
+| lite official-ish metadata | 201 | 15.334ms | 18.220ms | 21.065ms | 35.635ms | 35.873ms |
+
+このvariantでもofficial ext-grpc SA JSONのp50約11msには近づかなかった。`Grpc\VERSION` 変更は `BaseStub` の `user-agent` には効くが、GAXの `x-goog-api-client` 内 `grpc/...` は `phpversion('grpc')` 由来であり、この診断variantでは `grpc/0.1.0` のままだった。ただし、過去の単独検証で `x-goog-api-client` の `grpc/1.58.0` 相当化は改善を示していないため、個別metadata値だけが主因である可能性は低い。
 
 まだ説明できていないこと:
 
