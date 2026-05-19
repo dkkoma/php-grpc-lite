@@ -375,3 +375,25 @@ official ext-grpc 1.58.0 の `GRPC_TRACE=http` には、SA JSON条件でも `BDP
 2. official側は `GRPC_TRACE=http` とstrace TLS write/readを相関する。raw traceにはauthorization tokenが含まれるため、共有する場合は必ずredactする。
 3. lite側は `GRPC_LITE_TRACE_FILE` のframe traceを一次ソースにする。
 4. 必要ならSSL key log + decrypted HTTP/2 captureで、HPACK後のwire frameを直接比較する。
+
+### lite inbound frame trace extension
+
+lite側の `GRPC_LITE_TRACE_FILE` はこれまで inbound stream frames を出しておらず、`PING` / `SETTINGS` などcontrol frameだけを見ていた。`on_frame_recv_callback` のtrace対象を全frameへ広げ、payloadを出さずに `HEADERS` / `DATA` / trailing `HEADERS` のframe type、flags、payload length、timestampだけを記録できるようにした。
+
+SA JSON / `ExecuteStreamingSql SELECT 1` / 20 iterationsのlite traceでは、request HEADERS/DATA送信後、response initial HEADERSが概ね +18ms〜+22msで到着している。
+
+代表形状:
+
+| stream | request HEADERS out | request DATA out | response HEADERS in | response DATA in | trailing HEADERS in | server PING in |
+|---:|---:|---:|---:|---:|---:|---:|
+| 5 | +0.000ms | +0.293ms | +20.920ms | +21.204ms | +21.571ms | +21.811ms |
+| 7 | +0.000ms | +0.149ms | +18.142ms | +18.483ms | +18.798ms | +18.924ms |
+| 9 | +0.000ms | +0.226ms | +19.378ms | +19.883ms | +20.390ms | +20.744ms |
+| 11 | +0.000ms | +0.176ms | +20.480ms | +24.532ms | +25.398ms | +26.503ms |
+| 19 | +0.000ms | +0.059ms | +12.768ms | +12.978ms | +13.795ms | +13.889ms |
+
+このtraceから、lite内でresponseを読んだ後の処理が主因ではないことはさらに強くなった。遅延はrequest DATA送信後からresponse initial HEADERS到着までにあり、つまりclientから見える範囲ではserver/frontend response arrival待ちとして観測される。
+
+server PINGは多くのstreamでresponse/trailingと同時または直後に来ており、liteは即座にACKしている。したがって、このreproでは「clientがserver PINGに遅くACKするためresponseが遅れる」という形ではない。
+
+次はofficial側も同じ粒度で、response HEADERS/DATA/TRAILERS到着時刻とserver PINGの相対順序を比較する。officialは `GRPC_TRACE=http` でraw authorizationを含むため、解析結果だけをredactして記録する。

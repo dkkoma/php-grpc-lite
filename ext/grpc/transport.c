@@ -57,7 +57,7 @@ static const char *grpc_lite_h2_setting_name(uint32_t id);
 static void grpc_lite_trace_open_and_lock(FILE **fp);
 static void grpc_lite_trace_unlock_and_close(FILE *fp);
 static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length);
-static void grpc_lite_trace_inbound_control_frame(h2_connection *connection, const nghttp2_frame *frame);
+static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghttp2_frame *frame);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 static size_t remaining_request_bytes(grpc_call *call);
 static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
@@ -645,7 +645,7 @@ static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint
     }
 }
 
-static void grpc_lite_trace_inbound_control_frame(h2_connection *connection, const nghttp2_frame *frame)
+static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghttp2_frame *frame)
 {
     FILE *fp;
     grpc_call *call;
@@ -653,17 +653,6 @@ static void grpc_lite_trace_inbound_control_frame(h2_connection *connection, con
     if (connection == NULL || frame == NULL || grpc_lite_trace_file_path() == NULL) {
         return;
     }
-    switch (frame->hd.type) {
-        case NGHTTP2_SETTINGS:
-        case NGHTTP2_WINDOW_UPDATE:
-        case NGHTTP2_PING:
-        case NGHTTP2_GOAWAY:
-        case NGHTTP2_RST_STREAM:
-            break;
-        default:
-            return;
-    }
-
     call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     grpc_lite_trace_open_and_lock(&fp);
     if (fp == NULL) {
@@ -1927,7 +1916,7 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     (void) session;
 
-    grpc_lite_trace_inbound_control_frame(connection, frame);
+    grpc_lite_trace_inbound_frame(connection, frame);
 
     if (frame->hd.type == NGHTTP2_GOAWAY) {
         if (connection != NULL) {
