@@ -18,6 +18,13 @@ docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=select1-
 docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=select1-bench.php -t spanner-repro:lite-select1 .
 ```
 
+Pub/Sub `ListTopics` cross-check:
+
+```sh
+docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=list-topics-bench.php -t pubsub-repro:official-listtopics .
+docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=list-topics-bench.php -t pubsub-repro:lite-listtopics .
+```
+
 ## Run with service account key
 
 ```sh
@@ -34,6 +41,18 @@ for tag in official lite; do
     -e DB_SPANNER_INSTANCE="$INSTANCE" \
     -e DB_SPANNER_DATABASE="$DATABASE" \
     spanner-repro:$tag 200
+done
+```
+
+For the Pub/Sub `ListTopics` cross-check, `DB_SPANNER_INSTANCE` and `DB_SPANNER_DATABASE` are not required:
+
+```sh
+for tag in official lite; do
+  docker run --rm \
+    -v "$SA_KEY":/sa.json:ro \
+    -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
+    -e GOOGLE_CLOUD_PROJECT="$PROJECT" \
+    pubsub-repro:$tag-listtopics 200
 done
 ```
 

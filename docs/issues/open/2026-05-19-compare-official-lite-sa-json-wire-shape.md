@@ -509,3 +509,34 @@ protobuf拡張なしのlite traceから算出した `request TLS write -> first 
 - official SA JSONでは同じ `request write -> first read` がp50約11msまで短くなる理由。
 - liteのwireは1 TLS writeにcoalesce済みなので、単純な「write分割」ではない。
 - official C-coreのHTTP/2 scheduler / HPACK state / TLS record / stream lifecycleのどれがSpanner frontendの応答開始に効いているか。
+
+### Pub/Sub ListTopics cross-check
+
+Spanner固有の現象か、Google API gRPC全般で起きる現象かを切り分けるため、同じSA JSONでPub/Sub `ListTopics` の最小reproを追加した。
+
+追加fixture:
+
+- `tools/diagnostics/issue5-spanner-repro/list-topics-bench.php`
+- Docker build arg: `BENCH_SCRIPT=list-topics-bench.php`
+- composer dependency: `google/cloud-pubsub` `v1.51.0`
+
+計測条件:
+
+- project: `vast-falcon-165704`
+- credential: 同じSA JSON
+- iterations: 200
+- official: `pecl grpc-1.58.0`
+- lite: `dkkoma/php-grpc-lite:0.0.8`
+
+結果:
+
+| case | ext.grpc | mean | p50 | p90 | p99 | min | max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Pub/Sub `ListTopics` official | 1.58.0 | 511.489ms | 429.626ms | 1011.703ms | 1437.054ms | 149.333ms | 1454.317ms |
+| Pub/Sub `ListTopics` lite | 0.1.0 | 513.301ms | 405.557ms | 993.418ms | 1469.382ms | 148.918ms | 1539.694ms |
+
+判断:
+
+- Pub/Sub `ListTopics` ではofficial/liteの差は再現しない。
+- したがって、issue #5の `SELECT 1` 差分は「Google API gRPC全般でliteが常に遅い」ではなく、Spanner `ExecuteStreamingSql` / Spanner frontend / Spanner向けmetadata・session条件との相互作用として扱うのが妥当。
+- Pub/Sub自体の絶対値は大きく揺れているため、ここでは性能評価ではなく、差分再現有無のcross-checkとしてのみ扱う。
