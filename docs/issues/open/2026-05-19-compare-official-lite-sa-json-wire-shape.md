@@ -885,8 +885,8 @@ fixture:
 | official ext-grpc 1.58 `grpc.http2.bdp_probe=0` | 500 | 11.372ms | 11.244ms | 12.827ms | 15.812ms | BDP offでも速い |
 | lite source active off | 500 | 18.954ms | 18.576ms | 20.128ms | 23.715ms | baseline |
 | lite source active on, `0ms` | 500 | 15.506ms | 15.221ms | 17.316ms | 24.072ms | 明確に改善 |
+| lite source active on, `10ms` | 500 | 14.716ms | 14.574ms | 16.075ms | 19.511ms | 0msに近い改善 |
 | lite source active on, `100ms` | 500 | 20.178ms | 20.450ms | 22.547ms | 27.274ms | 改善なし |
-| lite source active on, `1000ms` | 500 | 19.872ms | 19.827ms | 21.451ms | 25.176ms | 改善なし |
 
 参考: 最初に試した「connectionごとに1回だけprobe」は `mean=19.953ms / p50=19.439ms / p90=21.988ms / p99=29.105ms` で、改善はあるが効果が弱かった。
 
@@ -894,7 +894,7 @@ fixture:
 
 - `one outstanding` 制約だけで重複PINGは避けつつ、ACK後に再armする形がSpanner SELECT 1では最も効く。
 - 1回/connectionや1000ms intervalでは、reporterが見た改善幅に近づかない。
-- 現時点では、`active_bdp_probe_min_interval_ms=0` はissue #5の診断overrideとして価値がある。100msはCore初期値に近いが、単純active PING実装ではSpanner `SELECT 1` の改善を示さなかった。ただしdefault-onにする根拠はなく、production defaultはoffに戻す。
+- 現時点では、`active_bdp_probe_min_interval_ms=0` または `10` はissue #5の診断overrideとして価値がある。100msはCore初期値に近いが、単純active PING実装ではSpanner `SELECT 1` の改善を示さなかった。ただしdefault-onにする根拠はなく、production defaultはoffに戻す。
 - official ext-grpcとの差はまだp50で約4.3ms残るため、BDP probeだけで完全解決ではない。
 
 ### 主要ベンチ再計測: default on の副作用
