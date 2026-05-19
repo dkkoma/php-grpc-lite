@@ -33,6 +33,8 @@ COPY cli-bench.php /app/cli-bench.php
 COPY select1-bench.php /app/select1-bench.php
 COPY list-topics-bench.php /app/list-topics-bench.php
 COPY get-topic-bench.php /app/get-topic-bench.php
+COPY get-project-bench.php /app/get-project-bench.php
+COPY get-secret-bench.php /app/get-secret-bench.php
 RUN ln -s "/app/${BENCH_SCRIPT}" /app/bench.php
 ENTRYPOINT ["php", "/app/bench.php"]
 CMD ["200"]

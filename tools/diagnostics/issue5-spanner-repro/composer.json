@@ -2,6 +2,8 @@
     "require": {
         "php": "^8.4",
         "google/cloud-pubsub": "^1.51",
+        "google/cloud-resource-manager": "^1.1",
+        "google/cloud-secret-manager": "^2.3",
         "google/cloud-spanner": "^1.104.1"
     },
     "config": {

@@ -576,3 +576,44 @@ lite trace上の `GetTopic` `rpc.end` は、200 iterationsで `min=150.556ms / p
 - `GetTopic` は `ListTopics` より軽い単一topic RPCだが、今回の環境では150ms台と800ms〜1s台の二峰性があり、Spannerで見えている +8〜11ms級の差を検出する用途には弱い。
 - official/liteの一貫した劣後は見えない。runごとのp50はofficial/liteどちらにも振れる。
 - Pub/Subは、少なくともこのproject/topic条件では「Google API gRPC全般でliteだけ遅い」という仮説を支持しない。ただし、揺れが大きいため小さい差の不存在証明には使わない。
+
+### Secret Manager / Resource Manager fixed-resource cross-check attempt
+
+Pub/Sub以外で固定resourceを読む軽いunary RPCとして、Secret Manager `GetSecret` と Resource Manager `GetProject` のfixtureを追加した。
+
+追加fixture:
+
+- `tools/diagnostics/issue5-spanner-repro/get-secret-bench.php`
+- `tools/diagnostics/issue5-spanner-repro/get-project-bench.php`
+- Docker build arg: `BENCH_SCRIPT=get-secret-bench.php` / `BENCH_SCRIPT=get-project-bench.php`
+
+結果:
+
+| API | RPC | 結果 |
+|---|---|---|
+| Secret Manager | `GetSecret` | API有効化、SA権限付与、`test` secret作成後に計測可能 |
+| Resource Manager | `GetProject` | `cloudresourcemanager.googleapis.com` がconsumer project `205742274492` で無効 |
+
+Secret Managerについては `ListSecrets page_size=1` が通るため、空list RPCとして参考計測した。
+
+| case | variant | iter | mean | p50 | p90 | p99 | min | max |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Secret Manager `ListSecrets` | official | 100 | 185.047ms | 150.957ms | 180.008ms | 4269.127ms | 88.091ms | 4269.127ms |
+| Secret Manager `ListSecrets` | lite | 100 | 142.460ms | 143.057ms | 169.691ms | 507.891ms | 86.841ms | 507.891ms |
+
+`test` secret作成後、固定resource unaryとして `GetSecret` を計測した。
+
+| case | variant | iter | mean | p50 | p90 | p99 | min | max |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Secret Manager `GetSecret` | official | 200 | 161.856ms | 164.227ms | 170.481ms | 198.631ms | 85.370ms | 259.841ms |
+| Secret Manager `GetSecret` | lite | 200 | 163.350ms | 164.576ms | 170.772ms | 199.320ms | 87.338ms | 206.081ms |
+
+lite trace上の `GetSecret` `rpc.end` は、`n=202 / min=78.477ms / p50=164.132ms / p90=170.427ms / p99=198.724ms / mean=162.755ms` だった。アプリ側の値とほぼ同じで、PHP wrapper後段ではなくRPC自体の応答分布として観測される。
+
+判断:
+
+- Secret Manager `ListSecrets` はPub/Subよりは軽いが、officialに4.2s級outlierがあり、+8〜11ms級の差を見る用途にはまだ弱い。
+- Secret Manager `GetSecret` はPub/Subより安定しており、official/liteはほぼ同等だった。
+- したがって、SA JSON + Google public API gRPC + 軽量unary一般でliteが一貫して遅い、という仮説は支持しない。
+- Spanner `ExecuteStreamingSql` / `Commit` で見えている差は、Spanner data plane / session / Spanner向けmetadata / frontend schedulingとの相互作用として扱うのが妥当。
+- Resource ManagerはAPI無効のため、現状態では候補から外す。

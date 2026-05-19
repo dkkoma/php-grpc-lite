@@ -27,6 +27,27 @@ docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=get-topi
 docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=get-topic-bench.php -t pubsub-repro:lite-gettopic .
 ```
 
+Secret Manager `GetSecret` cross-check:
+
+```sh
+docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=get-project-bench.php -t resourcemanager-repro:official-getproject .
+docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=get-project-bench.php -t resourcemanager-repro:lite-getproject .
+docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=get-secret-bench.php -t secretmanager-repro:official-getsecret .
+docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=get-secret-bench.php -t secretmanager-repro:lite-getsecret .
+```
+
+Resource Manager `GetProject` only needs `GOOGLE_CLOUD_PROJECT`.
+
+```sh
+for tag in official lite; do
+  docker run --rm \
+    -v "$SA_KEY":/sa.json:ro \
+    -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
+    -e GOOGLE_CLOUD_PROJECT="$PROJECT" \
+    resourcemanager-repro:$tag-getproject 200
+done
+```
+
 ## Run with service account key
 
 ```sh
@@ -43,6 +64,19 @@ for tag in official lite; do
     -e DB_SPANNER_INSTANCE="$INSTANCE" \
     -e DB_SPANNER_DATABASE="$DATABASE" \
     spanner-repro:$tag 200
+done
+```
+
+For Secret Manager `GetSecret`, set `SECRET_ID` to an existing secret id. It defaults to `test`.
+
+```sh
+for tag in official lite; do
+  docker run --rm \
+    -v "$SA_KEY":/sa.json:ro \
+    -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
+    -e GOOGLE_CLOUD_PROJECT="$PROJECT" \
+    -e SECRET_ID=test \
+    secretmanager-repro:$tag-getsecret 200
 done
 ```
 
