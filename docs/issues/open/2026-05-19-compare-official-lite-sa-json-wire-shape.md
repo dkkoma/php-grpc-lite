@@ -397,3 +397,97 @@ SA JSON / `ExecuteStreamingSql SELECT 1` / 20 iterationsのlite traceでは、re
 server PINGは多くのstreamでresponse/trailingと同時または直後に来ており、liteは即座にACKしている。したがって、このreproでは「clientがserver PINGに遅くACKするためresponseが遅れる」という形ではない。
 
 次はofficial側も同じ粒度で、response HEADERS/DATA/TRAILERS到着時刻とserver PINGの相対順序を比較する。officialは `GRPC_TRACE=http` でraw authorizationを含むため、解析結果だけをredactして記録する。
+
+### official/lite socket option and per-RPC I/O shape
+
+`strace -f -ttt -T -yy` で `setsockopt` / `getsockopt` / `fcntl` とTCP 443向けI/Oを確認した。
+
+socket option差分:
+
+| variant | socket shape | observed socket options | 判断 |
+|---|---|---|---|
+| official ext-grpc 1.58 | `TCPv6` v4-mapped socket | `TCP_NODELAY=1`, `TCP_INQ=1`, `SO_REUSEADDR=1`, `IPV6_V6ONLY=0` | C-core固有のsocket設定差はある |
+| grpc-lite | `TCP` IPv4 socket | `TCP_NODELAY=1` | 最小設定 |
+
+`TCP_INQ` はofficialとの差分として見えたため、liteへ条件付き追加したvariantをsource buildして `SELECT 1` / SA JSON / 200 iterationsで測った。
+
+| variant | mean | p50 | p90 | p99 | 判断 |
+|---|---:|---:|---:|---:|---|
+| lite + `TCP_INQ` | 23.1ms | 22.0ms | 25.6ms | 32.2ms | 改善なし。採用しない |
+
+この結果から、`TCP_INQ` 自体は今回の10ms級差分の主因から外す。`SO_REUSEADDR` とv4-mapped socketも、request write後からfirst response readまでの差を説明する候補としては弱いが、未検証なので「主因候補からは低優先」として残す。
+
+per-RPC I/O shapeでは、official/liteともwarm後は1RPCにつき小さいcontrol writeとrequest writeが見える。
+
+| variant | repeated request write shape | response read shape | 判断 |
+|---|---|---|---|
+| official ext-grpc 1.58 | `sendmsg` 52B control write → `sendmsg` 約1400B request write | `recvmsg` 約196B前後 | C-coreはcontrol/write schedulerを持つ |
+| grpc-lite | `write` 39B control write → `write` 約847〜855B request write | `read` 約196B前後 | nghttp2/OpenSSL直接経路 |
+
+この差は「wire上の分割/HPACK/TLS recordが違う」ことを示すが、単独で遅延原因とはまだ言えない。official ADCはrequest writeがlite ADCより大きいにもかかわらず速くないため、write size単独では説明できない。
+
+official `GRPC_TRACE=http` では、serverからのresponse DATA後にserver PINGが来て、C-coreがPING ACKを返す形が見える。liteのinbound frame traceでも、server PINGはresponse/trailingと同時または直後に来て即ACKされる。したがって、この最小reproでは「server PING ACKが遅いせいでresponseが止まる」という形ではない。
+
+raw official traceにはauthorization tokenが含まれる。今後もdocs/GitHubへ貼るのはredact済みの要約のみとする。
+
+現時点で残る未解明点:
+
+1. official SA JSONだけが速く、official ADCとlite SA/ADCが同レンジになる理由。
+2. 同じPHP package構成でも、official C-core transportとlite nghttp2 direct transportでSpanner frontendの応答開始が変わる理由。
+3. TLS record / HPACK dynamic table / HTTP/2 scheduler / C-core call lifecycleのどれが、SA JSON/JWT条件と相互作用しているか。
+
+次に見るべき候補:
+
+1. `SELECT 1` のrequest HEADERS/DATAを可能な範囲で完全に同一化し、server-visible metadata差をまとめて潰す。
+2. lite側でdiagnostic限定のTLS write/read traceを追加し、nghttp2 frame outと実際のOpenSSL write boundaryを対応付ける。
+3. 必要ならdecrypted HTTP/2 captureを検討する。ただしcredential漏えいリスクが高いため、実施する場合はtoken redaction手順を先に決める。
+
+### lite TLS I/O boundary trace
+
+`GRPC_LITE_TRACE_FILE` にdiagnostic限定の `wire.tls_write` / `wire.tls_read` / retry eventを追加し、nghttp2 frame outとOpenSSL I/O境界を対応付けた。payloadやtokenは出さず、requested/result length、stream id、RPC methodだけを記録する。
+
+PHPT:
+
+- `./tools/test/check-phpt.sh`: 16/16 PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+
+`SELECT 1` / SA JSON / 20 iterationsのsource-build traceでは、`ExecuteStreamingSql` のrequest HEADERS/DATAは1回のTLS writeにcoalesceされている。つまり、liteがHEADERSとDATAを別TLS writeで送っているわけではない。
+
+代表形状:
+
+| event | timing |
+|---|---|
+| `wire.frame_out` HEADERS | request header block生成 |
+| `wire.frame_out` DATA | gRPC 5B + protobuf request |
+| `wire.tls_write` | HEADERS + DATA を1 writeで送信 |
+| `wire.tls_read_retry` | `SSL_ERROR_WANT_READ` でpoll待ち |
+| `wire.tls_read` | response initial HEADERSを含むTLS record到着 |
+| `wire.frame_in` HEADERS/DATA/trailing HEADERS | nghttp2がresponseを処理 |
+| `wire.frame_in` PING → `wire.tls_write` 17B | server PING ACK |
+
+lite traceから算出した `request TLS write -> first TLS read`:
+
+| source | n | min | p50 | p90 | p99 | max |
+|---|---:|---:|---:|---:|---:|---:|
+| lite `GRPC_LITE_TRACE_FILE` | 21 | 18.8ms | 23.0ms | 35.1ms | 43.6ms | 45.4ms |
+
+同じ見方を既存straceへ適用した結果:
+
+| source | n | min | p50 | p90 | p99 | max |
+|---|---:|---:|---:|---:|---:|---:|
+| official ext-grpc 1.58 strace | 23 | 0.5ms | 11.0ms | 12.4ms | 12.8ms | 36.9ms |
+| grpc-lite strace | 24 | 7.2ms | 19.1ms | 21.6ms | 38.8ms | 42.3ms |
+
+この追加traceで確定したこと:
+
+- liteはrequest HEADERS/DATAを1回のTLS writeにまとめている。
+- trace-onlyのTLS read/write eventには、receive側も `current_io_call` を設定してstream id / RPC methodを相関できるようにした。
+- liteの主な待ちは `SSL_ERROR_WANT_READ` 後のpoll待ちであり、first TLS readが来るまでの時間として観測される。
+- responseが到着した後のnghttp2処理、protobuf decode、PHP deliveryは今回の差分の主因ではない。
+- server PING ACKはresponse後に即座に出ており、response開始前のブロッカーではない。
+
+まだ説明できていないこと:
+
+- official SA JSONでは同じ `request write -> first read` がp50約11msまで短くなる理由。
+- liteのwireは1 TLS writeにcoalesce済みなので、単純な「write分割」ではない。
+- official C-coreのHTTP/2 scheduler / HPACK state / TLS record / stream lifecycleのどれがSpanner frontendの応答開始に効いているか。

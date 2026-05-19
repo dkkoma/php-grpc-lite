@@ -678,6 +678,35 @@ static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghtt
     grpc_lite_trace_unlock_and_close(fp);
 }
 
+static void grpc_lite_trace_transport_io(h2_connection *connection, const char *event, size_t requested_len, ssize_t result_len, int ssl_error, int saved_errno)
+{
+    FILE *fp;
+
+    if (connection == NULL || event == NULL || grpc_lite_trace_file_path() == NULL) {
+        return;
+    }
+    grpc_lite_trace_open_and_lock(&fp);
+    if (fp == NULL) {
+        return;
+    }
+    fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":", monotonic_us(), (long) getpid());
+    grpc_lite_trace_json_string(fp, event, strlen(event));
+    fprintf(fp, ",\"requested_len\":%zu,\"result_len\":%zd", requested_len, result_len);
+    if (ssl_error != 0) {
+        fprintf(fp, ",\"ssl_error\":%d", ssl_error);
+    }
+    if (saved_errno != 0) {
+        fprintf(fp, ",\"errno\":%d", saved_errno);
+    }
+    if (connection->current_io_call != NULL && connection->current_io_call->method_path != NULL) {
+        fprintf(fp, ",\"rpc_method\":");
+        grpc_lite_trace_json_string(fp, ZSTR_VAL(connection->current_io_call->method_path), ZSTR_LEN(connection->current_io_call->method_path));
+        fprintf(fp, ",\"stream_id\":%d", connection->current_io_call->stream_id);
+    }
+    fputs("}\n", fp);
+    grpc_lite_trace_unlock_and_close(fp);
+}
+
 static void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count)
 {
     FILE *fp;
@@ -1209,9 +1238,11 @@ static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data
         while (true) {
             int written = SSL_write(connection->ssl, data, (int) length);
             if (written > 0) {
+                grpc_lite_trace_transport_io(connection, "wire.tls_write", length, written, 0, 0);
                 return written;
             }
             int ssl_error = SSL_get_error(connection->ssl, written);
+            grpc_lite_trace_transport_io(connection, "wire.tls_write_retry", length, written, ssl_error, 0);
             connection->last_ssl_error = ssl_error;
             if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
                 short events = ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
@@ -1250,6 +1281,7 @@ static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data
 #endif
         );
         if (written >= 0) {
+            grpc_lite_trace_transport_io(connection, "wire.socket_write", length, written, 0, 0);
             return written;
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1357,9 +1389,11 @@ static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t 
         while (true) {
             int nread = SSL_read(connection->ssl, data, (int) length);
             if (nread > 0) {
+                grpc_lite_trace_transport_io(connection, "wire.tls_read", length, nread, 0, 0);
                 return nread;
             }
             int ssl_error = SSL_get_error(connection->ssl, nread);
+            grpc_lite_trace_transport_io(connection, "wire.tls_read_retry", length, nread, ssl_error, 0);
             connection->last_ssl_error = ssl_error;
             if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
                 short events = ssl_error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
@@ -1389,6 +1423,7 @@ static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t 
     while (true) {
         ssize_t nread = recv(connection->fd, data, length, 0);
         if (nread >= 0) {
+            grpc_lite_trace_transport_io(connection, "wire.socket_read", length, nread, 0, 0);
             return nread;
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) {

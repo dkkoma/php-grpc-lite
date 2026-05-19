@@ -145,7 +145,10 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     }
 
     while (!call.stream_closed) {
-        ssize_t nread = connection_recv(connection, (uint8_t *) recv_buf, sizeof(recv_buf), call.deadline_abs_us);
+        ssize_t nread;
+        connection->current_io_call = &call;
+        nread = connection_recv(connection, (uint8_t *) recv_buf, sizeof(recv_buf), call.deadline_abs_us);
+        connection->current_io_call = NULL;
         if (nread <= 0) {
             bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && call.deadline_abs_us > 0;
             if (nread < 0) {

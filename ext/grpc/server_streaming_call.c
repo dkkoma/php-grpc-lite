@@ -284,7 +284,9 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             state->completed = true;
             break;
         }
+        state->call.connection->current_io_call = call;
         nread = connection_recv(state->call.connection, (uint8_t *) state->recv_buf, state->recv_buf_len, call->deadline_abs_us);
+        state->call.connection->current_io_call = NULL;
         if (nread <= 0) {
             bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && call->deadline_abs_us > 0;
             if (nread < 0) {
