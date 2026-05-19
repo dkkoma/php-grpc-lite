@@ -934,3 +934,42 @@ Commit x-goog-api-client: ... pb/+n
 - Dockerfileは同じ構造だが、報告者はbookworm、手元はtrixie読み替え。
 
 次に完全一致させるには、報告者と同じcredential typeを作るためservice-account JSON keyで実行する必要がある。
+
+### local execution with service-account JSON 2026-05-19
+
+同じ `tools/diagnostics/issue5-spanner-repro/` を、gcloud ADCではなくservice-account JSON keyを `GOOGLE_APPLICATION_CREDENTIALS=/sa.json` としてmountして再実行した。
+
+結果:
+
+| variant | ext.grpc | ext.spanner | iter | mean | p50 | p90 | p99 | min | max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| official | 1.58.0 | 1.106.0.0 | 200 | 24.072ms | 23.470ms | 27.772ms | 43.954ms | 18.515ms | 74.363ms |
+| lite | 0.1.0 | 1.106.0.0 | 200 | 42.242ms | 41.791ms | 45.180ms | 49.984ms | 30.472ms | 67.441ms |
+
+ratioは約1.75xで、報告者環境の `official 26.2ms` vs `lite 46.0ms` と同じ形が手元でも再現した。
+
+同条件でlite traceを5 iteration取得したところ、`x-goog-api-client` は0.0.8の修正どおり1値にfoldされ、全Spanner RPCで `cred-type/jwt` が付いた。
+
+例:
+
+```text
+CreateSession x-goog-api-client: ... grpc/0.1.0 ... pb/+n cred-type/jwt
+ExecuteStreamingSql x-goog-api-client: ... grpc/0.1.0 ... pb/+n cred-type/jwt
+Commit x-goog-api-client: ... grpc/0.1.0 ... pb/+n cred-type/jwt
+```
+
+connection startのHTTP/2 control frame shapeは従来と同じ:
+
+```text
+out SETTINGS: ENABLE_PUSH=0, INITIAL_WINDOW_SIZE=8388608
+out WINDOW_UPDATE: increment=8323073
+out SETTINGS ACK
+```
+
+これで、差分の再現条件は `service-account JSON / JWT credential path` に強く依存することが確認できた。gcloud ADCではofficial/liteが同等だった一方、service-account JSONではofficialが約24ms、liteが約42msになった。lite側はADC/SAで大きくは変わらず、official側だけがSA JSON条件で大きく速くなっている。
+
+次の調査対象:
+
+1. official ext-grpcがSA JSON / JWT credential pathで作るactual wire shapeを、可能な範囲で観測する。
+2. liteのSA JSON / JWT pathで、CallCredentials plugin実行、authorization生成、metadata/header shape、HPACK indexing、per-RPC credential処理のどこに差が残るかを切り分ける。
+3. officialだけがADCよりSA JSONで速くなる理由を確認する。credential plugin/cache、authorization metadata生成、またはSpanner frontend routing/cacheが候補。
