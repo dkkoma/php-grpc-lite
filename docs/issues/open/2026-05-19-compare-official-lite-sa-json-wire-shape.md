@@ -166,6 +166,37 @@ GAX入口では、officialとliteのmetadata差は小さい。代表Commit:
 - officialは `x-goog-api-client: cred-type/jwt` をduplicate headerとして送っているが、lite 0.0.7もduplicateで遅かったため、これ単独は主因ではない。
 - 次の有力候補は、server visible metadata shapeのうち `grpc-accept-encoding`、`user-agent`、HPACK/header order/dynamic table、またはofficial C-coreのHTTP/2 connection settings/control behavior。
 
+### minimal SELECT 1 repro
+
+transaction/Commit固有の要因を外すため、`tools/diagnostics/issue5-spanner-repro/select1-bench.php` を追加した。
+
+このreproは以下だけを実行する。
+
+1. `SpannerClient` からdatabaseを作る。
+2. warmupとして `SELECT 1` を1回実行する。
+3. 計測ループで `Database::execute('SELECT 1')->rows()->current()` だけを実行する。
+
+つまり、実測対象は `ExecuteStreamingSql SELECT 1` のserver streaming RPC単独に近い。transaction、BeginTransaction、Commit、mutation、DMLは含まない。
+
+SA JSON条件では、この最小reproでも差が再現した。
+
+| condition | variant | iter | mean | p50 | p90 | p99 |
+|---|---|---:|---:|---:|---:|---:|
+| SA JSON | official ext-grpc 1.58 | 200 | 11.1ms | 10.4ms | 13.5ms | 21.8ms |
+| SA JSON | grpc-lite 0.0.8 | 200 | 22.0ms | 21.3ms | 25.3ms | 38.2ms |
+| gcloud ADC | official ext-grpc 1.58 | 200 | 21.3ms | 21.0ms | 24.0ms | 29.2ms |
+| gcloud ADC | grpc-lite 0.0.8 | 200 | 21.1ms | 20.7ms | 23.4ms | 33.4ms |
+
+この結果は重要。
+
+- Commit固有ではない。
+- transaction/write path固有でもない。
+- `ExecuteStreamingSql SELECT 1` の軽いserver streaming RPCだけで、SA JSON条件ではofficialだけが速い。
+- ADC条件ではofficial/liteがほぼ同等になるため、credential pathが差の発現条件である可能性は高い。
+- 一方で、liteのSA JSONとADCはほぼ同レンジなので、credential処理のPHP CPUだけでは説明しない。
+
+以降は、この最小reproを主対象にする。Commitは実アプリ再現確認として残すが、原因切り分けの主対象からは外す。
+
 ### credential path から transport state へつながる仮説
 
 `ADC vs SA JSON` は最初の再現条件だが、コード上はcredential providerが直接HTTP/2 transportを選ぶわけではない。

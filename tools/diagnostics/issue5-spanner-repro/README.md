@@ -11,6 +11,13 @@ docker build --build-arg GRPC_VARIANT=official -t spanner-repro:official .
 docker build --build-arg GRPC_VARIANT=lite -t spanner-repro:lite .
 ```
 
+Minimal `ExecuteStreamingSql SELECT 1` only:
+
+```sh
+docker build --build-arg GRPC_VARIANT=official --build-arg BENCH_SCRIPT=select1-bench.php -t spanner-repro:official-select1 .
+docker build --build-arg GRPC_VARIANT=lite --build-arg BENCH_SCRIPT=select1-bench.php -t spanner-repro:lite-select1 .
+```
+
 ## Run with service account key
 
 ```sh
