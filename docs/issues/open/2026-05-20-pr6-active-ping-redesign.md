@@ -517,3 +517,28 @@ trace自体の影響を避けるため、trace/tcpdumpなしで300 iterationsの
 - active PINGはgapなし連続RPCでも改善を作るが、gapを入れたactive offでも同程度に近づくため、PINGそのものより「peer側のconnection stateやschedulerに働きかける何か」と整理する。
 - 今後の実装候補は、active PINGの採用判断だけでなく、request pacing、server-origin PING ACK処理、preflight drain、HTTP/2 control flush timingを含めて検討する必要がある。
 - ただし、意図的なsleep/gapをproductionに入れることは現時点では採用候補にしない。これは原因切り分けのための観測であり、実装方針ではない。
+
+#### official ext-grpc 1.58.0 とのgap比較
+
+`spanner-repro:official-select1` は `grpc module version => 1.58.0`。同じservice-account JSON / `SELECT 1` / marker-only 300 iterationsで、ext-grpc 1.58.0にもgapを入れて比較した。
+
+| impl | gap | elapsed mean | elapsed p50 | elapsed p90 | elapsed p99 |
+|---|---:|---:|---:|---:|---:|
+| official ext-grpc 1.58.0 | 0ms | 11.067ms | 10.881ms | 12.965ms | 16.147ms |
+| official ext-grpc 1.58.0 | 10ms | 12.909ms | 12.703ms | 15.238ms | 20.637ms |
+| official ext-grpc 1.58.0 | 50ms | 13.983ms | 13.267ms | 16.940ms | 32.831ms |
+| grpc-lite active off | 0ms | 21.562ms | 21.254ms | 23.953ms | 28.530ms |
+| grpc-lite active off | 10ms | 13.458ms | 12.187ms | 17.607ms | 32.129ms |
+| grpc-lite active off | 50ms | 14.145ms | 13.063ms | 17.597ms | 34.883ms |
+
+観測:
+
+- grpc-lite active offに10ms gapを入れると、official ext-grpc 1.58.0のgapなしp50 `10.881ms` にかなり近づく。
+- 同じ10ms gap条件では、grpc-lite active off p50 `12.187ms` と official ext-grpc 1.58.0 p50 `12.703ms` は同レンジ。
+- 一方、official ext-grpc 1.58.0はgapなしが最速で、gapを入れるとむしろ遅くなる。したがって、gapは「ext-grpcにも必要な改善条件」ではなく、grpc-liteの連続RPC時にだけ強く出ているpacing/scheduling差を緩和する観測条件と見る。
+
+判断:
+
+- 「RPCごとに10ms sleepを入れればgrpc-liteはext-grpcくらい速いのでは」という仮説は、p50では概ね支持される。
+- ただし、sleep/gapは実装として入れるものではない。ext-grpc 1.58.0はgapなしで速いため、目標はsleepを入れることではなく、grpc-liteのgapなし連続RPCでも同じconnection/control stateに近づけることである。
+- 重要な差分は `grpc-lite gap 0ms` と `grpc-lite gap 10ms` の間にあり、ext-grpc側では同じgap効果が出ない。ここが次の根本原因調査対象である。
