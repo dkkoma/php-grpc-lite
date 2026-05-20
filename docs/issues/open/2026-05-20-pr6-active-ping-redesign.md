@@ -441,3 +441,79 @@ HTTP/2 trace上のPING:
 - sleepなし条件では、active 10msがSpanner `SELECT 1` のresponse frame到着を短縮している観測が再度得られた。
 - ただしtcpdump/trace付きrunのため絶対値は通常ベンチとは分ける。今回の結果は「connection churnなしでactive PINGの差を観測できる」ことと、「差はrequest後のstream response frame到着前にある」ことの根拠として扱う。
 - 次に詰めるべき点は、active PINGがなぜ後続RPCのSpanner response schedulingに効くのか、server-origin PING ACKだけでは不足なのか、peer enforcement上どのintervalまで安全に許容できるのかである。
+
+### inter-RPC gap sweep
+
+sleepありmarker runでactive PINGなしでも速く見える結果が出たため、active PING効果とinter-RPC idle/gap効果を分離して調べる。
+
+確認すること:
+
+- active offで `0ms / 1ms / 5ms / 10ms / 50ms` gapを入れたとき、response frame timingがどう変わるか。
+- active 10msで同じgap sweepを行い、active PINGの差がどのgapで残る/消えるか。
+- gap中にserver-origin PING、client PING ACK、SETTINGS ACK、WINDOW_UPDATE、preflight drainが発生するか。
+- 同一HTTP/2 connection reuseが維持されているか。
+
+計測方針:
+
+- latency評価はsleep付き単発値ではなく、gap sweepの傾向として扱う。
+- tcpdumpありの絶対値は補助扱いにし、主指標はgrpc-lite trace上の `last outbound request frame -> first response HEADERS/DATA frame` とする。
+- active PING有効時のTCP first inbound payloadはPING ACK等のcontrol frameを含むため、response timingとして使わない。
+
+#### traceあり gap sweep
+
+まず、HTTP/2 control lifecycleを確認できるようにtraceあり・tcpdumpなしで200 iterationsを計測した。
+
+| active PING | gap | elapsed p50 | response frame p50 | response frame p90 | response frame p99 | preflight |
+|---|---:|---:|---:|---:|---:|---|
+| off | 0ms | 22.152ms | 18.782ms | 24.420ms | 40.479ms | no pending x201 |
+| off | 1ms | 20.952ms | 17.578ms | 23.255ms | 36.506ms | no pending x200 |
+| off | 5ms | 16.886ms | 13.559ms | 16.817ms | 38.535ms | no pending x200 |
+| off | 10ms | 14.300ms | 10.666ms | 13.484ms | 20.688ms | no pending x200 |
+| off | 50ms | 16.094ms | 11.892ms | 15.109ms | 20.239ms | no pending x200 |
+| active 10ms | 0ms | 16.731ms | 13.665ms | 16.607ms | 22.428ms | no pending x200 |
+| active 10ms | 1ms | 15.395ms | 12.038ms | 20.763ms | 25.397ms | no pending x198 / drained x2 |
+| active 10ms | 5ms | 19.868ms | 15.830ms | 19.513ms | 26.110ms | no pending x8 / drained x192 |
+| active 10ms | 10ms | 17.576ms | 13.187ms | 20.950ms | 49.734ms | no pending x3 / drained x197 |
+| active 10ms | 50ms | 16.733ms | 11.950ms | 15.528ms | 29.595ms | no pending x1 / drained x199 |
+
+観測:
+
+- active offでもgapを入れるだけでresponse frame p50が大きく短縮する。`0ms -> 10ms` で `18.782ms -> 10.666ms`。
+- active 10msはgap 0msでactive off 0msより速いが、gapを入れたactive offとの差は小さくなる。
+- active 10msではgapが長くなるほど、次RPC開始前にPING ACK等のpending TLS dataが到着し、preflight drainが増える。
+- active 10ms + 5msは2回の計測で遅く、単純に「gapが長いほど速い」ではない。active PINGのmin interval、ACK到着、preflight drain、Spanner/GFE schedulingが相互作用している可能性がある。
+
+#### marker-only gap sweep
+
+trace自体の影響を避けるため、trace/tcpdumpなしで300 iterationsのmarker-only sweepも実施した。
+
+| active PING | gap | elapsed mean | elapsed p50 | elapsed p90 | elapsed p99 |
+|---|---:|---:|---:|---:|---:|
+| off | 0ms | 21.562ms | 21.254ms | 23.953ms | 28.530ms |
+| off | 1ms | 20.993ms | 20.098ms | 25.069ms | 33.728ms |
+| off | 5ms | 17.449ms | 16.392ms | 21.300ms | 31.846ms |
+| off | 10ms | 13.458ms | 12.187ms | 17.607ms | 32.129ms |
+| off | 50ms | 14.145ms | 13.063ms | 17.597ms | 34.883ms |
+| active 10ms | 0ms | 16.084ms | 15.802ms | 18.516ms | 24.309ms |
+| active 10ms | 1ms | 14.016ms | 13.558ms | 16.370ms | 23.656ms |
+| active 10ms | 5ms | 22.409ms | 22.053ms | 25.945ms | 34.277ms |
+| active 10ms | 5ms repeat | 21.028ms | 20.505ms | 23.940ms | 35.950ms |
+| active 10ms | 10ms | 13.909ms | 13.359ms | 16.726ms | 22.780ms |
+| active 10ms | 10ms repeat | 14.732ms | 13.698ms | 16.327ms | 19.776ms |
+| active 10ms | 50ms | 12.348ms | 12.092ms | 14.089ms | 19.414ms |
+| active 10ms | 50ms repeat | 13.431ms | 12.807ms | 17.110ms | 23.283ms |
+
+観測:
+
+- marker-onlyでもactive offのgap効果は再現した。active off `0ms -> 10ms` でp50は `21.254ms -> 12.187ms`。
+- active 10msもgap 0msではactive off 0msより速いが、active off 10msと同程度までは縮まる。
+- active 10ms + 5msはrepeatでも遅く、偶然の単発外れ値ではなさそう。現時点では採用候補ではなく、追加調査対象として扱う。
+- 50ms gapはactive off / active 10msとも速いが、これは実運用の連続RPCではなくidleを挟んだworkloadである。
+
+判断:
+
+- `active PINGだけが改善要因` ではない。inter-RPC gapそのものがSpanner/GFE/HTTP/2 connectionの応答timingを大きく変えている。
+- 連続RPCの遅さは、grpc-liteがrequestを詰めて送ることによるpeer側scheduling / pacing / control lifecycleとの相互作用として見るべきである。
+- active PINGはgapなし連続RPCでも改善を作るが、gapを入れたactive offでも同程度に近づくため、PINGそのものより「peer側のconnection stateやschedulerに働きかける何か」と整理する。
+- 今後の実装候補は、active PINGの採用判断だけでなく、request pacing、server-origin PING ACK処理、preflight drain、HTTP/2 control flush timingを含めて検討する必要がある。
+- ただし、意図的なsleep/gapをproductionに入れることは現時点では採用候補にしない。これは原因切り分けのための観測であり、実装方針ではない。
