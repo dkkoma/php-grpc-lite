@@ -197,6 +197,35 @@ SA JSON条件では、この最小reproでも差が再現した。
 
 以降は、この最小reproを主対象にする。Commitは実アプリ再現確認として残すが、原因切り分けの主対象からは外す。
 
+### 2026-05-20 minimal SELECT 1 SA JSON rerun
+
+`spanner-repro:official-select1` / `spanner-repro:lite-select1` を再利用し、同じreal Spanner databaseとSA JSONで200 iterationsを再計測した。
+
+Command shape:
+
+```bash
+docker run --rm \
+  -v /Users/daisuke/Downloads/vast-falcon-165704-f49f27268136.json:/sa.json:ro \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
+  -e GOOGLE_CLOUD_PROJECT=vast-falcon-165704 \
+  -e DB_SPANNER_INSTANCE=bench \
+  -e DB_SPANNER_DATABASE=laravel-bench-db \
+  spanner-repro:<official|lite>-select1 200
+```
+
+Raw logs: `var/bench-results/select1-sa-json-rerun-20260520-225707/`。
+
+| condition | variant | iter | mean | p50 | p90 | p99 | min | max |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| SA JSON | official ext-grpc 1.58 | 200 | 12.314ms | 12.273ms | 14.300ms | 25.293ms | 8.622ms | 25.974ms |
+| SA JSON | grpc-lite source image | 200 | 21.148ms | 20.919ms | 23.764ms | 30.585ms | 17.168ms | 46.828ms |
+
+判断:
+
+- minimal `ExecuteStreamingSql SELECT 1` のSA JSON差は今回も再現した。
+- p50差は約8.6ms、ratioは約1.70x。
+- 以前の `SA JSON official 10.4ms / lite 21.3ms` と同じ傾向で、officialのみSA JSON条件で速い。
+
 ### credential path から transport state へつながる仮説
 
 `ADC vs SA JSON` は最初の再現条件だが、コード上はcredential providerが直接HTTP/2 transportを選ぶわけではない。
