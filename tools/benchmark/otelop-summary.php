@@ -89,6 +89,7 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
                 $shape,
                 (string) ($attributes['benchmark.implementation'] ?? ''),
                 (string) ($attributes['benchmark.transport'] ?? '-'),
+                (string) ($attributes['benchmark.rpc_gap_ms'] ?? '0'),
             ];
             $key = implode("\t", $keyParts);
             $cpuGroups[$key] = [
@@ -97,6 +98,7 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
                 'shape' => $shape,
                 'implementation' => $keyParts[3],
                 'transport' => $keyParts[4],
+                'rpc_gap_ms' => $keyParts[5],
                 'calls' => (int) ($attributes['benchmark.calls'] ?? 0),
                 'cpu_total_us_per_call' => (float) ($attributes['benchmark.cpu_total_us_per_call'] ?? 0.0),
                 'cpu_user_us_per_call' => (float) ($attributes['benchmark.cpu_user_us_per_call'] ?? 0.0),
@@ -113,6 +115,7 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
             $shape,
             (string) ($attributes['benchmark.implementation'] ?? ''),
             (string) ($attributes['benchmark.transport'] ?? '-'),
+            (string) ($attributes['benchmark.rpc_gap_ms'] ?? '0'),
         ];
         $key = implode("\t", $keyParts);
         $groups[$key]['suite'] = $keyParts[0];
@@ -120,6 +123,7 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
         $groups[$key]['shape'] = $shape;
         $groups[$key]['implementation'] = $keyParts[3];
         $groups[$key]['transport'] = $keyParts[4];
+        $groups[$key]['rpc_gap_ms'] = $keyParts[5];
         $groups[$key]['durations_us'][] = ((float) ($span['durationMs'] ?? 0.0)) * 1000.0;
     }
 
@@ -132,11 +136,12 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
 ksort($groups);
 if ($groups !== []) {
     printf(
-        "%-28s %-24s %-18s %-14s %8s %12s %12s %12s\n",
+        "%-28s %-24s %-18s %-14s %7s %8s %12s %12s %12s\n",
         'suite',
         'measurement',
         'shape',
         'variant',
+        'gap_ms',
         'count',
         'span_p50_us',
         'span_p99_us',
@@ -147,11 +152,12 @@ if ($groups !== []) {
         $durations = $group['durations_us'];
         $spanPercentiles = percentiles($durations);
         printf(
-            "%-28s %-24s %-18s %-14s %8d %12.1f %12.1f %12.1f\n",
+            "%-28s %-24s %-18s %-14s %7s %8d %12.1f %12.1f %12.1f\n",
             $group['suite'],
             $group['measurement'],
             $group['shape'],
             variantName($group['implementation'], $group['transport']),
+            $group['rpc_gap_ms'],
             count($durations),
             $spanPercentiles['p50'],
             $spanPercentiles['p99'],
@@ -164,11 +170,12 @@ if ($cpuGroups !== []) {
     ksort($cpuGroups);
     echo "\nCPU summary spans\n";
     printf(
-        "%-28s %-24s %-18s %-14s %8s %14s %14s %14s %14s\n",
+        "%-28s %-24s %-18s %-14s %7s %8s %14s %14s %14s %14s\n",
         'suite',
         'measurement',
         'shape',
         'variant',
+        'gap_ms',
         'calls',
         'cpu_us/call',
         'user_us/call',
@@ -178,11 +185,12 @@ if ($cpuGroups !== []) {
     printf("%'-145s\n", '');
     foreach ($cpuGroups as $group) {
         printf(
-            "%-28s %-24s %-18s %-14s %8d %14.1f %14.1f %14.1f %14.1f\n",
+            "%-28s %-24s %-18s %-14s %7s %8d %14.1f %14.1f %14.1f %14.1f\n",
             $group['suite'],
             $group['measurement'],
             $group['shape'],
             variantName($group['implementation'], $group['transport']),
+            $group['rpc_gap_ms'],
             $group['calls'],
             $group['cpu_total_us_per_call'],
             $group['cpu_user_us_per_call'],

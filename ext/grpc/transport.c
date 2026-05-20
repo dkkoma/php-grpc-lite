@@ -678,6 +678,9 @@ static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghtt
         fprintf(fp, ",\"last_stream_id\":%d,\"error_code\":%u", frame->goaway.last_stream_id, frame->goaway.error_code);
     } else if (frame->hd.type == NGHTTP2_RST_STREAM) {
         fprintf(fp, ",\"error_code\":%u", frame->rst_stream.error_code);
+    } else if (frame->hd.type == NGHTTP2_PING && grpc_lite_trace_wire_bytes_enabled()) {
+        fprintf(fp, ",\"payload_hex\":");
+        grpc_lite_trace_hex(fp, frame->ping.opaque_data, sizeof(frame->ping.opaque_data));
     }
     fputs("}\n", fp);
     grpc_lite_trace_unlock_and_close(fp);
@@ -709,6 +712,35 @@ static void grpc_lite_trace_transport_io(h2_connection *connection, const char *
         fprintf(fp, ",\"stream_id\":%d", connection->current_io_call->stream_id);
     }
     fputs("}\n", fp);
+    grpc_lite_trace_unlock_and_close(fp);
+}
+
+static void grpc_lite_trace_persistent_preflight(h2_connection *connection, const char *result, const char *reason, ssize_t peek_result, int ssl_error, int saved_errno)
+{
+    FILE *fp;
+
+    if (connection == NULL || result == NULL || grpc_lite_trace_file_path() == NULL) {
+        return;
+    }
+    grpc_lite_trace_open_and_lock(&fp);
+    if (fp == NULL) {
+        return;
+    }
+    fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"persistent.preflight\",\"result\":", monotonic_us(), (long) getpid());
+    grpc_lite_trace_json_string(fp, result, strlen(result));
+    fprintf(fp, ",\"reason\":");
+    grpc_lite_trace_json_string(fp, reason != NULL ? reason : "", reason != NULL ? strlen(reason) : 0);
+    fprintf(
+        fp,
+        ",\"fd\":%d,\"active_stream_count\":%zu,\"dead\":%s,\"draining\":%s,\"peek_result\":%zd,\"ssl_error\":%d,\"errno\":%d}\n",
+        connection->fd,
+        connection->active_stream_count,
+        connection->dead ? "true" : "false",
+        connection->draining ? "true" : "false",
+        peek_result,
+        ssl_error,
+        saved_errno
+    );
     grpc_lite_trace_unlock_and_close(fp);
 }
 
@@ -922,9 +954,11 @@ static bool preflight_persistent_connection(h2_connection *connection, uint64_t 
     ssize_t rv;
 
     if (!connection_usable(connection)) {
+        grpc_lite_trace_persistent_preflight(connection, "reject", "connection is not usable", -1, 0, 0);
         return connection_usable(connection);
     }
     if (connection->active_stream_count > 0) {
+        grpc_lite_trace_persistent_preflight(connection, "accept", "active streams present", -1, 0, 0);
         return true;
     }
     if (connection->ssl != NULL) {
@@ -932,9 +966,19 @@ static bool preflight_persistent_connection(h2_connection *connection, uint64_t 
         rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
         ssl_error = SSL_get_error(connection->ssl, (int) rv);
         if (rv > 0) {
-            return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
+            bool drained = drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
+            grpc_lite_trace_persistent_preflight(
+                connection,
+                drained ? "accept" : "reject",
+                drained ? "pending TLS data drained" : connection->last_error_detail,
+                rv,
+                ssl_error,
+                0
+            );
+            return drained;
         }
         if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+            grpc_lite_trace_persistent_preflight(connection, "accept", "no pending TLS data", rv, ssl_error, 0);
             return true;
         }
         connection->last_ssl_error = ssl_error;
@@ -945,6 +989,7 @@ static bool preflight_persistent_connection(h2_connection *connection, uint64_t 
             snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "persistent TLS connection preflight failed: SSL_get_error=%d", ssl_error);
             mark_connection_dead(connection, ECONNRESET);
         }
+        grpc_lite_trace_persistent_preflight(connection, "reject", connection->last_error_detail, rv, ssl_error, 0);
         return false;
     }
 
@@ -952,16 +997,29 @@ static bool preflight_persistent_connection(h2_connection *connection, uint64_t 
     if (rv == 0) {
         set_connection_error_detail(connection, "persistent connection closed by peer before reuse");
         mark_connection_dead(connection, 0);
+        grpc_lite_trace_persistent_preflight(connection, "reject", connection->last_error_detail, rv, 0, 0);
         return false;
     }
     if (rv < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        int saved_errno = errno;
         mark_connection_dead(connection, errno);
+        grpc_lite_trace_persistent_preflight(connection, "reject", connection->last_error_detail, rv, 0, saved_errno);
         return false;
     }
     if (rv > 0) {
-        return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
+        bool drained = drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
+        grpc_lite_trace_persistent_preflight(
+            connection,
+            drained ? "accept" : "reject",
+            drained ? "pending socket data drained" : connection->last_error_detail,
+            rv,
+            0,
+            0
+        );
+        return drained;
     }
 
+    grpc_lite_trace_persistent_preflight(connection, "accept", "no pending socket data", rv, 0, 0);
     return true;
 }
 
@@ -1586,7 +1644,6 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         *error_message = "failed to create nghttp2 session";
         return NULL;
     }
-
     {
         nghttp2_settings_entry settings[] = {
             { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },

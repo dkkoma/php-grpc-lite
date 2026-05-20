@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
@@ -18,6 +20,7 @@ $implementation = 'php-grpc-lite';
 $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $calls = 50;
+$rpcGapMs = RpcGap::fromEnvironment();
 $cases = [
     [0, 0, 0],
     [10, 0, 32],
@@ -48,6 +51,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $calls = (int) ($args[++$argIndex] ?? 0);
     } elseif (str_starts_with($arg, '--calls=')) {
         $calls = (int) substr($arg, strlen('--calls='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -77,9 +81,10 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
         'benchmark.response_initial_keys' => $responseKeys,
         'benchmark.response_trailing_keys' => $responseKeys,
         'benchmark.value_bytes' => $valueBytes,
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ]);
     $latenciesNs = [];
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $metadata, $calls, $responseKeys, $benchTelemetry, &$latenciesNs): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $metadata, $calls, $responseKeys, $rpcGapMs, $benchTelemetry, &$latenciesNs): int {
         for ($callIndex = 0; $callIndex < $calls; $callIndex++) {
             $startedNs = hrtime(true);
             $details = UnaryBenchHelper::callDetailed(
@@ -98,6 +103,7 @@ foreach ($cases as [$requestKeys, $responseKeys, $valueBytes]) {
                 throw new \RuntimeException("expected $responseKeys response metadata pairs, got $initialCount/$trailingCount");
             }
             $latenciesNs[] = $callEndNs - $startedNs;
+            RpcGap::sleepBetweenCalls($rpcGapMs, $callIndex + 1 < $calls);
         }
 
         return $calls;
@@ -146,7 +152,7 @@ function countPrefix(array $metadata, string $prefix): int
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite [--calls=50]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/metadata-header.php --suite=metadata-header --implementation=php-grpc-lite [--calls=50] [--rpc-gap-ms=0]\n");
     exit(2);
 }
 

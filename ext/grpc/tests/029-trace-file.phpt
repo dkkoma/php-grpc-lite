@@ -1,5 +1,7 @@
 --TEST--
 grpc-lite trace file records unary and server streaming RPC completion
+--INI--
+grpc_lite.http2_stream_window_size=1048576
 --SKIPIF--
 <?php
 if (!extension_loaded('grpc')) {
@@ -26,6 +28,7 @@ if ($traceFile === false) {
 }
 file_put_contents($traceFile, '');
 putenv('GRPC_LITE_TRACE_FILE=' . $traceFile);
+putenv('GRPC_LITE_TRACE_WIRE_BYTES=1');
 
 $opts = ['credentials' => ChannelCredentials::createInsecure()];
 $channel = new Channel('test-server:50051', $opts);
@@ -44,7 +47,11 @@ foreach ($stream->responses() as $_reply) {
 $streamStatus = $stream->getStatus();
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $streamStatus->code, 'streaming status');
 
+[$followupResponse, $followupStatus] = $client->SayHello($request)->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followupStatus->code, 'follow-up unary status');
+
 putenv('GRPC_LITE_TRACE_FILE');
+putenv('GRPC_LITE_TRACE_WIRE_BYTES');
 
 $lines = array_values(array_filter(explode("\n", trim((string) file_get_contents($traceFile)))));
 unlink($traceFile);
@@ -89,7 +96,9 @@ foreach ($records as $record) {
         && ($record['stream_id'] ?? null) === 0
         && ($record['frame_type'] ?? null) === 'SETTINGS'
         && ($record['flags'] ?? null) === 0) {
-        $settingsFrame = $record;
+        if ($settingsFrame === null) {
+            $settingsFrame = $record;
+        }
     }
     if (($record['event'] ?? null) === 'wire.frame_out'
         && ($record['stream_id'] ?? null) === 0
@@ -126,6 +135,7 @@ grpc_lite_phpt_assert_true(is_array($settingsFrame), 'outbound SETTINGS trace ex
 grpc_lite_phpt_assert_same(2, $settingsFrame['settings_count'] ?? null, 'outbound SETTINGS count');
 grpc_lite_phpt_assert_same('ENABLE_PUSH', $settingsFrame['settings'][0]['name'] ?? null, 'outbound SETTINGS enable push');
 grpc_lite_phpt_assert_same('INITIAL_WINDOW_SIZE', $settingsFrame['settings'][1]['name'] ?? null, 'outbound SETTINGS initial window');
+grpc_lite_phpt_assert_same(1048576, $settingsFrame['settings'][1]['value'] ?? null, 'outbound initial SETTINGS uses overridden stream window');
 grpc_lite_phpt_assert_true(!array_key_exists('rpc_method', $settingsFrame), 'connection-level SETTINGS must not be attributed to an RPC');
 grpc_lite_phpt_assert_true(is_array($connectionWindowUpdateFrame), 'outbound connection WINDOW_UPDATE trace exists');
 grpc_lite_phpt_assert_true(($connectionWindowUpdateFrame['window_size_increment'] ?? 0) > 0, 'outbound connection WINDOW_UPDATE increment');

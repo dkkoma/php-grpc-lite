@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
@@ -22,6 +24,7 @@ $payloadBytes = 100;
 $serverDelayMs = 0;
 $calls = 20;
 $warmupCalls = 3;
+$rpcGapMs = RpcGap::fromEnvironment();
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -61,6 +64,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $warmupCalls = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--warmup-calls=')) {
         $warmupCalls = (int) substr($arg, strlen('--warmup-calls='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -121,6 +125,7 @@ foreach ($proxyCases as $proxyCase) {
         $proxyCase,
         $payloadBytes,
         $serverDelayMs,
+        $rpcGapMs,
         $benchTelemetry,
     );
 
@@ -134,6 +139,7 @@ foreach ($proxyCases as $proxyCase) {
         $proxyCase,
         $payloadBytes,
         $serverDelayMs,
+        $rpcGapMs,
         $benchTelemetry,
     );
 }
@@ -155,6 +161,7 @@ function runMode(
     array $proxyCase,
     int $payloadBytes,
     int $serverDelayMs,
+    int $rpcGapMs,
     ?BenchTelemetry $benchTelemetry,
 ): void {
     $latenciesNs = [];
@@ -164,8 +171,9 @@ function runMode(
         'benchmark.payload_bytes' => $payloadBytes,
         'benchmark.server_delay_ms' => $serverDelayMs,
         'benchmark.toxiproxy_downstream_latency_ms' => $proxyCase['downstream_latency_ms'],
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ]);
-    $sample = ResourceSampler::measure(static function () use ($clientFactory, $request, $calls, $benchTelemetry, &$latenciesNs): int {
+    $sample = ResourceSampler::measure(static function () use ($clientFactory, $request, $calls, $rpcGapMs, $benchTelemetry, &$latenciesNs): int {
         for ($call = 0; $call < $calls; $call++) {
             $client = $clientFactory();
             $startedNs = hrtime(true);
@@ -177,6 +185,7 @@ function runMode(
             ]);
             $latenciesNs[] = $callEndNs - $startedNs;
             unset($client);
+            RpcGap::sleepBetweenCalls($rpcGapMs, $call + 1 < $calls);
         }
 
         return $calls;
@@ -236,7 +245,7 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(
         STDERR,
-        "Usage: php tools/benchmark/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite [--calls=20] [--payload-bytes=100]\n",
+        "Usage: php tools/benchmark/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite [--calls=20] [--payload-bytes=100] [--rpc-gap-ms=10]\n",
     );
     exit(2);
 }

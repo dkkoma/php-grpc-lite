@@ -342,6 +342,8 @@ official ext-grpc 1.58.0 の `GRPC_TRACE=http` には、SA JSON条件でも `BDP
 - 差分は `SELECT 1` のrequest write後からfirst response readまでに出ている。
 - official SA JSONだけが速い。official ADCはliteと同レンジ。
 - liteはSA JSON/ADCでほぼ同レンジ。つまり、credential処理のPHP CPUやtoken生成だけでは説明しない。
+- client-origin PING診断の一時実験は後続調査で破棄し、現在の調査軸から外した。
+- official ext-grpcは `grpc.http2.bdp_probe=0` でもSA JSONで速いため、BDP probe単独はofficial SA fast pathの必要条件ではない。
 - repeated request TLS write sizeはofficial/liteで違うが、official ADCは大きいwriteでも速くないため、write size単独でも説明しない。
 
 追加で、単独差分を小さく潰した。
@@ -357,6 +359,9 @@ official ext-grpc 1.58.0 の `GRPC_TRACE=http` には、SA JSON条件でも `BDP
 | lite `phpversion('grpc') = 1.58.0` | mean 20.8ms / p50 20.6ms | `x-goog-api-client`のgrpc version差ではない |
 | lite HTTP/2 receive window 1MiB | mean 22.1ms / p50 21.8ms | 8MiB window設定ではない |
 | lite HTTP/2 receive window 64KiB | mean 22.3ms / p50 21.7ms | window縮小は改善しない |
+
+
+2026-05-20 update: client-origin PING診断は実装候補から外した。以降の調査は `docs/issues/open/2026-05-20-spanner-gap-pacing-investigation.md` に移し、gap / pacing / wire timingを主軸にする。
 
 この段階で、次の候補は主因から外す。
 
@@ -697,4 +702,8 @@ HPACK dynamic table size 0 variantでは、`ExecuteStreamingSql` のHEADERS fram
 
 - officialの約1400B送信が、HTTP/2 frame列、TLS record、C-core scheduler/control frameのどの組み合わせから来ているか。
 - officialとliteで、Spanner frontendがresponseを開始する条件に効くwire/control stateが何か。
-- 単純なmetadata同一化、HPACK無効化、socket family同一化、BDP probe off、PING追加では説明できていない。
+- 単純なmetadata同一化、HPACK無効化、socket family同一化、BDP probe offでは説明できていない。
+
+### 2026-05-20以降の調査先
+
+client-origin PING診断はノイズが大きいため実装・調査軸から外した。以降のSpanner `SELECT 1` 遅延差調査は `docs/issues/open/2026-05-20-spanner-gap-pacing-investigation.md` で扱う。

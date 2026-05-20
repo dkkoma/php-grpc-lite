@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
@@ -22,6 +24,7 @@ $streams = 10;
 $messageCount = 100;
 $payloadSizes = [0, 100, 1024, 10 * 1024];
 $transport = 'native';
+$rpcGapMs = RpcGap::fromEnvironment();
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -57,6 +60,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
         $transport = substr($arg, strlen('--transport='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -86,9 +90,10 @@ foreach ($payloadSizes as $payloadBytes) {
         'benchmark.message_count' => $messageCount,
         'benchmark.payload_bytes' => $payloadBytes,
         'benchmark.transport' => $transport,
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ]);
     $streamLatenciesNs = [];
-    $sample = ResourceSampler::measure(static function () use ($client, $request, $streams, $benchTelemetry, &$streamLatenciesNs): int {
+    $sample = ResourceSampler::measure(static function () use ($client, $request, $streams, $rpcGapMs, $benchTelemetry, &$streamLatenciesNs): int {
         $messages = 0;
         for ($stream = 0; $stream < $streams; $stream++) {
             $streamStartNs = hrtime(true);
@@ -99,6 +104,7 @@ foreach ($payloadSizes as $payloadBytes) {
                 'rpc.method' => 'BenchServerStream',
             ]);
             $streamLatenciesNs[] = $streamEndNs - $streamStartNs;
+            RpcGap::sleepBetweenCalls($rpcGapMs, $stream + 1 < $streams);
         }
         return $messages;
     });
@@ -135,7 +141,7 @@ function parseIntList(string $value): array
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/payload-streaming.php --suite=payload-streaming --implementation=php-grpc-lite [--streams=10] [--message-count=100] [--payload-sizes=0,100,1024,10240]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/payload-streaming.php --suite=payload-streaming --implementation=php-grpc-lite [--streams=10] [--message-count=100] [--payload-sizes=0,100,1024,10240] [--rpc-gap-ms=0]\n");
     exit(2);
 }
 
