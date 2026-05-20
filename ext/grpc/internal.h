@@ -526,6 +526,7 @@ static void clear_connection_call_owner(h2_connection *connection, grpc_call *ca
 static void destroy_detached_connection_if_unowned(h2_connection *connection);
 static void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call);
 static int send_pending_h2_frames(h2_connection *connection, grpc_call *call);
+static int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
 static void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count);
 static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
 static void destroy_server_streaming_call_state(server_streaming_call_state *state);
@@ -540,7 +541,7 @@ static void build_authority(char *buffer, size_t buffer_len, const char *host, z
 static zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key);
 static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
 static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
-static bool preflight_persistent_connection(h2_connection *connection);
+static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);

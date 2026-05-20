@@ -12,6 +12,9 @@
 #include "transport_core.c"
 
 #define GRPC_LITE_H2_WRITE_COALESCE_CAPACITY 16384
+#define GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE 4096
+#define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
+#define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
 
 static void destroy_h2_connection(h2_connection *connection);
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
@@ -30,7 +33,8 @@ static void mark_connection_draining(h2_connection *connection, int32_t last_str
 static bool connection_usable(h2_connection *connection);
 static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
 static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
-static bool preflight_persistent_connection(h2_connection *connection);
+static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us);
+static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
@@ -42,6 +46,7 @@ static int configure_tls_connection(h2_connection *connection, const char *host,
 static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
 static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out);
 static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
+static int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
 static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
 static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
 static void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
@@ -825,7 +830,93 @@ static bool connection_entry_matches_key(persistent_connection_entry *entry, con
     return identity_matches(entry->connection_key_identity, key, key_len);
 }
 
-static bool preflight_persistent_connection(h2_connection *connection)
+static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us)
+{
+    uint8_t buffer[GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE];
+    size_t total_read = 0;
+    size_t iterations = 0;
+    bool reached_read_boundary = false;
+
+    if (!connection_usable(connection)) {
+        return false;
+    }
+
+    while (iterations < GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS && total_read < GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES) {
+        ssize_t nread;
+        iterations++;
+
+        if (connection->ssl != NULL) {
+            int ssl_read = SSL_read(connection->ssl, buffer, sizeof(buffer));
+            if (ssl_read > 0) {
+                nread = ssl_read;
+                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read", sizeof(buffer), nread, 0, 0);
+            } else {
+                int ssl_error = SSL_get_error(connection->ssl, ssl_read);
+                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read_retry", sizeof(buffer), ssl_read, ssl_error, 0);
+                connection->last_ssl_error = ssl_error;
+                if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+                    reached_read_boundary = true;
+                    break;
+                }
+                if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+                    set_connection_error_detail(connection, "persistent TLS connection closed by peer before reuse");
+                    mark_connection_dead(connection, 0);
+                } else {
+                    snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "persistent TLS connection preflight read failed: SSL_get_error=%d", ssl_error);
+                    mark_connection_dead(connection, ECONNRESET);
+                }
+                return false;
+            }
+        } else {
+            nread = recv(connection->fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+            if (nread == 0) {
+                set_connection_error_detail(connection, "persistent connection closed by peer before reuse");
+                mark_connection_dead(connection, 0);
+                return false;
+            }
+            if (nread < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    reached_read_boundary = true;
+                    break;
+                }
+                mark_connection_dead(connection, errno);
+                return false;
+            }
+            grpc_lite_trace_transport_io(connection, "wire.socket_preflight_read", sizeof(buffer), nread, 0, 0);
+        }
+
+        total_read += (size_t) nread;
+        ssize_t rv = nghttp2_session_mem_recv(connection->session, buffer, (size_t) nread);
+        if (rv < 0) {
+            snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "nghttp2_session_mem_recv failed during persistent preflight: %s", nghttp2_strerror((int) rv));
+            mark_connection_dead(connection, (int) rv);
+            return false;
+        }
+        if (!connection_usable(connection)) {
+            return false;
+        }
+        if (nghttp2_session_want_write(connection->session)) {
+            rv = send_pending_h2_frames_with_deadline(connection, NULL, deadline_abs_us);
+            if (rv != 0) {
+                if (connection->last_error_detail[0] == '\0') {
+                    snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "nghttp2_session_send failed during persistent preflight: %s", nghttp2_strerror((int) rv));
+                }
+                mark_connection_dead(connection, (int) rv);
+                return false;
+            }
+        }
+    }
+
+    if (!reached_read_boundary) {
+        set_connection_error_detail(connection, "persistent preflight drain limit exceeded");
+        mark_connection_draining(connection, 0, NGHTTP2_NO_ERROR);
+        return false;
+    }
+
+    return connection_usable(connection);
+}
+
+static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
 {
     char byte;
     ssize_t rv;
@@ -841,9 +932,7 @@ static bool preflight_persistent_connection(h2_connection *connection)
         rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
         ssl_error = SSL_get_error(connection->ssl, (int) rv);
         if (rv > 0) {
-            mark_connection_draining(connection, 0, NGHTTP2_NO_ERROR);
-            set_connection_error_detail(connection, "persistent TLS connection has pending control data before reuse");
-            return false;
+            return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
         }
         if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
             return true;
@@ -870,9 +959,7 @@ static bool preflight_persistent_connection(h2_connection *connection)
         return false;
     }
     if (rv > 0) {
-        mark_connection_draining(connection, 0, NGHTTP2_NO_ERROR);
-        set_connection_error_detail(connection, "persistent connection has pending control data before reuse");
-        return false;
+        return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
     }
 
     return true;
@@ -1554,7 +1641,7 @@ static h2_connection *get_persistent_connection(const char *key, size_t key_len,
         entry = NULL;
         connection = NULL;
     }
-    if (connection != NULL && !preflight_persistent_connection(connection)) {
+    if (connection != NULL && !preflight_persistent_connection(connection, deadline_abs_us)) {
         remove_unusable_persistent_connection(key, key_len, connection);
         entry = NULL;
         connection = NULL;
@@ -1710,7 +1797,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     return (ssize_t) length;
 }
 
-static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
+static int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us)
 {
     int rv;
 
@@ -1718,7 +1805,7 @@ static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
         return NGHTTP2_ERR_INVALID_ARGUMENT;
     }
     connection->current_io_call = call;
-    connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : connection->setup_deadline_abs_us;
+    connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : fallback_deadline_abs_us;
     connection->current_write_timed_out = false;
     connection->write_coalescing = connection->tls;
     connection->write_buffer_len = 0;
@@ -1748,6 +1835,15 @@ static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
     connection->write_coalescing = false;
     connection->write_buffer_len = 0;
     return rv;
+}
+
+static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
+{
+    return send_pending_h2_frames_with_deadline(
+        connection,
+        call,
+        connection != NULL ? connection->setup_deadline_abs_us : 0
+    );
 }
 
 static size_t remaining_request_bytes(grpc_call *call)
