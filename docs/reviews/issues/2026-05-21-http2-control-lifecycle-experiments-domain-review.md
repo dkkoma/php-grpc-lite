@@ -85,3 +85,20 @@
 - Medium: `none`
 - Low: `none`
 - Design Decision: `none`
+
+## Re-review 2026-05-21 initial SETTINGS handshake wait
+
+- Scope: `grpc_lite.http2_experimental_wait_initial_settings_ack`, `h2_connection` SETTINGS handshake state, `wait_initial_settings_handshake()`, setup deadline/error propagation, and issue documentation for the new experiment.
+- Result: no new domain model findings. The new INI is a default-off boolean diagnostic toggle, the SETTINGS handshake markers are owned by `h2_connection`, and the wait is modeled as connection setup lifecycle before first stream creation rather than as gRPC Call or PHP surface state.
+- SETTINGS ACK lifecycle: acceptable for this experiment. `peer_settings_received` tracks inbound peer `SETTINGS`; `client_settings_ack_received` tracks peer ACK of the client's initial `SETTINGS`; `wait_initial_settings_handshake()` drains inbound frames and flushes pending nghttp2 control frames before allowing the first RPC stream.
+- Deadline/error handling: acceptable for this experiment. The wait reuses the connection setup deadline, marks setup failures on the connection, and maps timeout to `HTTP/2 transport deadline exceeded` during connection creation.
+- Public/internal/diagnostic boundary: acceptable. The flag is `PHP_INI_SYSTEM`, boolean, default off, and documented as an experiment rather than production default behavior.
+- New issues from updated naming/docs: none.
+
+## Re-review Result: initial SETTINGS handshake wait
+
+- Blocker: `none`
+- High: `none`
+- Medium: `none`
+- Low: `none`
+- Design Decision: `none`

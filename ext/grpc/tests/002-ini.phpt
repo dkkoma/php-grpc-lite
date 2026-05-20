@@ -16,6 +16,7 @@ grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_stream_window_siz
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_connection_window_size'), 'connection window ini');
 grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_ext_grpc_158_settings_profile'), 'official settings experiment ini');
 grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_data_chunk_window_update'), 'response window update experiment ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_wait_initial_settings_ack'), 'wait settings ack experiment ini');
 grpc_lite_phpt_assert_same('32', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'read-ahead messages ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'read-ahead bytes ini');
 grpc_lite_phpt_assert_same('auto', ini_get('grpc_lite.backend'), 'backend ini');

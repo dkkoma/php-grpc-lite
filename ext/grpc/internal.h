@@ -471,6 +471,8 @@ struct _h2_connection {
     nghttp2_session_callbacks *callbacks;
     nghttp2_session *session;
     char authority[512];
+    bool peer_settings_received;
+    bool client_settings_ack_received;
     bool dead;
     bool draining;
     bool detached_from_cache;
@@ -624,6 +626,7 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     zend_long http2_connection_window_size;
     bool http2_experimental_ext_grpc_158_settings_profile;
     bool http2_experimental_data_chunk_window_update;
+    bool http2_experimental_wait_initial_settings_ack;
     zend_long server_streaming_read_ahead_max_messages;
     zend_long server_streaming_read_ahead_max_bytes;
     char *backend;

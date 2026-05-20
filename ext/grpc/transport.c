@@ -40,6 +40,7 @@ static bool connection_usable(h2_connection *connection);
 static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
 static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
 static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us);
+static bool wait_initial_settings_handshake(h2_connection *connection, uint64_t deadline_abs_us);
 static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
@@ -985,6 +986,49 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
     return connection_usable(connection);
 }
 
+static bool wait_initial_settings_handshake(h2_connection *connection, uint64_t deadline_abs_us)
+{
+    uint8_t buffer[GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE];
+
+    if (!connection_usable(connection)) {
+        return false;
+    }
+
+    while (connection_usable(connection)
+        && (!connection->peer_settings_received || !connection->client_settings_ack_received)) {
+        ssize_t nread = connection_recv(connection, buffer, sizeof(buffer), deadline_abs_us);
+        if (nread <= 0) {
+            if (nread == 0) {
+                set_connection_error_detail(connection, "connection closed while waiting for initial HTTP/2 settings handshake");
+                mark_connection_dead(connection, 0);
+            } else if (connection->last_error_detail[0] == '\0') {
+                snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "recv failed while waiting for initial HTTP/2 settings handshake: %s", strerror(errno));
+                mark_connection_dead(connection, errno);
+            }
+            return false;
+        }
+
+        ssize_t rv = nghttp2_session_mem_recv(connection->session, buffer, (size_t) nread);
+        if (rv < 0) {
+            snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "nghttp2_session_mem_recv failed while waiting for initial HTTP/2 settings handshake: %s", nghttp2_strerror((int) rv));
+            mark_connection_dead(connection, (int) rv);
+            return false;
+        }
+        if (nghttp2_session_want_write(connection->session)) {
+            rv = send_pending_h2_frames_with_deadline(connection, NULL, deadline_abs_us);
+            if (rv != 0) {
+                if (connection->last_error_detail[0] == '\0') {
+                    snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "nghttp2_session_send failed while waiting for initial HTTP/2 settings handshake: %s", nghttp2_strerror((int) rv));
+                }
+                mark_connection_dead(connection, (int) rv);
+                return false;
+            }
+        }
+    }
+
+    return connection_usable(connection);
+}
+
 static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
 {
     char byte;
@@ -1722,6 +1766,19 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         destroy_h2_connection(connection);
         return NULL;
     }
+    if (PHP_GRPC_LITE_G(http2_experimental_wait_initial_settings_ack)
+        && !wait_initial_settings_handshake(connection, deadline_abs_us)) {
+        if (connection->setup_timed_out || connection->last_io_errno == ETIMEDOUT) {
+            *error_message = "HTTP/2 transport deadline exceeded";
+        } else if (connection->last_error_detail[0] != '\0') {
+            snprintf(error_detail, error_detail_len, "%s", connection->last_error_detail);
+            *error_message = error_detail;
+        } else {
+            *error_message = "failed to complete initial HTTP/2 settings handshake";
+        }
+        destroy_h2_connection(connection);
+        return NULL;
+    }
     build_authority(connection->authority, sizeof(connection->authority), host, port, authority, authority_len);
     return connection;
 }
@@ -2168,6 +2225,15 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 
     if (frame->hd.type != NGHTTP2_HEADERS && frame->hd.type != NGHTTP2_DATA) {
         grpc_lite_trace_inbound_frame(connection, frame);
+    }
+
+    if (frame->hd.type == NGHTTP2_SETTINGS) {
+        if ((frame->hd.flags & NGHTTP2_FLAG_ACK) != 0) {
+            connection->client_settings_ack_received = true;
+        } else {
+            connection->peer_settings_received = true;
+        }
+        return 0;
     }
 
     if (frame->hd.type == NGHTTP2_GOAWAY) {
