@@ -60,6 +60,33 @@ real Spanner `ExecuteStreamingSql SELECT 1` のSA JSON差について、official
 | grpc-lite | SA JSON | 22.237ms | 21.723ms | 25.298ms | 25.718ms | 569 |
 | grpc-lite | ADC | 22.090ms | 22.060ms | 25.326ms | 26.765ms | 602 |
 
+## tcpdump + trace 相関
+
+4条件について、少数試行で同一コンテナ内 `tcpdump` とframe traceを同時取得した。RPCごとにmarkerを出し、marker区間内の最後のclient outbound payload/frameから最初のserver inbound payload/frameまでを比較した。
+
+- 実行日時: 2026-05-21
+- iteration: 10
+- raw data: `var/bench-results/select1-four-variant-tcpdump-trace-20260521-053648/`
+- capture: container内 `tcpdump -i any -nn -s 0 -w ... 'tcp port 443'`
+- marker: `epoch_us` と `mono_us` をRPC開始/終了で出力
+- official trace時刻: diagnostic patchの `gettimeofday()` epoch usec
+- grpc-lite trace時刻: `monotonic_us()` monotonic usec
+
+| variant | credential | elapsed p50 | tcp last outbound payload -> first inbound payload p50 | trace last outbound frame -> first inbound frame p50 |
+|---|---|---:|---:|---:|
+| official ext-grpc | SA JSON | 13.461ms | 9.854ms | 10.402ms |
+| official ext-grpc | ADC | 20.153ms | 16.423ms | 17.249ms |
+| grpc-lite | SA JSON | 22.585ms | 19.168ms | 19.688ms |
+| grpc-lite | ADC | 24.547ms | 19.833ms | 20.520ms |
+
+補足:
+
+- tcpdumpとtraceは同じ区間差を見ている。各variantでtcpとtraceの差は概ね1ms以内で、計測点の違いとして説明できる範囲。
+- 4条件すべて、requestはmarker開始後およそ1〜2msでclient outbound payload/frameまで進む。差の大半はその後のfirst inbound response到着までにある。
+- official SA JSONのみ、serverがresponseを開始するまでのwire gapが約10msで、official ADC / grpc-lite SA / grpc-lite ADCは約16〜20ms。
+- tcpdump上のclient outbound payload countはp50で各条件1個。今回のSELECT 1では、単純なTCP packet分割数の差は主因ではない。
+- この計測のため、grpc-lite診断traceにnghttp2 begin-frame hookを追加し、inbound `HEADERS` / `DATA` のframe境界もpayloadなしで記録できるようにした。
+
 ## HTTP/2 frame count summary
 
 | variant | frame | count |
@@ -85,13 +112,13 @@ real Spanner `ExecuteStreamingSql SELECT 1` のSA JSON差について、official
 - official ext-grpcはper-RPCで多数のoutbound `WINDOW_UPDATE` を出している。grpc-liteは初期connection `WINDOW_UPDATE` 以外を出していない。
 - official ext-grpcのinitial `SETTINGS` payloadは36 bytes、grpc-liteは12 bytes。`SETTINGS`差とその後の`WINDOW_UPDATE` lifecycleは次の確認対象。
 - official SAの `out HEADERS -> first inbound stream frame` p50は約10.5ms、official ADCは約18.5ms。差はrequest frame送信後からresponse frame到着までに集中している。
+- tcpdump同時取得でも同じ傾向を確認した。クライアント内traceだけの見かけではなく、wire上のfirst inbound payload到着時刻として差が出ている。
 
 ## 次の確認対象
 
 1. official ext-grpcのinitial `SETTINGS` payload内容を特定し、grpc-liteとの差を表にする。
 2. official ext-grpcのper-RPC `WINDOW_UPDATE` がstream/connectionどちらで、どのタイミング・incrementで出ているか確認する。
-3. grpc-lite側traceをinbound HEADERS/DATA frame境界まで出せるようにし、officialと同じ `out HEADERS -> first inbound HEADERS/DATA/trailers` の比較を可能にする。
-4. `SETTINGS` / `WINDOW_UPDATE` 差をgrpc-liteに小さく反映した実験branchを作り、SA JSON gapが縮むか確認する。
+3. `SETTINGS` / `WINDOW_UPDATE` 差をgrpc-liteに小さく反映した実験branchを作り、SA JSON gapが縮むか確認する。
 
 ## 判断ログ
 

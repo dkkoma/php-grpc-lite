@@ -63,6 +63,7 @@ static void grpc_lite_trace_open_and_lock(FILE **fp);
 static void grpc_lite_trace_unlock_and_close(FILE *fp);
 static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length);
 static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghttp2_frame *frame);
+static void grpc_lite_trace_inbound_frame_header(h2_connection *connection, const nghttp2_frame_hd *hd);
 static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 static size_t remaining_request_bytes(grpc_call *call);
 static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
@@ -71,6 +72,7 @@ static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
+static int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data);
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 static uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
@@ -346,6 +348,7 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(*callbacks, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_header_callback(*callbacks, on_header_callback);
     nghttp2_session_callbacks_set_on_stream_close_callback(*callbacks, on_stream_close_callback);
+    nghttp2_session_callbacks_set_on_begin_frame_callback(*callbacks, on_begin_frame_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(*callbacks, on_frame_recv_callback);
     return 0;
 }
@@ -681,6 +684,34 @@ static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghtt
     } else if (frame->hd.type == NGHTTP2_PING && grpc_lite_trace_wire_bytes_enabled()) {
         fprintf(fp, ",\"payload_hex\":");
         grpc_lite_trace_hex(fp, frame->ping.opaque_data, sizeof(frame->ping.opaque_data));
+    }
+    fputs("}\n", fp);
+    grpc_lite_trace_unlock_and_close(fp);
+}
+
+static void grpc_lite_trace_inbound_frame_header(h2_connection *connection, const nghttp2_frame_hd *hd)
+{
+    FILE *fp;
+    grpc_call *call;
+
+    if (connection == NULL || hd == NULL || grpc_lite_trace_file_path() == NULL) {
+        return;
+    }
+    if (hd->type != NGHTTP2_HEADERS && hd->type != NGHTTP2_DATA) {
+        return;
+    }
+
+    call = grpc_call_from_stream_id(connection, hd->stream_id);
+    grpc_lite_trace_open_and_lock(&fp);
+    if (fp == NULL) {
+        return;
+    }
+    fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.frame_in\",\"stream_id\":%d,\"frame_type\":", monotonic_us(), (long) getpid(), hd->stream_id);
+    grpc_lite_trace_json_string(fp, grpc_lite_h2_frame_type_name(hd->type), strlen(grpc_lite_h2_frame_type_name(hd->type)));
+    fprintf(fp, ",\"frame_type_id\":%u,\"flags\":%u,\"frame_payload_len\":%zu", (unsigned) hd->type, (unsigned) hd->flags, hd->length);
+    if (call != NULL && call->method_path != NULL) {
+        fprintf(fp, ",\"rpc_method\":");
+        grpc_lite_trace_json_string(fp, ZSTR_VAL(call->method_path), ZSTR_LEN(call->method_path));
     }
     fputs("}\n", fp);
     grpc_lite_trace_unlock_and_close(fp);
@@ -2098,13 +2129,24 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     return 0;
 }
 
+static int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    (void) session;
+
+    grpc_lite_trace_inbound_frame_header(connection, hd);
+    return 0;
+}
+
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     (void) session;
 
-    grpc_lite_trace_inbound_frame(connection, frame);
+    if (frame->hd.type != NGHTTP2_HEADERS && frame->hd.type != NGHTTP2_DATA) {
+        grpc_lite_trace_inbound_frame(connection, frame);
+    }
 
     if (frame->hd.type == NGHTTP2_GOAWAY) {
         if (connection != NULL) {
