@@ -542,3 +542,43 @@ trace自体の影響を避けるため、trace/tcpdumpなしで300 iterationsの
 - 「RPCごとに10ms sleepを入れればgrpc-liteはext-grpcくらい速いのでは」という仮説は、p50では概ね支持される。
 - ただし、sleep/gapは実装として入れるものではない。ext-grpc 1.58.0はgapなしで速いため、目標はsleepを入れることではなく、grpc-liteのgapなし連続RPCでも同じconnection/control stateに近づけることである。
 - 重要な差分は `grpc-lite gap 0ms` と `grpc-lite gap 10ms` の間にあり、ext-grpc側では同じgap効果が出ない。ここが次の根本原因調査対象である。
+
+#### trace + tcpdump exact correlation
+
+後から再確認できるように、raw pcap / tcpdump text / grpc-lite trace / markerをgit管理外の `var/issue5-bdp-matrix/tcpdump-gap-dual-marker-20260520-2132/` に保存した。
+
+このrunではPHP markerに `epoch_us` と `mono_us` の両方を出し、tcpdumpのepoch時刻とgrpc-lite traceのmonotonic時刻を同じRPC windowへ対応付けた。
+
+条件:
+
+- impl: grpc-lite
+- active PING: off
+- credentials: service-account JSON
+- RPC: warmed `ExecuteStreamingSql SELECT 1`
+- iterations: 100
+- compared gaps: `0ms`, `10ms`
+- saved files per case: `.pcap`, `.tcpdump.log`, `.tcpdump.err`, `.trace.jsonl`, `.markers.log`, `.summary.log`
+- analyzer output: `analysis.log`
+
+結果:
+
+| gap | elapsed p50 | trace first request frame | trace last request frame | trace first response frame | trace last request -> first response | tcp first outbound payload | tcp first inbound payload | tcp last outbound -> first inbound | SYN | gap control frames |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0ms | 25.034ms | 1.339ms | 1.541ms | 23.083ms | 22.105ms | 1.646ms | 22.810ms | 21.465ms | 1 | 0 |
+| 10ms | 15.186ms | 1.959ms | 2.185ms | 13.216ms | 10.959ms | 2.357ms | 12.267ms | 9.883ms | 1 | 0 |
+
+観測:
+
+- TCP connectionは両条件ともrun開始時のSYN 1回のみ。connection churnではない。
+- request送信開始/完了はgap 10msの方がむしろ少し遅い。clientが早く送れているから速い、ではない。
+- 差は `last outbound request frame -> first response frame` と `last outbound TCP payload -> first inbound TCP payload` に集中している。
+- inter-RPC gap中のHTTP/2 control frameは両条件とも0。gap 10msが速い理由は「gap中にserver PING/ACK/SETTINGS/WINDOW_UPDATEを処理したから」ではない。
+- RPC window内のcontrol frame countは両条件ともp50で2。server-origin PINGとclient ACKの基本形は変わっていない。
+- outbound/inbound payload packet countもほぼ同じで、wire data shapeが変わって速くなっているわけではない。
+
+判断:
+
+- gap 10msの改善は、client側のHTTP/2 control frame処理完了やpacket shape差では説明しにくい。
+- clientは同じようにrequestを送り、その後のserver/GFE/Spanner側のfirst response packet/frame到着が早くなっている。
+- したがって本命仮説は、grpc-liteのgapなし連続RPCがpeer側のrequest pacing / fairness / scheduler windowに引っかかり、10ms gapでその状態を避けている、という方向に寄る。
+- active PINGはこのpeer側状態へ働きかける別手段だった可能性があるが、PINGそのものを採用する根拠ではない。
