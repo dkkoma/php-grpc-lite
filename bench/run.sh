@@ -38,6 +38,15 @@ export SPANNER_EMULATOR_HOST="${SPANNER_EMULATOR_HOST:-spanner-emulator:9010}"
 export NO_PROXY="${NO_PROXY:-test-server,spanner-emulator,toxiproxy,otelop,localhost,127.0.0.1}"
 export no_proxy="${no_proxy:-$NO_PROXY}"
 
+case "$suite" in
+    rtt-unary|spanner-shape|tls-spanner-shape|spanner-real-client|cpu-spanner-real-client)
+        export BENCH_RPC_GAP_MS="${BENCH_RPC_GAP_MS:-10}"
+        ;;
+    *)
+        export BENCH_RPC_GAP_MS="${BENCH_RPC_GAP_MS:-0}"
+        ;;
+esac
+
 if [[ "$implementation" == "ext-grpc" ]]; then
     container_service="${BENCH_CONTAINER_SERVICE:-dev-ext-grpc}"
     autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
@@ -61,6 +70,7 @@ run_benchmark_php() {
         BENCH_OTEL_RUN_ID \
         OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
         OTEL_EXPORTER_OTLP_ENDPOINT \
+        BENCH_RPC_GAP_MS \
         SPANNER_EMULATOR_HOST \
         NO_PROXY \
         no_proxy

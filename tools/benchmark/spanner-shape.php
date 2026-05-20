@@ -2,12 +2,14 @@
 declare(strict_types=1);
 
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
 use Grpc\ChannelCredentials;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
@@ -23,6 +25,7 @@ $warmupCalls = 10;
 $nativeResponseMode = 'stream';
 $transport = 'native';
 $tlsRoot = '';
+$rpcGapMs = RpcGap::fromEnvironment();
 
 $unaryCases = [
     ['name' => 'begin_txn_unary', 'request_bytes' => 92, 'response_bytes' => 18],
@@ -73,6 +76,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $tlsRoot = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--tls-root=')) {
         $tlsRoot = substr($arg, strlen('--tls-root='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -111,6 +115,7 @@ foreach ($unaryCases as $case) {
         'benchmark.request_bytes' => $case['request_bytes'],
         'benchmark.response_bytes' => $case['response_bytes'],
         'benchmark.operation_shape' => $case['name'],
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ]);
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
         UnaryBenchHelper::call($unaryClient, $request);
@@ -129,6 +134,7 @@ foreach ($unaryCases as $case) {
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchUnary',
             ], $statusCode);
+            RpcGap::sleepBetweenCalls($rpcGapMs, $call + 1 < $calls);
         }
     }
 }
@@ -142,6 +148,7 @@ foreach ($streamingCases as $case) {
         'benchmark.message_count' => $case['message_count'],
         'benchmark.native_response_mode' => $nativeResponseMode,
         'benchmark.operation_shape' => $case['name'],
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ]);
     for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
         StreamingBenchHelper::drain($streamingClient, $request);
@@ -160,6 +167,7 @@ foreach ($streamingCases as $case) {
                 'rpc.service' => 'helloworld.Greeter',
                 'rpc.method' => 'BenchServerStream',
             ], $statusCode);
+            RpcGap::sleepBetweenCalls($rpcGapMs, $call + 1 < $calls);
         }
     }
 }
@@ -215,6 +223,6 @@ function isTlsSuite(string $suite): bool
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/spanner-shape.php --suite=spanner-shape|tls-spanner-shape --implementation=php-grpc-lite [--calls=1000] [--warmup-calls=10] [--tls-root=...]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/spanner-shape.php --suite=spanner-shape|tls-spanner-shape --implementation=php-grpc-lite [--calls=1000] [--warmup-calls=10] [--tls-root=...] [--rpc-gap-ms=10]\n");
     exit(2);
 }

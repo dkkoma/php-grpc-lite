@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
@@ -24,6 +26,7 @@ $payloadBytes = 100;
 $serverDelayMs = 0;
 $warmupStreams = 1;
 $transport = 'native';
+$rpcGapMs = RpcGap::fromEnvironment();
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -67,6 +70,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
         $transport = substr($arg, strlen('--transport='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -97,6 +101,7 @@ $benchTelemetry->setContext('throughput_streaming', [
     'benchmark.server_delay_ms' => $serverDelayMs,
     'benchmark.warmup_streams' => $warmupStreams,
     'benchmark.transport' => $transport,
+    'benchmark.rpc_gap_ms' => $rpcGapMs,
 ]);
 for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {
     StreamingBenchHelper::drain($client, $request);
@@ -104,7 +109,7 @@ for ($warmup = 0; $warmup < $warmupStreams; $warmup++) {
 
 $streamLatenciesNs = [];
 $deadlineNs = (int) round($durationSec * 1_000_000_000);
-$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $benchTelemetry, &$streamLatenciesNs): int {
+$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $rpcGapMs, $benchTelemetry, &$streamLatenciesNs): int {
     $startedNs = hrtime(true);
     $messages = 0;
 
@@ -117,6 +122,7 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $d
             'rpc.method' => 'BenchServerStream',
         ]);
         $streamLatenciesNs[] = $streamEndNs - $streamStartNs;
+        RpcGap::sleepBetweenCalls($rpcGapMs, hrtime(true) - $startedNs < $deadlineNs);
     } while (hrtime(true) - $startedNs < $deadlineNs);
 
     return $messages;
@@ -143,7 +149,7 @@ echo "OTEL spans exported.\n";
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/throughput-streaming.php --suite=throughput-streaming --implementation=php-grpc-lite [--duration=3] [--message-count=1000] [--payload-bytes=100]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/throughput-streaming.php --suite=throughput-streaming --implementation=php-grpc-lite [--duration=3] [--message-count=1000] [--payload-bytes=100] [--rpc-gap-ms=0]\n");
     exit(2);
 }
 

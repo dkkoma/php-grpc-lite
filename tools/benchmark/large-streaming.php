@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 
 $args = $argv;
@@ -18,6 +20,7 @@ $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $messageCounts = [10_000, 100_000];
 $payloadBytes = 100;
+$rpcGapMs = RpcGap::fromEnvironment();
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -45,6 +48,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $payloadBytes = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--payload-bytes=')) {
         $payloadBytes = (int) substr($arg, strlen('--payload-bytes='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -68,6 +72,7 @@ foreach ($messageCounts as $messageCount) {
         'benchmark.target' => $target,
         'benchmark.message_count' => $messageCount,
         'benchmark.payload_bytes' => $payloadBytes,
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ]);
     $sample = ResourceSampler::measure(static function () use ($benchTelemetry, $client, $request): int {
         $streamStartNs = hrtime(true);
@@ -105,7 +110,7 @@ function parseIntList(string $value): array
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/large-streaming.php --suite=large-streaming --implementation=php-grpc-lite [--message-counts=10000,100000] [--payload-bytes=100]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/large-streaming.php --suite=large-streaming --implementation=php-grpc-lite [--message-counts=10000,100000] [--payload-bytes=100] [--rpc-gap-ms=0]\n");
     exit(2);
 }
 

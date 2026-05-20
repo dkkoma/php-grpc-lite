@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 
 use Google\Cloud\Spanner\Database;
 use Google\Cloud\Spanner\SpannerClient;
@@ -10,6 +11,7 @@ use PhpGrpcLite\Tests\Integration\Fixtures\Spanner\DatabaseAdminGrpcClient;
 use PhpGrpcLite\Tests\Integration\Fixtures\Spanner\InstanceAdminGrpcClient;
 use PhpGrpcLite\Tests\Integration\Fixtures\Spanner\SpannerEnv;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 
 $args = $argv;
 array_shift($args);
@@ -22,6 +24,7 @@ $warmupCalls = 5;
 $calls = 100;
 $transport = 'native';
 $cpuSummaryOnly = false;
+$rpcGapMs = RpcGap::fromEnvironment();
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -55,6 +58,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = substr($arg, strlen('--transport='));
     } elseif ($arg === '--cpu-summary-only') {
         $cpuSummaryOnly = true;
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -101,10 +105,10 @@ try {
     seedSelectRow($database);
     warmup($database, $warmupCalls);
 
-    measureSelect($benchTelemetry, $database, $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
-    measureDml($benchTelemetry, $database, 'dml_insert_10col', $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
-    measureDml($benchTelemetry, $database, 'dml_update_10col', $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
-    measureDml($benchTelemetry, $database, 'dml_delete_10col', $calls, $target, $transport, $warmupCalls, $cpuSummaryOnly);
+    measureSelect($benchTelemetry, $database, $calls, $target, $transport, $warmupCalls, $rpcGapMs, $cpuSummaryOnly);
+    measureDml($benchTelemetry, $database, 'dml_insert_10col', $calls, $target, $transport, $warmupCalls, $rpcGapMs, $cpuSummaryOnly);
+    measureDml($benchTelemetry, $database, 'dml_update_10col', $calls, $target, $transport, $warmupCalls, $rpcGapMs, $cpuSummaryOnly);
+    measureDml($benchTelemetry, $database, 'dml_delete_10col', $calls, $target, $transport, $warmupCalls, $rpcGapMs, $cpuSummaryOnly);
 } finally {
     if ($instanceName !== null) {
         SpannerEnv::deleteInstance($instanceAdmin, $instanceId);
@@ -154,9 +158,10 @@ function measureSelect(
     string $target,
     string $transport,
     int $warmupCalls,
+    int $rpcGapMs,
     bool $cpuSummaryOnly,
 ): void {
-    $benchTelemetry->setContext('small_select_1row_10col', commonContext($target, $calls, $transport, $warmupCalls) + [
+    $benchTelemetry->setContext('small_select_1row_10col', commonContext($target, $calls, $transport, $warmupCalls, $rpcGapMs) + [
         'benchmark.spanner_api' => 'Transaction::execute',
         'benchmark.operation_shape' => 'select_1row_10col',
         'benchmark.transaction_scope' => 'pre_started_read_write',
@@ -165,7 +170,7 @@ function measureSelect(
     ]);
 
     if ($cpuSummaryOnly) {
-        recordCpuSummary($benchTelemetry, $calls, static function () use ($database): void {
+        recordCpuSummary($benchTelemetry, $calls, $rpcGapMs, static function () use ($database): void {
             $transaction = $database->transaction();
             try {
                 drainSelect($transaction);
@@ -192,6 +197,7 @@ function measureSelect(
                 'rpc.method' => 'ExecuteStreamingSql',
             ], $statusCode);
             rollbackActive($transaction);
+            RpcGap::sleepBetweenCalls($rpcGapMs, $index + 1 < $calls);
         }
     }
 }
@@ -204,9 +210,10 @@ function measureDml(
     string $target,
     string $transport,
     int $warmupCalls,
+    int $rpcGapMs,
     bool $cpuSummaryOnly,
 ): void {
-    $benchTelemetry->setContext($measurement, commonContext($target, $calls, $transport, $warmupCalls) + [
+    $benchTelemetry->setContext($measurement, commonContext($target, $calls, $transport, $warmupCalls, $rpcGapMs) + [
         'benchmark.spanner_api' => 'Transaction::executeUpdate',
         'benchmark.operation_shape' => $measurement,
         'benchmark.transaction_scope' => 'pre_started_read_write',
@@ -219,7 +226,7 @@ function measureDml(
             seedDmlRows($database, $measurement, $calls);
         }
 
-        recordCpuSummary($benchTelemetry, $calls, static function (int $index) use ($database, $measurement): void {
+        recordCpuSummary($benchTelemetry, $calls, $rpcGapMs, static function (int $index) use ($database, $measurement): void {
             $id = operationId($measurement, $index);
             $transaction = $database->transaction();
             try {
@@ -268,12 +275,13 @@ function measureDml(
                 'rpc.method' => 'ExecuteStreamingSql',
             ], $statusCode);
             rollbackActive($transaction);
+            RpcGap::sleepBetweenCalls($rpcGapMs, $index + 1 < $calls);
         }
     }
 }
 
 /** @return array<string, int|string> */
-function commonContext(string $target, int $calls, string $transport, int $warmupCalls): array
+function commonContext(string $target, int $calls, string $transport, int $warmupCalls, int $rpcGapMs): array
 {
     return [
         'benchmark.target' => $target,
@@ -281,6 +289,7 @@ function commonContext(string $target, int $calls, string $transport, int $warmu
         'benchmark.warmup_calls' => $warmupCalls,
         'benchmark.transport' => $transport,
         'benchmark.spanner_path' => 'google-cloud-spanner',
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ];
 }
 
@@ -312,12 +321,13 @@ function seedDmlRows(Database $database, string $measurement, int $calls): void
     }
 }
 
-function recordCpuSummary(BenchTelemetry $benchTelemetry, int $calls, callable $operation): void
+function recordCpuSummary(BenchTelemetry $benchTelemetry, int $calls, int $rpcGapMs, callable $operation): void
 {
     $usageStart = getrusage();
     $startNs = hrtime(true);
     for ($index = 0; $index < $calls; $index++) {
         $operation($index);
+        RpcGap::sleepBetweenCalls($rpcGapMs, $index + 1 < $calls);
     }
     $endNs = hrtime(true);
     $usageEnd = getrusage();
@@ -388,6 +398,6 @@ function deleteSql(int $id): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/spanner-real-client.php --suite=spanner-real-client --implementation=php-grpc-lite [--calls=100] [--warmup-calls=5] [--target=spanner-emulator:9010] [--cpu-summary-only]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/spanner-real-client.php --suite=spanner-real-client --implementation=php-grpc-lite [--calls=100] [--warmup-calls=5] [--target=spanner-emulator:9010] [--cpu-summary-only] [--rpc-gap-ms=10]\n");
     exit(2);
 }

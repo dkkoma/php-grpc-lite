@@ -22,6 +22,8 @@ BENCH_OTEL_RUN_ID=local-spanner-shape ./bench/compare.sh spanner-shape
 BENCH_OTEL_RUN_ID=local-spanner-real ./bench/compare.sh spanner-real-client
 ```
 
+`rtt-unary` / `spanner-shape` / `tls-spanner-shape` / `spanner-real-client` / `cpu-spanner-real-client` は、通常の比較線ではRPC span記録後から次RPC開始前に10msのinter-RPC gapを入れる。gapはspan外なのでRPC latency percentileには含めない。値は `BENCH_RPC_GAP_MS=0` または `--rpc-gap-ms=0` で上書きでき、OTEL spanには `benchmark.rpc_gap_ms` として記録する。sustained throughput系は最大処理量を見るため既定gapは0msのままにする。
+
 ## Runner
 
 単独実行で比較対象を切り替える場合は `BENCH_IMPLEMENTATION=ext-grpc` を指定する。ext-grpc 側は `dev-ext-grpc` と `vendor/autoload.php` を使う。実行後は同じrun idのspanを `otelop-summary.php` で集計する。
@@ -29,6 +31,7 @@ BENCH_OTEL_RUN_ID=local-spanner-real ./bench/compare.sh spanner-real-client
 ```bash
 ./bench/run.sh throughput-unary --duration=5 --payload-bytes=100
 BENCH_IMPLEMENTATION=ext-grpc ./bench/run.sh throughput-unary --duration=5 --payload-bytes=100
+BENCH_RPC_GAP_MS=10 ./bench/compare.sh throughput-unary --duration=5
 ```
 
 ## OTEL export

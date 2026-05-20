@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 require __DIR__ . '/ResourceSampler.php';
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
 use PhpGrpcLite\Tools\Benchmark\ResourceSampler;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
 $args = $argv;
@@ -21,6 +23,7 @@ $payloadBytes = 100;
 $serverDelayMs = 0;
 $warmupCalls = 10;
 $transport = 'native';
+$rpcGapMs = RpcGap::fromEnvironment();
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -60,6 +63,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $transport = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--transport=')) {
         $transport = substr($arg, strlen('--transport='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -89,6 +93,7 @@ $benchTelemetry->setContext('throughput_unary', [
     'benchmark.server_delay_ms' => $serverDelayMs,
     'benchmark.warmup_calls' => $warmupCalls,
     'benchmark.transport' => $transport,
+    'benchmark.rpc_gap_ms' => $rpcGapMs,
 ]);
 for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
     UnaryBenchHelper::call($client, $request);
@@ -96,7 +101,7 @@ for ($warmup = 0; $warmup < $warmupCalls; $warmup++) {
 
 $latenciesNs = [];
 $deadlineNs = (int) round($durationSec * 1_000_000_000);
-$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $benchTelemetry, &$latenciesNs): int {
+$sample = ResourceSampler::measure(static function () use ($client, $request, $deadlineNs, $rpcGapMs, $benchTelemetry, &$latenciesNs): int {
     $startedNs = hrtime(true);
     $calls = 0;
 
@@ -110,6 +115,7 @@ $sample = ResourceSampler::measure(static function () use ($client, $request, $d
         ]);
         $latenciesNs[] = $callEndNs - $callStartNs;
         $calls++;
+        RpcGap::sleepBetweenCalls($rpcGapMs, hrtime(true) - $startedNs < $deadlineNs);
     } while (hrtime(true) - $startedNs < $deadlineNs);
 
     return $calls;
@@ -150,7 +156,7 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(
         STDERR,
-        "Usage: php tools/benchmark/throughput-unary.php --suite=throughput-unary --implementation=php-grpc-lite [--target=test-server:50051] [--duration=3] [--payload-bytes=100] [--server-delay-ms=0]\n",
+        "Usage: php tools/benchmark/throughput-unary.php --suite=throughput-unary --implementation=php-grpc-lite [--target=test-server:50051] [--duration=3] [--payload-bytes=100] [--server-delay-ms=0] [--rpc-gap-ms=0]\n",
     );
     exit(2);
 }

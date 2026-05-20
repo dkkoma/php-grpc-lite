@@ -2,12 +2,14 @@
 declare(strict_types=1);
 
 require __DIR__ . '/BenchTelemetry.php';
+require __DIR__ . '/RpcGap.php';
 require __DIR__ . '/StreamingBenchHelper.php';
 require __DIR__ . '/UnaryBenchHelper.php';
 
 use Helloworld\BenchRequest;
 use Grpc\ChannelCredentials;
 use PhpGrpcLite\Tools\Benchmark\BenchTelemetry;
+use PhpGrpcLite\Tools\Benchmark\RpcGap;
 use PhpGrpcLite\Tools\Benchmark\StreamingBenchHelper;
 use PhpGrpcLite\Tools\Benchmark\UnaryBenchHelper;
 
@@ -23,6 +25,7 @@ $warmupCalls = 100;
 $nativeResponseMode = 'stream';
 $transport = 'native';
 $tlsRoot = '';
+$rpcGapMs = RpcGap::fromEnvironment();
 
 for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
     $arg = $args[$argIndex];
@@ -62,6 +65,7 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $tlsRoot = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--tls-root=')) {
         $tlsRoot = substr($arg, strlen('--tls-root='));
+    } elseif (RpcGap::consumeArgument($arg, $args, $argIndex, $rpcGapMs)) {
     } else {
         usage("unexpected argument: $arg");
     }
@@ -205,7 +209,7 @@ printf(
 printf("%'-116s\n", '');
 
 foreach ($cases as $case) {
-    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport, isTlsSuite($suite)) + [
+    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport, isTlsSuite($suite), $rpcGapMs) + [
         'benchmark.call_type' => $case['call_type'],
         'benchmark.request_bytes' => $case['request_bytes'],
         'benchmark.response_bytes' => $case['response_bytes'],
@@ -216,7 +220,7 @@ foreach ($cases as $case) {
     ]);
 
     runWarmup($case, $unaryClient, $streamingClient, $target, $clientOptions, $warmupCalls);
-    $result = measureCase($case, $unaryClient, $streamingClient, $target, $clientOptions, $calls);
+    $result = measureCase($case, $unaryClient, $streamingClient, $target, $clientOptions, $calls, $rpcGapMs);
 
     printf(
         "%-32s %-16s %8d %14.1f %14.1f %14.1f %14.1f\n",
@@ -257,7 +261,7 @@ function streamingRequest(int $messageCount, int $requestBytes, int $responseByt
 }
 
 /** @return array<string, int|string> */
-function commonContext(string $target, int $calls, int $warmupCalls, string $transport, bool $tls): array
+function commonContext(string $target, int $calls, int $warmupCalls, string $transport, bool $tls, int $rpcGapMs): array
 {
     return [
         'benchmark.target' => $target,
@@ -266,6 +270,7 @@ function commonContext(string $target, int $calls, int $warmupCalls, string $tra
         'benchmark.transport' => $transport,
         'benchmark.security' => $tls ? 'tls' : 'h2c',
         'benchmark.cpu_source' => 'getrusage',
+        'benchmark.rpc_gap_ms' => $rpcGapMs,
     ];
 }
 
@@ -281,12 +286,13 @@ function runWarmup(array $case, object $unaryClient, object $streamingClient, st
  * @param array<string, mixed> $case
  * @return array<string, float|int>
  */
-function measureCase(array $case, object $unaryClient, object $streamingClient, string $target, array $clientOptions, int $calls): array
+function measureCase(array $case, object $unaryClient, object $streamingClient, string $target, array $clientOptions, int $calls, int $rpcGapMs): array
 {
     $usageStart = getrusage();
     $startNs = hrtime(true);
     for ($call = 0; $call < $calls; $call++) {
         runOneCall($case, $unaryClient, $streamingClient, $target, $clientOptions);
+        RpcGap::sleepBetweenCalls($rpcGapMs, $call + 1 < $calls);
     }
     $endNs = hrtime(true);
     $usageEnd = getrusage();
@@ -358,6 +364,6 @@ function rusageTimeUs(array $usage, string $prefix): float
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/cpu-micro.php --suite=cpu-micro|tls-cpu-micro --implementation=php-grpc-lite [--calls=5000] [--warmup-calls=100] [--tls-root=...]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/cpu-micro.php --suite=cpu-micro|tls-cpu-micro --implementation=php-grpc-lite [--calls=5000] [--warmup-calls=100] [--tls-root=...] [--rpc-gap-ms=0]\n");
     exit(2);
 }
