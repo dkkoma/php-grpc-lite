@@ -16,6 +16,12 @@
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
 
+enum {
+    GRPC_LITE_EXT_GRPC_158_HTTP2_WINDOW_SIZE = 4194304,
+    GRPC_LITE_EXT_GRPC_158_HTTP2_MAX_HEADER_LIST_SIZE = 16384,
+    GRPC_LITE_EXT_GRPC_158_SETTINGS_GRPC_ALLOW_TRUE_BINARY_METADATA = 65027,
+};
+
 static void destroy_h2_connection(h2_connection *connection);
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
 static void detach_persistent_connection_by_ptr(h2_connection *connection);
@@ -1675,24 +1681,35 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         *error_message = "failed to create nghttp2 session";
         return NULL;
     }
-    {
+    if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_settings_profile)) {
+        nghttp2_settings_entry settings[] = {
+            { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
+            { NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 0 },
+            { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, GRPC_LITE_EXT_GRPC_158_HTTP2_WINDOW_SIZE },
+            { NGHTTP2_SETTINGS_MAX_FRAME_SIZE, GRPC_LITE_EXT_GRPC_158_HTTP2_WINDOW_SIZE },
+            { NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, GRPC_LITE_EXT_GRPC_158_HTTP2_MAX_HEADER_LIST_SIZE },
+            { GRPC_LITE_EXT_GRPC_158_SETTINGS_GRPC_ALLOW_TRUE_BINARY_METADATA, 1 },
+        };
+        rv = nghttp2_submit_settings(connection->session, NGHTTP2_FLAG_NONE, settings, sizeof(settings) / sizeof(settings[0]));
+        connection_window_size = GRPC_LITE_EXT_GRPC_158_HTTP2_WINDOW_SIZE;
+    } else {
         nghttp2_settings_entry settings[] = {
             { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
             { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, stream_window_size },
         };
         rv = nghttp2_submit_settings(connection->session, NGHTTP2_FLAG_NONE, settings, sizeof(settings) / sizeof(settings[0]));
+    }
+    if (rv != 0) {
+        destroy_h2_connection(connection);
+        *error_message = "failed to submit HTTP/2 settings";
+        return NULL;
+    }
+    if (connection_window_size > GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE) {
+        rv = nghttp2_submit_window_update(connection->session, NGHTTP2_FLAG_NONE, 0, connection_window_size - GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE);
         if (rv != 0) {
             destroy_h2_connection(connection);
-            *error_message = "failed to submit HTTP/2 settings";
+            *error_message = "failed to expand HTTP/2 connection receive window";
             return NULL;
-        }
-        if (connection_window_size > GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE) {
-            rv = nghttp2_submit_window_update(connection->session, NGHTTP2_FLAG_NONE, 0, connection_window_size - GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE);
-            if (rv != 0) {
-                destroy_h2_connection(connection);
-                *error_message = "failed to expand HTTP/2 connection receive window";
-                return NULL;
-            }
         }
     }
     rv = send_pending_h2_frames(connection, NULL);
@@ -2010,12 +2027,17 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, stream_id);
-    (void) session;
     (void) flags;
     if (call == NULL) {
         return 0;
     }
     if (stream_id == call->stream_id && len > 0) {
+        if (PHP_GRPC_LITE_G(http2_experimental_data_chunk_window_update)) {
+            int rv = nghttp2_submit_window_update(session, NGHTTP2_FLAG_NONE, 0, (int32_t) len);
+            if (rv != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+        }
         if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
             if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;

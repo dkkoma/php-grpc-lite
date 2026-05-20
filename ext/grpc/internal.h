@@ -622,6 +622,8 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     zend_string *default_roots_pem;
     zend_long http2_stream_window_size;
     zend_long http2_connection_window_size;
+    bool http2_experimental_ext_grpc_158_settings_profile;
+    bool http2_experimental_data_chunk_window_update;
     zend_long server_streaming_read_ahead_max_messages;
     zend_long server_streaming_read_ahead_max_bytes;
     char *backend;
