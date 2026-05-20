@@ -223,6 +223,6 @@ function isTlsSuite(string $suite): bool
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/spanner-shape.php --suite=spanner-shape|tls-spanner-shape --implementation=php-grpc-lite [--calls=1000] [--warmup-calls=10] [--tls-root=...] [--rpc-gap-ms=10]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/spanner-shape.php --suite=spanner-shape|tls-spanner-shape --implementation=php-grpc-lite [--calls=1000] [--warmup-calls=10] [--tls-root=...] [--rpc-gap-ms=0]\n");
     exit(2);
 }

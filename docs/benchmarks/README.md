@@ -22,7 +22,7 @@ BENCH_OTEL_RUN_ID=local-spanner-shape ./bench/compare.sh spanner-shape
 BENCH_OTEL_RUN_ID=local-spanner-real ./bench/compare.sh spanner-real-client
 ```
 
-`rtt-unary` / `spanner-shape` / `tls-spanner-shape` / `spanner-real-client` / `cpu-spanner-real-client` は、通常の比較線ではRPC span記録後から次RPC開始前に10msのinter-RPC gapを入れる。gapはspan外なのでRPC latency percentileには含めない。値は `BENCH_RPC_GAP_MS=0` または `--rpc-gap-ms=0` で上書きでき、OTEL spanには `benchmark.rpc_gap_ms` として記録する。sustained throughput系は最大処理量を見るため既定gapは0msのままにする。
+通常の比較線ではRPC間sleepを入れない。gapは `BENCH_RPC_GAP_MS=10` または `--rpc-gap-ms=10` で明示指定したときだけ、RPC span記録後から次RPC開始前に入る。gapはspan外なのでRPC latency percentileには含めない。OTEL spanには `benchmark.rpc_gap_ms` として記録する。real Spanner側のpacing / scheduling調査では10ms gapを使うが、Go test-server / Spanner shape / RTT / sustained throughput系では既定gap 0msのまま比較する。
 
 ## Runner
 

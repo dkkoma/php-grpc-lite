@@ -38,14 +38,7 @@ export SPANNER_EMULATOR_HOST="${SPANNER_EMULATOR_HOST:-spanner-emulator:9010}"
 export NO_PROXY="${NO_PROXY:-test-server,spanner-emulator,toxiproxy,otelop,localhost,127.0.0.1}"
 export no_proxy="${no_proxy:-$NO_PROXY}"
 
-case "$suite" in
-    rtt-unary|spanner-shape|tls-spanner-shape|spanner-real-client|cpu-spanner-real-client)
-        export BENCH_RPC_GAP_MS="${BENCH_RPC_GAP_MS:-10}"
-        ;;
-    *)
-        export BENCH_RPC_GAP_MS="${BENCH_RPC_GAP_MS:-0}"
-        ;;
-esac
+export BENCH_RPC_GAP_MS="${BENCH_RPC_GAP_MS:-0}"
 
 if [[ "$implementation" == "ext-grpc" ]]; then
     container_service="${BENCH_CONTAINER_SERVICE:-dev-ext-grpc}"
@@ -86,7 +79,7 @@ run_benchmark_php() {
     echo "  OTEL run id: $BENCH_OTEL_RUN_ID"
     echo "==========================================="
 
-    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$container_service" php ${php_args+"${php_args[@]}"} "$@" \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$container_service" php -d memory_limit=-1 ${php_args+"${php_args[@]}"} "$@" \
         --suite="$suite" \
         --implementation="$implementation" \
         --autoload="$autoload_path" \
@@ -149,7 +142,7 @@ esac
 
 echo
 echo "OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
-docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
+docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php -d memory_limit=-1 \
     tools/benchmark/otelop-summary.php \
     --run-id="$BENCH_OTEL_RUN_ID" \
     --suite="$suite" \

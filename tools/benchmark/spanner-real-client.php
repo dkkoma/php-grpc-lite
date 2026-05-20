@@ -398,6 +398,6 @@ function deleteSql(int $id): string
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/spanner-real-client.php --suite=spanner-real-client --implementation=php-grpc-lite [--calls=100] [--warmup-calls=5] [--target=spanner-emulator:9010] [--cpu-summary-only] [--rpc-gap-ms=10]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/spanner-real-client.php --suite=spanner-real-client --implementation=php-grpc-lite [--calls=100] [--warmup-calls=5] [--target=spanner-emulator:9010] [--cpu-summary-only] [--rpc-gap-ms=0]\n");
     exit(2);
 }

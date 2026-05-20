@@ -245,7 +245,7 @@ function usage(string $message): never
     fwrite(STDERR, $message . "\n\n");
     fwrite(
         STDERR,
-        "Usage: php tools/benchmark/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite [--calls=20] [--payload-bytes=100] [--rpc-gap-ms=10]\n",
+        "Usage: php tools/benchmark/rtt-unary.php --suite=rtt-unary --implementation=php-grpc-lite [--calls=20] [--payload-bytes=100] [--rpc-gap-ms=0]\n",
     );
     exit(2);
 }
