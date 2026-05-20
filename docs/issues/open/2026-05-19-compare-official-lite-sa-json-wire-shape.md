@@ -342,6 +342,8 @@ official ext-grpc 1.58.0 の `GRPC_TRACE=http` には、SA JSON条件でも `BDP
 - 差分は `SELECT 1` のrequest write後からfirst response readまでに出ている。
 - official SA JSONだけが速い。official ADCはliteと同レンジ。
 - liteはSA JSON/ADCでほぼ同レンジ。つまり、credential処理のPHP CPUやtoken生成だけでは説明しない。
+- grpc-liteのactive PINGはSA JSON/ADCどちらでも改善する。これはSA JSON/JWT専用効果ではなく、grpc-lite transport/control state側の改善候補として扱う。
+- official ext-grpcは `grpc.http2.bdp_probe=0` でもSA JSONで速いため、BDP probe単独はofficial SA fast pathの必要条件ではない。
 - repeated request TLS write sizeはofficial/liteで違うが、official ADCは大きいwriteでも速くないため、write size単独でも説明しない。
 
 追加で、単独差分を小さく潰した。
@@ -357,6 +359,22 @@ official ext-grpc 1.58.0 の `GRPC_TRACE=http` には、SA JSON条件でも `BDP
 | lite `phpversion('grpc') = 1.58.0` | mean 20.8ms / p50 20.6ms | `x-goog-api-client`のgrpc version差ではない |
 | lite HTTP/2 receive window 1MiB | mean 22.1ms / p50 21.8ms | 8MiB window設定ではない |
 | lite HTTP/2 receive window 64KiB | mean 22.3ms / p50 21.7ms | window縮小は改善しない |
+
+
+2026-05-20に、PR #6 branchでcredential / BDP / active PING matrixを再計測した。iterationsは1000。
+
+| impl | credential | option | mean | p50 | p90 | p99 | 判断 |
+|---|---|---|---:|---:|---:|---:|---|
+| official ext-grpc 1.58 | SA JSON | default | 11.723ms | 11.552ms | 13.677ms | 16.984ms | official SA fast path |
+| official ext-grpc 1.58 | SA JSON | `grpc.http2.bdp_probe=0` | 12.664ms | 12.231ms | 14.732ms | 21.776ms | BDP offでも速い |
+| official ext-grpc 1.58 | ADC | default | 21.160ms | 20.826ms | 23.571ms | 27.934ms | ADCではlite offと同レンジ |
+| official ext-grpc 1.58 | ADC | `grpc.http2.bdp_probe=0` | 22.157ms | 21.297ms | 24.239ms | 31.725ms | BDP offでやや悪化 |
+| grpc-lite source | SA JSON | active off | 22.511ms | 21.087ms | 24.409ms | 35.348ms | baseline |
+| grpc-lite source | SA JSON | active `0ms` | 17.325ms | 16.704ms | 19.903ms | 25.808ms | 改善 |
+| grpc-lite source | SA JSON | active `10ms` | 17.061ms | 16.090ms | 19.100ms | 28.761ms | 改善 |
+| grpc-lite source | ADC | active off | 21.966ms | 21.521ms | 24.479ms | 32.360ms | baseline |
+| grpc-lite source | ADC | active `0ms` | 16.839ms | 16.424ms | 19.173ms | 25.526ms | 改善 |
+| grpc-lite source | ADC | active `10ms` | 15.495ms | 15.192ms | 17.620ms | 23.233ms | 改善 |
 
 この段階で、次の候補は主因から外す。
 
