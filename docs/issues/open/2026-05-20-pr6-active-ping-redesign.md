@@ -392,3 +392,52 @@ HTTP/2 trace上のPING:
 - これで「active PINGの効果をtcpdumpで調べる」前提条件は整った。今後のtcpdump比較では、connection churnを除外したうえで、request最後のoutbound payloadからfirst inbound payloadまでの差を見る。
 - 現時点のtcpdump再調査は、active 10msがSpanner `SELECT 1` のp50を安定して改善する根拠にはならない。改善の有無はtcpdumpなし・長めsample・run順序入れ替えで別途評価する。
 - tcpdump付きrunの価値は、latency絶対値ではなく、connection reuse、packet count、server response packet timing、trace上のcontrol frame lifecycle確認に置く。
+
+補足:
+
+- 上記は各RPC後に `usleep(50000)` を入れたlifecycle耐性確認であり、性能比較として扱わない。
+- sleepはRPC間control frameをpreflight前に到着させるための人工条件で、通常の連続RPC workloadとは異なる。
+- 以降のtcpdump付き性能調査ではsleepを入れない。
+- また、active PING有効時の `first inbound TCP payload` はPING ACKなどのcontrol frameを含み得るため、response timingの判断には使わない。response timingはgrpc-lite trace上のstream response `HEADERS` / `DATA` frameで見る。
+
+### sleepなしtcpdump再調査
+
+sleep条件を外し、同じ `SELECT 1` をtcpdumpあり・traceあり・100 iterationsで取り直した。
+
+条件:
+
+- target: `vast-falcon-165704 / bench / laravel-bench-db`
+- RPC: warmed `ExecuteStreamingSql SELECT 1`
+- credentials: service-account JSON
+- iterations: 100
+- inter-RPC sleep: none
+- tcpdump: container内 `tcpdump -i any -nn -tt -s 160 'tcp port 443'`
+- trace: `GRPC_LITE_TRACE_FILE` + `GRPC_LITE_TRACE_WIRE_BYTES=1`
+- log dir: `var/issue5-bdp-matrix/tcpdump-nosleep-after-drain/`
+
+結果:
+
+| variant | TCP packets | SYN | elapsed p50 | trace last outbound request frame -> first response frame p50 | trace p90 | trace p99 | trace connection prefaces | max stream id | preflight |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| active off | 472 | 1 | 22.602ms | 19.186ms | 23.565ms | 34.952ms | 1 | 203 | accept `no pending TLS data` x101 |
+| active 10ms | 722 | 1 | 16.304ms | 13.079ms | 17.859ms | 23.518ms | 1 | 201 | accept `no pending TLS data` x100 |
+
+HTTP/2 trace上のPING:
+
+| variant | client non-ACK PING | server non-ACK PING | client PING ACK | server PING ACK |
+|---|---:|---:|---:|---:|
+| active off | 0 | 102 | 102 | 0 |
+| active 10ms | 101 | 101 | 101 | 100 |
+
+観測:
+
+- sleepなしでもactive off / active 10msともSYNはrun開始時の1回だけで、connection reuseは維持されている。
+- active 10msはclient-origin PING分だけpacket数が増える。
+- active 10msでは、elapsed p50とtrace上の `last outbound request frame -> first response frame` がどちらも短い。
+- active 10msのtcpdump上の最初のinbound payloadはPING ACK等のcontrol frameになり得るため、tcpdump単体のfirst inboundではなくtrace上のstream response frameで評価した。
+
+判断:
+
+- sleepなし条件では、active 10msがSpanner `SELECT 1` のresponse frame到着を短縮している観測が再度得られた。
+- ただしtcpdump/trace付きrunのため絶対値は通常ベンチとは分ける。今回の結果は「connection churnなしでactive PINGの差を観測できる」ことと、「差はrequest後のstream response frame到着前にある」ことの根拠として扱う。
+- 次に詰めるべき点は、active PINGがなぜ後続RPCのSpanner response schedulingに効くのか、server-origin PING ACKだけでは不足なのか、peer enforcement上どのintervalまで安全に許容できるのかである。
