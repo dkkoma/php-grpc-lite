@@ -15,8 +15,6 @@
 #define GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE 4096
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
-#define GRPC_LITE_HTTP2_MIN_MAX_FRAME_SIZE 16384U
-#define GRPC_LITE_HTTP2_MAX_MAX_FRAME_SIZE 16777215U
 
 static void destroy_h2_connection(h2_connection *connection);
 static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
@@ -71,7 +69,6 @@ static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
 static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
 static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
-static int maybe_submit_active_bdp_settings_update(h2_connection *connection);
 static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
 static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
@@ -351,121 +348,6 @@ static int configure_callbacks(nghttp2_session_callbacks **callbacks)
     nghttp2_session_callbacks_set_on_stream_close_callback(*callbacks, on_stream_close_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(*callbacks, on_frame_recv_callback);
     return 0;
-}
-
-static void maybe_submit_active_bdp_probe(h2_connection *connection)
-{
-    uint64_t timestamp;
-    uint64_t now;
-    zend_long min_interval_ms;
-
-    if (connection == NULL || connection->session == NULL || connection->dead || connection->draining || !PHP_GRPC_LITE_G(active_bdp_probe)) {
-        return;
-    }
-    if (connection->active_bdp_probe_outstanding) {
-        return;
-    }
-
-    now = monotonic_us();
-    min_interval_ms = PHP_GRPC_LITE_G(active_bdp_probe_min_interval_ms);
-    if (min_interval_ms > (zend_long) (UINT64_MAX / 1000ULL)) {
-        return;
-    }
-    if (min_interval_ms > 0
-        && connection->active_bdp_probe_sent_at_us > 0
-        && now < connection->active_bdp_probe_sent_at_us + ((uint64_t) min_interval_ms * 1000ULL)) {
-        return;
-    }
-
-    timestamp = now;
-    for (int index = 7; index >= 0; --index) {
-        connection->active_bdp_probe_opaque[index] = (uint8_t) (timestamp & 0xff);
-        timestamp >>= 8;
-    }
-    if (nghttp2_submit_ping(connection->session, NGHTTP2_FLAG_NONE, connection->active_bdp_probe_opaque) == 0) {
-        connection->active_bdp_probe_outstanding = true;
-        connection->active_bdp_probe_sent_at_us = now;
-    }
-}
-
-static uint32_t grpc_lite_clamp_u32_setting(zend_long value, uint32_t minimum, uint32_t maximum)
-{
-    if (value < (zend_long) minimum) {
-        return minimum;
-    }
-    if (value > (zend_long) maximum) {
-        return maximum;
-    }
-    return (uint32_t) value;
-}
-
-static int maybe_submit_active_bdp_settings_update(h2_connection *connection)
-{
-    nghttp2_settings_entry settings[2];
-    size_t count = 0;
-    uint32_t target_initial_window_size;
-    uint32_t target_max_frame_size;
-    int rv;
-
-    if (connection == NULL || connection->session == NULL || connection->dead || connection->draining || !PHP_GRPC_LITE_G(active_bdp_update_settings)) {
-        return 0;
-    }
-
-    target_initial_window_size = grpc_lite_clamp_u32_setting(
-        PHP_GRPC_LITE_G(active_bdp_settings_initial_window_size),
-        1,
-        INT32_MAX);
-    if (target_initial_window_size > connection->active_bdp_last_sent_initial_window_size) {
-        settings[count].settings_id = NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-        settings[count].value = target_initial_window_size;
-        count++;
-    }
-
-    if (PHP_GRPC_LITE_G(active_bdp_update_max_frame_size)) {
-        target_max_frame_size = grpc_lite_clamp_u32_setting(
-            PHP_GRPC_LITE_G(active_bdp_settings_max_frame_size),
-            GRPC_LITE_HTTP2_MIN_MAX_FRAME_SIZE,
-            GRPC_LITE_HTTP2_MAX_MAX_FRAME_SIZE);
-        if (target_max_frame_size > connection->active_bdp_last_sent_max_frame_size) {
-            settings[count].settings_id = NGHTTP2_SETTINGS_MAX_FRAME_SIZE;
-            settings[count].value = target_max_frame_size;
-            count++;
-        }
-    }
-
-    if (count == 0) {
-        return 0;
-    }
-
-    rv = nghttp2_submit_settings(connection->session, NGHTTP2_FLAG_NONE, settings, count);
-    if (rv != 0) {
-        return rv;
-    }
-
-    for (size_t index = 0; index < count; index++) {
-        if (settings[index].settings_id == NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE) {
-            connection->active_bdp_last_sent_initial_window_size = settings[index].value;
-        } else if (settings[index].settings_id == NGHTTP2_SETTINGS_MAX_FRAME_SIZE) {
-            connection->active_bdp_last_sent_max_frame_size = settings[index].value;
-        }
-    }
-    return 0;
-}
-
-static int complete_active_bdp_probe_if_matching(h2_connection *connection, const nghttp2_frame *frame)
-{
-    if (connection == NULL || frame == NULL || !connection->active_bdp_probe_outstanding) {
-        return 0;
-    }
-    if (frame->hd.type != NGHTTP2_PING || (frame->hd.flags & NGHTTP2_FLAG_ACK) == 0) {
-        return 0;
-    }
-    if (memcmp(frame->ping.opaque_data, connection->active_bdp_probe_opaque, sizeof(connection->active_bdp_probe_opaque)) != 0) {
-        return 0;
-    }
-
-    connection->active_bdp_probe_outstanding = false;
-    return maybe_submit_active_bdp_settings_update(connection);
 }
 
 static const char *grpc_lite_trace_file_path(void)
@@ -1762,9 +1644,6 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         *error_message = "failed to create nghttp2 session";
         return NULL;
     }
-    connection->active_bdp_last_sent_initial_window_size = stream_window_size;
-    connection->active_bdp_last_sent_max_frame_size = GRPC_LITE_HTTP2_MIN_MAX_FRAME_SIZE;
-
     {
         nghttp2_settings_entry settings[] = {
             { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
@@ -2119,7 +1998,6 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
             }
             smart_str_appendl(&call->body, (const char *) data, len);
         }
-        maybe_submit_active_bdp_probe(connection);
     }
     return 0;
 }
@@ -2227,9 +2105,6 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     (void) session;
 
     grpc_lite_trace_inbound_frame(connection, frame);
-    if (complete_active_bdp_probe_if_matching(connection, frame) != 0) {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-    }
 
     if (frame->hd.type == NGHTTP2_GOAWAY) {
         if (connection != NULL) {
