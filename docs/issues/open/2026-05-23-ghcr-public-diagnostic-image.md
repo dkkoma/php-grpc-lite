@@ -49,3 +49,7 @@ real SpannerのHTTP/2 wire shape / RTT差分はローカルネットワークの
 - GHCR publish workflowが追加されている。
 - pull/run手順がドキュメント化されている。
 - 初回push後にpackageをpublicへ変更できる手順が明記されている。
+- 2026-05-23: `test` branch pushで `Publish diagnostic images` workflow 起動を確認。run: https://github.com/dkkoma/php-grpc-lite/actions/runs/26332035997
+- 2026-05-23: `official` / `lite` の両jobがsuccess。`lite` は46秒、`official` はext-grpc PECL build込みで約19分半。
+- 2026-05-23: 未認証pullで `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:lite` / `:official` を取得できることを確認。Apple Silicon hostでは `--platform linux/amd64` が必要。
+- 2026-05-23: `--entrypoint php` で `/app/vendor/autoload.php` と `extension_loaded("grpc")` を確認。`official` は `Grpc\\VERSION=1.58.0`、`lite` は `Grpc\\VERSION=0.1.0`。
