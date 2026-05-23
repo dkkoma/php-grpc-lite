@@ -15,6 +15,13 @@ PHP_INI_BEGIN()
     STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_ext_grpc_158_settings_profile", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_ext_grpc_158_settings_profile, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_data_chunk_window_update", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_data_chunk_window_update, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_wait_initial_settings_ack", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_wait_initial_settings_ack, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_ext_grpc_158_wire_profile", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_ext_grpc_158_wire_profile, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_hpack_deflate_table_size_zero", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_hpack_deflate_table_size_zero, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_ENTRY("grpc_lite.http2_experimental_ext_grpc_158_header_padding_target", "0", PHP_INI_SYSTEM, OnUpdateLong, http2_experimental_ext_grpc_158_header_padding_target, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_add_grpc_accept_encoding", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_add_grpc_accept_encoding, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_ENTRY("grpc_lite.http2_experimental_user_agent_extra_bytes", "0", PHP_INI_SYSTEM, OnUpdateLong, http2_experimental_user_agent_extra_bytes, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_split_x_goog_api_client", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_split_x_goog_api_client, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_BOOLEAN("grpc_lite.http2_experimental_no_index_x_bench_padding", "0", PHP_INI_SYSTEM, OnUpdateBool, http2_experimental_no_index_x_bench_padding, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.server_streaming_read_ahead_max_messages", "32", PHP_INI_ALL, OnUpdateLong, server_streaming_read_ahead_max_messages, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.server_streaming_read_ahead_max_bytes", "8388608", PHP_INI_ALL, OnUpdateLong, server_streaming_read_ahead_max_bytes, zend_grpc_lite_globals, grpc_lite_globals)
 PHP_INI_END()
@@ -50,6 +57,13 @@ PHP_GINIT_FUNCTION(grpc_lite)
     grpc_lite_globals->http2_experimental_ext_grpc_158_settings_profile = 0;
     grpc_lite_globals->http2_experimental_data_chunk_window_update = 0;
     grpc_lite_globals->http2_experimental_wait_initial_settings_ack = 0;
+    grpc_lite_globals->http2_experimental_ext_grpc_158_wire_profile = 0;
+    grpc_lite_globals->http2_experimental_hpack_deflate_table_size_zero = 0;
+    grpc_lite_globals->http2_experimental_ext_grpc_158_header_padding_target = 0;
+    grpc_lite_globals->http2_experimental_add_grpc_accept_encoding = 0;
+    grpc_lite_globals->http2_experimental_user_agent_extra_bytes = 0;
+    grpc_lite_globals->http2_experimental_split_x_goog_api_client = 0;
+    grpc_lite_globals->http2_experimental_no_index_x_bench_padding = 0;
     grpc_lite_globals->server_streaming_read_ahead_max_messages = 32;
     grpc_lite_globals->server_streaming_read_ahead_max_bytes = 8 * 1024 * 1024;
     grpc_lite_globals->backend = NULL;
@@ -189,6 +203,13 @@ PHP_MINFO_FUNCTION(grpc_lite)
     php_info_print_table_row(2, "grpc_lite.http2_experimental_ext_grpc_158_settings_profile", INI_STR("grpc_lite.http2_experimental_ext_grpc_158_settings_profile"));
     php_info_print_table_row(2, "grpc_lite.http2_experimental_data_chunk_window_update", INI_STR("grpc_lite.http2_experimental_data_chunk_window_update"));
     php_info_print_table_row(2, "grpc_lite.http2_experimental_wait_initial_settings_ack", INI_STR("grpc_lite.http2_experimental_wait_initial_settings_ack"));
+    php_info_print_table_row(2, "grpc_lite.http2_experimental_ext_grpc_158_wire_profile", INI_STR("grpc_lite.http2_experimental_ext_grpc_158_wire_profile"));
+    php_info_print_table_row(2, "grpc_lite.http2_experimental_hpack_deflate_table_size_zero", INI_STR("grpc_lite.http2_experimental_hpack_deflate_table_size_zero"));
+    php_info_print_table_row(2, "grpc_lite.http2_experimental_ext_grpc_158_header_padding_target", INI_STR("grpc_lite.http2_experimental_ext_grpc_158_header_padding_target"));
+    php_info_print_table_row(2, "grpc_lite.http2_experimental_add_grpc_accept_encoding", INI_STR("grpc_lite.http2_experimental_add_grpc_accept_encoding"));
+    php_info_print_table_row(2, "grpc_lite.http2_experimental_user_agent_extra_bytes", INI_STR("grpc_lite.http2_experimental_user_agent_extra_bytes"));
+    php_info_print_table_row(2, "grpc_lite.http2_experimental_split_x_goog_api_client", INI_STR("grpc_lite.http2_experimental_split_x_goog_api_client"));
+    php_info_print_table_row(2, "grpc_lite.http2_experimental_no_index_x_bench_padding", INI_STR("grpc_lite.http2_experimental_no_index_x_bench_padding"));
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_messages", INI_STR("grpc_lite.server_streaming_read_ahead_max_messages"));
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_bytes", INI_STR("grpc_lite.server_streaming_read_ahead_max_bytes"));
     php_info_print_table_end();

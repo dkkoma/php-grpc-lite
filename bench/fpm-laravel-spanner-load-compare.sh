@@ -67,11 +67,12 @@ run_variant() {
     local fpm_service="$2"
     local nginx_service="$3"
     local action="$4"
+    local grpc_lite_extra_ini_args="${5:-}"
 
     if [[ "$LARAVEL_SPANNER_EMULATOR_HOST" != "" ]]; then
         docker compose up -d spanner-emulator
     fi
-    docker compose up -d --force-recreate "$fpm_service" "$nginx_service"
+    GRPC_LITE_EXTRA_INI_ARGS="$grpc_lite_extra_ini_args" docker compose up -d --force-recreate "$fpm_service" "$nginx_service"
     wait_until_ready "$nginx_service"
     warm_fpm_workers "$fpm_service" "$nginx_service" "$action" "$variant"
 
@@ -197,10 +198,13 @@ for action in "${actions[@]}"; do
     for variant in "${variants[@]}"; do
         case "$variant" in
             native)
-                run_variant native fpm-lifecycle-16 nginx-laravel-native "$action"
+                run_variant native fpm-lifecycle-16 nginx-laravel-native "$action" ""
+                ;;
+            native-pad)
+                run_variant native-pad fpm-lifecycle-16 nginx-laravel-native "$action" "-d grpc_lite.http2_experimental_ext_grpc_158_wire_profile=1 -d grpc_lite.http2_experimental_ext_grpc_158_header_padding_target=1191"
                 ;;
             ext-grpc)
-                run_variant ext-grpc fpm-ext-grpc-16 nginx-laravel-ext-grpc "$action"
+                run_variant ext-grpc fpm-ext-grpc-16 nginx-laravel-ext-grpc "$action" ""
                 ;;
             *)
                 echo "unknown BENCH_VARIANTS entry: $variant" >&2

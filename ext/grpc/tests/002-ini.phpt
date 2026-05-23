@@ -17,6 +17,13 @@ grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_connection_window
 grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_ext_grpc_158_settings_profile'), 'official settings experiment ini');
 grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_data_chunk_window_update'), 'response window update experiment ini');
 grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_wait_initial_settings_ack'), 'wait settings ack experiment ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_ext_grpc_158_wire_profile'), 'ext-grpc wire profile experiment ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_hpack_deflate_table_size_zero'), 'hpack deflate table size zero experiment ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_ext_grpc_158_header_padding_target'), 'ext-grpc wire profile header padding target ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_add_grpc_accept_encoding'), 'grpc accept encoding experiment ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_user_agent_extra_bytes'), 'user agent extra bytes experiment ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_split_x_goog_api_client'), 'split x-goog-api-client experiment ini');
+grpc_lite_phpt_assert_same('0', ini_get('grpc_lite.http2_experimental_no_index_x_bench_padding'), 'no-index x-bench-padding experiment ini');
 grpc_lite_phpt_assert_same('32', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'read-ahead messages ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'read-ahead bytes ini');
 grpc_lite_phpt_assert_same('auto', ini_get('grpc_lite.backend'), 'backend ini');

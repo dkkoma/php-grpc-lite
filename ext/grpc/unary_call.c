@@ -101,6 +101,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     append_request_header(&request_headers, ":path", sizeof(":path") - 1, path, path_len);
     append_request_header(&request_headers, "content-type", sizeof("content-type") - 1, "application/grpc", sizeof("application/grpc") - 1);
     append_request_header(&request_headers, "te", sizeof("te") - 1, "trailers", sizeof("trailers") - 1);
+    append_grpc_accept_encoding_request_header(&request_headers);
     remaining_timeout_us = remaining_timeout_us_for_deadline(deadline_abs_us);
     if (remaining_timeout_us < 0) {
         call.timed_out = true;

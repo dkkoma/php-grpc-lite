@@ -473,6 +473,8 @@ struct _h2_connection {
     char authority[512];
     bool peer_settings_received;
     bool client_settings_ack_received;
+    bool ext_grpc_158_initial_ping_submitted;
+    uint32_t ext_grpc_158_pending_connection_window_update;
     bool dead;
     bool draining;
     bool detached_from_cache;
@@ -584,6 +586,7 @@ static const char *validate_channel_inputs(const char *key, size_t key_len, cons
 static const char *validate_grpc_path(const char *path, size_t path_len);
 static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+static void append_grpc_accept_encoding_request_header(h2_request_headers *headers);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
 static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
@@ -627,6 +630,13 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     bool http2_experimental_ext_grpc_158_settings_profile;
     bool http2_experimental_data_chunk_window_update;
     bool http2_experimental_wait_initial_settings_ack;
+    bool http2_experimental_ext_grpc_158_wire_profile;
+    bool http2_experimental_hpack_deflate_table_size_zero;
+    zend_long http2_experimental_ext_grpc_158_header_padding_target;
+    bool http2_experimental_add_grpc_accept_encoding;
+    zend_long http2_experimental_user_agent_extra_bytes;
+    bool http2_experimental_split_x_goog_api_client;
+    bool http2_experimental_no_index_x_bench_padding;
     zend_long server_streaming_read_ahead_max_messages;
     zend_long server_streaming_read_ahead_max_bytes;
     char *backend;

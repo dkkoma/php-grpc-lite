@@ -40,7 +40,7 @@ static bool connection_usable(h2_connection *connection);
 static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
 static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
 static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us);
-static bool wait_initial_settings_handshake(h2_connection *connection, uint64_t deadline_abs_us);
+static bool wait_initial_settings_handshake(h2_connection *connection, uint64_t deadline_abs_us, bool wait_client_settings_ack);
 static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
 static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
@@ -90,6 +90,10 @@ static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t val
 static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
 static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+static void append_request_header_with_flags(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen, uint8_t flags);
+static uint8_t ext_grpc_158_wire_profile_header_flags(const char *name, size_t namelen);
+static size_t ext_grpc_158_wire_profile_headers_target_payload_len(uint32_t stream_id, size_t current_payload_len);
+static int ext_grpc_158_wire_profile_write_padded_headers(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out, bool *handled);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
 static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
 static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
@@ -986,7 +990,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
     return connection_usable(connection);
 }
 
-static bool wait_initial_settings_handshake(h2_connection *connection, uint64_t deadline_abs_us)
+static bool wait_initial_settings_handshake(h2_connection *connection, uint64_t deadline_abs_us, bool wait_client_settings_ack)
 {
     uint8_t buffer[GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE];
 
@@ -995,7 +999,7 @@ static bool wait_initial_settings_handshake(h2_connection *connection, uint64_t 
     }
 
     while (connection_usable(connection)
-        && (!connection->peer_settings_received || !connection->client_settings_ack_received)) {
+        && (!connection->peer_settings_received || (wait_client_settings_ack && !connection->client_settings_ack_received))) {
         ssize_t nread = connection_recv(connection, buffer, sizeof(buffer), deadline_abs_us);
         if (nread <= 0) {
             if (nread == 0) {
@@ -1597,6 +1601,82 @@ static int h2_connection_buffer_or_write(h2_connection *connection, const uint8_
     return SUCCESS;
 }
 
+static size_t ext_grpc_158_wire_profile_headers_target_payload_len(uint32_t stream_id, size_t current_payload_len)
+{
+    zend_long configured_target = PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_header_padding_target);
+    size_t target_payload_len;
+    size_t max_padded_payload_len;
+    if (configured_target <= 0) {
+        return 0;
+    }
+    if (stream_id >= 3 && (stream_id % 2) == 1) {
+        target_payload_len = (size_t) configured_target;
+        max_padded_payload_len = current_payload_len + 256;
+        if (target_payload_len <= current_payload_len) {
+            return 0;
+        }
+        return target_payload_len <= max_padded_payload_len ? target_payload_len : max_padded_payload_len;
+    }
+    return 0;
+}
+
+static int ext_grpc_158_wire_profile_write_padded_headers(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out, bool *handled)
+{
+    size_t payload_len;
+    uint8_t frame_type;
+    uint8_t frame_flags;
+    uint32_t stream_id;
+    size_t target_payload_len;
+    size_t pad_len;
+    size_t padded_length;
+    uint8_t *padded;
+    int result;
+
+    *handled = false;
+    if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_header_padding_target) <= 0
+        || length < 9) {
+        return SUCCESS;
+    }
+    payload_len = ((size_t) data[0] << 16) | ((size_t) data[1] << 8) | (size_t) data[2];
+    if (payload_len + 9 != length) {
+        return SUCCESS;
+    }
+    frame_type = data[3];
+    frame_flags = data[4];
+    stream_id = (((uint32_t) data[5] & 0x7fU) << 24)
+        | ((uint32_t) data[6] << 16)
+        | ((uint32_t) data[7] << 8)
+        | (uint32_t) data[8];
+    if (frame_type != NGHTTP2_HEADERS || (frame_flags & NGHTTP2_FLAG_PADDED) != 0) {
+        return SUCCESS;
+    }
+    target_payload_len = ext_grpc_158_wire_profile_headers_target_payload_len(stream_id, payload_len);
+    if (target_payload_len == 0 || target_payload_len <= payload_len) {
+        return SUCCESS;
+    }
+    pad_len = target_payload_len - payload_len - 1;
+    if (pad_len > UINT8_MAX || payload_len + 1 + pad_len != target_payload_len) {
+        return SUCCESS;
+    }
+    padded_length = 9 + target_payload_len;
+    padded = emalloc(padded_length);
+    memcpy(padded, data, 9);
+    padded[0] = (uint8_t) ((target_payload_len >> 16) & 0xff);
+    padded[1] = (uint8_t) ((target_payload_len >> 8) & 0xff);
+    padded[2] = (uint8_t) (target_payload_len & 0xff);
+    padded[4] = (uint8_t) (frame_flags | NGHTTP2_FLAG_PADDED);
+    padded[9] = (uint8_t) pad_len;
+    memcpy(padded + 10, data + 9, payload_len);
+    memset(padded + 10 + payload_len, 0, pad_len);
+    result = h2_connection_buffer_or_write(connection, padded, padded_length, deadline_abs_us, timed_out);
+    if (result == SUCCESS) {
+        grpc_lite_trace_outbound_frame(connection, padded, padded_length);
+    }
+    efree(padded);
+    *handled = true;
+    return result;
+}
+
 static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us)
 {
     zend_long remaining_timeout_us;
@@ -1720,12 +1800,27 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         *error_message = "failed to configure callbacks";
         return NULL;
     }
-    if (nghttp2_session_client_new(&connection->session, connection->callbacks, connection) != 0) {
+    if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_wire_profile)
+        || PHP_GRPC_LITE_G(http2_experimental_hpack_deflate_table_size_zero)) {
+        nghttp2_option *option = NULL;
+        if (nghttp2_option_new(&option) != 0) {
+            destroy_h2_connection(connection);
+            *error_message = "failed to create nghttp2 option";
+            return NULL;
+        }
+        nghttp2_option_set_max_deflate_dynamic_table_size(option, 0);
+        rv = nghttp2_session_client_new2(&connection->session, connection->callbacks, connection, option);
+        nghttp2_option_del(option);
+    } else {
+        rv = nghttp2_session_client_new(&connection->session, connection->callbacks, connection);
+    }
+    if (rv != 0) {
         destroy_h2_connection(connection);
         *error_message = "failed to create nghttp2 session";
         return NULL;
     }
-    if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_settings_profile)) {
+    if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_wire_profile)
+        || PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_settings_profile)) {
         nghttp2_settings_entry settings[] = {
             { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
             { NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 0 },
@@ -1766,8 +1861,22 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         destroy_h2_connection(connection);
         return NULL;
     }
-    if (PHP_GRPC_LITE_G(http2_experimental_wait_initial_settings_ack)
-        && !wait_initial_settings_handshake(connection, deadline_abs_us)) {
+    if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_wire_profile)
+        && !wait_initial_settings_handshake(connection, deadline_abs_us, false)) {
+        if (connection->setup_timed_out || connection->last_io_errno == ETIMEDOUT) {
+            *error_message = "HTTP/2 transport deadline exceeded";
+        } else if (connection->last_error_detail[0] != '\0') {
+            snprintf(error_detail, error_detail_len, "%s", connection->last_error_detail);
+            *error_message = error_detail;
+        } else {
+            *error_message = "failed to receive initial peer HTTP/2 settings";
+        }
+        destroy_h2_connection(connection);
+        return NULL;
+    }
+    if (!PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_wire_profile)
+        && PHP_GRPC_LITE_G(http2_experimental_wait_initial_settings_ack)
+        && !wait_initial_settings_handshake(connection, deadline_abs_us, true)) {
         if (connection->setup_timed_out || connection->last_io_errno == ETIMEDOUT) {
             *error_message = "HTTP/2 transport deadline exceeded";
         } else if (connection->last_error_detail[0] != '\0') {
@@ -1940,6 +2049,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     h2_connection *connection = (h2_connection *) user_data;
     uint64_t deadline_abs_us;
     bool *timed_out;
+    bool handled = false;
     (void) session;
     (void) flags;
 
@@ -1952,6 +2062,12 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     deadline_abs_us = connection->current_write_deadline_abs_us > 0
         ? connection->current_write_deadline_abs_us
         : connection->setup_deadline_abs_us;
+    if (ext_grpc_158_wire_profile_write_padded_headers(connection, data, length, deadline_abs_us, timed_out, &handled) != SUCCESS) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    if (handled) {
+        return (ssize_t) length;
+    }
     if (h2_connection_buffer_or_write(connection, data, length, deadline_abs_us, timed_out) != SUCCESS) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
@@ -2089,7 +2205,12 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
         return 0;
     }
     if (stream_id == call->stream_id && len > 0) {
-        if (PHP_GRPC_LITE_G(http2_experimental_data_chunk_window_update)) {
+        if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_wire_profile)) {
+            if (len > UINT32_MAX - connection->ext_grpc_158_pending_connection_window_update) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            connection->ext_grpc_158_pending_connection_window_update += (uint32_t) len;
+        } else if (PHP_GRPC_LITE_G(http2_experimental_data_chunk_window_update)) {
             int rv = nghttp2_submit_window_update(session, NGHTTP2_FLAG_NONE, 0, (int32_t) len);
             if (rv != 0) {
                 return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -2252,6 +2373,24 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
             }
         }
         return 0;
+    }
+    if (PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_wire_profile)
+        && frame->hd.type == NGHTTP2_PING
+        && (frame->hd.flags & NGHTTP2_FLAG_ACK) == 0) {
+        if (connection->ext_grpc_158_pending_connection_window_update > 0) {
+            uint32_t increment = connection->ext_grpc_158_pending_connection_window_update;
+            connection->ext_grpc_158_pending_connection_window_update = 0;
+            if (nghttp2_submit_window_update(session, NGHTTP2_FLAG_NONE, 0, (int32_t) increment) != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+        }
+        if (!connection->ext_grpc_158_initial_ping_submitted) {
+            uint8_t opaque_data[8] = {0};
+            if (nghttp2_submit_ping(session, NGHTTP2_FLAG_NONE, opaque_data) != 0) {
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            connection->ext_grpc_158_initial_ping_submitted = true;
+        }
     }
     if (call == NULL) {
         return 0;
@@ -2448,6 +2587,11 @@ static void grow_request_headers(h2_request_headers *headers)
 
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
 {
+    append_request_header_with_flags(headers, name, namelen, value, valuelen, NGHTTP2_NV_FLAG_NONE);
+}
+
+static void append_request_header_with_flags(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen, uint8_t flags)
+{
     if (headers->len >= headers->capacity) {
         grow_request_headers(headers);
         if (headers->len >= headers->capacity) {
@@ -2459,8 +2603,41 @@ static void append_request_header(h2_request_headers *headers, const char *name,
         (uint8_t *) value,
         namelen,
         valuelen,
-        NGHTTP2_NV_FLAG_NONE
+        flags
     };
+}
+
+static uint8_t ext_grpc_158_wire_profile_header_flags(const char *name, size_t namelen)
+{
+    if (PHP_GRPC_LITE_G(http2_experimental_no_index_x_bench_padding)
+        && namelen == sizeof("x-bench-padding") - 1
+        && name != NULL
+        && memcmp(name, "x-bench-padding", sizeof("x-bench-padding") - 1) == 0) {
+        return NGHTTP2_NV_FLAG_NO_INDEX;
+    }
+    if (!PHP_GRPC_LITE_G(http2_experimental_ext_grpc_158_wire_profile)) {
+        return NGHTTP2_NV_FLAG_NONE;
+    }
+    return namelen == sizeof("authorization") - 1
+        && name != NULL
+        && memcmp(name, "authorization", sizeof("authorization") - 1) == 0
+            ? NGHTTP2_NV_FLAG_NO_INDEX
+            : NGHTTP2_NV_FLAG_NONE;
+}
+
+static void append_grpc_accept_encoding_request_header(h2_request_headers *headers)
+{
+    if (!PHP_GRPC_LITE_G(http2_experimental_add_grpc_accept_encoding)) {
+        return;
+    }
+    append_request_header_with_flags(
+        headers,
+        "grpc-accept-encoding",
+        sizeof("grpc-accept-encoding") - 1,
+        "gzip,deflate,identity",
+        sizeof("gzip,deflate,identity") - 1,
+        ext_grpc_158_wire_profile_header_flags("grpc-accept-encoding", sizeof("grpc-accept-encoding") - 1)
+    );
 }
 
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us)
@@ -2479,16 +2656,78 @@ static void append_grpc_timeout_request_header(h2_request_headers *headers, zend
         zend_string_release(value_str);
         return;
     }
-    append_request_header(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    append_request_header_with_flags(
+        headers,
+        "grpc-timeout",
+        sizeof("grpc-timeout") - 1,
+        ZSTR_VAL(value_str),
+        ZSTR_LEN(value_str),
+        ext_grpc_158_wire_profile_header_flags("grpc-timeout", sizeof("grpc-timeout") - 1)
+    );
 }
 
 static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent)
 {
+    zend_long extra_bytes = PHP_GRPC_LITE_G(http2_experimental_user_agent_extra_bytes);
     if (primary_user_agent != NULL && ZSTR_LEN(primary_user_agent) > 0) {
-        append_request_header(headers, "user-agent", sizeof("user-agent") - 1, ZSTR_VAL(primary_user_agent), ZSTR_LEN(primary_user_agent));
+        if (extra_bytes > 0) {
+            zend_string *value_str = zend_string_alloc(ZSTR_LEN(primary_user_agent) + (size_t) extra_bytes, 0);
+            memcpy(ZSTR_VAL(value_str), ZSTR_VAL(primary_user_agent), ZSTR_LEN(primary_user_agent));
+            memset(ZSTR_VAL(value_str) + ZSTR_LEN(primary_user_agent), 'x', (size_t) extra_bytes);
+            ZSTR_VAL(value_str)[ZSTR_LEN(primary_user_agent) + (size_t) extra_bytes] = '\0';
+            if (headers->value_strings != NULL && headers->value_count < headers->capacity) {
+                headers->value_strings[headers->value_count++] = value_str;
+                append_request_header_with_flags(
+                    headers,
+                    "user-agent",
+                    sizeof("user-agent") - 1,
+                    ZSTR_VAL(value_str),
+                    ZSTR_LEN(value_str),
+                    ext_grpc_158_wire_profile_header_flags("user-agent", sizeof("user-agent") - 1)
+                );
+                return;
+            }
+            zend_string_release(value_str);
+        }
+        append_request_header_with_flags(
+            headers,
+            "user-agent",
+            sizeof("user-agent") - 1,
+            ZSTR_VAL(primary_user_agent),
+            ZSTR_LEN(primary_user_agent),
+            ext_grpc_158_wire_profile_header_flags("user-agent", sizeof("user-agent") - 1)
+        );
         return;
     }
-    append_request_header(headers, "user-agent", sizeof("user-agent") - 1, "php-grpc-lite/0.1.0", sizeof("php-grpc-lite/0.1.0") - 1);
+    if (extra_bytes > 0) {
+        const char *base = "php-grpc-lite/0.1.0";
+        size_t base_len = sizeof("php-grpc-lite/0.1.0") - 1;
+        zend_string *value_str = zend_string_alloc(base_len + (size_t) extra_bytes, 0);
+        memcpy(ZSTR_VAL(value_str), base, base_len);
+        memset(ZSTR_VAL(value_str) + base_len, 'x', (size_t) extra_bytes);
+        ZSTR_VAL(value_str)[base_len + (size_t) extra_bytes] = '\0';
+        if (headers->value_strings != NULL && headers->value_count < headers->capacity) {
+            headers->value_strings[headers->value_count++] = value_str;
+            append_request_header_with_flags(
+                headers,
+                "user-agent",
+                sizeof("user-agent") - 1,
+                ZSTR_VAL(value_str),
+                ZSTR_LEN(value_str),
+                ext_grpc_158_wire_profile_header_flags("user-agent", sizeof("user-agent") - 1)
+            );
+            return;
+        }
+        zend_string_release(value_str);
+    }
+    append_request_header_with_flags(
+        headers,
+        "user-agent",
+        sizeof("user-agent") - 1,
+        "php-grpc-lite/0.1.0",
+        sizeof("php-grpc-lite/0.1.0") - 1,
+        ext_grpc_158_wire_profile_header_flags("user-agent", sizeof("user-agent") - 1)
+    );
 }
 
 static bool is_valid_custom_request_header_name_char(unsigned char ch)
@@ -2609,6 +2848,7 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
 {
     zend_string *name_str = NULL;
     zend_string *value_str;
+    const char *cred_type;
 
     if (Z_TYPE_P(value) != IS_STRING) {
         zend_throw_exception(NULL, "gRPC request metadata value must be a string", 0);
@@ -2643,7 +2883,40 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
     if (headers->value_strings != NULL) {
         headers->value_strings[headers->value_count++] = value_str;
     }
-    append_request_header(headers, ZSTR_VAL(name_str), ZSTR_LEN(name_str), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    if (PHP_GRPC_LITE_G(http2_experimental_split_x_goog_api_client)
+        && ZSTR_LEN(name_str) == sizeof("x-goog-api-client") - 1
+        && memcmp(ZSTR_VAL(name_str), "x-goog-api-client", sizeof("x-goog-api-client") - 1) == 0
+        && (cred_type = strstr(ZSTR_VAL(value_str), " cred-type/")) != NULL) {
+        size_t first_len = (size_t) (cred_type - ZSTR_VAL(value_str));
+        const char *second_value = cred_type + 1;
+        size_t second_len = ZSTR_LEN(value_str) - first_len - 1;
+        append_request_header_with_flags(
+            headers,
+            ZSTR_VAL(name_str),
+            ZSTR_LEN(name_str),
+            ZSTR_VAL(value_str),
+            first_len,
+            ext_grpc_158_wire_profile_header_flags(ZSTR_VAL(name_str), ZSTR_LEN(name_str))
+        );
+        append_request_header_with_flags(
+            headers,
+            ZSTR_VAL(name_str),
+            ZSTR_LEN(name_str),
+            second_value,
+            second_len,
+            ext_grpc_158_wire_profile_header_flags(ZSTR_VAL(name_str), ZSTR_LEN(name_str))
+        );
+        headers->custom_value_count++;
+        return 0;
+    }
+    append_request_header_with_flags(
+        headers,
+        ZSTR_VAL(name_str),
+        ZSTR_LEN(name_str),
+        ZSTR_VAL(value_str),
+        ZSTR_LEN(value_str),
+        ext_grpc_158_wire_profile_header_flags(ZSTR_VAL(name_str), ZSTR_LEN(name_str))
+    );
     headers->custom_value_count++;
     return 0;
 }
