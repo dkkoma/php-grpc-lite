@@ -1,0 +1,73 @@
+name: Publish diagnostic images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/publish-diagnostic-images.yml"
+      - "tools/diagnostics/issue5-spanner-repro/**"
+  workflow_dispatch:
+    inputs:
+      grpc_lite_version:
+        description: "php-grpc-lite package version or constraint for the lite image"
+        required: false
+        default: "0.0.8"
+      grpc_official_version:
+        description: "official ext-grpc PECL version for the official image"
+        required: false
+        default: "1.58.0"
+
+concurrency:
+  group: publish-diagnostic-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish ${{ matrix.variant }} repro image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - official
+          - lite
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: tools/diagnostics/issue5-spanner-repro
+          file: tools/diagnostics/issue5-spanner-repro/Dockerfile
+          push: true
+          build-args: |
+            GRPC_VARIANT=${{ matrix.variant }}
+            GRPC_LITE_VERSION=${{ inputs.grpc_lite_version || '0.0.8' }}
+            GRPC_OFFICIAL_VERSION=${{ inputs.grpc_official_version || '1.58.0' }}
+          tags: |
+            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:${{ matrix.variant }}
+            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:${{ matrix.variant }}-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/dkkoma/php-grpc-lite
+            org.opencontainers.image.description=php-grpc-lite Spanner/PubSub/Secret Manager diagnostic repro image
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=diagnostic-${{ matrix.variant }}
+          cache-to: type=gha,scope=diagnostic-${{ matrix.variant }},mode=max

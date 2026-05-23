@@ -2,7 +2,6 @@
 ARG GRPC_VARIANT=official
 ARG GRPC_OFFICIAL_VERSION=1.58.0
 ARG GRPC_LITE_VERSION=0.0.8
-ARG BENCH_SCRIPT=cli-bench.php
 
 FROM php:8.4-cli-trixie AS base
 RUN set -eux \
@@ -24,7 +23,6 @@ RUN curl -fsSL https://github.com/php/pie/releases/latest/download/pie.phar -o /
  && pie install --auto-install-system-dependencies dkkoma/php-grpc-lite:${GRPC_LITE_VERSION}
 
 FROM grpc-${GRPC_VARIANT} AS app
-ARG BENCH_SCRIPT
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 COPY composer.json /app/composer.json
@@ -35,6 +33,7 @@ COPY list-topics-bench.php /app/list-topics-bench.php
 COPY get-topic-bench.php /app/get-topic-bench.php
 COPY get-project-bench.php /app/get-project-bench.php
 COPY get-secret-bench.php /app/get-secret-bench.php
-RUN ln -s "/app/${BENCH_SCRIPT}" /app/bench.php
-ENTRYPOINT ["php", "/app/bench.php"]
+COPY entrypoint.sh /usr/local/bin/issue5-spanner-repro
+RUN chmod +x /usr/local/bin/issue5-spanner-repro
+ENTRYPOINT ["issue5-spanner-repro"]
 CMD ["200"]
