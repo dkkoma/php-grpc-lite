@@ -53,3 +53,8 @@ real SpannerのHTTP/2 wire shape / RTT差分はローカルネットワークの
 - 2026-05-23: `official` / `lite` の両jobがsuccess。`lite` は46秒、`official` はext-grpc PECL build込みで約19分半。
 - 2026-05-23: 未認証pullで `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:lite` / `:official` を取得できることを確認。Apple Silicon hostでは `--platform linux/amd64` が必要。
 - 2026-05-23: `--entrypoint php` で `/app/vendor/autoload.php` と `extension_loaded("grpc")` を確認。`official` は `Grpc\\VERSION=1.58.0`、`lite` は `Grpc\\VERSION=0.1.0`。
+- 2026-05-23: VM上で動かす想定のSpanner診断シナリオをローカルでsmoke確認。`official` / `lite` の `select1-bench.php` と `cli-bench.php` を各3 iteration実行し、全ケースexit 0。結果保存先: `var/bench-results/ghcr-public-image-spanner-smoke-20260523T122343Z/`。
+  - `official-select1`: p50 77.3ms / p99 82.5ms
+  - `official-cli`: p50 172.0ms / p99 253.2ms
+  - `lite-select1`: p50 106.9ms / p99 110.2ms
+  - `lite-cli`: p50 290.5ms / p99 367.7ms
