@@ -141,3 +141,69 @@ for variant in official lite; do
     "$IMAGE:$variant" 200
 done
 ```
+
+## Wire/header-size diagnostic on GCP VM
+
+Use this mode for issue #5 header-size investigation. It is different from the simple benchmark entrypoint: it records PHP markers, grpc-lite HTTP/2 trace, tcpdump pcap, and a derived summary under `/results`.
+
+The `lite` image is source-built from this repository branch so it contains diagnostic INI knobs such as `grpc_lite.http2_experimental_no_index_x_bench_padding`. The `official` image is PECL ext-grpc and is useful for wall-time / packet timing comparison, but it does not emit grpc-lite trace events.
+
+Example on a GCP VM near the Spanner instance:
+
+```sh
+SA_KEY=/path/to/sa-key.json
+PROJECT=vast-falcon-165704
+INSTANCE=bench
+DATABASE=laravel-bench-db
+IMAGE=ghcr.io/dkkoma/php-grpc-lite-spanner-repro
+RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
+
+for pad in 0 500 510 520 630; do
+  mkdir -p "results/lite-pad-${pad}-${RUN_ID}"
+  docker run --rm \
+    --cap-add NET_RAW --cap-add NET_ADMIN \
+    -v "$SA_KEY":/sa.json:ro \
+    -v "$PWD/results/lite-pad-${pad}-${RUN_ID}":/results \
+    -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
+    -e GOOGLE_CLOUD_PROJECT="$PROJECT" \
+    -e DB_SPANNER_INSTANCE="$INSTANCE" \
+    -e DB_SPANNER_DATABASE="$DATABASE" \
+    -e ITER=60 \
+    -e SPANNER_GRPC_EXTRA_HEADER_BYTES="$pad" \
+    -e PHP_INI_ARGS='-d grpc_lite.http2_experimental_no_index_x_bench_padding=1' \
+    --entrypoint issue5-wire-diagnostic \
+    "$IMAGE:lite"
+done
+```
+
+For the official comparator:
+
+```sh
+mkdir -p "results/official-${RUN_ID}"
+docker run --rm \
+  --cap-add NET_RAW --cap-add NET_ADMIN \
+  -v "$SA_KEY":/sa.json:ro \
+  -v "$PWD/results/official-${RUN_ID}":/results \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/sa.json \
+  -e GOOGLE_CLOUD_PROJECT="$PROJECT" \
+  -e DB_SPANNER_INSTANCE="$INSTANCE" \
+  -e DB_SPANNER_DATABASE="$DATABASE" \
+  -e ITER=60 \
+  --entrypoint issue5-wire-diagnostic \
+  "$IMAGE:official"
+```
+
+Each run writes:
+
+- `markers.log`: PHP-side operation markers and elapsed time
+- `php.err`: PHP stderr
+- `trace.jsonl`: grpc-lite wire trace; empty for official ext-grpc
+- `tcpdump.pcap`: packet capture for `tcp port 443`
+- `tcpdump.log`: tcpdump stderr/statistics
+- `summary.txt`: derived grpc-lite stream summary from trace and markers
+
+Interpretation target:
+
+- `header_payload_len_unique` from `summary.txt` shows grpc-lite request HEADERS payload sizes.
+- `headers_to_first_in_us_*` estimates client-observed outbound HEADERS to first inbound HTTP/2 frame latency.
+- `tcpdump.pcap` is used to verify outbound TLS packet size and inbound packet timing for the same run.

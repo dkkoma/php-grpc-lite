@@ -9,10 +9,6 @@ on:
       - "tools/diagnostics/issue5-spanner-repro/**"
   workflow_dispatch:
     inputs:
-      grpc_lite_version:
-        description: "php-grpc-lite package version or constraint for the lite image"
-        required: false
-        default: "0.0.8"
       grpc_official_version:
         description: "official ext-grpc PECL version for the official image"
         required: false
@@ -55,12 +51,11 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: tools/diagnostics/issue5-spanner-repro
+          context: .
           file: tools/diagnostics/issue5-spanner-repro/Dockerfile
           push: true
           build-args: |
             GRPC_VARIANT=${{ matrix.variant }}
-            GRPC_LITE_VERSION=${{ inputs.grpc_lite_version || '0.0.8' }}
             GRPC_OFFICIAL_VERSION=${{ inputs.grpc_official_version || '1.58.0' }}
           tags: |
             ghcr.io/dkkoma/php-grpc-lite-spanner-repro:${{ matrix.variant }}

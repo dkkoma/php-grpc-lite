@@ -20,3 +20,6 @@ ext/grpc/*.dep
 ext/grpc/*.lo
 ext/grpc/*.o
 ext/grpc/run-tests.php
+
+var/
+vendor/
