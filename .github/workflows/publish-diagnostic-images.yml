@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/publish-diagnostic-images.yml"
       - "tools/diagnostics/issue5-spanner-repro/**"
+      - "ext/grpc/**"
   workflow_dispatch:
     inputs:
       grpc_official_version:
