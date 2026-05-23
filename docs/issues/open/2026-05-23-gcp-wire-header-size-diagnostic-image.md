@@ -118,3 +118,54 @@ Observed sample:
 | 510 | 1104B | 72027us | 76011us |
 
 このローカル値はネットワーク依存を含むため性能判断には使わない。VM検証前の確認として、header sizeを変えたrunでtrace/pcap/marker/summaryが揃い、summary上でHEADERS payload差とfirst inbound差を読めることを確認した。
+
+## GHCR publish / public image検証
+
+2026-05-23に `test` branch pushでGHCR publish workflowを実行した。
+
+- Workflow run: https://github.com/dkkoma/php-grpc-lite/actions/runs/26333201920
+- Head SHA: `fe9a74efe35a66e35e6c15db66727c0490272cb2`
+- `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:lite`: publish成功
+- `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:official`: publish成功
+
+`lite` public image verification:
+
+- `docker pull --platform linux/amd64 ghcr.io/dkkoma/php-grpc-lite-spanner-repro:lite`: OK
+- Digest: `sha256:d8832cf1162f78b2a315ce95f889998ceb29433121dc69fb711e5dd19146942c`
+- `php --ri grpc` で以下の実験INIが入っていることを確認:
+  - `grpc_lite.http2_experimental_ext_grpc_158_settings_profile`
+  - `grpc_lite.http2_experimental_ext_grpc_158_wire_profile`
+  - `grpc_lite.http2_experimental_ext_grpc_158_header_padding_target`
+  - `grpc_lite.http2_experimental_no_index_x_bench_padding`
+
+`lite` public image Spanner diagnostic smoke:
+
+- Result dir: `var/bench-results/ghcr-wire-diag-lite-smoke-20260523T130535Z/`
+- command: `issue5-wire-diagnostic`
+- environment: real Spanner / SA JSON / `ITER=3` / `SPANNER_GRPC_EXTRA_HEADER_BYTES=510` / `grpc_lite.http2_experimental_no_index_x_bench_padding=1`
+- output files: `markers.log`, `trace.jsonl`, `tcpdump.pcap`, `tcpdump.txt`, `summary.txt`
+
+Observed sample:
+
+| stream | HEADERS payload | HEADERS -> first inbound |
+|---:|---:|---:|
+| 3 | 1233B | 68186us |
+| 5 | 1101B | 32132us |
+| 7 | 1101B | 43604us |
+
+`x-bench-padding` がstream 5以降でも圧縮で落ちず、steady HEADERS payloadが `1101B` として残ることを確認した。これにより、VM上でheader size sweepを実行できるimageとして成立している。
+
+`official` public image verification:
+
+- `docker pull --platform linux/amd64 ghcr.io/dkkoma/php-grpc-lite-spanner-repro:official`: OK
+- Digest: `sha256:92f03356106a14b8f629a75132bbcc47542d864fdf03392773c97c7c34d14f03`
+- `extension_loaded("grpc") === true`
+- `Grpc\VERSION === 1.58.0`
+
+`official` public image diagnostic smoke:
+
+- Result dir: `var/bench-results/ghcr-wire-diag-official-smoke-20260523T131900Z/`
+- command: `issue5-wire-diagnostic`
+- environment: real Spanner / SA JSON / `ITER=1`
+- output files: `markers.log`, `tcpdump.pcap`, `tcpdump.txt`, `summary.txt`
+- `official` imageはlite traceを出さないため `select_streams=0` になるが、markerとtcpdumpは取得できる。
