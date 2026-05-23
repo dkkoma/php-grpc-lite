@@ -3,7 +3,7 @@ name: Publish diagnostic images
 on:
   push:
     branches:
-      - main
+      - test
     paths:
       - ".github/workflows/publish-diagnostic-images.yml"
       - "tools/diagnostics/issue5-spanner-repro/**"
