@@ -68,6 +68,10 @@ GCP VM上で、Cloud Spanner `ExecuteStreamingSql` の request HEADERS size / ou
 - ローカルで少数iterationのSpanner診断が完走し、traceからHEADERS sizeとfirst inbound latencyを集計できる。
 - 2026-05-23: `lite` imageをPackagist installからrepo source buildへ変更。現在ブランチのtrace/padding/no-index実験ノブを含むextensionをimageへ入れる方針にした。
 - 2026-05-23: `tcpdump`、`select-table-marked-app-extra-header.php`、`issue5-wire-diagnostic` runner、`wire-summary.php` を追加。
+- 2026-05-24: `vast-falcon-165704` で Compute Engine APIを有効化し、Spanner instanceと同じ `asia-northeast1-a` に `e2-micro` VM `grpc-lite-wire-e2micro` を作成した。
+- 2026-05-24: VM上のDockerでGHCR imageをpullし、SA JSONを `/home/daisuke/sa.json` に配置した。
+- 2026-05-24: VM上では診断containerに `--network host` が必要。通常bridge networkではtcpdump filterはpacketを受けてもpcapが欠けるケースがあった。
+- 2026-05-24: `tcpdump -Z root -U` と計測終了後の `TCPDUMP_STOP_GRACE=1` をrunnerへ追加し、VM上でpcapが欠けずに残ることを確認した。
 
 ## ローカル検証結果
 
@@ -169,3 +173,60 @@ Observed sample:
 - environment: real Spanner / SA JSON / `ITER=1`
 - output files: `markers.log`, `tcpdump.pcap`, `tcpdump.txt`, `summary.txt`
 - `official` imageはlite traceを出さないため `select_streams=0` になるが、markerとtcpdumpは取得できる。
+
+## GCP VM検証
+
+2026-05-24にGCP VMを作成し、VM上でdiagnostic imageを実行できることを確認した。
+
+VM:
+
+- Project: `vast-falcon-165704`
+- Zone: `asia-northeast1-a`
+- Instance: `grpc-lite-wire-e2micro`
+- Machine type: `e2-micro`
+- OS: Container-Optimized OS `cos-stable`
+- Boot disk: `30GB pd-standard`
+- External IP at creation: `34.146.128.188`
+- Spanner instance: `bench` (`regional-asia-northeast1`)
+
+作成後確認:
+
+- `docker --version`: `Docker version 27.5.1`
+- stateful partition: 約26GB free
+- `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:lite` pull OK
+- `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:official` pull OK
+
+VM上の最終lite smoke:
+
+- Workflow run: https://github.com/dkkoma/php-grpc-lite/actions/runs/26347127675
+- Head SHA: `f9d7233c21f02bffa1d709af546c2ebc583a21ba`
+- Result dir on VM: `/home/daisuke/results/lite-pad510-final-20260524T001109Z`
+- command: `issue5-wire-diagnostic`
+- Docker options: `--network host --cap-add NET_RAW --cap-add NET_ADMIN`
+- environment: real Spanner / SA JSON / `ITER=5` / `SPANNER_GRPC_EXTRA_HEADER_BYTES=510` / `grpc_lite.http2_experimental_no_index_x_bench_padding=1`
+- output files: `markers.log`, `trace.jsonl`, `tcpdump.pcap`, `tcpdump.txt`, `summary.txt`
+- tcpdump result: `54 packets captured`, `54 packets received by filter`, `0 packets dropped`
+- `tcpdump.txt`: 54 lines
+
+Observed sample:
+
+| stream | HEADERS payload | HEADERS -> first inbound |
+|---:|---:|---:|
+| 3 | 1235B | 17837us |
+| 5 | 1103B | 5346us |
+| 7 | 1103B | 5471us |
+| 9 | 1103B | 5652us |
+| 11 | 1103B | 3958us |
+
+VM上のofficial smoke:
+
+- Result dir on VM: `/home/daisuke/results/official-final-20260524T001135Z`
+- command: `issue5-wire-diagnostic`
+- Docker options: `--network host --cap-add NET_RAW --cap-add NET_ADMIN`
+- environment: real Spanner / SA JSON / `ITER=3`
+- output files: `markers.log`, `tcpdump.pcap`, `tcpdump.txt`, `summary.txt`
+- tcpdump result: `46 packets captured`, `46 packets received by filter`, `0 packets dropped`
+- `tcpdump.txt`: 46 lines
+- marker elapsed p50: `8367us`
+
+この時点で、VM上で `lite` はgrpc-lite trace + marker + tcpdump、`official` はmarker + tcpdumpを取得できる。以降のheader-size sweepはこのVMと同じrunner条件で実施する。

@@ -161,6 +161,7 @@ RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
 for pad in 0 500 510 520 630; do
   mkdir -p "results/lite-pad-${pad}-${RUN_ID}"
   docker run --rm \
+    --network host \
     --cap-add NET_RAW --cap-add NET_ADMIN \
     -v "$SA_KEY":/sa.json:ro \
     -v "$PWD/results/lite-pad-${pad}-${RUN_ID}":/results \
@@ -169,6 +170,7 @@ for pad in 0 500 510 520 630; do
     -e DB_SPANNER_INSTANCE="$INSTANCE" \
     -e DB_SPANNER_DATABASE="$DATABASE" \
     -e ITER=60 \
+    -e TCPDUMP_STOP_GRACE=1 \
     -e SPANNER_GRPC_EXTRA_HEADER_BYTES="$pad" \
     -e PHP_INI_ARGS='-d grpc_lite.http2_experimental_no_index_x_bench_padding=1' \
     --entrypoint issue5-wire-diagnostic \
@@ -181,6 +183,7 @@ For the official comparator:
 ```sh
 mkdir -p "results/official-${RUN_ID}"
 docker run --rm \
+  --network host \
   --cap-add NET_RAW --cap-add NET_ADMIN \
   -v "$SA_KEY":/sa.json:ro \
   -v "$PWD/results/official-${RUN_ID}":/results \
@@ -189,6 +192,7 @@ docker run --rm \
   -e DB_SPANNER_INSTANCE="$INSTANCE" \
   -e DB_SPANNER_DATABASE="$DATABASE" \
   -e ITER=60 \
+  -e TCPDUMP_STOP_GRACE=1 \
   --entrypoint issue5-wire-diagnostic \
   "$IMAGE:official"
 ```
@@ -201,6 +205,8 @@ Each run writes:
 - `tcpdump.pcap`: packet capture for `tcp port 443`
 - `tcpdump.log`: tcpdump stderr/statistics
 - `summary.txt`: derived grpc-lite stream summary from trace and markers
+
+Use `--network host` on the VM. Without host networking, tcpdump can see packets through the filter but may not persist a complete pcap from the container network namespace. `TCPDUMP_STOP_GRACE` only waits after the PHP marker/trace measurement has finished so tcpdump can flush captured packets; it is not part of the measured RPC interval.
 
 Interpretation target:
 
