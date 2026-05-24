@@ -376,3 +376,52 @@ Latency summary from `wire-summary.php`:
 - official ADC OAuthのHEADERS payloadは `792B -> 720B steady` で、SA JSONよりかなり小さい。
 - これにより、ローカルで見ていた `1191B` はVMでも再現し、今回のstock traceで見たmetadata生サイズ `1394B` とは別層の値であることを確認した。
 - 今後のrequest shape比較では、official-frame-trace / grpc-lite traceの `HEADERS payload length` を主比較値にし、tcpdumpのTCP payload lengthは補助値として扱う。
+
+## VM attached service account変更
+
+2026-05-24に、VM metadata ADCを専用service accountへ寄せるため、`grpc-lite-wire-e2micro` のattached service accountを変更した。
+
+変更前:
+
+- service account: `205742274492-compute@developer.gserviceaccount.com`
+- OAuth scope: `https://www.googleapis.com/auth/cloud-platform`
+
+変更後:
+
+- service account: `test-spanner@vast-falcon-165704.iam.gserviceaccount.com`
+- OAuth scope: `https://www.googleapis.com/auth/cloud-platform`
+- project IAM: `roles/spanner.databaseAdmin`, `roles/pubsub.viewer`, `roles/secretmanager.viewer`
+
+操作:
+
+```console
+gcloud compute instances stop grpc-lite-wire-e2micro --project vast-falcon-165704 --zone asia-northeast1-a
+gcloud compute instances set-service-account grpc-lite-wire-e2micro \
+  --project vast-falcon-165704 \
+  --zone asia-northeast1-a \
+  --service-account test-spanner@vast-falcon-165704.iam.gserviceaccount.com \
+  --scopes cloud-platform
+gcloud compute instances start grpc-lite-wire-e2micro --project vast-falcon-165704 --zone asia-northeast1-a
+```
+
+metadata ADC確認:
+
+```console
+$ curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
+test-spanner@vast-falcon-165704.iam.gserviceaccount.com
+```
+
+credential JSONはVM上に置かず、`GOOGLE_APPLICATION_CREDENTIALS` も設定しない。`/home/daisuke/*.json` が存在しないことを確認した。
+
+Spanner `SELECT 1` smoke:
+
+| implementation | auth | iter | mean | p50 | p90 | p99 |
+|---|---|---:|---:|---:|---:|---:|
+| official ext-grpc 1.58.0 | VM metadata ADC (`test-spanner`) | 20 | 5432us | 5917us | 6572us | 7328us |
+| grpc-lite | VM metadata ADC (`test-spanner`) | 20 | 5327us | 5602us | 6619us | 7017us |
+
+確認結果:
+
+- attached service account変更後も、official ext-grpc / grpc-lite のどちらもmetadata ADCでSpannerへアクセスできる。
+- 以降のVM上のSpanner比較は、SA JSON fileではなくVM metadata ADCを標準条件にする。
