@@ -258,7 +258,34 @@ Stock traceで取れなかったもの:
 
 そのため、officialの「metadata shape」と「TLS packet shape」は確認できるが、grpc-lite traceと同じ粒度の `wire.frame_out HEADERS payload_len` はstock official imageでは取得できない。exactなofficial outbound HEADERS sizeが必要な場合は、official gRPC C-coreをinstrumentしてsource buildする必要がある。
 
-SA JSON metadata summary:
+### 計測対象を揃えた比較
+
+今回の主比較対象は、過去のローカル調査と同じく `ExecuteStreamingSql SELECT 1` のrequest shapeである。サイズは層ごとに分ける。
+
+| layer | 意味 | officialでの取得方法 | liteでの取得方法 | 主比較に使うか |
+|---|---|---|---|---|
+| HEADERS payload length | HPACK encoded HTTP/2 HEADERS frame payload bytes | instrumented official traceの過去記録 | grpc-lite `wire.frame_out HEADERS` trace | yes |
+| TCP payload length | TLS recordを含むclient outbound TCP payload bytes | tcpdump | tcpdump | yes, HEADERS差の補助 |
+| metadata name+value bytes | HPACK前のmetadata生サイズ | stock C-core `SEND_INITIAL_METADATA` trace | PHP/C metadata dump相当 | no, 入力shape確認のみ |
+
+同じ計測対象で見ると、過去ローカル計測と今回VM計測は以下の対応になる。
+
+| variant | credential | HEADERS payload length | TCP payload length | note |
+|---|---|---:|---:|---|
+| official ext-grpc 1.58 | SA JSON | first `1260B`, steady `1191B` | steady approx `1400B` | 過去instrumented official trace + tcpdump |
+| official ext-grpc 1.58 | SA JSON | n/a in stock trace | `1472B` -> `1400B` | 今回VM stock trace + tcpdump |
+| official ext-grpc 1.58 | ADC OAuth | n/a in stock trace | `998B` -> `948B` | 今回VM stock trace + tcpdump |
+| grpc-lite baseline | SA JSON | steady approx `641B` | not listed here | grpc-lite trace |
+| grpc-lite wire-profile | SA JSON | steady approx `1022B` | approx `1231B` | grpc-lite trace + tcpdump |
+| grpc-lite wire-profile + padding | SA JSON | steady `1191B` | steady approx `1400B` | grpc-lite trace + tcpdump |
+
+したがって、今回の `1394B` は過去の `1191B` と比較する値ではない。`1394B` はHPACK前のmetadata生サイズ、`1191B` はHPACK後のHEADERS payload length、`1400B` はTLS/TCP packet payload lengthである。
+
+### metadata input shape
+
+以下は主比較値ではなく、officialがHPACK encoderへ渡しているmetadata input shapeの確認である。
+
+SA JSON:
 
 | RPC | message len | metadata entries | metadata name+value bytes | auth value len | credential marker |
 |---|---:|---:|---:|---:|---|
@@ -267,7 +294,7 @@ SA JSON metadata summary:
 | `ExecuteStreamingSql` | 164 | 14 | 1394 | 739 | `x-goog-api-client: cred-type/jwt` |
 | `DeleteSession` | 146 | 14 | 1383 | 739 | `x-goog-api-client: cred-type/jwt` |
 
-ADC OAuth metadata summary:
+ADC OAuth:
 
 | RPC | message len | metadata entries | metadata name+value bytes | auth value len | credential marker | extra |
 |---|---:|---:|---:|---:|---|---|
@@ -300,4 +327,4 @@ tcpdump上のrequest packet例:
 - official SA JSONはcredential markerとして `cred-type/jwt` を送る。ADC OAuthは `cred-type/u` と `x-goog-user-project` が見える。
 - official SA JSONとADC OAuthでinbound SETTINGSは同じなので、少なくともserver SETTINGS差では説明できない。
 - officialのoutbound request packetはSA JSONのほうがADC OAuthより明確に大きい。ただしこの値はTLS record/TCP payloadであり、HPACK HEADERS payload lengthそのものではない。
-- 以降、officialのexact outbound HEADERS sizeを比較軸にするなら、stock traceではなくinstrumented official buildを使う。
+- 今回のVM stock traceだけではofficial HEADERS payload lengthは取れない。過去ローカルのinstrumented official traceで取った `first 1260B / steady 1191B` と、今回VM tcpdumpの `steady 1400B` は同じ層ではないが整合している。

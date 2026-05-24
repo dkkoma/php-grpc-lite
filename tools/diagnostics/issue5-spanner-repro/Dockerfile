@@ -15,6 +15,21 @@ ARG GRPC_OFFICIAL_VERSION
 RUN pecl install grpc-${GRPC_OFFICIAL_VERSION} \
  && docker-php-ext-enable grpc
 
+FROM base AS grpc-official-frame-trace
+ARG GRPC_OFFICIAL_VERSION
+COPY tools/diagnostics/issue5-spanner-repro/patches/official-grpc-1.58.0-frame-trace.patch /tmp/official-frame-trace.patch
+RUN set -eux \
+ && pecl download grpc-${GRPC_OFFICIAL_VERSION} \
+ && tar xf grpc-${GRPC_OFFICIAL_VERSION}.tgz \
+ && cd grpc-${GRPC_OFFICIAL_VERSION} \
+ && patch -p1 < /tmp/official-frame-trace.patch \
+ && phpize \
+ && ./configure \
+ && make -j$(nproc) \
+ && cp modules/grpc.so "$(php -r 'echo ini_get("extension_dir");')/grpc.so" \
+ && docker-php-ext-enable grpc \
+ && php -n -d extension=grpc.so -r 'echo phpversion("grpc"), PHP_EOL;'
+
 FROM base AS grpc-lite
 COPY ext/grpc/config.m4 ext/grpc/*.c ext/grpc/*.h /usr/src/php/ext/grpc/
 RUN docker-php-ext-install grpc

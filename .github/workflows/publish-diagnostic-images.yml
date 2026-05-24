@@ -33,6 +33,7 @@ jobs:
       matrix:
         variant:
           - official
+          - official-frame-trace
           - lite
 
     steps:

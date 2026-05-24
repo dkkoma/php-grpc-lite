@@ -1,0 +1,236 @@
+--- a/src/core/ext/transport/chttp2/transport/writing.cc
++++ b/src/core/ext/transport/chttp2/transport/writing.cc
+@@ -20,6 +20,12 @@
+ 
+ #include <inttypes.h>
+ #include <stddef.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/file.h>
++#include <sys/time.h>
++#include <unistd.h>
+ 
+ #include <algorithm>
+ #include <memory>
+@@ -234,7 +240,127 @@
+ }
+ 
+ namespace {
++
++static const char* FrameTypeName(uint8_t frame_type) {
++  switch (frame_type) {
++    case GRPC_CHTTP2_FRAME_DATA:
++      return "DATA";
++    case GRPC_CHTTP2_FRAME_HEADER:
++      return "HEADERS";
++    case GRPC_CHTTP2_FRAME_CONTINUATION:
++      return "CONTINUATION";
++    case GRPC_CHTTP2_FRAME_RST_STREAM:
++      return "RST_STREAM";
++    case GRPC_CHTTP2_FRAME_SETTINGS:
++      return "SETTINGS";
++    case GRPC_CHTTP2_FRAME_PING:
++      return "PING";
++    case GRPC_CHTTP2_FRAME_GOAWAY:
++      return "GOAWAY";
++    case GRPC_CHTTP2_FRAME_WINDOW_UPDATE:
++      return "WINDOW_UPDATE";
++    default:
++      return "UNKNOWN";
++  }
++}
++
++static uint64_t MonotonicUs() {
++  struct timeval tv;
++  gettimeofday(&tv, nullptr);
++  return static_cast<uint64_t>(tv.tv_sec) * 1000000u +
++         static_cast<uint64_t>(tv.tv_usec);
++}
+ 
++static void TraceConnectionPreface(FILE* fp, size_t chunk_len) {
++  fprintf(fp,
++          "{\"monotonic_us\":%" PRIu64
++          ",\"pid\":%ld,\"event\":\"wire.connection_preface\",\"transport\":\"official_ext_grpc\",\"chunk_len\":%zu}\n",
++          MonotonicUs(), static_cast<long>(getpid()), chunk_len);
++}
++
++static void TraceOutboundFrameRecord(FILE* fp, const uint8_t header[9],
++                                     uint32_t frame_len, size_t chunk_len) {
++  const uint8_t type = header[3];
++  const uint8_t flags = header[4];
++  const uint32_t stream_id =
++      ((static_cast<uint32_t>(header[5]) & 0x7f) << 24) |
++      (static_cast<uint32_t>(header[6]) << 16) |
++      (static_cast<uint32_t>(header[7]) << 8) |
++      static_cast<uint32_t>(header[8]);
++  fprintf(fp,
++          "{\"monotonic_us\":%" PRIu64
++          ",\"pid\":%ld,\"event\":\"wire.frame_out\",\"transport\":\"official_ext_grpc\",\"stream_id\":%u,\"frame_type\":\"%s\",\"frame_type_id\":%u,\"flags\":%u,\"frame_payload_len\":%u,\"chunk_len\":%zu}\n",
++          MonotonicUs(), static_cast<long>(getpid()), stream_id,
++          FrameTypeName(type), static_cast<unsigned>(type),
++          static_cast<unsigned>(flags), frame_len, chunk_len);
++}
++
++static void TraceOutboundFrames(grpc_chttp2_transport* t) {
++  const char* path = getenv("GRPC_OFFICIAL_FRAME_TRACE_FILE");
++  if (path == nullptr || path[0] == '\0') return;
++  FILE* fp = fopen(path, "a");
++  if (fp == nullptr) return;
++  flock(fileno(fp), LOCK_EX);
++
++  uint8_t header[9];
++  size_t header_len = 0;
++  uint32_t payload_remaining = 0;
++  bool first_slice = true;
++
++  for (size_t slice_index = 0; slice_index < t->outbuf.count; slice_index++) {
++    const grpc_slice& slice = t->outbuf.slices[slice_index];
++    const uint8_t* data = GRPC_SLICE_START_PTR(slice);
++    size_t len = GRPC_SLICE_LENGTH(slice);
++    size_t offset = 0;
++
++    if (first_slice && len >= GRPC_CHTTP2_CLIENT_CONNECT_STRLEN &&
++        memcmp(data, GRPC_CHTTP2_CLIENT_CONNECT_STRING,
++               GRPC_CHTTP2_CLIENT_CONNECT_STRLEN) == 0) {
++      TraceConnectionPreface(fp, GRPC_CHTTP2_CLIENT_CONNECT_STRLEN);
++      offset = GRPC_CHTTP2_CLIENT_CONNECT_STRLEN;
++    }
++    first_slice = false;
++
++    while (offset < len) {
++      if (payload_remaining > 0) {
++        const size_t skip =
++            std::min(static_cast<size_t>(payload_remaining), len - offset);
++        payload_remaining -= static_cast<uint32_t>(skip);
++        offset += skip;
++        continue;
++      }
++
++      const size_t needed = sizeof(header) - header_len;
++      const size_t take = std::min(needed, len - offset);
++      memcpy(header + header_len, data + offset, take);
++      header_len += take;
++      offset += take;
++
++      if (header_len == sizeof(header)) {
++        const uint32_t frame_len = (static_cast<uint32_t>(header[0]) << 16) |
++                                   (static_cast<uint32_t>(header[1]) << 8) |
++                                   static_cast<uint32_t>(header[2]);
++        TraceOutboundFrameRecord(fp, header, frame_len,
++                                 static_cast<size_t>(frame_len) +
++                                     sizeof(header));
++        payload_remaining = frame_len;
++        header_len = 0;
++      }
++    }
++  }
++
++  if (header_len != 0 || payload_remaining != 0) {
++    fprintf(fp,
++            "{\"monotonic_us\":%" PRIu64
++            ",\"pid\":%ld,\"event\":\"wire.chunk_unparsed\",\"transport\":\"official_ext_grpc\",\"header_len\":%zu,\"payload_remaining\":%u}\n",
++            MonotonicUs(), static_cast<long>(getpid()), header_len,
++            payload_remaining);
++  }
++
++  flock(fileno(fp), LOCK_UN);
++  fclose(fp);
++}
++
+ class CountDefaultMetadataEncoder {
+  public:
+   size_t count() const { return count_; }
+@@ -671,7 +797,12 @@
+ 
+   maybe_initiate_ping(t);
+ 
+-  return ctx.Result();
++  grpc_chttp2_begin_write_result result = ctx.Result();
++  if (result.writing) {
++    TraceOutboundFrames(t);
++  }
++
++  return result;
+ }
+ 
+ void grpc_chttp2_end_write(grpc_chttp2_transport* t, grpc_error_handle error) {
+--- a/src/core/ext/transport/chttp2/transport/parsing.cc
++++ b/src/core/ext/transport/chttp2/transport/parsing.cc
+@@ -19,7 +19,12 @@
+ #include <grpc/support/port_platform.h>
+ 
+ #include <inttypes.h>
++#include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
++#include <sys/file.h>
++#include <sys/time.h>
++#include <unistd.h>
+ 
+ #include <initializer_list>
+ #include <string>
+@@ -189,7 +194,55 @@
+       return MakeFrameTypeString(
+           absl::StrCat("UNKNOWN_FRAME_TYPE_", static_cast<int>(frame_type)),
+           flags, {});
++  }
++}
++
++static const char* FrameTypeName(uint8_t frame_type) {
++  switch (frame_type) {
++    case GRPC_CHTTP2_FRAME_DATA:
++      return "DATA";
++    case GRPC_CHTTP2_FRAME_HEADER:
++      return "HEADERS";
++    case GRPC_CHTTP2_FRAME_CONTINUATION:
++      return "CONTINUATION";
++    case GRPC_CHTTP2_FRAME_RST_STREAM:
++      return "RST_STREAM";
++    case GRPC_CHTTP2_FRAME_SETTINGS:
++      return "SETTINGS";
++    case GRPC_CHTTP2_FRAME_PING:
++      return "PING";
++    case GRPC_CHTTP2_FRAME_GOAWAY:
++      return "GOAWAY";
++    case GRPC_CHTTP2_FRAME_WINDOW_UPDATE:
++      return "WINDOW_UPDATE";
++    default:
++      return "UNKNOWN";
+   }
++}
++
++static uint64_t MonotonicUs() {
++  struct timeval tv;
++  gettimeofday(&tv, nullptr);
++  return static_cast<uint64_t>(tv.tv_sec) * 1000000u +
++         static_cast<uint64_t>(tv.tv_usec);
++}
++
++static void TraceIncomingFrame(grpc_chttp2_transport* t) {
++  const char* path = getenv("GRPC_OFFICIAL_FRAME_TRACE_FILE");
++  if (path == nullptr || path[0] == '\0') return;
++  FILE* fp = fopen(path, "a");
++  if (fp == nullptr) return;
++  flock(fileno(fp), LOCK_EX);
++  fprintf(fp,
++          "{\"monotonic_us\":%" PRIu64
++          ",\"pid\":%ld,\"event\":\"wire.frame_in\",\"transport\":\"official_ext_grpc\",\"stream_id\":%u,\"frame_type\":\"%s\",\"frame_type_id\":%u,\"flags\":%u,\"frame_payload_len\":%u}\n",
++          MonotonicUs(), static_cast<long>(getpid()), t->incoming_stream_id,
++          FrameTypeName(t->incoming_frame_type),
++          static_cast<unsigned>(t->incoming_frame_type),
++          static_cast<unsigned>(t->incoming_frame_flags),
++          t->incoming_frame_size);
++  flock(fileno(fp), LOCK_UN);
++  fclose(fp);
+ }
+ }  // namespace
+ 
+@@ -322,6 +375,7 @@
+                     .c_str(),
+                 t->incoming_frame_size, t->incoming_stream_id);
+       }
++      TraceIncomingFrame(t);
+       t->deframe_state = GRPC_DTS_FRAME;
+       err = init_frame_parser(t);
+       if (!err.ok()) {

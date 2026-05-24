@@ -23,6 +23,7 @@ fi
 
 set +e
 GRPC_LITE_TRACE_FILE="$results_dir/trace.jsonl" \
+  GRPC_OFFICIAL_FRAME_TRACE_FILE="$results_dir/trace.jsonl" \
   php $php_ini_args "/app/$bench_script" "$iter" >"$results_dir/markers.log" 2>"$results_dir/php.err"
 rc=$?
 set -e
