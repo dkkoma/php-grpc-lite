@@ -140,11 +140,12 @@ run_variant() {
     docker logs laravel-nginx > "$out_dir/nginx-$variant-$action.log" 2>&1 || true
     completed_requests="$(assert_success_responses "$output")"
 
-    local rps average_ms p50_ms p90_ms max_ms
+    local rps average_ms p50_ms p90_ms p99_ms max_ms
     rps="$(printf '%s\n' "$output" | awk '/Requests\/sec:/ {print $2}')"
     average_ms="$(printf '%s\n' "$output" | awk '/Average:/ {printf "%.3f", $2 * 1000}')"
-    p50_ms="$(printf '%s\n' "$output" | awk '/  50% in / {printf "%.3f", $3 * 1000}')"
-    p90_ms="$(printf '%s\n' "$output" | awk '/  90% in / {printf "%.3f", $3 * 1000}')"
+    p50_ms="$(printf '%s\n' "$output" | awk '$1 == "50%%" {printf "%.3f", $3 * 1000}')"
+    p90_ms="$(printf '%s\n' "$output" | awk '$1 == "90%%" {printf "%.3f", $3 * 1000}')"
+    p99_ms="$(printf '%s\n' "$output" | awk '$1 == "99%%" {printf "%.3f", $3 * 1000}')"
     max_ms="$(printf '%s\n' "$output" | awk '/Slowest:/ {printf "%.3f", $2 * 1000}')"
 
     awk \
@@ -157,12 +158,13 @@ run_variant() {
         -v average_ms="$average_ms" \
         -v p50_ms="$p50_ms" \
         -v p90_ms="$p90_ms" \
+        -v p99_ms="$p99_ms" \
         -v max_ms="$max_ms" \
         'BEGIN {
             cgroup_cpu_us = after_cgroup - before_cgroup;
-            printf("%-10s %-34s %8d %9s %12.1f %10.1f %10.1f %10.1f %10.1f\n",
+            printf("%-10s %-34s %8d %9s %12.1f %10.1f %10.1f %10.1f %10.1f %10.1f\n",
                 variant, action, completed_requests, rps, cgroup_cpu_us / completed_requests,
-                average_ms, p50_ms, p90_ms, max_ms);
+                average_ms, p50_ms, p90_ms, p99_ms, max_ms);
         }'
 }
 
@@ -176,8 +178,8 @@ for image in lite official nginx loadgen; do
     docker pull "$(image_tag "$image")"
 done
 
-printf "%-10s %-34s %8s %9s %12s %10s %10s %10s %10s\n" variant action requests rps cpu_us/req avg_ms p50_ms p90_ms max_ms
-printf "%118s\n" "" | tr " " "-"
+printf "%-10s %-34s %8s %9s %12s %10s %10s %10s %10s %10s\n" variant action requests rps cpu_us/req avg_ms p50_ms p90_ms p99_ms max_ms
+printf "%129s\n" "" | tr " " "-"
 
 for action in $actions; do
     for variant in $variants; do
