@@ -230,3 +230,74 @@ VM上のofficial smoke:
 - marker elapsed p50: `8367us`
 
 この時点で、VM上で `lite` はgrpc-lite trace + marker + tcpdump、`official` はmarker + tcpdumpを取得できる。以降のheader-size sweepはこのVMと同じrunner条件で実施する。
+
+## official request shape確認
+
+2026-05-24に、VM上で `official` imageのC-core traceを有効化し、SA JSONとADC OAuthで `SELECT 1` のrequest shapeを確認した。
+
+実行条件:
+
+- VM: `grpc-lite-wire-e2micro` / `asia-northeast1-a`
+- image: `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:official`
+- `Grpc\VERSION`: `1.58.0`
+- RPC: `CreateSession` -> `ExecuteStreamingSql SELECT 1` x 3 -> `DeleteSession`
+- trace: `GRPC_TRACE=http,api`, `GRPC_VERBOSITY=DEBUG`
+- tcpdump: `--network host --cap-add NET_RAW --cap-add NET_ADMIN`
+- result archive: `var/gcp-vm-results/official-request-shape-20260524T023928Z.tar.gz`
+
+Stock `ext-grpc` / gRPC C-core traceで取れたもの:
+
+- `SEND_INITIAL_METADATA` のmetadata name/value、重複metadata、credential由来metadata、`SEND_MESSAGE len`
+- inbound `SETTINGS` / `WINDOW_UPDATE` / `HEADERS` / `DATA` / `PING` のframe typeとpayload length
+- tcpdump上のTLS packet lengthとtiming
+
+Stock traceで取れなかったもの:
+
+- client outboundのHPACK encoded HEADERS frame payload length
+- client outbound HEADERS / DATA / PING のHTTP/2 frame境界
+
+そのため、officialの「metadata shape」と「TLS packet shape」は確認できるが、grpc-lite traceと同じ粒度の `wire.frame_out HEADERS payload_len` はstock official imageでは取得できない。exactなofficial outbound HEADERS sizeが必要な場合は、official gRPC C-coreをinstrumentしてsource buildする必要がある。
+
+SA JSON metadata summary:
+
+| RPC | message len | metadata entries | metadata name+value bytes | auth value len | credential marker |
+|---|---:|---:|---:|---:|---|
+| `CreateSession` | 74 | 15 | 1344 | 739 | `x-goog-api-client: cred-type/jwt` |
+| `ExecuteStreamingSql` | 164 | 14 | 1394 | 739 | `x-goog-api-client: cred-type/jwt` |
+| `ExecuteStreamingSql` | 164 | 14 | 1394 | 739 | `x-goog-api-client: cred-type/jwt` |
+| `DeleteSession` | 146 | 14 | 1383 | 739 | `x-goog-api-client: cred-type/jwt` |
+
+ADC OAuth metadata summary:
+
+| RPC | message len | metadata entries | metadata name+value bytes | auth value len | credential marker | extra |
+|---|---:|---:|---:|---:|---|---|
+| `CreateSession` | 74 | 16 | 901 | 261 | `x-goog-api-client: cred-type/u` | `x-goog-user-project: vast-falcon-165704` |
+| `ExecuteStreamingSql` | 164 | 14 | 923 | 261 | none on this captured stream | `x-goog-user-project: vast-falcon-165704` |
+| `DeleteSession` | 146 | 14 | 912 | 261 | none on this captured stream | `x-goog-user-project: vast-falcon-165704` |
+
+Inbound server SETTINGSはSA JSON / ADC OAuthで同じ:
+
+| setting | value |
+|---|---:|
+| `SETTINGS_MAX_CONCURRENT_STREAMS` | 100 |
+| `SETTINGS_INITIAL_WINDOW_SIZE` | 1048576 |
+| `SETTINGS_MAX_HEADER_LIST_SIZE` | 65536 |
+
+tcpdump上のrequest packet例:
+
+| credential | phase | outbound TCP payload length |
+|---|---|---:|
+| SA JSON | CreateSession request | 1554 |
+| SA JSON | ExecuteStreamingSql request 1 | 1472 |
+| SA JSON | ExecuteStreamingSql request 2 | 1400 |
+| ADC OAuth | CreateSession request | 1114 |
+| ADC OAuth | ExecuteStreamingSql request 1 | 998 |
+| ADC OAuth | ExecuteStreamingSql request 2 | 948 |
+
+確認結果:
+
+- official SA JSONはJWT auth valueが約739Bで、ADC OAuthのBearer token約261Bより大きい。
+- official SA JSONはcredential markerとして `cred-type/jwt` を送る。ADC OAuthは `cred-type/u` と `x-goog-user-project` が見える。
+- official SA JSONとADC OAuthでinbound SETTINGSは同じなので、少なくともserver SETTINGS差では説明できない。
+- officialのoutbound request packetはSA JSONのほうがADC OAuthより明確に大きい。ただしこの値はTLS record/TCP payloadであり、HPACK HEADERS payload lengthそのものではない。
+- 以降、officialのexact outbound HEADERS sizeを比較軸にするなら、stock traceではなくinstrumented official buildを使う。
