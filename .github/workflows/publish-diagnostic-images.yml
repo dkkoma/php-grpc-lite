@@ -1,4 +1,4 @@
-name: Publish diagnostic images
+name: Publish Laravel FPM bench images
 
 on:
   push:
@@ -6,8 +6,12 @@ on:
       - test
     paths:
       - ".github/workflows/publish-diagnostic-images.yml"
-      - "tools/diagnostics/issue5-spanner-repro/**"
+      - "tools/diagnostics/laravel-fpm-spanner-bench/**"
+      - "tools/benchmark/laravel-spanner-app/**"
+      - "tools/benchmark/nginx/**"
       - "ext/grpc/**"
+      - "composer.json"
+      - "composer.lock"
   workflow_dispatch:
     inputs:
       grpc_official_version:
@@ -16,7 +20,7 @@ on:
         default: "1.58.0"
 
 concurrency:
-  group: publish-diagnostic-images-${{ github.ref }}
+  group: publish-laravel-fpm-bench-images-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -25,16 +29,25 @@ permissions:
 
 jobs:
   publish:
-    name: Publish ${{ matrix.variant }} repro image
+    name: Publish ${{ matrix.variant }} Laravel FPM bench image
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        variant:
-          - official
-          - official-frame-trace
-          - lite
+        include:
+          - variant: lite
+            target: lite
+            cache_scope: laravel-fpm-lite
+          - variant: official
+            target: official
+            cache_scope: laravel-fpm-official
+          - variant: nginx
+            target: nginx
+            cache_scope: laravel-fpm-nginx
+          - variant: loadgen
+            target: loadgen
+            cache_scope: laravel-fpm-loadgen
 
     steps:
       - name: Checkout
@@ -54,17 +67,17 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: tools/diagnostics/issue5-spanner-repro/Dockerfile
+          file: tools/diagnostics/laravel-fpm-spanner-bench/Dockerfile
+          target: ${{ matrix.target }}
           push: true
           build-args: |
-            GRPC_VARIANT=${{ matrix.variant }}
             GRPC_OFFICIAL_VERSION=${{ inputs.grpc_official_version || '1.58.0' }}
           tags: |
-            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:${{ matrix.variant }}
-            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:${{ matrix.variant }}-${{ github.sha }}
+            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:laravel-fpm-${{ matrix.variant }}
+            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:laravel-fpm-${{ matrix.variant }}-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/dkkoma/php-grpc-lite
-            org.opencontainers.image.description=php-grpc-lite Spanner/PubSub/Secret Manager diagnostic repro image
+            org.opencontainers.image.description=php-grpc-lite Laravel/FPM Spanner benchmark image
             org.opencontainers.image.licenses=MIT
-          cache-from: type=gha,scope=diagnostic-${{ matrix.variant }}
-          cache-to: type=gha,scope=diagnostic-${{ matrix.variant }},mode=max
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=max
