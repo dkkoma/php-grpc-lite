@@ -1,4 +1,13 @@
-FROM php:8.4-fpm-trixie AS app-base
+ARG PHP_VERSION=8.4
+ARG DISTRO=trixie
+ARG GRPC_OFFICIAL_VERSION=1.58.0
+ARG GRPC_OFFICIAL_PROFILE=optimized
+ARG EXT_GRPC_ARTIFACT_REPO=ghcr.io/dkkoma/ext-grpc-artifacts
+ARG TARGETARCH
+
+FROM ${EXT_GRPC_ARTIFACT_REPO}:${GRPC_OFFICIAL_VERSION}-php${PHP_VERSION}-${DISTRO}-${TARGETARCH}-${GRPC_OFFICIAL_PROFILE} AS official-grpc-artifact
+
+FROM php:${PHP_VERSION}-fpm-${DISTRO} AS app-base
 
 ARG FPM_MAX_CHILDREN=16
 
@@ -65,11 +74,17 @@ CMD ["sh", "-lc", "su -s /bin/sh www-data -c 'php /workspace/tools/benchmark/lar
 FROM app-base AS official
 
 ARG GRPC_OFFICIAL_VERSION=1.58.0
+ARG GRPC_OFFICIAL_PROFILE=optimized
 
-RUN CFLAGS='-O3 -flto -fno-semantic-interposition' LDFLAGS='-flto' pecl install "grpc-${GRPC_OFFICIAL_VERSION}" \
-    && docker-php-ext-enable grpc \
+COPY --from=official-grpc-artifact /artifacts/grpc.so /tmp/official-grpc.so
+COPY --from=official-grpc-artifact /artifacts/metadata.json /usr/local/share/grpc-official-artifact-metadata.json
+
+RUN cp /tmp/official-grpc.so "$(php-config --extension-dir)/grpc.so" \
+    && rm /tmp/official-grpc.so \
+    && echo 'extension=grpc.so' > /usr/local/etc/php/conf.d/zz-official-grpc.ini \
     && php -m | grep -x grpc \
-    && php -r 'echo phpversion("grpc"), PHP_EOL;'
+    && php -r 'echo phpversion("grpc"), PHP_EOL;' \
+    && php -r 'echo file_get_contents("/usr/local/share/grpc-official-artifact-metadata.json");'
 
 ENV BENCH_TRANSPORT_IMPL=ext-grpc
 

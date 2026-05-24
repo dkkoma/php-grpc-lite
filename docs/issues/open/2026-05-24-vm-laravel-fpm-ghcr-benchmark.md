@@ -45,6 +45,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - [x] workflow追加
 - [x] VM runner追加
 - [x] GHCR publish確認
+- [x] official ext-grpc imageをartifact `grpc.so` 利用へ切替
 - [ ] VM比較実行
 
 ## 検証条件
@@ -63,6 +64,8 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - VM runnerは `GOOGLE_APPLICATION_CREDENTIALS` を渡さず、metadata server ADCだけで実行する。
 - GHCR publishは GitHub Actions run `26360354877` で成功。`lite` / `official` / `nginx` / `loadgen` の4 imageのみをpublishした。
 - 初回smokeではFPM warmup完了前の502をready扱いしていた。runnerはHTTP 200応答を確認するまで待つ形に修正した。
+- official ext-grpcは `pecl install grpc-${version}` をLaravel/FPM bench image内で実行しない。特にパッチやカスタムビルドが必要ない限り、`ghcr.io/dkkoma/ext-grpc-artifacts` の `grpc.so` artifact imageからCOPYして使う。
+- artifact利用への切替はlocal Docker buildで確認済み。`tools/diagnostics/laravel-fpm-spanner-bench/Dockerfile` の `official` targetで `1.58.0-php8.4-trixie-arm64-optimized` をCOPYし、`php -m` と `phpversion("grpc")` が `grpc` / `1.58.0` を返すことを確認した。
 
 ## 完了条件
 
