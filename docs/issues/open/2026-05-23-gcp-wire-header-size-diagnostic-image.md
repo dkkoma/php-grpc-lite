@@ -328,3 +328,51 @@ tcpdump上のrequest packet例:
 - official SA JSONとADC OAuthでinbound SETTINGSは同じなので、少なくともserver SETTINGS差では説明できない。
 - officialのoutbound request packetはSA JSONのほうがADC OAuthより明確に大きい。ただしこの値はTLS record/TCP payloadであり、HPACK HEADERS payload lengthそのものではない。
 - 今回のVM stock traceだけではofficial HEADERS payload lengthは取れない。過去ローカルのinstrumented official traceで取った `first 1260B / steady 1191B` と、今回VM tcpdumpの `steady 1400B` は同じ層ではないが整合している。
+
+## official-frame-trace imageでのHEADERS payload再計測
+
+2026-05-24に、official ext-grpc 1.58.0へHTTP/2 frame trace patchを当てた `official-frame-trace` diagnostic imageを追加し、VM上でSA JSON / ADC OAuthの `ExecuteStreamingSql SELECT 1` を同一条件で再計測した。
+
+Build / publish:
+
+- commit: `394e355`
+- workflow: `Publish diagnostic images`
+- run: `26350857157`
+- image: `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:official-frame-trace`
+- digest at VM pull: `sha256:c2a3565d3cce0737c4691b9a2ad40f71bfd35e55caf6f1f172bf056cc49be71b`
+
+実行条件:
+
+- VM: `grpc-lite-wire-e2micro` / `asia-northeast1-a`
+- RPC: `CreateSession` -> `ExecuteStreamingSql SELECT 1` x 20 -> `DeleteSession`
+- trace file: `GRPC_OFFICIAL_FRAME_TRACE_FILE=/results/trace.jsonl`
+- tcpdump: `--network host --cap-add NET_RAW --cap-add NET_ADMIN`
+- result archive: `var/gcp-vm-results/official-frame-trace-select1-20260524T034516Z.tar.gz`
+
+HEADERS payload length:
+
+| variant | credential | select stream count | first select HEADERS | second select HEADERS | steady select HEADERS |
+|---|---|---:|---:|---:|---:|
+| official ext-grpc 1.58 frame-trace | SA JSON | 20 | 1260B | 1210B | 1191B |
+| official ext-grpc 1.58 frame-trace | ADC OAuth | 20 | 792B | 720B | 720B |
+
+Control/data frame shape:
+
+| variant | out SETTINGS | out WINDOW_UPDATE | out HEADERS | out DATA | out PING | in SETTINGS | in WINDOW_UPDATE | in HEADERS | in DATA | in PING |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| official SA JSON | 2 | 26 | 22 | 22 | 24 | 2 | 1 | 44 | 22 | 24 |
+| official ADC OAuth | 2 | 30 | 22 | 22 | 24 | 2 | 1 | 44 | 22 | 24 |
+
+Latency summary from `wire-summary.php`:
+
+| variant | credential | steady HEADERS -> first inbound p50 | steady p90 | steady p99 | marker p50 | marker p90 |
+|---|---|---:|---:|---:|---:|---:|
+| official ext-grpc 1.58 frame-trace | SA JSON | 2893us | 4758us | 4862us | 6062us | 6827us |
+| official ext-grpc 1.58 frame-trace | ADC OAuth | 4277us | 4536us | 4998us | 6111us | 6548us |
+
+確認結果:
+
+- official SA JSONのHEADERS payloadは、VMでも過去ローカルのinstrumented official traceと同じ `1260B -> 1210B -> 1191B steady` になった。
+- official ADC OAuthのHEADERS payloadは `792B -> 720B steady` で、SA JSONよりかなり小さい。
+- これにより、ローカルで見ていた `1191B` はVMでも再現し、今回のstock traceで見たmetadata生サイズ `1394B` とは別層の値であることを確認した。
+- 今後のrequest shape比較では、official-frame-trace / grpc-lite traceの `HEADERS payload length` を主比較値にし、tcpdumpのTCP payload lengthは補助値として扱う。

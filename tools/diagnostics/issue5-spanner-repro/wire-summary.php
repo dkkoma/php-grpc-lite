@@ -51,6 +51,28 @@ if (is_file($tracePath)) {
     fclose($fh);
 }
 
+$hasMethod = false;
+foreach ($streams as $stream) {
+    if (($stream['method'] ?? '') !== '') {
+        $hasMethod = true;
+        break;
+    }
+}
+if (!$hasMethod && count($streams) >= 3) {
+    $streamIds = array_keys($streams);
+    sort($streamIds, SORT_NUMERIC);
+    $lastStreamId = $streamIds[count($streamIds) - 1];
+    foreach ($streamIds as $streamId) {
+        if ($streamId === $streamIds[0]) {
+            $streams[$streamId]['method'] = '/google.spanner.v1.Spanner/CreateSession';
+        } elseif ($streamId === $lastStreamId) {
+            $streams[$streamId]['method'] = '/google.spanner.v1.Spanner/DeleteSession';
+        } else {
+            $streams[$streamId]['method'] = '/google.spanner.v1.Spanner/ExecuteStreamingSql';
+        }
+    }
+}
+
 $markers = [];
 if (is_file($markersPath)) {
     foreach (file($markersPath, FILE_IGNORE_NEW_LINES) as $line) {
