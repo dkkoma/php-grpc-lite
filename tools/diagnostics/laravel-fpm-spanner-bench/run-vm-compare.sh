@@ -23,11 +23,13 @@ project="${LARAVEL_SPANNER_PROJECT_ID:-vast-falcon-165704}"
 instance="${LARAVEL_SPANNER_INSTANCE_ID:-bench}"
 database="${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}"
 min_sessions="${LARAVEL_SPANNER_MIN_SESSIONS:-16}"
-fpm_cpus="${BENCH_FPM_CPUS:-4.0}"
+fpm_cpus="${BENCH_FPM_CPUS:-2.0}"
 warmup_requests="${BENCH_FPM_WARMUP_REQUESTS:-64}"
 warmup_concurrency="${BENCH_FPM_WARMUP_CONCURRENCY:-16}"
 
 mkdir -p "$out_dir"
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$out_dir/docker-config}"
+mkdir -p "$DOCKER_CONFIG"
 exec > >(tee -a "$out_dir/runner.log") 2>&1
 
 if (( requests % concurrency != 0 )); then
@@ -58,9 +60,11 @@ wait_until_ready() {
     local action="$1"
     local attempt
     for attempt in $(seq 1 90); do
-        if docker run --rm --network "$network" "$(image_tag loadgen)" \
+        local output
+        output="$(docker run --rm --network "$network" "$(image_tag loadgen)" \
             -n 1 -c 1 -disable-keepalive \
-            "http://laravel-nginx:8080/bench?action=$action" >/dev/null 2>&1; then
+            "http://laravel-nginx:8080/bench?action=$action" 2>/dev/null || true)"
+        if printf '%s\n' "$output" | grep -q '  \[200\][[:space:]]\+1 responses'; then
             return
         fi
         sleep 1

@@ -44,7 +44,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - [x] Dockerfile追加
 - [x] workflow追加
 - [x] VM runner追加
-- [ ] GHCR publish確認
+- [x] GHCR publish確認
 - [ ] VM比較実行
 
 ## 検証条件
@@ -53,7 +53,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - VM attached service account: `test-spanner@vast-falcon-165704.iam.gserviceaccount.com`
 - auth: VM metadata ADCのみ。credential JSONは使わない。
 - Spanner: `vast-falcon-165704` / `bench` / `laravel-bench-db`
-- FPM: 16 workers / CPU quota 4.0
+- FPM: 16 workers / CPU quota 2.0（`e2-micro` のVM上限に合わせる）
 
 ## 判断ログ
 
@@ -61,6 +61,8 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - GHCR packageは既存の `php-grpc-lite-spanner-repro` を使う。新規packageのvisibility設定を増やさず、既にpublic pull確認済みのpackageへ用途別tagを追加する。
 - 既存のissue #5 wire diagnostic image workflowはこのbranchでは用途外とし、`test` branch pushではLaravel/FPM bench用tagだけをpublishする。
 - VM runnerは `GOOGLE_APPLICATION_CREDENTIALS` を渡さず、metadata server ADCだけで実行する。
+- GHCR publishは GitHub Actions run `26360354877` で成功。`lite` / `official` / `nginx` / `loadgen` の4 imageのみをpublishした。
+- 初回smokeではFPM warmup完了前の502をready扱いしていた。runnerはHTTP 200応答を確認するまで待つ形に修正した。
 
 ## 完了条件
 
