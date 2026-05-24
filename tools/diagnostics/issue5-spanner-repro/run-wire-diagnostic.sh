@@ -13,7 +13,7 @@ mkdir -p "$results_dir"
 rm -f "$results_dir/markers.log" "$results_dir/php.err" "$results_dir/trace.jsonl" "$results_dir/tcpdump.pcap" "$results_dir/summary.txt"
 
 if [ "$tcpdump_enabled" = "1" ]; then
-  tcpdump -i "$tcpdump_interface" -nn -s 0 -w "$results_dir/tcpdump.pcap" $tcpdump_filter >"$results_dir/tcpdump.log" 2>&1 &
+  tcpdump -U -i "$tcpdump_interface" -nn -s 0 -w "$results_dir/tcpdump.pcap" $tcpdump_filter >"$results_dir/tcpdump.log" 2>&1 &
   tcpdump_pid=$!
   sleep 0.2
 else
