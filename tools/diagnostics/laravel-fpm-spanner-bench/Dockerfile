@@ -102,7 +102,7 @@ ENV FPM_UPSTREAM=laravel-fpm \
 
 FROM golang:1.25-trixie AS loadgen-build
 
-RUN go install github.com/rakyll/hey@latest
+RUN go install github.com/rakyll/hey@v0.1.5
 
 FROM debian:trixie-slim AS loadgen
 
