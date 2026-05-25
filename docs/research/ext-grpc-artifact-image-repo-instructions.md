@@ -192,8 +192,8 @@ php -r 'var_dump(class_exists("Grpc\\Channel"));'
 
 - Laravel/FPM bench image、Spanner repro image、今後追加するdiagnostic imageの通常official variantでは `pecl install grpc-${version}` をしない。
 - frame traceなど公式 `ext-grpc` 自体へpatchを当てる必要があるdiagnostic targetだけsource buildを許可する。
-- amd64のperformance comparatorでは `optimized-amd64-skylake` を優先する。
-- arm64や最適化条件を揃えない互換確認では `pecl` を使う。
+- 通常比較ではCPU世代依存を避けるため `pecl` を使い、php-grpc-lite側も追加最適化flagなしの同等条件で比較する。
+- `optimized-amd64-skylake` は、実CPUがSkylake相当以上であることを確認した明示的な最適化比較だけに使う。
 - artifact tagは `<grpc-version>-php<php-version>-<distro>-<arch>-<profile>` を使う。
 - `Dockerfile` 側では `EXT_GRPC_ARTIFACT_ARCH` build argでartifact archを明示できるようにする。GitHub Actions / GCP VMのamd64比較では `amd64`、arm64ローカル確認では `arm64` + `pecl` を指定する。
 

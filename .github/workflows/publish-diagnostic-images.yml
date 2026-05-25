@@ -21,11 +21,11 @@ on:
       grpc_official_profile:
         description: "official ext-grpc artifact build profile"
         required: false
-        default: "optimized-amd64-skylake"
+        default: "pecl"
         type: choice
         options:
-          - optimized-amd64-skylake
           - pecl
+          - optimized-amd64-skylake
 
 concurrency:
   group: publish-laravel-fpm-bench-images-${{ github.ref }}
@@ -80,7 +80,7 @@ jobs:
           push: true
           build-args: |
             GRPC_OFFICIAL_VERSION=${{ inputs.grpc_official_version || '1.58.0' }}
-            GRPC_OFFICIAL_PROFILE=${{ inputs.grpc_official_profile || 'optimized-amd64-skylake' }}
+            GRPC_OFFICIAL_PROFILE=${{ inputs.grpc_official_profile || 'pecl' }}
             EXT_GRPC_ARTIFACT_ARCH=amd64
           tags: |
             ghcr.io/dkkoma/php-grpc-lite-spanner-repro:laravel-fpm-${{ matrix.variant }}

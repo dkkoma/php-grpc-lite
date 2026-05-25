@@ -22,7 +22,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - `test` branch pushでLaravel/FPM Spanner bench専用imageだけをbuild/pushする。
 - imageは既存のpublic GHCR package `ghcr.io/dkkoma/php-grpc-lite-spanner-repro` のtagとしてpublishする。
 - VM上の実行scriptを追加し、metadata server ADCでSpannerへ接続する。
-- 比較対象はgrpc-lite currentとofficial ext-grpc 1.58.0 artifact。amd64 performance comparatorでは `optimized-amd64-skylake` profileを使う。
+- 比較対象はgrpc-lite currentとofficial ext-grpc 1.58.0 artifact。VMの実CPUがBroadwellだったため、通常比較ではofficial ext-grpc `pecl` profileとgrpc-lite追加最適化flagなしを揃えて使う。
 
 ## 非スコープ
 
@@ -56,6 +56,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - auth: VM metadata ADCのみ。credential JSONは使わない。
 - Spanner: `vast-falcon-165704` / `bench` / `laravel-bench-db`
 - FPM: 16 workers / CPU quota 2.0（`e2-micro` のVM上限に合わせる）
+- VM CPU: Intel family 6 model 79 / Broadwell。`optimized-amd64-skylake` artifactは標準比較に使わない。
 
 ## 判断ログ
 
@@ -66,12 +67,14 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - GHCR publishは GitHub Actions run `26360354877` で成功。`lite` / `official` / `nginx` / `loadgen` の4 imageのみをpublishした。
 - 初回smokeではFPM warmup完了前の502をready扱いしていた。runnerはHTTP 200応答を確認するまで待つ形に修正した。
 - official ext-grpcは `pecl install grpc-${version}` をLaravel/FPM bench image内で実行しない。特にパッチやカスタムビルドが必要ない限り、`ghcr.io/dkkoma/ext-grpc-artifacts` の `grpc.so` artifact imageからCOPYして使う。
-- artifact tagは `<grpc-version>-php<php-version>-<distro>-<arch>-<profile>`。`pecl` は全arch、`optimized-amd64-skylake` はamd64専用。Laravel/FPM benchのGitHub Actions publishではamd64向けに `1.58.0-php8.4-trixie-amd64-optimized-amd64-skylake` を使う。
+- artifact tagは `<grpc-version>-php<php-version>-<distro>-<arch>-<profile>`。`pecl` は全arch、`optimized-amd64-skylake` はamd64専用。Laravel/FPM benchのGitHub Actions publish defaultは `1.58.0-php8.4-trixie-amd64-pecl` とし、optimized profileは実CPU targetを満たす場合の明示比較だけに使う。
 - Dockerfileは `EXT_GRPC_ARTIFACT_ARCH` build argでartifact archを明示する。GitHub Actionsは `amd64` 固定、arm64ローカル確認は `EXT_GRPC_ARTIFACT_ARCH=arm64` + `GRPC_OFFICIAL_PROFILE=pecl` を指定する。
 - `tools/diagnostics/issue5-spanner-repro/Dockerfile` の通常official variantもartifact COPYへ切替済み。`grpc-official-frame-trace` は公式 `ext-grpc` にtrace patchを当てるため、例外としてsource buildを維持する。
 - local smokeとして `docker build --target grpc-official -f tools/diagnostics/issue5-spanner-repro/Dockerfile --build-arg EXT_GRPC_ARTIFACT_ARCH=arm64 --build-arg GRPC_OFFICIAL_PROFILE=pecl ...` を実行し、artifact `grpc.so` が `phpversion("grpc") === 1.58.0` でロードできることを確認した。
 - `--platform linux/amd64` + `EXT_GRPC_ARTIFACT_ARCH=amd64` + `GRPC_OFFICIAL_PROFILE=optimized-amd64-skylake` でも同じsmokeを実行し、current GCP/GitHub Actions用tagがロードできることを確認した。
 - `test` branch push後の GitHub Actions run `26376549711` は成功。Laravel/FPM bench image publishは現行tag `1.58.0-php8.4-trixie-amd64-optimized-amd64-skylake` を使う経路で完了した。
+- 公式 `gcr.io/google.com/cloudsdktool/google-cloud-cli:stable` container + `openssh-client` でVMのCPUを確認した。`gcloud` はホストinstallではなく公式containerで実行する。
+- VM CPUは `GenuineIntel` / family `6` / model `79` / `Intel(R) Xeon(R) CPU @ 2.20GHz` で、SkylakeではなくBroadwell系だった。以後このVMの標準比較はofficial `pecl` profileに戻す。
 - 旧 `optimized` profile tagを使ったrun `26375271620` / `26375466928` はartifact COPY経路確認としては有効だが、現行tag方針の最終確認ではない。
 - `test` branch push後の GitHub Actions run `26375271620` は成功。`official` image buildはartifact COPY経路で完了した。
 - VM smoke `laravel-fpm-artifact-smoke-20260524T230700Z` は `select_1row_10col` / `16 requests` / `c4` で `lite` / `official` ともにHTTP 200で完走した。

@@ -171,7 +171,8 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
   - first releaseはsource buildを基本にし、pre-packaged binary配布はCI matrixとrelease artifact整備後に判断する。
 - 公式 `ext-grpc` 比較用artifact:
   - 通常のbench / diagnostic imageでは `pecl install grpc` を実行せず、`ghcr.io/dkkoma/ext-grpc-artifacts:<grpc-version>-php<php-version>-<distro>-<arch>-<profile>` から `/artifacts/grpc.so` をCOPYして使う。
-  - `pecl` profileは全arch、`optimized-amd64-skylake` profileはamd64専用。amd64のperformance comparatorでは `optimized-amd64-skylake` を優先する。
+  - 通常比較ではCPU世代依存を避けるため `pecl` profileを使い、php-grpc-lite側も追加最適化flagなしの同等条件で比較する。
+  - `optimized-amd64-skylake` profileはamd64専用。実CPUがSkylake相当以上であることを確認した明示的な最適化比較だけに使う。
   - artifact archはDockerfileの `EXT_GRPC_ARTIFACT_ARCH` build argで明示する。
   - 公式 `ext-grpc` 自体へpatchを当てるframe traceなど、custom instrumentationが必要なdiagnostic targetだけsource buildを許可する。
 
