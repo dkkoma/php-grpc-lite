@@ -71,6 +71,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - `tools/diagnostics/issue5-spanner-repro/Dockerfile` の通常official variantもartifact COPYへ切替済み。`grpc-official-frame-trace` は公式 `ext-grpc` にtrace patchを当てるため、例外としてsource buildを維持する。
 - local smokeとして `docker build --target grpc-official -f tools/diagnostics/issue5-spanner-repro/Dockerfile --build-arg EXT_GRPC_ARTIFACT_ARCH=arm64 --build-arg GRPC_OFFICIAL_PROFILE=pecl ...` を実行し、artifact `grpc.so` が `phpversion("grpc") === 1.58.0` でロードできることを確認した。
 - `--platform linux/amd64` + `EXT_GRPC_ARTIFACT_ARCH=amd64` + `GRPC_OFFICIAL_PROFILE=optimized-amd64-skylake` でも同じsmokeを実行し、current GCP/GitHub Actions用tagがロードできることを確認した。
+- `test` branch push後の GitHub Actions run `26376549711` は成功。Laravel/FPM bench image publishは現行tag `1.58.0-php8.4-trixie-amd64-optimized-amd64-skylake` を使う経路で完了した。
 - 旧 `optimized` profile tagを使ったrun `26375271620` / `26375466928` はartifact COPY経路確認としては有効だが、現行tag方針の最終確認ではない。
 - `test` branch push後の GitHub Actions run `26375271620` は成功。`official` image buildはartifact COPY経路で完了した。
 - VM smoke `laravel-fpm-artifact-smoke-20260524T230700Z` は `select_1row_10col` / `16 requests` / `c4` で `lite` / `official` ともにHTTP 200で完走した。
