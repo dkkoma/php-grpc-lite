@@ -75,6 +75,8 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - `test` branch push後の GitHub Actions run `26376549711` は成功。Laravel/FPM bench image publishは現行tag `1.58.0-php8.4-trixie-amd64-optimized-amd64-skylake` を使う経路で完了した。
 - 公式 `gcr.io/google.com/cloudsdktool/google-cloud-cli:stable` container + `openssh-client` でVMのCPUを確認した。`gcloud` はホストinstallではなく公式containerで実行する。
 - VM CPUは `GenuineIntel` / family `6` / model `79` / `Intel(R) Xeon(R) CPU @ 2.20GHz` で、SkylakeではなくBroadwell系だった。以後このVMの標準比較はofficial `pecl` profileに戻す。
+- `test` branch push後の GitHub Actions run `26377329903` は成功。Laravel/FPM bench image publishはofficial `pecl` profile defaultへ戻した状態で完了した。
+- pecl profile imageでVM比較 `laravel-fpm-pecl-compare-20260525T004000Z` を実行した。VM上のrunner表示は古いpercentile parseでp50/p90が0になったため、保存済み `hey-*.log` からp50/p90/p99を再集計した。
 - 旧 `optimized` profile tagを使ったrun `26375271620` / `26375466928` はartifact COPY経路確認としては有効だが、現行tag方針の最終確認ではない。
 - `test` branch push後の GitHub Actions run `26375271620` は成功。`official` image buildはartifact COPY経路で完了した。
 - VM smoke `laravel-fpm-artifact-smoke-20260524T230700Z` は `select_1row_10col` / `16 requests` / `c4` で `lite` / `official` ともにHTTP 200で完走した。
@@ -100,6 +102,28 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 | official | `select_1row_10col` | 9.1044 | 167,110.6 | 1,637.2 | 1,534.7 | 2,500.4 | 4,001.7 |
 
 このrunでは全体latencyはSpanner側待ちが大きく、CPU/requestの値もaction間で大きく揺れる。runtime比較の継続には同一imageで複数runを取り、外れ値とSpanner待ちの影響を分ける必要がある。
+
+## VM比較結果(pecl profile)
+
+条件:
+
+- VM: `grpc-lite-wire-e2micro`
+- VM CPU: Intel family 6 model 79 / Broadwell
+- auth: metadata ADC
+- FPM CPU quota: `2.0`
+- requests/concurrency: `192` / `16`
+- run id: `laravel-fpm-pecl-compare-20260525T004000Z`
+- official ext-grpc artifact: `1.58.0-php8.4-trixie-amd64-pecl`
+- grpc-lite build: Laravel/FPM bench Dockerfileの通常build。追加 `-O3` / LTO / CPU target flagなし。
+
+| variant | action | rps | cpu_us/req | avg_ms | p50_ms | p90_ms | p99_ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| lite | `transaction_select2_update1_insert1` | 23.0666 | 27,349.3 | 678.6 | 683.2 | 741.2 | 893.2 |
+| official | `transaction_select2_update1_insert1` | 7.1029 | 208,932.3 | 2,129.7 | 2,100.7 | 2,994.8 | 4,505.7 |
+| lite | `select_1row_10col` | 8.8370 | 143,021.5 | 1,722.5 | 1,548.7 | 2,774.9 | 5,857.2 |
+| official | `select_1row_10col` | 9.3933 | 161,870.0 | 1,564.9 | 1,382.7 | 2,905.1 | 4,005.6 |
+
+このrunでもtransaction系はliteが大きく速く、small selectはofficialが少し速い。e2-micro + real SpannerではSpanner待ちとVM CPU制約の揺れが大きいため、採否判断には複数runか、より安定したGCE machine typeでの再測定が必要。
 
 ## 完了条件
 
