@@ -148,6 +148,29 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 
 metadata ADC条件のminimal `SELECT 1` では、official peclとlite通常buildの差は小さい。1000 iterationではliteがp50/p90/p99で上回ったが、200 iterationではほぼ同等でofficialがやや良い値もあるため、現時点では「大きな性能差は再現しない」と扱う。
 
+## VM比較結果(issue #5 original minimal repro)
+
+条件:
+
+- VM: `grpc-lite-wire-e2micro`
+- VM CPU: Intel family 6 model 79 / Broadwell
+- auth: metadata ADC
+- images: `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:official` / `:lite`
+- script: `cli-bench.php`
+- workload: warmup `SELECT 1` 後、各iterationで `Database::runTransaction()` 内から `Transaction::execute('SELECT @i')` と `Transaction::commit()` を実行する。
+- official ext-grpc: `1.58.0`
+- grpc-lite: `0.1.0`
+- google/cloud-spanner: `1.106.0.0`
+
+| iter | variant | mean_us | p50_us | p90_us | p99_us | min_us | max_us |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 200 | official | 11,381 | 10,255 | 11,690 | 19,787 | 8,737 | 191,677 |
+| 200 | lite | 10,989 | 10,195 | 11,281 | 15,653 | 9,007 | 134,935 |
+| 1000 | official | 10,857 | 10,679 | 12,158 | 14,761 | 8,006 | 46,087 |
+| 1000 | lite | 9,356 | 9,275 | 10,170 | 11,155 | 7,510 | 39,455 |
+
+metadata ADC条件のissue #5 original reproでは、official peclよりlite通常buildのほうが速い。1000 iterationではliteがp50で約1.4ms、p99で約3.6ms良い。少なくともこのVM + metadata ADC条件では、issue #5の発端だった「liteがofficialより大きく遅い」状態は再現しない。
+
 ## 完了条件
 
 - VM上でGHCR imageをpullしてLaravel/FPM Spanner比較が実行できる。
