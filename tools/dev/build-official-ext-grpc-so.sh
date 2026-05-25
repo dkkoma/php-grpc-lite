@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Build official PECL ext-grpc grpc.so for version-aligned comparisons.
+# Build official PECL ext-grpc grpc.so for exceptional local custom comparisons.
+#
+# Normal benchmark/diagnostic images must use ghcr.io/dkkoma/ext-grpc-artifacts.
+# Keep this helper only for cases where a source build or local patch is the
+# object of investigation.
 #
 # Usage:
 #   ./tools/dev/build-official-ext-grpc-so.sh <version> [profile]
