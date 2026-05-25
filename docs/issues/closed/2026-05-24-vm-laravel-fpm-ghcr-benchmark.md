@@ -1,5 +1,5 @@
 ---
-Status: Open
+Status: Closed
 Owner: Codex
 Created: 2026-05-24
 Related:
@@ -47,7 +47,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - [x] GHCR publish確認
 - [x] official ext-grpc imageをartifact `grpc.so` 利用へ切替
 - [x] artifact tag/profile変更をDockerfile、workflow、docsへ反映
-- [ ] VM比較実行
+- [x] VM比較実行
 
 ## 検証条件
 
@@ -171,8 +171,27 @@ metadata ADC条件のminimal `SELECT 1` では、official peclとlite通常build
 
 metadata ADC条件のissue #5 original reproでは、official peclよりlite通常buildのほうが速い。1000 iterationではliteがp50で約1.4ms、p99で約3.6ms良い。少なくともこのVM + metadata ADC条件では、issue #5の発端だった「liteがofficialより大きく遅い」状態は再現しない。
 
+## 最終判断
+
+- official ext-grpc pecl artifactとgrpc-lite通常buildを、GCP VM上のmetadata ADC条件で比較できる状態を作れた。
+- VM CPUはBroadwell系だったため、`optimized-amd64-skylake` artifactは標準比較から外し、official peclとgrpc-lite通常buildで比較条件を揃えた。
+- `SELECT 1` 単体、issue #5 original minimal repro、Laravel/FPM transaction系のいずれでも、issue #5の発端だった「grpc-liteがofficial ext-grpcより大きく遅い」状態は再現しなかった。
+- Laravel/FPM small selectではofficialがやや速いrunもあるが、差は小さく、Spanner待ちとe2-microの揺れを超える強い結論にはしない。
+- SA JSONによるheaders size増加、headers padding、特定header size境界による速度差は、VM上で再現せず、ローカル測定環境・ネットワーク経路依存の可能性が高い。今後の本流の改善候補から外す。
+- したがってこのissueの目的は完了。今後同種の性能差を見る場合は、GCP VM上、metadata ADC、official artifact profileとCPU targetを揃えた条件を基準に、再現条件から改めて切る。
+
 ## 完了条件
 
 - VM上でGHCR imageをpullしてLaravel/FPM Spanner比較が実行できる。
 - 結果にCPU/request、RPS、avg/p50/p90/max latencyが含まれる。
 - 実行条件と結果がこのissueに記録されている。
+
+## 完了記録
+
+- Closed: 2026-05-25
+- Fix / verification commits:
+  - `1046016` Issue 5: official ext-grpc artifact利用方針を全体へ反映
+  - `fb2b43b` Issue 5: VM比較のofficial profileをpeclへ戻す
+  - `d8ece49` Issue 5: pecl profileでVM比較を再計測
+  - `ecf8c99` Issue 5: minimal SELECT 1のVM比較を記録
+  - `9e45e77` Issue 5: original minimal reproのVM比較を記録
