@@ -125,6 +125,29 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 
 このrunでもtransaction系はliteが大きく速く、small selectはofficialが少し速い。e2-micro + real SpannerではSpanner待ちとVM CPU制約の揺れが大きいため、採否判断には複数runか、より安定したGCE machine typeでの再測定が必要。
 
+## VM比較結果(minimal SELECT 1)
+
+条件:
+
+- VM: `grpc-lite-wire-e2micro`
+- VM CPU: Intel family 6 model 79 / Broadwell
+- auth: metadata ADC
+- images: `ghcr.io/dkkoma/php-grpc-lite-spanner-repro:official` / `:lite`
+- script: `select1-bench.php`
+- workload: `Database::execute('SELECT 1')->rows()->current()` のみ。warmupで同じ `SELECT 1` を1回実行後に計測。
+- official ext-grpc: `1.58.0`
+- grpc-lite: `0.1.0`
+- google/cloud-spanner: `1.106.0.0`
+
+| iter | variant | mean_us | p50_us | p90_us | p99_us | min_us | max_us |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 200 | official | 5,151 | 5,460 | 6,130 | 7,258 | 3,421 | 10,180 |
+| 200 | lite | 5,341 | 5,479 | 6,414 | 9,230 | 3,127 | 10,523 |
+| 1000 | official | 5,359 | 5,672 | 6,276 | 7,812 | 3,439 | 11,215 |
+| 1000 | lite | 4,918 | 5,201 | 5,855 | 6,789 | 3,077 | 11,073 |
+
+metadata ADC条件のminimal `SELECT 1` では、official peclとlite通常buildの差は小さい。1000 iterationではliteがp50/p90/p99で上回ったが、200 iterationではほぼ同等でofficialがやや良い値もあるため、現時点では「大きな性能差は再現しない」と扱う。
+
 ## 完了条件
 
 - VM上でGHCR imageをpullしてLaravel/FPM Spanner比較が実行できる。
