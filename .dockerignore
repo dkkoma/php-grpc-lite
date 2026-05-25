@@ -20,3 +20,8 @@ ext/grpc/*.dep
 ext/grpc/*.lo
 ext/grpc/*.o
 ext/grpc/run-tests.php
+
+var/
+vendor/
+tools/benchmark/laravel-spanner-app/storage/
+tools/benchmark/laravel-spanner-app/bootstrap/cache/

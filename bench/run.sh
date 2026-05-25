@@ -29,6 +29,7 @@ fi
 extra_args=("$@")
 timestamp="${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}"
 implementation="${BENCH_IMPLEMENTATION:-php-grpc-lite}"
+implementation_label="${BENCH_IMPLEMENTATION_LABEL:-$implementation}"
 container_service="${BENCH_CONTAINER_SERVICE:-dev}"
 autoload_path="${BENCH_AUTOLOAD:-vendor/autoload.php}"
 export BENCH_OTEL_RUN_ID="${BENCH_OTEL_RUN_ID:-$timestamp}"
@@ -52,6 +53,10 @@ run_benchmark_php() {
     local php_args=()
     if [[ "$implementation" == "php-grpc-lite" ]]; then
         php_args=(-d extension=/workspace/ext/grpc/modules/grpc.so)
+        if [[ -n "${BENCH_PHP_EXTRA_INI_ARGS:-}" ]]; then
+            # shellcheck disable=SC2206
+            php_args+=(${BENCH_PHP_EXTRA_INI_ARGS})
+        fi
     fi
     local docker_env=()
     local env_name
@@ -76,9 +81,9 @@ run_benchmark_php() {
     echo "  OTEL run id: $BENCH_OTEL_RUN_ID"
     echo "==========================================="
 
-    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$container_service" php ${php_args+"${php_args[@]}"} "$@" \
+    docker compose run --rm "${docker_env[@]+"${docker_env[@]}"}" "$container_service" php -d memory_limit=-1 ${php_args+"${php_args[@]}"} "$@" \
         --suite="$suite" \
-        --implementation="$implementation" \
+        --implementation="$implementation_label" \
         --autoload="$autoload_path" \
         "${extra_args[@]+"${extra_args[@]}"}"
 }
@@ -139,7 +144,7 @@ esac
 
 echo
 echo "OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
-docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
+docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php -d memory_limit=-1 \
     tools/benchmark/otelop-summary.php \
     --run-id="$BENCH_OTEL_RUN_ID" \
     --suite="$suite" \

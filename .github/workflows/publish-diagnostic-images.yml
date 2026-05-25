@@ -1,0 +1,93 @@
+name: Publish Laravel FPM bench images
+
+on:
+  push:
+    branches:
+      - test
+    paths:
+      - ".github/workflows/publish-diagnostic-images.yml"
+      - "tools/diagnostics/laravel-fpm-spanner-bench/**"
+      - "tools/benchmark/laravel-spanner-app/**"
+      - "tools/benchmark/nginx/**"
+      - "ext/grpc/**"
+      - "composer.json"
+      - "composer.lock"
+  workflow_dispatch:
+    inputs:
+      grpc_official_version:
+        description: "official ext-grpc artifact version for the official image"
+        required: false
+        default: "1.58.0"
+      grpc_official_profile:
+        description: "official ext-grpc artifact build profile"
+        required: false
+        default: "pecl"
+        type: choice
+        options:
+          - pecl
+          - optimized-amd64-skylake
+
+concurrency:
+  group: publish-laravel-fpm-bench-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish ${{ matrix.variant }} Laravel FPM bench image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: lite
+            target: lite
+            cache_scope: laravel-fpm-lite
+          - variant: official
+            target: official
+            cache_scope: laravel-fpm-official
+          - variant: nginx
+            target: nginx
+            cache_scope: laravel-fpm-nginx
+          - variant: loadgen
+            target: loadgen
+            cache_scope: laravel-fpm-loadgen
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tools/diagnostics/laravel-fpm-spanner-bench/Dockerfile
+          target: ${{ matrix.target }}
+          push: true
+          build-args: |
+            GRPC_OFFICIAL_VERSION=${{ inputs.grpc_official_version || '1.58.0' }}
+            GRPC_OFFICIAL_PROFILE=${{ inputs.grpc_official_profile || 'pecl' }}
+            EXT_GRPC_ARTIFACT_ARCH=amd64
+          tags: |
+            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:laravel-fpm-${{ matrix.variant }}
+            ghcr.io/dkkoma/php-grpc-lite-spanner-repro:laravel-fpm-${{ matrix.variant }}-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/dkkoma/php-grpc-lite
+            org.opencontainers.image.description=php-grpc-lite Laravel/FPM Spanner benchmark image
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=max

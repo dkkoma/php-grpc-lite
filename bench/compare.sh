@@ -30,7 +30,7 @@ BENCH_IMPLEMENTATION=ext-grpc ./bench/run.sh "$suite" "$@"
 
 echo
 echo "Combined OTEL summary: run_id=$BENCH_OTEL_RUN_ID"
-docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php \
+docker compose run --rm -e BENCH_OTEL_RUN_ID="$BENCH_OTEL_RUN_ID" dev php -d memory_limit=-1 \
     tools/benchmark/otelop-summary.php \
     --run-id="$BENCH_OTEL_RUN_ID" \
     --suite="$suite" \
