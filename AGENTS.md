@@ -47,6 +47,8 @@
 - C拡張静的解析: `./tools/test/check-c-static-analysis.sh`
 - 単独ベンチ: `./bench/run.sh <suite>`
 - ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner代表shapeは `spanner-shape`、実経路smoke/regressionは `spanner-real-client` を使う。franken-go backend を含める場合は対象suiteを明確にした専用runnerを追加する。
+- official ext-grpc を比較対象としてimageへ組み込む場合は、特にpatchやcustom instrumentationが必要ない限り `ghcr.io/dkkoma/ext-grpc-artifacts` の `grpc.so` artifactを使う。通常のdiagnostic/bench Dockerfileで `pecl install grpc` はしない。
+- artifact tagは `<grpc-version>-php<php-version>-<distro>-<arch>-<profile>`。`pecl` は全arch、`optimized-amd64-skylake` はamd64専用。amd64 performance comparatorでは `optimized-amd64-skylake` を優先し、arm64や互換確認では `pecl` を使う。Dockerfileでは `EXT_GRPC_ARTIFACT_ARCH` build argでartifact archを明示する。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。
 
 ## ベンチ作業の注意

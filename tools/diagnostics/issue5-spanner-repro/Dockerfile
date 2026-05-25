@@ -1,8 +1,15 @@
 # syntax=docker/dockerfile:1.6
+ARG PHP_VERSION=8.4
+ARG DISTRO=trixie
 ARG GRPC_VARIANT=official
 ARG GRPC_OFFICIAL_VERSION=1.58.0
+ARG GRPC_OFFICIAL_PROFILE=pecl
+ARG EXT_GRPC_ARTIFACT_ARCH=amd64
+ARG EXT_GRPC_ARTIFACT_REPO=ghcr.io/dkkoma/ext-grpc-artifacts
 
-FROM php:8.4-cli-trixie AS base
+FROM ${EXT_GRPC_ARTIFACT_REPO}:${GRPC_OFFICIAL_VERSION}-php${PHP_VERSION}-${DISTRO}-${EXT_GRPC_ARTIFACT_ARCH}-${GRPC_OFFICIAL_PROFILE} AS grpc-official-artifact
+
+FROM php:${PHP_VERSION}-cli-${DISTRO} AS base
 RUN set -eux \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -12,8 +19,14 @@ RUN set -eux \
 
 FROM base AS grpc-official
 ARG GRPC_OFFICIAL_VERSION
-RUN pecl install grpc-${GRPC_OFFICIAL_VERSION} \
- && docker-php-ext-enable grpc
+ARG GRPC_OFFICIAL_PROFILE
+COPY --from=grpc-official-artifact /artifacts/grpc.so /tmp/official-grpc.so
+COPY --from=grpc-official-artifact /artifacts/metadata.json /usr/local/share/grpc-official-artifact-metadata.json
+RUN cp /tmp/official-grpc.so "$(php -r 'echo ini_get("extension_dir");')/grpc.so" \
+ && rm /tmp/official-grpc.so \
+ && docker-php-ext-enable grpc \
+ && php -n -d extension=grpc.so -r 'echo phpversion("grpc"), PHP_EOL;' \
+ && php -r 'echo file_get_contents("/usr/local/share/grpc-official-artifact-metadata.json");'
 
 FROM base AS grpc-official-frame-trace
 ARG GRPC_OFFICIAL_VERSION

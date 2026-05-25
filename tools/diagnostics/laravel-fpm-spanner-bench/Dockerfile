@@ -1,11 +1,11 @@
 ARG PHP_VERSION=8.4
 ARG DISTRO=trixie
 ARG GRPC_OFFICIAL_VERSION=1.58.0
-ARG GRPC_OFFICIAL_PROFILE=optimized
+ARG GRPC_OFFICIAL_PROFILE=pecl
+ARG EXT_GRPC_ARTIFACT_ARCH=amd64
 ARG EXT_GRPC_ARTIFACT_REPO=ghcr.io/dkkoma/ext-grpc-artifacts
-ARG TARGETARCH
 
-FROM ${EXT_GRPC_ARTIFACT_REPO}:${GRPC_OFFICIAL_VERSION}-php${PHP_VERSION}-${DISTRO}-${TARGETARCH}-${GRPC_OFFICIAL_PROFILE} AS official-grpc-artifact
+FROM ${EXT_GRPC_ARTIFACT_REPO}:${GRPC_OFFICIAL_VERSION}-php${PHP_VERSION}-${DISTRO}-${EXT_GRPC_ARTIFACT_ARCH}-${GRPC_OFFICIAL_PROFILE} AS official-grpc-artifact
 
 FROM php:${PHP_VERSION}-fpm-${DISTRO} AS app-base
 
@@ -74,7 +74,7 @@ CMD ["sh", "-lc", "su -s /bin/sh www-data -c 'php /workspace/tools/benchmark/lar
 FROM app-base AS official
 
 ARG GRPC_OFFICIAL_VERSION=1.58.0
-ARG GRPC_OFFICIAL_PROFILE=optimized
+ARG GRPC_OFFICIAL_PROFILE=pecl
 
 COPY --from=official-grpc-artifact /artifacts/grpc.so /tmp/official-grpc.so
 COPY --from=official-grpc-artifact /artifacts/metadata.json /usr/local/share/grpc-official-artifact-metadata.json

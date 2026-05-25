@@ -22,7 +22,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - `test` branch pushでLaravel/FPM Spanner bench専用imageだけをbuild/pushする。
 - imageは既存のpublic GHCR package `ghcr.io/dkkoma/php-grpc-lite-spanner-repro` のtagとしてpublishする。
 - VM上の実行scriptを追加し、metadata server ADCでSpannerへ接続する。
-- 比較対象はgrpc-lite currentとofficial ext-grpc 1.58.0 optimized。
+- 比較対象はgrpc-lite currentとofficial ext-grpc 1.58.0 artifact。amd64 performance comparatorでは `optimized-amd64-skylake` profileを使う。
 
 ## 非スコープ
 
@@ -46,6 +46,7 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - [x] VM runner追加
 - [x] GHCR publish確認
 - [x] official ext-grpc imageをartifact `grpc.so` 利用へ切替
+- [x] artifact tag/profile変更をDockerfile、workflow、docsへ反映
 - [ ] VM比較実行
 
 ## 検証条件
@@ -65,7 +66,12 @@ issue #5のwire diagnosticでは、`test` branch pushでGHCR imageをbuildし、
 - GHCR publishは GitHub Actions run `26360354877` で成功。`lite` / `official` / `nginx` / `loadgen` の4 imageのみをpublishした。
 - 初回smokeではFPM warmup完了前の502をready扱いしていた。runnerはHTTP 200応答を確認するまで待つ形に修正した。
 - official ext-grpcは `pecl install grpc-${version}` をLaravel/FPM bench image内で実行しない。特にパッチやカスタムビルドが必要ない限り、`ghcr.io/dkkoma/ext-grpc-artifacts` の `grpc.so` artifact imageからCOPYして使う。
-- artifact利用への切替はlocal Docker buildで確認済み。`tools/diagnostics/laravel-fpm-spanner-bench/Dockerfile` の `official` targetで `1.58.0-php8.4-trixie-arm64-optimized` をCOPYし、`php -m` と `phpversion("grpc")` が `grpc` / `1.58.0` を返すことを確認した。
+- artifact tagは `<grpc-version>-php<php-version>-<distro>-<arch>-<profile>`。`pecl` は全arch、`optimized-amd64-skylake` はamd64専用。Laravel/FPM benchのGitHub Actions publishではamd64向けに `1.58.0-php8.4-trixie-amd64-optimized-amd64-skylake` を使う。
+- Dockerfileは `EXT_GRPC_ARTIFACT_ARCH` build argでartifact archを明示する。GitHub Actionsは `amd64` 固定、arm64ローカル確認は `EXT_GRPC_ARTIFACT_ARCH=arm64` + `GRPC_OFFICIAL_PROFILE=pecl` を指定する。
+- `tools/diagnostics/issue5-spanner-repro/Dockerfile` の通常official variantもartifact COPYへ切替済み。`grpc-official-frame-trace` は公式 `ext-grpc` にtrace patchを当てるため、例外としてsource buildを維持する。
+- local smokeとして `docker build --target grpc-official -f tools/diagnostics/issue5-spanner-repro/Dockerfile --build-arg EXT_GRPC_ARTIFACT_ARCH=arm64 --build-arg GRPC_OFFICIAL_PROFILE=pecl ...` を実行し、artifact `grpc.so` が `phpversion("grpc") === 1.58.0` でロードできることを確認した。
+- `--platform linux/amd64` + `EXT_GRPC_ARTIFACT_ARCH=amd64` + `GRPC_OFFICIAL_PROFILE=optimized-amd64-skylake` でも同じsmokeを実行し、current GCP/GitHub Actions用tagがロードできることを確認した。
+- 旧 `optimized` profile tagを使ったrun `26375271620` / `26375466928` はartifact COPY経路確認としては有効だが、現行tag方針の最終確認ではない。
 - `test` branch push後の GitHub Actions run `26375271620` は成功。`official` image buildはartifact COPY経路で完了した。
 - VM smoke `laravel-fpm-artifact-smoke-20260524T230700Z` は `select_1row_10col` / `16 requests` / `c4` で `lite` / `official` ともにHTTP 200で完走した。
 - 初回VM比較 `laravel-fpm-artifact-compare-20260524T230811Z` は完走。runnerのpercentile parseが `hey` の `50%%` 表記に合っておらず、実行時表示のp50/p90は0になったため、保存済み `hey-*.log` から値を確認し、runnerを修正した。
