@@ -14,6 +14,8 @@ require __DIR__ . '/helpers.inc';
 
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_stream_window_size'), 'stream window ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.http2_connection_window_size'), 'connection window ini');
+grpc_lite_phpt_assert_same('16384', ini_get('grpc_lite.http2_max_frame_size'), 'max frame size ini');
+grpc_lite_phpt_assert_same('65536', ini_get('grpc_lite.http2_max_header_list_size'), 'max header list size ini');
 grpc_lite_phpt_assert_same('32', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'read-ahead messages ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'read-ahead bytes ini');
 grpc_lite_phpt_assert_same('auto', ini_get('grpc_lite.backend'), 'backend ini');

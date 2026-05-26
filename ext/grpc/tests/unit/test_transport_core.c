@@ -67,6 +67,15 @@ static void test_effective_limits(void)
     ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE, effective_http2_window_size(GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE));
     ASSERT_UINT32(8 * 1024 * 1024, effective_http2_window_size(8 * 1024 * 1024));
     ASSERT_UINT32(GRPC_LITE_HTTP2_MAX_WINDOW_SIZE, effective_http2_window_size(GRPC_LITE_HTTP2_MAX_WINDOW_SIZE + 1L));
+    ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE, effective_http2_max_frame_size(0));
+    ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE, effective_http2_max_frame_size(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE - 1));
+    ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE, effective_http2_max_frame_size(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE));
+    ASSERT_UINT32(65536, effective_http2_max_frame_size(65536));
+    ASSERT_UINT32(GRPC_LITE_HTTP2_MAX_FRAME_SIZE, effective_http2_max_frame_size(GRPC_LITE_HTTP2_MAX_FRAME_SIZE + 1L));
+    ASSERT_UINT32(0, effective_http2_max_header_list_size(-1));
+    ASSERT_UINT32(0, effective_http2_max_header_list_size(0));
+    ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_HEADER_LIST_SIZE, effective_http2_max_header_list_size(GRPC_LITE_HTTP2_DEFAULT_MAX_HEADER_LIST_SIZE));
+    ASSERT_UINT32(UINT32_MAX, effective_http2_max_header_list_size((zend_long) UINT32_MAX + 1L));
 
     ASSERT_SIZE(4096, effective_max_response_metadata_bytes(1024, 4096));
     ASSERT_SIZE(GRPC_LITE_DEFAULT_METADATA_HARD_BYTES, effective_max_response_metadata_bytes(1024, -1));

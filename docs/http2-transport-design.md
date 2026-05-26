@@ -122,6 +122,7 @@ Requirements:
 - message size超過、metadata size超過、unsupported compression、malformed gRPC frame、invalid content-type、明示cancelなどのstream-local failureは該当streamを閉じ、connectionがusableなら次RPCで再利用する。
 - server streamingはC stream resourceをPHP Generatorがpullし、messageごとにyieldする。
 - client receive stream / connection windowは8MiBをdefaultにし、large responseでHTTP/2 flow-controlによる送信停止とWINDOW_UPDATE往復を減らす。どちらも `grpc_lite.http2_stream_window_size` / `grpc_lite.http2_connection_window_size` INIで調整可能にする。
+- 初期HTTP/2 SETTINGSでは、`SETTINGS_MAX_FRAME_SIZE` をHTTP/2 defaultの16KiB、`SETTINGS_MAX_HEADER_LIST_SIZE` を64KiBとして明示する。どちらも `grpc_lite.http2_max_frame_size` / `grpc_lite.http2_max_header_list_size` INIで検証時に調整可能にする。
 - slow consumer時はPHPが次messageを要求するまで追加readを進めない。別streamのI/Oで同じconnectionを読む場合は、server streaming payload queueをdefault 32 messages / 8MiBに制限し、超過時は対象streamを `RST_STREAM(CANCEL)` で閉じる。上限は `grpc_lite.server_streaming_read_ahead_max_messages` / `grpc_lite.server_streaming_read_ahead_max_bytes` INIで調整できる。
 - `cancel()` は対象streamへ `RST_STREAM(CANCEL)` を送る。
 

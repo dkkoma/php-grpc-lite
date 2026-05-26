@@ -6,6 +6,9 @@
 #define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
 #define GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE 65535
 #define GRPC_LITE_HTTP2_MAX_WINDOW_SIZE 2147483647L
+#define GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE 16384
+#define GRPC_LITE_HTTP2_MAX_FRAME_SIZE 16777215
+#define GRPC_LITE_HTTP2_DEFAULT_MAX_HEADER_LIST_SIZE (64 * 1024)
 #define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
 #define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
 #define GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES (64 * 1024)
@@ -60,6 +63,28 @@ static uint32_t effective_http2_window_size(zend_long configured)
     }
     if (configured > GRPC_LITE_HTTP2_MAX_WINDOW_SIZE) {
         return GRPC_LITE_HTTP2_MAX_WINDOW_SIZE;
+    }
+    return (uint32_t) configured;
+}
+
+static uint32_t effective_http2_max_frame_size(zend_long configured)
+{
+    if (configured < GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE) {
+        return GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE;
+    }
+    if (configured > GRPC_LITE_HTTP2_MAX_FRAME_SIZE) {
+        return GRPC_LITE_HTTP2_MAX_FRAME_SIZE;
+    }
+    return (uint32_t) configured;
+}
+
+static uint32_t effective_http2_max_header_list_size(zend_long configured)
+{
+    if (configured < 0) {
+        return 0;
+    }
+    if ((zend_ulong) configured > UINT32_MAX) {
+        return UINT32_MAX;
     }
     return (uint32_t) configured;
 }

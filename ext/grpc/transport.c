@@ -1543,6 +1543,8 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
     int rv;
     uint32_t stream_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_stream_window_size));
     uint32_t connection_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_connection_window_size));
+    uint32_t max_frame_size = effective_http2_max_frame_size(PHP_GRPC_LITE_G(http2_max_frame_size));
+    uint32_t max_header_list_size = effective_http2_max_header_list_size(PHP_GRPC_LITE_G(http2_max_header_list_size));
 
     connection = pecalloc(1, sizeof(h2_connection), persistent);
     connection->persistent = persistent;
@@ -1591,6 +1593,8 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
         nghttp2_settings_entry settings[] = {
             { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
             { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, stream_window_size },
+            { NGHTTP2_SETTINGS_MAX_FRAME_SIZE, max_frame_size },
+            { NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, max_header_list_size },
         };
         rv = nghttp2_submit_settings(connection->session, NGHTTP2_FLAG_NONE, settings, sizeof(settings) / sizeof(settings[0]));
         if (rv != 0) {
