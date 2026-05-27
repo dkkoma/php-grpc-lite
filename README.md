@@ -11,7 +11,7 @@ Current review status:
 - HTTP/2 transport is provided by this repository's source-build extension in `ext/grpc/`.
 - The source-built grpc extension builds a PHP module named `grpc` and produces `grpc.so`.
 - Official `ext-grpc` and this source-built grpc extension must not be loaded at the same time.
-- Default backend selection is `grpc_lite.backend=auto`: normal PHP runtimes use the built-in nghttp2 HTTP/2 backend, while FrankenPHP runtimes with the `FrankenGrpc\*` extension surface can delegate to grpc-go.
+- Default backend selection is `grpc_lite.backend=http2`: php-grpc-lite uses the built-in nghttp2 HTTP/2 backend unless `franken-go` is explicitly selected.
 - Release readiness is still gated by C extension memory/lifecycle QA.
 - Unary and server streaming are the current compatibility scope. Client streaming and bidirectional streaming are not implemented yet.
 
@@ -75,18 +75,20 @@ Full install notes, verification commands, rollback notes, and large-streaming g
 
 ## Backend Selection
 
-The default backend is selected by `grpc_lite.backend=auto`. `auto` uses the FrankenPHP grpc-go backend only when an internal `FrankenGrpc\Channel` class is loaded; otherwise it uses the built-in HTTP/2 backend.
+The default backend is the built-in HTTP/2 transport:
 
 ```ini
-grpc_lite.backend=auto
+grpc_lite.backend=http2
 ```
+
+The optional FrankenPHP grpc-go backend is explicit opt-in. `auto` is still accepted as a compatibility/testing value: it selects `franken-go` only when an internal `FrankenGrpc\Channel` class is loaded, otherwise it selects `http2`.
 
 Per-channel override:
 
 ```php
 $channel = new Grpc\Channel($endpoint, [
     'credentials' => Grpc\ChannelCredentials::createInsecure(),
-    'grpc_lite.backend' => 'http2', // auto | http2 | franken-go
+    'grpc_lite.backend' => 'franken-go', // http2 | franken-go | auto
 ]);
 ```
 

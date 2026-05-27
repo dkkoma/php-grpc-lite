@@ -39,7 +39,7 @@ The Go extension should tolerate unknown options and implement at least:
 | `grpc.max_receive_message_length` | Enforce or document unsupported. |
 | `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` | Enforce or document unsupported. |
 
-For the first smoke path, plaintext/insecure transport is enough. TLS and mTLS should be added before recommending `grpc_lite.backend=auto` for production TLS workloads.
+For the first smoke path, plaintext/insecure transport is enough. TLS and mTLS should be added before recommending `grpc_lite.backend=franken-go` for production TLS workloads.
 
 ## Call contract
 

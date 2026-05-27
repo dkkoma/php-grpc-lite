@@ -4,7 +4,9 @@
 
 `php-grpc-lite` keeps the public `Grpc\` surface compatible with the official PHP gRPC package while allowing the transport implementation to be selected at channel construction time.
 
-The global default is `grpc_lite.backend=auto`. In normal PHP runtimes this resolves to the built-in HTTP/2 transport in `ext/grpc`. In FrankenPHP runtimes that load the `FrankenGrpc\*` extension surface, `auto` resolves to the optional grpc-go backend.
+The global default is `grpc_lite.backend=http2`. php-grpc-lite uses the built-in HTTP/2 transport unless the optional FrankenPHP grpc-go backend is explicitly selected.
+
+`grpc_lite.backend=auto` is accepted as a compatibility/testing value, but it is not the default. In normal PHP runtimes `auto` resolves to the built-in HTTP/2 transport in `ext/grpc`. In FrankenPHP runtimes that load the `FrankenGrpc\*` extension surface, `auto` resolves to the optional grpc-go backend.
 
 ## Backend selection
 
@@ -21,7 +23,7 @@ Supported values:
 Global default:
 
 ```ini
-grpc_lite.backend=auto
+grpc_lite.backend=http2
 ```
 
 Per-channel override:

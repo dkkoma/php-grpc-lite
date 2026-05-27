@@ -9,7 +9,7 @@ ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 static int le_server_streaming_call_state;
 
 PHP_INI_BEGIN()
-    STD_PHP_INI_ENTRY("grpc_lite.backend", "auto", PHP_INI_SYSTEM, OnUpdateString, backend, zend_grpc_lite_globals, grpc_lite_globals)
+    STD_PHP_INI_ENTRY("grpc_lite.backend", "http2", PHP_INI_SYSTEM, OnUpdateString, backend, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.http2_stream_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_stream_window_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.http2_connection_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_connection_window_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.http2_max_frame_size", "16384", PHP_INI_SYSTEM, OnUpdateLong, http2_max_frame_size, zend_grpc_lite_globals, grpc_lite_globals)
