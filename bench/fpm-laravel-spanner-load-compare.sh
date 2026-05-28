@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 
 requests="${1:-1024}"
 concurrency="${2:-16}"
+hey_timeout="${BENCH_HEY_TIMEOUT:-20}"
 IFS=" " read -r -a actions <<< "${BENCH_ACTIONS:-transaction_select2_update1_insert1}"
 IFS=" " read -r -a variants <<< "${BENCH_VARIANTS:-native ext-grpc}"
 app_dir="tools/benchmark/laravel-spanner-app"
@@ -41,9 +42,10 @@ if (( requests % concurrency != 0 )); then
     printf 'requests must be divisible by concurrency: requests=%s concurrency=%s\n' "$requests" "$concurrency" >&2
     exit 1
 fi
-printf 'requests=%s concurrency=%s actions=%s variants=%s project=%s instance=%s database=%s emulator_host=%s min_sessions=%s\n' \
+printf 'requests=%s concurrency=%s hey_timeout=%s actions=%s variants=%s project=%s instance=%s database=%s emulator_host=%s min_sessions=%s\n' \
     "$requests" \
     "$concurrency" \
+    "$hey_timeout" \
     "${actions[*]}" \
     "${variants[*]}" \
     "$LARAVEL_SPANNER_PROJECT_ID" \
@@ -62,34 +64,69 @@ ensure_app_dependencies() {
         install --no-interaction --prefer-dist
 }
 
+ensure_variant_extension() {
+    local variant="$1"
+    case "$variant" in
+        native)
+            build_grpc_extension dev
+            ;;
+        franken-zts)
+            build_grpc_extension franken-zts-laravel-native
+            ;;
+        ext-grpc)
+            ;;
+    esac
+}
+
+build_grpc_extension() {
+    local service="$1"
+    printf 'build ext/grpc service=%s\n' "$service"
+    docker compose run --build --rm "$service" sh -lc '
+        set -e
+        cd /workspace/ext/grpc
+        make clean >/tmp/php-grpc-lite-build-clean.log 2>&1 || true
+        rm -rf .libs modules *.lo *.o
+        phpize >/tmp/php-grpc-lite-build-phpize.log
+        ./configure --enable-grpc >/tmp/php-grpc-lite-build-configure.log
+        make -j"$(nproc)" >/tmp/php-grpc-lite-build-make.log
+        php -d extension=/workspace/ext/grpc/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"
+    '
+}
+
 run_variant() {
     local variant="$1"
-    local fpm_service="$2"
-    local nginx_service="$3"
+    local app_service="$2"
+    local http_service="$3"
     local action="$4"
 
+    ensure_variant_extension "$variant"
     if [[ "$LARAVEL_SPANNER_EMULATOR_HOST" != "" ]]; then
         docker compose up -d spanner-emulator
     fi
-    docker compose up -d --force-recreate "$fpm_service" "$nginx_service"
-    wait_until_ready "$nginx_service"
-    warm_fpm_workers "$fpm_service" "$nginx_service" "$action" "$variant"
+    if [[ "$app_service" == "$http_service" ]]; then
+        docker compose up -d --force-recreate "$app_service"
+    else
+        docker compose up -d --force-recreate "$app_service" "$http_service"
+    fi
+    wait_until_ready "$http_service"
+    warm_workers "$app_service" "$http_service" "$action" "$variant"
 
     local before_cgroup
-    before_cgroup="$(cgroup_cpu_us "$fpm_service")"
+    before_cgroup="$(cgroup_cpu_us "$app_service")"
 
     local output
     output="$(docker compose run --rm loadgen \
         -n "$requests" \
         -c "$concurrency" \
+        -t "$hey_timeout" \
         -disable-keepalive \
-        "http://$nginx_service:8080/bench?action=$action")"
+        "http://$http_service:8080/bench?action=$action")"
     printf '%s\n' "$output" > "$log_dir/hey-$variant-$action.log"
     local completed_requests
     completed_requests="$(assert_success_responses "$output" "$variant" "$action")"
 
     local after_cgroup
-    after_cgroup="$(cgroup_cpu_us "$fpm_service")"
+    after_cgroup="$(cgroup_cpu_us "$app_service")"
 
     local rps average_ms p50_ms p90_ms max_ms
     rps="$(printf '%s\n' "$output" | awk '/Requests\/sec:/ {print $2}')"
@@ -147,9 +184,40 @@ warm_fpm_workers() {
     docker compose run --rm loadgen \
         -n "$warmup_requests" \
         -c "$warmup_concurrency" \
+        -t "$hey_timeout" \
         -disable-keepalive \
         "http://$nginx_service:8080/bench?action=$action" \
         > "$log_dir/warmup-$variant-$action.log"
+}
+
+warm_workers() {
+    local app_service="$1"
+    local http_service="$2"
+    local action="$3"
+    local variant="$4"
+    case "$variant" in
+        franken-zts)
+            local workers
+            workers="${FRANKENPHP_WORKERS:-16}"
+            if [[ "$workers" -le 0 ]]; then
+                workers=1
+            fi
+            local warmup_requests="${BENCH_FPM_WARMUP_REQUESTS:-$((workers * 4))}"
+            local warmup_concurrency="${BENCH_FPM_WARMUP_CONCURRENCY:-$workers}"
+            printf 'warmup variant=%s action=%s workers=%s requests=%s concurrency=%s\n' \
+                "$variant" "$action" "$workers" "$warmup_requests" "$warmup_concurrency"
+            docker compose run --rm loadgen \
+                -n "$warmup_requests" \
+                -c "$warmup_concurrency" \
+                -t "$hey_timeout" \
+                -disable-keepalive \
+                "http://$http_service:8080/bench?action=$action" \
+                > "$log_dir/warmup-$variant-$action.log"
+            ;;
+        *)
+            warm_fpm_workers "$app_service" "$http_service" "$action" "$variant"
+            ;;
+    esac
 }
 
 assert_success_responses() {
@@ -201,6 +269,9 @@ for action in "${actions[@]}"; do
                 ;;
             ext-grpc)
                 run_variant ext-grpc fpm-ext-grpc-16 nginx-laravel-ext-grpc "$action"
+                ;;
+            franken-zts)
+                run_variant franken-zts franken-zts-laravel-native franken-zts-laravel-native "$action"
                 ;;
             *)
                 echo "unknown BENCH_VARIANTS entry: $variant" >&2

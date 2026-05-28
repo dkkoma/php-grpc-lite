@@ -2,7 +2,7 @@
 Status: Open
 Owner: Codex
 Created: 2026-05-28
-Branch: main
+Branch: feature/zts-formal-support
 ---
 
 # ZTS正式サポート
@@ -57,6 +57,8 @@ Branch: main
 - 2026-05-28: NTS/ZTS代表性能比較用 `tools/test/check-zts-performance.sh` を追加。
 - 2026-05-28: ZTS thread並列比較用 `tools/test/check-zts-parallel-performance.sh` とPHP call path worker `tools/benchmark/zts-parallel-call-path.php` / `tools/benchmark/zts-parallel-worker.php` を追加。
 - 2026-05-28: 追加レビューで、`SIGPIPE` のprocess-wide変更、runtime `getenv()` trace設定、persistent connection cacheのthread-local invariantを正式サポート前の確認タスクに追加。
+- 2026-05-28: FPM NTSと同じLaravel/Spanner application経路をFrankenPHP ZTSで計測するため、`franken-zts-laravel-native` serviceと `bench/fpm-laravel-spanner-load-compare.sh` の `franken-zts` variantを追加。
+- 2026-05-28: Cloud Spanner / Laravel mixed transactionでFPM NTS nativeとFrankenPHP ZTS nativeを同条件計測し、FrankenPHP ZTS側の大幅なwall time悪化を確認。
 
 ## 検証
 
@@ -93,6 +95,16 @@ Branch: main
     - unary workers=8: throughput 587.983/s, p50 11.179ms, p99 12.926ms
     - streaming workers=8: throughput 593.156/s, p50 10.843ms, p99 12.595ms
   - この1回runでは、ZTS threadはworker数増加に応じてthroughputが伸び、p99もNTS multi-processより悪化していない。正式な採否判断ではrepeatを追加して揺れを確認する。
+- `BENCH_RUN_ID=zts-franken-app-real-mixed-c16-64req-20260528 BENCH_VARIANTS='native franken-zts' BENCH_ACTIONS='transaction_select2_update1_insert1' BENCH_HEY_TIMEOUT=60 LARAVEL_SPANNER_EMULATOR_HOST= LARAVEL_SPANNER_PROJECT_ID=vast-falcon-165704 LARAVEL_SPANNER_INSTANCE_ID=bench LARAVEL_SPANNER_DATABASE_ID=laravel-bench-db LARAVEL_SPANNER_MIN_SESSIONS=16 FRANKENPHP_WORKERS=16 ./bench/fpm-laravel-spanner-load-compare.sh 64 16`: PASS
+  - log: `var/bench-results/fpm-laravel-spanner-load-zts-franken-app-real-mixed-c16-64req-20260528/`
+  - FPM NTS native: throughput 10.3529/s, cpu_us/req 25414.6, avg 1471.3ms, p50 1387.4ms, p90 1996.2ms, max 2287.0ms
+  - FrankenPHP ZTS native: throughput 1.5673/s, cpu_us/req 45448.8, avg 9048.4ms, p50 10190.4ms, p90 10680.5ms, max 10730.4ms
+  - 同じLaravel app / Cloud Spanner / mixed transaction / client concurrency 16 / service CPU quota 4.0 / warmup後で、FrankenPHP ZTSはFPM NTS比でthroughput約0.15x、平均wall time約6.15x、CPU/request約1.79x。
+- `BENCH_RUN_ID=zts-franken-app-real-mixed-c16-20260528 ... ./bench/fpm-laravel-spanner-load-compare.sh 256 16`: FAIL
+  - FPM NTS nativeは256/256成功: throughput 10.7372/s, cpu_us/req 25777.6, avg 1457.8ms, p50 1561.2ms, p90 1815.7ms, max 2074.2ms
+  - FrankenPHP ZTS nativeは229/256成功、27件がhey default 20s timeout。完了分の平均 15412.0ms、p50 15851.4ms、p90 18762.8ms。
+- `BENCH_RUN_ID=zts-franken-app-select-c16-20260528 BENCH_VARIANTS='native franken-zts' BENCH_ACTIONS='select_1row_10col' FRANKENPHP_WORKERS=16 ./bench/fpm-laravel-spanner-load-compare.sh 256 16`: FAIL
+  - local emulator条件ではFPM NTS側で1件 `ABORTED: The emulator only supports one transaction at a time.` が発生。並列application性能比較にはCloud Spannerを使う。
 
 ## 判断ログ
 
@@ -103,6 +115,8 @@ Branch: main
 - ZTS thread並列QAは、serverが速すぎて競合が見えなくなることを避けるため `server_delay_ms=10` をdefaultにする。
 - thread並列の代表worker数は `1,2,8` に絞る。
 - unaryだけではstream resource lifecycleや順次drainの問題が見えにくいため、同条件でserver streamingも含める。server streamingは各workerがPHP userlandの `GreeterClient->BenchServerStream(...)->responses()` を最後までdrainする。
+- FrankenPHP ZTSのapplication性能確認は、FPM NTSと同じLaravel/Spanner app、同じHTTP load generator、同じactionで比較する。`ext/grpc/modules/grpc.so` はNTS/ZTSでABIが異なるため、variantごとに対応するPHP image内でbuildし直してからserviceを起動する。
+- 2026-05-28のCloud Spanner mixed transaction比較では、synthetic ZTS thread parallel QAと異なり、FrankenPHP ZTS worker modeのapplication経路で顕著なwall time悪化が出た。次の調査はHTTP/FrankenPHP worker lifecycle、request後のLaravel app state reset、Spanner session/transaction lifecycle、ZTS thread-local persistent connection cacheの再利用状況を分解する。
 
 ## 追加確認タスク
 

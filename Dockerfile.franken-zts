@@ -1,0 +1,48 @@
+ARG GO_IMAGE=golang:1.26-trixie
+ARG PHP_IMAGE=php:8.4-zts-trixie
+
+FROM ${GO_IMAGE} AS go
+FROM composer:2 AS composer
+FROM ${PHP_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
+
+COPY --from=go /usr/local/go /usr/local/go
+COPY --from=composer /usr/bin/composer /usr/bin/composer
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        autoconf \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        libargon2-dev \
+        libcurl4-openssl-dev \
+        libnghttp2-dev \
+        libonig-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        libxml2-dev \
+        pkg-config \
+        protobuf-compiler \
+        unzip \
+        zlib1g-dev \
+    && pecl install protobuf \
+    && docker-php-ext-enable protobuf \
+    && go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN CGO_ENABLED=1 \
+    XCADDY_GO_BUILD_FLAGS="-tags=nowatcher,nobadger,nomysql,nopgx,nomercure,nobrotli" \
+    CGO_CFLAGS="-D_GNU_SOURCE $(php-config --includes)" \
+    CGO_LDFLAGS="$(php-config --ldflags) $(php-config --libs)" \
+    xcaddy build \
+        --output /usr/local/bin/frankenphp \
+        --with github.com/dunglas/frankenphp/caddy
+
+WORKDIR /workspace
+
+CMD ["bash"]

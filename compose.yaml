@@ -293,6 +293,56 @@ services:
     depends_on:
       - fpm-ext-grpc-16
 
+  franken-zts-laravel-native:
+    build:
+      context: .
+      dockerfile: Dockerfile.franken-zts
+    image: php-grpc-lite-franken-zts-laravel-native
+    cpus: 4.0
+    volumes:
+      - .:/workspace
+      - ${HOME}/.config/gcloud:/var/www/.config/gcloud:ro
+    working_dir: /workspace/tools/benchmark/laravel-spanner-app
+    environment:
+      HOME: /var/www
+      NATIVE_GRPC_SO: ${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}
+      BENCH_TRANSPORT_IMPL: ${BENCH_TRANSPORT_IMPL:-grpc-lite-franken-zts}
+      LARAVEL_SPANNER_TRACE: ${LARAVEL_SPANNER_TRACE:-}
+      LARAVEL_SPANNER_TRACE_FILE: ${LARAVEL_SPANNER_TRACE_FILE:-}
+      GRPC_LITE_TRACE_FILE: ${GRPC_LITE_TRACE_FILE:-}
+      SPANNER_EMULATOR_HOST: ${LARAVEL_SPANNER_EMULATOR_HOST-spanner-emulator:9010}
+      DB_SPANNER_PROJECT_ID: ${LARAVEL_SPANNER_PROJECT_ID:-test-project}
+      DB_SPANNER_INSTANCE_ID: ${LARAVEL_SPANNER_INSTANCE_ID:-laravel-bench-instance}
+      DB_SPANNER_DATABASE_ID: ${LARAVEL_SPANNER_DATABASE_ID:-laravel-bench-db}
+      LARAVEL_SPANNER_MIN_SESSIONS: ${LARAVEL_SPANNER_MIN_SESSIONS:-16}
+      FRANKENPHP_WORKERS: ${FRANKENPHP_WORKERS:-16}
+    command:
+      - sh
+      - -lc
+      - |
+        echo "extension=${NATIVE_GRPC_SO:-/workspace/ext/grpc/modules/grpc.so}" > /usr/local/etc/php/conf.d/zz-grpc-lite.ini
+        php -r 'exit(extension_loaded("grpc") ? 0 : 1);'
+        mkdir -p storage/framework/spanner storage/framework/views storage/logs bootstrap/cache
+        chown -R www-data:www-data storage bootstrap/cache
+        su -s /bin/sh www-data -c 'php /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php'
+        cat > /tmp/Caddyfile <<EOF
+        {
+            admin off
+            frankenphp {
+                worker /workspace/tools/benchmark/laravel-spanner-app/public/franken-worker.php $${FRANKENPHP_WORKERS:-16}
+            }
+        }
+        :8080 {
+            root * /workspace/tools/benchmark/laravel-spanner-app/public
+            encode zstd gzip
+            php_server
+        }
+        EOF
+        exec frankenphp run --config /tmp/Caddyfile --adapter caddyfile
+    depends_on:
+      - test-server
+      - spanner-emulator
+
   loadgen:
     build:
       context: .
