@@ -23,6 +23,7 @@ Branch: main
 - ZTS PHP上で `phpize && ./configure --enable-grpc && make`、extension load、PHPTを実行するrunnerを追加する。
 - CIのNative QAにZTS PHPT jobを追加する。
 - ZTS/NTSの代表性能比較QAを追加する。
+- ZTS thread並列でPHP userland call pathを通すQAを追加する。
 - SPEC / native test framework / release QA checklistのZTS記述を更新する。
 - C拡張内のZTSリスクを棚卸しし、必要なら追加修正する。
 
@@ -39,10 +40,12 @@ Branch: main
 2. ZTS PHPT runnerを追加し、ZTS buildであることをpreflightする。
 3. CIにZTS PHPT jobを追加する。
 4. NTS/ZTSの代表性能比較runnerを追加する。
-5. module globals、persistent connection cache、static mutable state、resource lifecycleをZTS観点でレビューする。
-6. ZTS PHPTと通常PHPTをDocker内で実行する。
-7. NTS/ZTS代表性能比較を実行し、OTEL summaryを記録する。
-8. 必要に応じてHTTP/2/gRPCドメインモデルレビューを残し、Blocker / High / Medium / Lowがnoneになるまで修正する。
+5. NTS multi-process / ZTS threadのPHP call path並列runnerを追加する。
+6. module globals、persistent connection cache、static mutable state、resource lifecycleをZTS観点でレビューする。
+7. ZTS PHPTと通常PHPTをDocker内で実行する。
+8. NTS/ZTS代表性能比較を実行し、OTEL summaryを記録する。
+9. ZTS thread並列のunary/server streaming比較を実行し、結果を記録する。
+10. 必要に応じてHTTP/2/gRPCドメインモデルレビューを残し、Blocker / High / Medium / Lowがnoneになるまで修正する。
 
 ## 進捗
 
@@ -52,6 +55,7 @@ Branch: main
 - 2026-05-28: CI `Native QA` に `ZTS PHPT` jobを追加。
 - 2026-05-28: SPEC / native test framework / release QA checklistのZTS gate記述を更新。
 - 2026-05-28: NTS/ZTS代表性能比較用 `tools/test/check-zts-performance.sh` を追加。
+- 2026-05-28: ZTS thread並列比較用 `tools/test/check-zts-parallel-performance.sh` とPHP call path worker `tools/benchmark/zts-parallel-call-path.php` / `tools/benchmark/zts-parallel-worker.php` を追加。
 - 2026-05-28: 追加レビューで、`SIGPIPE` のprocess-wide変更、runtime `getenv()` trace設定、persistent connection cacheのthread-local invariantを正式サポート前の確認タスクに追加。
 
 ## 検証
@@ -67,6 +71,12 @@ Branch: main
     - `zts-compare-smoke-20260528-nts-metadata-header`
     - `zts-compare-smoke-20260528-zts-metadata-header`
   - `--calls=5` のrunner smokeであり、正式な性能判断値ではない。正式QAではcalls/warmup/repeatを増やして再計測し、代表値を `docs/benchmarks/` またはこのissueへ記録する。
+- `ZTS_PARALLEL_WORKERS=1 ZTS_PARALLEL_CALLS=1 ZTS_PARALLEL_WARMUP_CALLS=0 ZTS_PARALLEL_STREAM_MESSAGES=2 ./tools/test/check-zts-parallel-performance.sh`: PASS
+  - NTS multi-process: unary / server streaming call path smoke PASS
+  - ZTS thread: unary / server streaming call path smoke PASS
+  - `server_delay_ms=10`
+  - server streamingはPHP userlandの `GreeterClient->BenchServerStream(...)->responses()` を最後までdrain
+  - worker `1` / calls `1` のrunner smokeであり、正式な性能判断値ではない。正式QAではdefault worker `1,2,8`、十分なcalls/warmup/repeatで再計測し、代表値を `docs/benchmarks/` またはこのissueへ記録する。
 
 ## 判断ログ
 
@@ -74,6 +84,9 @@ Branch: main
 - TSanはthread-safety regression検出に有用だが、ZTS build/load互換性そのものの代替にはしない。ZTS PHPTを独立gateにする。
 - `Grpc\VERSION` / package versionとは別に、ZTS対応可否はPIE metadataとCI gateで管理する。
 - ZTS正式サポートでは機能互換だけでなくNTSとの代表性能比較をQA evidenceに含める。初期対象は `spanner-shape` と `metadata-header` とし、必要なら `tls-spanner-shape` / `large-streaming` を追加する。
+- ZTS thread並列QAは、serverが速すぎて競合が見えなくなることを避けるため `server_delay_ms=10` をdefaultにする。
+- thread並列の代表worker数は `1,2,8` に絞る。
+- unaryだけではstream resource lifecycleや順次drainの問題が見えにくいため、同条件でserver streamingも含める。server streamingは各workerがPHP userlandの `GreeterClient->BenchServerStream(...)->responses()` を最後までdrainする。
 
 ## 追加確認タスク
 
@@ -87,6 +100,7 @@ Branch: main
 - 通常NTSの `./tools/test/check-phpt.sh` が引き続き通る。
 - C static analysisが通る。
 - `./tools/test/check-zts-performance.sh` を実行し、NTS/ZTSの代表性能比較結果をこのissueまたは `docs/benchmarks/` に記録する。
+- `./tools/test/check-zts-parallel-performance.sh` を実行し、NTS multi-process / ZTS threadのunary/server streaming call path比較結果をこのissueまたは `docs/benchmarks/` に記録する。
 - CI `Native QA` の `ZTS PHPT` jobが通る。
 - ZTS観点のコードレビューでBlocker / High / Medium / Lowがnoneになる。
 - 必要なレビュー記録と検証結果をこのissueに追記し、`Status: Closed` にして `docs/issues/closed/` へ移動する。

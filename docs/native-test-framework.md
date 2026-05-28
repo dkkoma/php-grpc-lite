@@ -12,6 +12,7 @@
 | Sanitizer | `./tools/test/check-c-sanitizer.sh` / `check-c-msan.sh` / `check-c-tsan.sh` | memory safety、UB、thread-safety regressionsをSanitizer PHP build上で検出する |
 | ZTS PHPT | `./tools/test/check-zts-phpt.sh` | ZTS PHP build上でextension build/loadとPHPT integrationを検証する |
 | ZTS performance comparison | `./tools/test/check-zts-performance.sh` | representative benchmarkをNTS/ZTS同条件で実行し、ZTS固有の性能差をOTEL run idで比較する |
+| ZTS parallel call path | `./tools/test/check-zts-parallel-performance.sh` | NTS multi-processとZTS threadでPHP userlandからunary/server streaming call pathを並列実行し、thread並列時のthroughput/latencyを比較する |
 | Valgrind / lifecycle | `./tools/test/check-c-valgrind.sh` / lifecycle scripts | sanitizerでは見落としやすいrelease lifecycle leak、FD/RSS増加、request-boundary reuseを検証する |
 
 ## Development gate
@@ -39,6 +40,14 @@ BENCH_TAG=zts-compare-YYYYMMDD ./tools/test/check-zts-performance.sh
 ```
 
 default suiteは `spanner-shape metadata-header`。必要に応じて `ZTS_PERF_SUITES` と `ZTS_PERF_ARGS` で対象と呼び出し数を調整する。
+
+ZTS thread並列のQAでは次も実行する。
+
+```bash
+./tools/test/check-zts-parallel-performance.sh
+```
+
+default条件は worker数 `1,2,8`、server側delay `10ms`、unary と server streaming の両方。server streamingは各thread/process workerがPHP userlandの `GreeterClient->BenchServerStream(...)->responses()` を最後まで順次drainする。
 
 ## Coverage gate
 

@@ -17,8 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-RUN pecl install protobuf \
-    && docker-php-ext-enable protobuf
+RUN pecl install protobuf parallel \
+    && docker-php-ext-enable protobuf parallel
 
 WORKDIR /workspace
 
