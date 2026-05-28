@@ -77,6 +77,22 @@ Branch: main
   - `server_delay_ms=10`
   - server streamingはPHP userlandの `GreeterClient->BenchServerStream(...)->responses()` を最後までdrain
   - worker `1` / calls `1` のrunner smokeであり、正式な性能判断値ではない。正式QAではdefault worker `1,2,8`、十分なcalls/warmup/repeatで再計測し、代表値を `docs/benchmarks/` またはこのissueへ記録する。
+- `ZTS_PARALLEL_WORKERS=1,2,8 ZTS_PARALLEL_CALLS=20 ZTS_PARALLEL_WARMUP_CALLS=2 ZTS_PARALLEL_SERVER_DELAY_MS=10 ZTS_PARALLEL_STREAM_MESSAGES=2 ./tools/test/check-zts-parallel-performance.sh`: PASS
+  - NTS multi-process:
+    - unary workers=1: throughput 72.487/s, p50 10.884ms, p99 11.886ms
+    - streaming workers=1: throughput 70.723/s, p50 11.655ms, p99 12.170ms
+    - unary workers=2: throughput 137.447/s, p50 11.800ms, p99 12.777ms
+    - streaming workers=2: throughput 135.468/s, p50 11.974ms, p99 14.769ms
+    - unary workers=8: throughput 528.034/s, p50 11.198ms, p99 15.905ms
+    - streaming workers=8: throughput 543.613/s, p50 11.809ms, p99 15.963ms
+  - ZTS thread:
+    - unary workers=1: throughput 80.182/s, p50 11.071ms, p99 11.680ms
+    - streaming workers=1: throughput 75.684/s, p50 11.759ms, p99 12.371ms
+    - unary workers=2: throughput 145.995/s, p50 11.927ms, p99 12.482ms
+    - streaming workers=2: throughput 145.616/s, p50 11.743ms, p99 12.705ms
+    - unary workers=8: throughput 587.983/s, p50 11.179ms, p99 12.926ms
+    - streaming workers=8: throughput 593.156/s, p50 10.843ms, p99 12.595ms
+  - この1回runでは、ZTS threadはworker数増加に応じてthroughputが伸び、p99もNTS multi-processより悪化していない。正式な採否判断ではrepeatを追加して揺れを確認する。
 
 ## 判断ログ
 
