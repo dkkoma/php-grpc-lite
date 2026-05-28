@@ -11,6 +11,20 @@ services:
       - test-server
       - spanner-emulator
 
+  dev-zts:
+    build:
+      context: .
+      dockerfile: Dockerfile.zts
+    image: php-grpc-lite-dev-zts
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      - test-server
+      - spanner-emulator
+
   dev-sanitizer:
     build:
       context: .

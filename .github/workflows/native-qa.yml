@@ -144,3 +144,41 @@ jobs:
           name: native-c-coverage
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  zts-phpt:
+    name: ZTS PHPT
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ZTS dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.zts
+          tags: php-grpc-lite-dev-zts:latest
+          load: true
+          cache-from: type=gha,scope=dev-zts
+          cache-to: type=gha,scope=dev-zts,mode=max
+
+      - name: Build test-server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./poc
+          file: ./poc/test-server/Dockerfile
+          tags: php-grpc-lite-test-server:latest
+          load: true
+          cache-from: type=gha,scope=test-server
+          cache-to: type=gha,scope=test-server,mode=max
+
+      - name: Install Composer dependencies
+        run: docker compose run --rm dev-zts composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run ZTS PHPT
+        run: ./tools/test/check-zts-phpt.sh

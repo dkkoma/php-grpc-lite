@@ -150,8 +150,9 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 
 ### 5.1 対応 PHP バージョン
 
-- PHP **8.4+**(NTS 主軸)
-- ZTS は将来検討(現時点では非対象)
+- PHP **8.4+**(NTS / ZTS)
+- ZTSではmodule globals上のpersistent connection cacheをthread-localとして扱い、threadをまたいでHTTP/2 session/socketを共有しない。
+- ZTS正式サポートのgateは `./tools/test/check-zts-phpt.sh` とCI `Native QA` の `ZTS PHPT` jobで管理する。
 
 ### 5.2 開発環境
 

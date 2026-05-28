@@ -10,6 +10,8 @@
 | PHPT integration | `./tools/test/check-phpt.sh` | PHP extension surface、unary/server streaming、metadata、deadline、TLS/mTLS、resource lifecycleを検証する |
 | C fuzz smoke | `./tools/test/check-c-fuzz.sh` | pure C protocol boundaryをlibFuzzer + ASan/UBSanで短時間探索する |
 | Sanitizer | `./tools/test/check-c-sanitizer.sh` / `check-c-msan.sh` / `check-c-tsan.sh` | memory safety、UB、thread-safety regressionsをSanitizer PHP build上で検出する |
+| ZTS PHPT | `./tools/test/check-zts-phpt.sh` | ZTS PHP build上でextension build/loadとPHPT integrationを検証する |
+| ZTS performance comparison | `./tools/test/check-zts-performance.sh` | representative benchmarkをNTS/ZTS同条件で実行し、ZTS固有の性能差をOTEL run idで比較する |
 | Valgrind / lifecycle | `./tools/test/check-c-valgrind.sh` / lifecycle scripts | sanitizerでは見落としやすいrelease lifecycle leak、FD/RSS増加、request-boundary reuseを検証する |
 
 ## Development gate
@@ -23,6 +25,20 @@
 このgateは、静的解析、C unit、PHPT、短時間fuzz smokeを実行する。長時間stress、Valgrind、全Sanitizer matrixはrelease gate側に置く。
 
 GitHub Actions の `Native QA` workflow でも push / pull request ごとに同じ development gate を実行する。
+
+ZTSに触る変更、module globals、persistent connection cache、object/resource lifecycleに触る変更では次も通す。
+
+```bash
+./tools/test/check-zts-phpt.sh
+```
+
+ZTS正式サポートのQAでは、機能gateに加えてNTSとの代表性能比較も取る。
+
+```bash
+BENCH_TAG=zts-compare-YYYYMMDD ./tools/test/check-zts-performance.sh
+```
+
+default suiteは `spanner-shape metadata-header`。必要に応じて `ZTS_PERF_SUITES` と `ZTS_PERF_ARGS` で対象と呼び出し数を調整する。
 
 ## Coverage gate
 
@@ -43,6 +59,8 @@ release前、またはtransport/lifecycle/resource管理を変える変更では
 ```
 
 このgateはdevelopment gate相当の検証に加えて、ASan/UBSan、MSan C core、TSan、Valgrind、lifecycle stress、FPM request-boundary lifecycleを実行する。
+
+ZTS正式サポートのrelease判定では、ZTS PHPTをCI上の必須gateとして扱い、NTS/ZTS代表性能比較をmanual QA evidenceとしてissueまたはbenchmark docsへ記録する。
 
 ## Boundary and fuzzing policy
 
