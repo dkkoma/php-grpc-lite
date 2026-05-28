@@ -329,7 +329,7 @@ services:
         {
             admin off
             frankenphp {
-                worker /workspace/tools/benchmark/laravel-spanner-app/public/franken-worker.php $${FRANKENPHP_WORKERS:-16}
+                worker /workspace/tools/benchmark/laravel-spanner-app/public/index.php $${FRANKENPHP_WORKERS:-16}
             }
         }
         :8080 {
