@@ -32,7 +32,7 @@ void build_authority(char *buffer, size_t buffer_len, const char *host, zend_lon
         return;
     }
 
-    snprintf(buffer, buffer_len, "%s:%ld", host, port);
+    snprintf(buffer, buffer_len, "%s:%ld", host, (long) port);
 }
 
 size_t effective_max_receive_message_bytes(zend_long max_receive_message_length)
@@ -168,7 +168,7 @@ const char *validate_channel_inputs(const char *key, size_t key_len, const char 
             return "invalid gRPC authority";
         }
     } else {
-        port_len = snprintf(port_buf, sizeof(port_buf), "%ld", port);
+        port_len = snprintf(port_buf, sizeof(port_buf), "%ld", (long) port);
         if (port_len < 0 || host_len + 1 + (size_t) port_len >= sizeof(((h2_connection *) 0)->authority)) {
             return "gRPC authority is too long";
         }

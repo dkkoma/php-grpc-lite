@@ -814,7 +814,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_call_set_credentials, 0, 0, 1)
 ZEND_END_ARG_INFO()
 
 
-static const zend_function_entry call_methods[] = {
+const zend_function_entry call_methods[] = {
     PHP_ME(Call, __construct, arginfo_call_construct, ZEND_ACC_PUBLIC)
     PHP_ME(Call, startBatch, arginfo_call_start_batch, ZEND_ACC_PUBLIC)
     PHP_ME(Call, setCredentials, arginfo_call_set_credentials, ZEND_ACC_PUBLIC)

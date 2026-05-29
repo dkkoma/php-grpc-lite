@@ -6,7 +6,18 @@
 
 ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 
-static int le_server_streaming_call_state;
+int le_server_streaming_call_state;
+
+zend_class_entry *grpc_ce_channel;
+zend_class_entry *grpc_ce_call;
+zend_class_entry *grpc_ce_channel_credentials;
+zend_class_entry *grpc_ce_call_credentials;
+zend_class_entry *grpc_ce_timeval;
+zend_object_handlers grpc_channel_handlers;
+zend_object_handlers grpc_call_handlers;
+zend_object_handlers grpc_channel_credentials_handlers;
+zend_object_handlers grpc_call_credentials_handlers;
+zend_object_handlers grpc_timeval_handlers;
 
 PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("grpc_lite.http2_stream_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_stream_window_size, zend_grpc_lite_globals, grpc_lite_globals)
@@ -17,18 +28,8 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("grpc_lite.server_streaming_read_ahead_max_bytes", "8388608", PHP_INI_ALL, OnUpdateLong, server_streaming_read_ahead_max_bytes, zend_grpc_lite_globals, grpc_lite_globals)
 PHP_INI_END()
 
-#include "surface.c"
-#include "transport.c"
-#ifdef PHP_GRPC_LITE_ENABLE_BENCH
-#include "diagnostic.c"
-#endif
-#include "unary_call.c"
-#include "server_streaming_call.c"
-#include "bridge.c"
-#ifdef PHP_GRPC_LITE_ENABLE_BENCH
-#include "bench.c"
-#else
-static const zend_function_entry grpc_lite_functions[] = {
+#ifndef PHP_GRPC_LITE_ENABLE_BENCH
+const zend_function_entry grpc_lite_functions[] = {
     PHP_FE_END
 };
 #endif

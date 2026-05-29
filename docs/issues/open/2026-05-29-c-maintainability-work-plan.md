@@ -310,6 +310,67 @@ Status: Closed
 - HTTP/2/gRPC domain review: `docs/reviews/issues/2026-05-30-phase2-core-helper-boundary-domain-review.md`
 - Result: Blocker/High/Medium/Low none
 
+### Phase 3: extension本体の複数翻訳単位build化
+
+Status: Closed
+
+開始: 2026-05-30 05:30 JST
+
+終了: 2026-05-30 05:54 JST
+
+目的:
+
+- `main.c` にproduction `.c` を直接includeする構造を廃止する。
+- `config.m4` でproduction / benchそれぞれのコンパイル対象を明示する。
+- Zend class entry、object handlers、resource id、bench diagnostic entrypointの所有元を明確にし、後続のheader分割とディレクトリ移動の前提を作る。
+
+実施内容:
+
+- `config.m4` は通常buildで `main.c protocol_core.c status_core.c transport_core.c surface.c transport.c unary_call.c server_streaming_call.c bridge.c` をコンパイルする形へ変更した。
+- `--enable-grpc-bench` 時だけ `diagnostic.c bench.c` を追加コンパイルする形へ変更した。
+- `main.c` からproduction `.c` includeを外し、module entry / MINIT / globals所有へ寄せた。
+- 複数翻訳単位から参照するclass entry、object handlers、resource id、method table、call orchestration関数を `internal.h` のextern宣言へ切り替えた。
+- `internal.h` で `config.h` を読み、`PHP_GRPC_LITE_ENABLE_BENCH` などのconfigure定義が全翻訳単位で見えるようにした。
+- `tools/test/check-c-static-analysis.sh` は、unity build前提の `main.c` だけではなく、production / benchの実コンパイル対象 `.c` を全てcppcheckする形へ変更した。
+- multi-TU化後のcppcheckで見つかった `zend_long` / `%ld` portability警告は、port値を `(long)` へ明示castして解消した。
+
+性能確認:
+
+- before: `33500e5` (`Phase 2: pure core helperの直接includeを廃止`)
+- after: Phase 3 working tree
+- before command: `BENCH_TAG=phase3-before-20260530-spanner-shape BENCH_IMPLEMENTATION_LABEL=phase2-before ./bench/run.sh spanner-shape --calls=300 --warmup-calls=20`
+- after command: `BENCH_TAG=phase3-after-20260530-spanner-shape BENCH_IMPLEMENTATION_LABEL=phase3-after ./bench/run.sh spanner-shape --calls=300 --warmup-calls=20`
+
+| shape | before p50/p99 us | after p50/p99 us | 判断 |
+|---|---:|---:|---|
+| begin_txn_unary | 30.5 / 266.5 | 32.7 / 145.5 | p50 +2.2us、p99改善側 |
+| commit_txn_unary | 32.6 / 228.3 | 30.8 / 248.2 | p50改善側、p99 +19.9us |
+| dml_delete_10col_streaming | 25.9 / 116.7 | 27.8 / 89.3 | p50 +1.9us、p99改善側 |
+| dml_insert_10col_streaming | 31.1 / 194.0 | 33.5 / 200.3 | p50 +2.4us、p99 +6.3us |
+| dml_update_10col_streaming | 31.0 / 94.3 | 29.7 / 71.9 | 改善側 |
+| select_1row_10col_streaming | 32.4 / 209.9 | 32.9 / 89.0 | p50ほぼ同等、p99改善側 |
+
+判断:
+
+- 300 calls / shape のspot checkでは、multi-TU化による明確な性能悪化は観測しなかった。
+- p50は一部で +2us台の増加があるが、同時に改善側へ振れたshapeもあるため、このphaseでは揺れの範囲として扱う。
+- p99は `commit_txn_unary` と `dml_insert_10col_streaming` で小幅増、他は改善側。継続的な性能判断は、次の性能目的issueで同条件の複数runまたは長めのrunを取る。
+
+検証:
+
+- `docker compose run --rm dev sh -lc 'cd /workspace && make distclean >/tmp/grpc-after-bench-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-after-bench-phpize.log && ./configure --enable-grpc >/tmp/grpc-after-bench-configure.log && make -j$(nproc) >/tmp/grpc-after-bench-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"'`: PASS
+- `docker compose run --rm dev sh -lc 'cd /workspace && make distclean >/tmp/grpc-phase3-final-bench-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-phase3-final-bench-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-phase3-final-bench-configure.log && make -j$(nproc) >/tmp/grpc-phase3-final-bench-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") && function_exists(\"grpc_lite_bench_unary_batch\") ? 0 : 1);"'`: PASS
+- `./tools/test/check-c-unit.sh`: PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+- `./tools/test/check-c-coverage.sh`: PASS, PHPT 15/15, lines 76.5%, functions 94.5%
+- `FUZZ_RUNS=100 ./tools/test/check-c-fuzz.sh`: PASS
+- `docker compose restart spanner-emulator && docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`: PASS, 30 tests / 109 assertions
+
+レビュー:
+
+- HTTP/2/gRPC domain review: `docs/reviews/issues/2026-05-30-phase3-multi-tu-domain-review.md`
+- Result: Blocker/High/Medium/Low none
+
 ## ディレクトリ構造案
 
 Phase 0後はrepository rootをextension rootとして扱う。次の整理では、PHP extensionとしての入口はroot直下に残し、C実装本体を `src/` へ移す。
@@ -396,6 +457,7 @@ repo root/
 ## 判断ログ
 
 - この作業は性能改善として扱わない。ベンチは回帰確認に留める。
+- multi translation unit化やhot pathのvisibility変更など、性能悪化の可能性がある構造変更では、代表ベンチのbefore/afterをissueに記録してからphaseを閉じる。beforeは直前phaseのコミット、afterは作業差分で同条件実行する。
 - C APIは外部公開しない。追加するヘッダは `src` 内のinternal APIであり、install対象にしない。外部公開C APIを持つまで `include/` は作らない。
 - 現方針では `franken-go` backendは残さない。もし再度必要になった場合は、C分割作業に混ぜず、SPEC変更と別issueから始める。
 - pure helperはPHP/Zend依存を減らせる優先候補だが、Zend allocatorや `zend_string` を使うhelperは無理にpure C化しない。

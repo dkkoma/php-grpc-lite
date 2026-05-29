@@ -14,41 +14,41 @@
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
 
-static void destroy_h2_connection(h2_connection *connection);
-static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
-static void detach_persistent_connection_by_ptr(h2_connection *connection);
-static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state);
-static bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
-static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state);
-static void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
-static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
-static void destroy_server_streaming_call_state(server_streaming_call_state *state);
-static void server_streaming_call_state_dtor(zend_resource *rsrc);
-static int configure_callbacks(nghttp2_session_callbacks **callbacks);
-static void mark_connection_dead(h2_connection *connection, int error_code);
-static void set_connection_error_detail(h2_connection *connection, const char *detail);
-static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
-static bool connection_usable(h2_connection *connection);
-static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
-static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
+void destroy_h2_connection(h2_connection *connection);
+void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
+void detach_persistent_connection_by_ptr(h2_connection *connection);
+bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state);
+bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
+void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state);
+void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
+void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
+void destroy_server_streaming_call_state(server_streaming_call_state *state);
+void server_streaming_call_state_dtor(zend_resource *rsrc);
+int configure_callbacks(nghttp2_session_callbacks **callbacks);
+void mark_connection_dead(h2_connection *connection, int error_code);
+void set_connection_error_detail(h2_connection *connection, const char *detail);
+void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
+bool connection_usable(h2_connection *connection);
+persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
+bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
 static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us);
-static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
-static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
-static int set_fd_nonblocking_mode(int fd, bool nonblocking);
-static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
-static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
-static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
-static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
-static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
-static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
-static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
+bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
+void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
+int set_fd_nonblocking_mode(int fd, bool nonblocking);
+int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
+zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
+int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
+int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
+int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
+int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
+ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
 static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out);
-static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
-static int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
-static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
-static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
-static void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
-static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
+ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
+int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
+h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
+h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
+void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
+int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
 static const char *grpc_lite_trace_file_path(void);
 static bool grpc_lite_trace_wire_bytes_enabled(void);
 static void grpc_lite_trace_json_string(FILE *fp, const char *bytes, size_t len);
@@ -61,41 +61,41 @@ static void grpc_lite_trace_open_and_lock(FILE **fp);
 static void grpc_lite_trace_unlock_and_close(FILE *fp);
 static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length);
 static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghttp2_frame *frame);
-static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
-static size_t remaining_request_bytes(grpc_call *call);
-static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
-static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
-static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
-static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
-static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
-static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
-static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
-static uint64_t monotonic_us(void);
+ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
+size_t remaining_request_bytes(grpc_call *call);
+size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
+ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
+void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
+int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
+int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
+int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
+uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
+zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
 int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
 bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
 bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
-static int init_request_headers(h2_request_headers *headers);
-static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
-static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
-static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
-static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
-static void free_request_headers(h2_request_headers *headers);
-static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
-static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+int init_request_headers(h2_request_headers *headers);
+void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
+void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
+int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
+void free_request_headers(h2_request_headers *headers);
+int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static bool server_streaming_read_ahead_limit_would_exceed(grpc_call *call, size_t payload_len);
 static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call);
-static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
-static void free_queued_response_payloads(grpc_call *call);
-static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
-static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void grpc_protocol_free_response_metadata_entries(grpc_call *call);
-static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
-static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
-static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
-static void cleanup_grpc_call(grpc_call *call);
+int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
+void free_queued_response_payloads(grpc_call *call);
+void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
+int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+void grpc_protocol_free_response_metadata_entries(grpc_call *call);
+void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
+void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
+void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
+void cleanup_grpc_call(grpc_call *call);
 
 static grpc_call *grpc_call_from_stream_id(h2_connection *connection, int32_t stream_id)
 {
@@ -105,7 +105,7 @@ static grpc_call *grpc_call_from_stream_id(h2_connection *connection, int32_t st
     return (grpc_call *) nghttp2_session_get_stream_user_data(connection->session, stream_id);
 }
 
-static int register_grpc_call_stream(h2_connection *connection, grpc_call *call)
+int register_grpc_call_stream(h2_connection *connection, grpc_call *call)
 {
     if (connection == NULL || call == NULL || call->stream_id <= 0) {
         return FAILURE;
@@ -123,7 +123,7 @@ static int register_grpc_call_stream(h2_connection *connection, grpc_call *call)
     return SUCCESS;
 }
 
-static void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call)
+void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call)
 {
     if (connection == NULL) {
         return;
@@ -164,7 +164,7 @@ static void unregister_grpc_call_stream(grpc_call *call)
     }
 }
 
-static void destroy_h2_connection(h2_connection *connection)
+void destroy_h2_connection(h2_connection *connection)
 {
     if (connection == NULL) {
         return;
@@ -191,14 +191,14 @@ static void destroy_h2_connection(h2_connection *connection)
     pefree(connection, connection->persistent);
 }
 
-static void destroy_detached_connection_if_unowned(h2_connection *connection)
+void destroy_detached_connection_if_unowned(h2_connection *connection)
 {
     if (connection != NULL && connection->detached_from_cache && connection->stream_owner_count == 0) {
         destroy_h2_connection(connection);
     }
 }
 
-static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection)
+void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection)
 {
     if (entry == NULL) {
         return;
@@ -212,7 +212,7 @@ static void destroy_persistent_connection_entry(persistent_connection_entry *ent
     pefree(entry, true);
 }
 
-static void detach_persistent_connection_by_ptr(h2_connection *connection)
+void detach_persistent_connection_by_ptr(h2_connection *connection)
 {
     persistent_connection_entry *entry;
     persistent_connection_entry *matched_entry = NULL;
@@ -239,17 +239,17 @@ static void detach_persistent_connection_by_ptr(h2_connection *connection)
     }
 }
 
-static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state)
+bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state)
 {
     return connection != NULL && state != NULL && state->call.connection == connection;
 }
 
-static bool connection_owned_by_call(h2_connection *connection, grpc_call *call)
+bool connection_owned_by_call(h2_connection *connection, grpc_call *call)
 {
     return connection != NULL && call != NULL && call->connection == connection;
 }
 
-static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state)
+void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state)
 {
     h2_connection *connection;
 
@@ -273,7 +273,7 @@ static void clear_connection_server_streaming_call_state_owner(server_streaming_
     destroy_detached_connection_if_unowned(connection);
 }
 
-static void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
+void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
 {
     if (!connection_owned_by_call(connection, call)) {
         return;
@@ -285,7 +285,7 @@ static void clear_connection_call_owner(h2_connection *connection, grpc_call *ca
     call->connection_owned = false;
 }
 
-static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code)
+void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code)
 {
     int rv;
 
@@ -303,7 +303,7 @@ static void cancel_active_server_streaming_call_state(server_streaming_call_stat
     }
 }
 
-static void destroy_server_streaming_call_state(server_streaming_call_state *state)
+void destroy_server_streaming_call_state(server_streaming_call_state *state)
 {
     if (state == NULL) {
         return;
@@ -330,12 +330,12 @@ static void destroy_server_streaming_call_state(server_streaming_call_state *sta
     efree(state);
 }
 
-static void server_streaming_call_state_dtor(zend_resource *rsrc)
+void server_streaming_call_state_dtor(zend_resource *rsrc)
 {
     destroy_server_streaming_call_state((server_streaming_call_state *) rsrc->ptr);
 }
 
-static int configure_callbacks(nghttp2_session_callbacks **callbacks)
+int configure_callbacks(nghttp2_session_callbacks **callbacks)
 {
     if (nghttp2_session_callbacks_new(callbacks) != 0) {
         return -1;
@@ -710,7 +710,7 @@ static void grpc_lite_trace_transport_io(h2_connection *connection, const char *
     grpc_lite_trace_unlock_and_close(fp);
 }
 
-static void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count)
+void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count)
 {
     FILE *fp;
     size_t i;
@@ -741,7 +741,7 @@ static void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *h
     grpc_lite_trace_unlock_and_close(fp);
 }
 
-static void mark_connection_dead(h2_connection *connection, int error_code)
+void mark_connection_dead(h2_connection *connection, int error_code)
 {
     if (connection == NULL) {
         return;
@@ -762,7 +762,7 @@ static void mark_connection_dead(h2_connection *connection, int error_code)
     }
 }
 
-static void set_connection_error_detail(h2_connection *connection, const char *detail)
+void set_connection_error_detail(h2_connection *connection, const char *detail)
 {
     if (connection == NULL || detail == NULL) {
         return;
@@ -770,7 +770,7 @@ static void set_connection_error_detail(h2_connection *connection, const char *d
     snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "%s", detail);
 }
 
-static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code)
+void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code)
 {
     if (connection == NULL) {
         return;
@@ -780,7 +780,7 @@ static void mark_connection_draining(h2_connection *connection, int32_t last_str
     connection->last_goaway_error_code = error_code;
 }
 
-static bool connection_usable(h2_connection *connection)
+bool connection_usable(h2_connection *connection)
 {
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
 }
@@ -796,7 +796,7 @@ static bool identity_matches(zend_string *stored, const char *expected, size_t e
     return ZSTR_LEN(stored) == expected_len && memcmp(ZSTR_VAL(stored), expected, expected_len) == 0;
 }
 
-static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len)
+persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len)
 {
     persistent_connection_entry *entry;
 
@@ -820,7 +820,7 @@ static persistent_connection_entry *create_persistent_connection_entry(h2_connec
     return entry;
 }
 
-static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len)
+bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len)
 {
     if (entry == NULL || entry->connection == NULL) {
         return false;
@@ -914,7 +914,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
     return connection_usable(connection);
 }
 
-static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
+bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
 {
     char byte;
     ssize_t rv;
@@ -963,7 +963,7 @@ static bool preflight_persistent_connection(h2_connection *connection, uint64_t 
     return true;
 }
 
-static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
+void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
 {
     persistent_connection_entry *entry = NULL;
 
@@ -986,7 +986,7 @@ static void remove_unusable_persistent_connection(const char *key, size_t key_le
     destroy_h2_connection(connection);
 }
 
-static int set_fd_nonblocking_mode(int fd, bool nonblocking)
+int set_fd_nonblocking_mode(int fd, bool nonblocking)
 {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) {
@@ -1000,7 +1000,7 @@ static int set_fd_nonblocking_mode(int fd, bool nonblocking)
     return fcntl(fd, F_SETFL, flags);
 }
 
-static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us)
+int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us)
 {
     if (deadline_abs_us == 0) {
         return -1;
@@ -1014,7 +1014,7 @@ static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us)
     return remaining_ms > INT_MAX ? INT_MAX : (int) remaining_ms;
 }
 
-static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us)
+zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us)
 {
     if (deadline_abs_us == 0) {
         return 0;
@@ -1041,7 +1041,7 @@ static size_t effective_server_streaming_read_ahead_max_bytes(void)
         : GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_BYTES;
 }
 
-static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us)
+int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us)
 {
     while (true) {
         struct pollfd pfd;
@@ -1067,7 +1067,7 @@ static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us
     }
 }
 
-static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len)
+int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len)
 {
     if (pem_len > INT_MAX) {
         return -1;
@@ -1092,7 +1092,7 @@ static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem
     return loaded > 0 ? 0 : -1;
 }
 
-static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len)
+int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len)
 {
     if (cert_len > INT_MAX || key_len > INT_MAX) {
         return -1;
@@ -1152,7 +1152,7 @@ static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t c
     return 0;
 }
 
-static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
+int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us)
 {
     const char *verify_name = tls_verify_name != NULL && tls_verify_name_len > 0 ? tls_verify_name : host;
 
@@ -1278,7 +1278,7 @@ static int configure_tls_connection(h2_connection *connection, const char *host,
     return 0;
 }
 
-static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length)
+ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length)
 {
     ssize_t written;
     if (call == NULL) {
@@ -1456,7 +1456,7 @@ static int h2_connection_buffer_or_write(h2_connection *connection, const uint8_
     return SUCCESS;
 }
 
-static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us)
+ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us)
 {
     zend_long remaining_timeout_us;
     if (connection == NULL) {
@@ -1535,7 +1535,7 @@ static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t 
     }
 }
 
-static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
+h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
 {
     h2_connection *connection;
     int rv;
@@ -1623,7 +1623,7 @@ static h2_connection *create_h2_connection(const char *host, zend_long port, con
     return connection;
 }
 
-static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
+h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message)
 {
     persistent_connection_entry *entry;
     h2_connection *connection;
@@ -1679,7 +1679,7 @@ static h2_connection *get_persistent_connection(const char *key, size_t key_len,
     return connection;
 }
 
-static void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
+void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
 {
     persistent_connection_entry *entry = NULL;
 
@@ -1703,7 +1703,7 @@ static void discard_persistent_connection(const char *key, size_t key_len, h2_co
     destroy_h2_connection(connection);
 }
 
-static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us)
+int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us)
 {
     char port_buf[16];
     struct addrinfo hints;
@@ -1714,7 +1714,7 @@ static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_u
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    snprintf(port_buf, sizeof(port_buf), "%ld", port);
+    snprintf(port_buf, sizeof(port_buf), "%ld", (long) port);
 
     if (getaddrinfo(host, port_buf, &hints, &result) != 0) {
         return -1;
@@ -1775,7 +1775,7 @@ static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_u
     return fd;
 }
 
-static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
+ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
     uint64_t deadline_abs_us;
@@ -1799,7 +1799,7 @@ static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size
     return (ssize_t) length;
 }
 
-static int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us)
+int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us)
 {
     int rv;
 
@@ -1839,7 +1839,7 @@ static int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_
     return rv;
 }
 
-static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
+int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
 {
     return send_pending_h2_frames_with_deadline(
         connection,
@@ -1848,7 +1848,7 @@ static int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
     );
 }
 
-static size_t remaining_request_bytes(grpc_call *call)
+size_t remaining_request_bytes(grpc_call *call)
 {
     size_t total_len = call->grpc_header_len + call->request_len;
     if (call->request_offset >= total_len) {
@@ -1857,7 +1857,7 @@ static size_t remaining_request_bytes(grpc_call *call)
     return total_len - call->request_offset;
 }
 
-static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
+size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
 {
     size_t copied = 0;
     size_t total_len = call->grpc_header_len + call->request_len;
@@ -1884,7 +1884,7 @@ static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
     return copied;
 }
 
-static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
     grpc_call *call = source != NULL ? (grpc_call *) source->ptr : NULL;
     size_t total_len;
@@ -1910,7 +1910,7 @@ static ssize_t data_source_read_callback(nghttp2_session *session, int32_t strea
     return (ssize_t) copied;
 }
 
-static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len)
+void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len)
 {
     call->grpc_header[0] = 0;
     call->grpc_header[1] = (uint8_t) ((payload_len >> 24) & 0xff);
@@ -1920,7 +1920,7 @@ static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len
     call->grpc_header_len = 5;
 }
 
-static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
+int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, stream_id);
@@ -1947,7 +1947,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
     return 0;
 }
 
-static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
@@ -2026,7 +2026,7 @@ static int on_header_callback(nghttp2_session *session, const nghttp2_frame *fra
     return 0;
 }
 
-static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
+int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, stream_id);
@@ -2043,7 +2043,7 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     return 0;
 }
 
-static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
+int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
@@ -2096,7 +2096,7 @@ static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
     return 0;
 }
 
-static uint64_t monotonic_us(void)
+uint64_t monotonic_us(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -2104,7 +2104,7 @@ static uint64_t monotonic_us(void)
 }
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
+zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
 {
     char buf[32];
     size_t copy_len = valuelen < sizeof(buf) - 1 ? valuelen : sizeof(buf) - 1;
@@ -2114,7 +2114,7 @@ static zend_long header_value_to_long(const uint8_t *value, size_t valuelen)
 }
 #endif
 
-static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen)
+zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen)
 {
     smart_str decoded = {0};
     size_t index = 0;
@@ -2198,19 +2198,19 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
     }
 }
 
-static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result)
+void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result)
 {
     result->code = grpc_lite_status_code_from_call(call, cancelled);
     result->details = grpc_lite_status_details_from_call(call, result->code);
 }
 
-static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status)
+void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status)
 {
     add_assoc_long(return_value, "status_code", status->code);
     add_assoc_str(return_value, "status_details", status->details != NULL ? zend_string_copy(status->details) : zend_empty_string);
 }
 
-static int init_request_headers(h2_request_headers *headers)
+int init_request_headers(h2_request_headers *headers)
 {
     headers->capacity = GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY;
     headers->len = 0;
@@ -2261,7 +2261,7 @@ static void grow_request_headers(h2_request_headers *headers)
     headers->capacity = new_capacity;
 }
 
-static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
+void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
 {
     if (headers->len >= headers->capacity) {
         grow_request_headers(headers);
@@ -2278,7 +2278,7 @@ static void append_request_header(h2_request_headers *headers, const char *name,
     };
 }
 
-static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us)
+void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us)
 {
     char timeout_buf[32];
     size_t timeout_len;
@@ -2297,7 +2297,7 @@ static void append_grpc_timeout_request_header(h2_request_headers *headers, zend
     append_request_header(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, ZSTR_VAL(value_str), ZSTR_LEN(value_str));
 }
 
-static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent)
+void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent)
 {
     if (primary_user_agent != NULL && ZSTR_LEN(primary_user_agent) > 0) {
         append_request_header(headers, "user-agent", sizeof("user-agent") - 1, ZSTR_VAL(primary_user_agent), ZSTR_LEN(primary_user_agent));
@@ -2463,7 +2463,7 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
     return 0;
 }
 
-static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv)
+int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv)
 {
     zend_string *key;
     zval *value;
@@ -2498,7 +2498,7 @@ static int append_custom_request_headers(h2_request_headers *headers, zval *head
     return 0;
 }
 
-static void free_request_headers(h2_request_headers *headers)
+void free_request_headers(h2_request_headers *headers)
 {
     size_t i;
     if (headers->name_strings != NULL) {
@@ -2534,7 +2534,7 @@ static void free_request_headers(h2_request_headers *headers)
     headers->custom_value_count = 0;
 }
 
-static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
+int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
 
@@ -2619,7 +2619,7 @@ static int grpc_protocol_validate_response_message_lengths(nghttp2_session *sess
     return 0;
 }
 
-static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
+int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
 
@@ -2788,7 +2788,7 @@ static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *ses
     }
 }
 
-static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload)
+int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload)
 {
     if (server_streaming_read_ahead_limit_would_exceed(call, ZSTR_LEN(payload))) {
         zend_string_release(payload);
@@ -2812,7 +2812,7 @@ static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, z
     return 0;
 }
 
-static void free_queued_response_payloads(grpc_call *call)
+void free_queued_response_payloads(grpc_call *call)
 {
     while (call->response_queue_head != NULL) {
         queued_payload *entry = call->response_queue_head;
@@ -2825,7 +2825,7 @@ static void free_queued_response_payloads(grpc_call *call)
     call->response_queue_bytes = 0;
 }
 
-static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
+int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing)
 {
     metadata_entry *entry;
     size_t entry_bytes = namelen + valuelen;
@@ -2866,7 +2866,7 @@ static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint
     return 0;
 }
 
-static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call)
+void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call)
 {
     metadata_entry *entry;
     for (entry = call->metadata_head; entry != NULL; entry = entry->next) {
@@ -2874,7 +2874,7 @@ static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call)
     }
 }
 
-static void grpc_protocol_free_response_metadata_entries(grpc_call *call)
+void grpc_protocol_free_response_metadata_entries(grpc_call *call)
 {
     while (call->metadata_head != NULL) {
         metadata_entry *entry = call->metadata_head;
@@ -2926,7 +2926,7 @@ static void add_binary_metadata_values_to_map(zval *metadata, zend_string *key, 
     }
 }
 
-static void grpc_protocol_copy_metadata_map(zval *metadata, grpc_call *call, bool trailing)
+void grpc_protocol_copy_metadata_map(zval *metadata, grpc_call *call, bool trailing)
 {
     metadata_entry *entry;
 
@@ -2943,7 +2943,7 @@ static void grpc_protocol_copy_metadata_map(zval *metadata, grpc_call *call, boo
     }
 }
 
-static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing)
+void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing)
 {
     zval metadata;
 
@@ -2951,7 +2951,7 @@ static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const c
     add_assoc_zval(return_value, name, &metadata);
 }
 
-static void cleanup_grpc_call(grpc_call *call)
+void cleanup_grpc_call(grpc_call *call)
 {
     if (call == NULL) {
         return;

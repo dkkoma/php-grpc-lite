@@ -20,7 +20,7 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
     }
     state->completed = true;
 }
-static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure)
+int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure)
 {
     h2_connection *connection;
     server_streaming_call_state *state;
@@ -374,13 +374,13 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
 }
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value)
+int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value)
 {
     return server_streaming_call_next_resource_core(server_streaming_resource_zv, return_value, NULL);
 }
 #endif
 
-static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result)
+void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result)
 {
     if (result->payload != NULL) {
         zend_string_release(result->payload);
@@ -392,7 +392,7 @@ static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result
     zval_ptr_dtor(&result->trailing_metadata);
 }
 
-static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result)
+int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result)
 {
     memset(result, 0, sizeof(*result));
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
@@ -402,7 +402,7 @@ static int server_streaming_call_next_resource(zval *server_streaming_resource_z
 #endif
 }
 
-static int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv)
+int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv)
 {
     server_streaming_call_state *state;
 

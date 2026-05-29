@@ -1101,7 +1101,7 @@ PHP_FUNCTION(grpc_lite_multiplex_unary)
     }
     nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, NULL, 0);
 
-    snprintf(authority, sizeof(authority), "%s:%ld", host, port);
+    snprintf(authority, sizeof(authority), "%s:%ld", host, (long) port);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV(":method", "POST");
     nva[nvlen++] = (nghttp2_nv) MAKE_NV(":scheme", "http");
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":authority", authority, strlen(authority));
@@ -1429,7 +1429,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         nghttp2_submit_window_update(session, NGHTTP2_FLAG_NONE, 0, (int32_t) (call.bench.recv_connection_window_size - 65535));
     }
 
-    snprintf(authority, sizeof(authority), "%s:%ld", host, port);
+    snprintf(authority, sizeof(authority), "%s:%ld", host, (long) port);
     if (init_request_headers(&request_headers) != 0) {
         close(call.fd);
         nghttp2_session_del(session);
@@ -2232,7 +2232,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_grpc_lite_server_streaming_cance
     ZEND_ARG_INFO(0, stream)
 ZEND_END_ARG_INFO()
 
-static const zend_function_entry grpc_lite_functions[] = {
+const zend_function_entry grpc_lite_functions[] = {
     PHP_FE(grpc_lite_unary, arginfo_grpc_lite_unary)
     PHP_FE(grpc_lite_server_streaming_open, arginfo_grpc_lite_server_streaming_open)
     PHP_FE(grpc_lite_server_streaming_next, arginfo_grpc_lite_server_streaming_next)

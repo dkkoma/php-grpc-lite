@@ -1,6 +1,10 @@
 #ifndef PHP_GRPC_LITE_INTERNAL_H
 #define PHP_GRPC_LITE_INTERNAL_H
 
+#ifdef HAVE_CONFIG_H
+# include "config.h"
+#endif
+
 /*
  * Private implementation header for php-grpc-lite grpc extension.
  * Not installed. Not a public C API.
@@ -46,16 +50,17 @@ typedef struct _h2_connection h2_connection;
 typedef struct persistent_connection_entry persistent_connection_entry;
 typedef struct server_streaming_call_state server_streaming_call_state;
 
-static zend_class_entry *grpc_ce_channel;
-static zend_class_entry *grpc_ce_call;
-static zend_class_entry *grpc_ce_channel_credentials;
-static zend_class_entry *grpc_ce_call_credentials;
-static zend_class_entry *grpc_ce_timeval;
-static zend_object_handlers grpc_channel_handlers;
-static zend_object_handlers grpc_call_handlers;
-static zend_object_handlers grpc_channel_credentials_handlers;
-static zend_object_handlers grpc_call_credentials_handlers;
-static zend_object_handlers grpc_timeval_handlers;
+extern zend_class_entry *grpc_ce_channel;
+extern zend_class_entry *grpc_ce_call;
+extern zend_class_entry *grpc_ce_channel_credentials;
+extern zend_class_entry *grpc_ce_call_credentials;
+extern zend_class_entry *grpc_ce_timeval;
+extern zend_object_handlers grpc_channel_handlers;
+extern zend_object_handlers grpc_call_handlers;
+extern zend_object_handlers grpc_channel_credentials_handlers;
+extern zend_object_handlers grpc_call_credentials_handlers;
+extern zend_object_handlers grpc_timeval_handlers;
+extern int le_server_streaming_call_state;
 
 #define GRPC_STATUS_OK 0
 #define GRPC_STATUS_CANCELLED 1
@@ -511,94 +516,112 @@ struct server_streaming_call_state {
 };
 
 
-static void destroy_h2_connection(h2_connection *connection);
-static void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
-static void detach_persistent_connection_by_ptr(h2_connection *connection);
-static bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state);
-static bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
-static void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state);
-static void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
-static void destroy_detached_connection_if_unowned(h2_connection *connection);
-static void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call);
-static int send_pending_h2_frames(h2_connection *connection, grpc_call *call);
-static int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
-static void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count);
-static void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
-static void destroy_server_streaming_call_state(server_streaming_call_state *state);
-static void server_streaming_call_state_dtor(zend_resource *rsrc);
-static int configure_callbacks(nghttp2_session_callbacks **callbacks);
-static void mark_connection_dead(h2_connection *connection, int error_code);
-static void set_connection_error_detail(h2_connection *connection, const char *detail);
-static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
-static bool connection_usable(h2_connection *connection);
-static zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key);
-static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
-static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
-static bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
-static void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
-static int set_fd_nonblocking_mode(int fd, bool nonblocking);
-static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
-static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
-static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
-static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
-static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
-static int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
-static ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
-static ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
-static h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
-static h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
-static void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
-static int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
-static ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
-static size_t remaining_request_bytes(grpc_call *call);
-static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
-static ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
-static void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
-static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
-static int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
-static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
-static int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
-static uint64_t monotonic_us(void);
+void destroy_h2_connection(h2_connection *connection);
+void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
+void detach_persistent_connection_by_ptr(h2_connection *connection);
+bool connection_owned_by_server_streaming_call_state(h2_connection *connection, server_streaming_call_state *state);
+bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
+void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state);
+void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
+void destroy_detached_connection_if_unowned(h2_connection *connection);
+int register_grpc_call_stream(h2_connection *connection, grpc_call *call);
+void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call);
+int send_pending_h2_frames(h2_connection *connection, grpc_call *call);
+int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
+void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count);
+void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
+void destroy_server_streaming_call_state(server_streaming_call_state *state);
+void server_streaming_call_state_dtor(zend_resource *rsrc);
+int configure_callbacks(nghttp2_session_callbacks **callbacks);
+void mark_connection_dead(h2_connection *connection, int error_code);
+void set_connection_error_detail(h2_connection *connection, const char *detail);
+void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
+bool connection_usable(h2_connection *connection);
+zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key);
+persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
+bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
+bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us);
+void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
+int set_fd_nonblocking_mode(int fd, bool nonblocking);
+int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
+zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
+int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
+int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
+int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
+int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
+ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
+ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
+h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
+h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
+void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
+int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
+ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
+size_t remaining_request_bytes(grpc_call *call);
+size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
+ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
+void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
+int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
+int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
+int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
+uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
+zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
-static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen);
+zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen);
 int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled);
-static int init_request_headers(h2_request_headers *headers);
-static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
-static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
-static void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
-static int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
-static void free_request_headers(h2_request_headers *headers);
-static int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
-static int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
-static int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
-static void free_queued_response_payloads(grpc_call *call);
-static void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
-static int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
-static void grpc_protocol_free_response_metadata_entries(grpc_call *call);
-static void grpc_protocol_copy_metadata_map(zval *metadata, grpc_call *call, bool trailing);
-static void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
-static void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
-static void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
-static void cleanup_grpc_call(grpc_call *call);
+int init_request_headers(h2_request_headers *headers);
+void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
+void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
+int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
+void free_request_headers(h2_request_headers *headers);
+int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
+int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
+void free_queued_response_payloads(grpc_call *call);
+void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
+int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool trailing);
+void grpc_protocol_free_response_metadata_entries(grpc_call *call);
+void grpc_protocol_copy_metadata_map(zval *metadata, grpc_call *call, bool trailing);
+void grpc_protocol_add_metadata_map_to_return(zval *return_value, const char *name, grpc_call *call, bool trailing);
+void resolve_grpc_call_status(grpc_call *call, bool cancelled, grpc_lite_status_result *result);
+void add_status_result_to_return(zval *return_value, grpc_lite_status_result *status);
+void cleanup_grpc_call(grpc_call *call);
 
-static void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result);
-static void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result);
-static int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result);
+void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result);
+void grpc_lite_streaming_next_result_dtor(grpc_lite_streaming_next_result *result);
+int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);
+int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value);
 #endif
-static int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure);
-static int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result);
+int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure);
+int server_streaming_call_next_resource(zval *server_streaming_resource_zv, grpc_lite_streaming_next_result *result);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value);
+int server_streaming_call_next_resource_diagnostic(zval *server_streaming_resource_zv, zval *return_value);
 #endif
-static int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv);
+int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-static void grpc_lite_diagnostic_add_unary_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status, uint64_t start_unix_nanos, uint64_t total_us, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused);
-static void grpc_lite_diagnostic_add_server_streaming_status(zval *diagnostic_result, server_streaming_call_state *state, grpc_lite_status_result *status);
+void grpc_lite_diagnostic_add_unary_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status, uint64_t start_unix_nanos, uint64_t total_us, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused);
+void grpc_lite_diagnostic_add_server_streaming_status(zval *diagnostic_result, server_streaming_call_state *state, grpc_lite_status_result *status);
 #endif
+
+zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce);
+void grpc_lite_channel_credentials_free_object(zend_object *object);
+zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce);
+void grpc_lite_call_credentials_free_object(zend_object *object);
+zend_object *grpc_lite_timeval_create_object(zend_class_entry *ce);
+zend_object *grpc_lite_channel_create_object(zend_class_entry *ce);
+void grpc_lite_channel_free_object(zend_object *object);
+zend_object *grpc_lite_call_create_object(zend_class_entry *ce);
+void grpc_lite_call_free_object(zend_object *object);
+
+extern const zend_function_entry channel_credentials_methods[];
+extern const zend_function_entry call_credentials_methods[];
+extern const zend_function_entry timeval_methods[];
+extern const zend_function_entry channel_methods[];
+extern const zend_function_entry call_methods[];
+extern const zend_function_entry grpc_lite_functions[];
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     HashTable persistent_connections;

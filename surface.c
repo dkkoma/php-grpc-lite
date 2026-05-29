@@ -2,7 +2,7 @@
 
 #include "internal.h"
 
-static zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce)
+zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce)
 {
     grpc_lite_channel_credentials_obj *obj = zend_object_alloc(sizeof(grpc_lite_channel_credentials_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -11,7 +11,7 @@ static zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry
     return &obj->std;
 }
 
-static void grpc_lite_channel_credentials_free_object(zend_object *object)
+void grpc_lite_channel_credentials_free_object(zend_object *object)
 {
     grpc_lite_channel_credentials_obj *obj = grpc_lite_channel_credentials_fetch(object);
     if (obj->root_certs != NULL) {
@@ -121,7 +121,7 @@ static zend_long grpc_lite_saturating_subtract(zend_long left, zend_long right)
     return grpc_lite_saturating_add(left, -right);
 }
 
-static zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce)
+zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce)
 {
     grpc_lite_call_credentials_obj *obj = zend_object_alloc(sizeof(grpc_lite_call_credentials_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -131,7 +131,7 @@ static zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *c
     return &obj->std;
 }
 
-static void grpc_lite_call_credentials_free_object(zend_object *object)
+void grpc_lite_call_credentials_free_object(zend_object *object)
 {
     grpc_lite_call_credentials_obj *obj = grpc_lite_call_credentials_fetch(object);
     zval_ptr_dtor(&obj->callback);
@@ -156,7 +156,7 @@ PHP_METHOD(CallCredentials, createFromPlugin)
     ZVAL_COPY(&obj->callback, callback);
 }
 
-static zend_object *grpc_lite_timeval_create_object(zend_class_entry *ce)
+zend_object *grpc_lite_timeval_create_object(zend_class_entry *ce)
 {
     grpc_lite_timeval_obj *obj = zend_object_alloc(sizeof(grpc_lite_timeval_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -251,7 +251,7 @@ PHP_METHOD(Timeval, zero)
     Z_GRPC_LITE_TIMEVAL_P(return_value)->microseconds = 0;
 }
 
-static zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
+zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
 {
     grpc_lite_channel_obj *obj = zend_object_alloc(sizeof(grpc_lite_channel_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -298,7 +298,7 @@ static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
     obj->initialized = false;
 }
 
-static void grpc_lite_channel_free_object(zend_object *object)
+void grpc_lite_channel_free_object(zend_object *object)
 {
     grpc_lite_channel_obj *obj = grpc_lite_channel_fetch(object);
     grpc_lite_channel_clear_fields(obj);
@@ -369,7 +369,7 @@ static void grpc_lite_sha256_hex(zend_string *value, char *hex)
     hex[SHA256_DIGEST_LENGTH * 2] = '\0';
 }
 
-static zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key)
+zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key)
 {
     smart_str canonical = {0};
     char root_certs_digest[SHA256_DIGEST_LENGTH * 2 + 1];
@@ -388,7 +388,7 @@ static zend_string *grpc_lite_build_connection_key(const char *host, size_t host
         host_len,
         (int) host_len,
         host,
-        port,
+        (long) port,
         authority_len,
         (int) authority_len,
         authority != NULL ? authority : "",
@@ -597,7 +597,7 @@ PHP_METHOD(Channel, watchConnectivityState)
     RETURN_FALSE;
 }
 
-static zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
+zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
 {
     grpc_lite_call_obj *obj = zend_object_alloc(sizeof(grpc_lite_call_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -613,7 +613,7 @@ static zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
     return &obj->std;
 }
 
-static void grpc_lite_call_free_object(zend_object *object)
+void grpc_lite_call_free_object(zend_object *object)
 {
     grpc_lite_call_obj *obj = grpc_lite_call_fetch(object);
     zval_ptr_dtor(&obj->channel);
@@ -717,7 +717,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_timeval_other, 0, 0, 1)
     ZEND_ARG_OBJ_INFO(0, other, Grpc\\Timeval, 0)
 ZEND_END_ARG_INFO()
 
-static const zend_function_entry channel_credentials_methods[] = {
+const zend_function_entry channel_credentials_methods[] = {
     PHP_ME(ChannelCredentials, createInsecure, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_ME(ChannelCredentials, createSsl, arginfo_channel_credentials_create_ssl, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_ME(ChannelCredentials, createDefault, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
@@ -727,12 +727,12 @@ static const zend_function_entry channel_credentials_methods[] = {
     PHP_FE_END
 };
 
-static const zend_function_entry call_credentials_methods[] = {
+const zend_function_entry call_credentials_methods[] = {
     PHP_ME(CallCredentials, createFromPlugin, arginfo_call_credentials_create_plugin, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_FE_END
 };
 
-static const zend_function_entry timeval_methods[] = {
+const zend_function_entry timeval_methods[] = {
     PHP_ME(Timeval, __construct, arginfo_timeval_construct, ZEND_ACC_PUBLIC)
     PHP_ME(Timeval, now, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_ME(Timeval, infFuture, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
@@ -746,7 +746,7 @@ static const zend_function_entry timeval_methods[] = {
     PHP_FE_END
 };
 
-static const zend_function_entry channel_methods[] = {
+const zend_function_entry channel_methods[] = {
     PHP_ME(Channel, __construct, arginfo_channel_construct, ZEND_ACC_PUBLIC)
     PHP_ME(Channel, getTarget, arginfo_no_args, ZEND_ACC_PUBLIC)
     PHP_ME(Channel, close, arginfo_no_args, ZEND_ACC_PUBLIC)
