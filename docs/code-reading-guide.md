@@ -10,7 +10,7 @@ generated client / gax
      -> Grpc\BaseStub
      -> Grpc\UnaryCall / Grpc\ServerStreamingCall
   -> Grpc\Call
-  -> main.c
+  -> grpc.c
      -> src/surface.c
      -> src/transport.c
      -> src/unary_call.c / src/server_streaming_call.c
@@ -28,7 +28,7 @@ HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレ
 2. `vendor/grpc/grpc/src/lib/BaseStub.php`
 3. `vendor/grpc/grpc/src/lib/UnaryCall.php`
 4. `vendor/grpc/grpc/src/lib/ServerStreamingCall.php`
-5. `main.c`
+5. `grpc.c`
 6. `src/surface.c`
 7. `src/bridge.c`
 8. `src/unary_call.c`
@@ -95,7 +95,7 @@ messageごとに `responses()` がpullするため、現在の実装はbatch dra
 
 ## 3. 拡張が登録するPHP surface
 
-`main.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。class/object実装は `src/surface.c`、official wrapperから呼ばれる `Grpc\Call` bridgeは `src/bridge.c` にあります。
+`grpc.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。class/object実装は `src/surface.c`、official wrapperから呼ばれる `Grpc\Call` bridgeは `src/bridge.c` にあります。
 
 | surface | 用途 |
 |---|---|

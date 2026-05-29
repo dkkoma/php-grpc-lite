@@ -2,6 +2,8 @@
 # include "config.h"
 #endif
 
+#include "php_grpc.h"
+
 #include "src/surface.h"
 #include "src/transport.h"
 
@@ -197,7 +199,7 @@ zend_module_entry grpc_module_entry = {
     PHP_RSHUTDOWN(grpc_lite),
     NULL,
     PHP_MINFO(grpc_lite),
-    "0.1.0",
+    PHP_GRPC_VERSION,
     ZEND_MODULE_GLOBALS(grpc_lite),
     PHP_GINIT(grpc_lite),
     PHP_GSHUTDOWN(grpc_lite),

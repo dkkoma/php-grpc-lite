@@ -12,7 +12,7 @@ docker compose run --rm dev sh -lc '
 
     php_includes="$(php-config --includes)"
     pkg_includes="$(pkg-config --cflags libnghttp2 openssl)"
-    production_sources="main.c src/protocol_core.c src/status_core.c src/transport_core.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/bridge.c"
+    production_sources="grpc.c src/protocol_core.c src/status_core.c src/transport_core.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/bridge.c"
     bench_sources="$production_sources src/diagnostic/diagnostic.c src/diagnostic/bench.c"
 
     cppcheck \
