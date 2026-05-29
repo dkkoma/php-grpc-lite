@@ -31,7 +31,7 @@
 - Why it matters: This does not change runtime protocol behavior, but it leaves a stale production-vs-diagnostic boundary description exactly at the point where Phase 5 is trying to make that boundary visible through layout. Future maintainers could incorrectly preserve an old include-based ABI assumption or reintroduce `main.c` coupling when touching bench-only HTTP/2 helpers.
 - Recommended fix: Update the comment to describe the current model: `src/diagnostic/bench.c` is compiled only by `config.m4` when `PHP_GRPC_LITE_ENABLE_BENCH` is enabled, and it intentionally keeps bench entrypoints out of the production source list while reusing private transport/call helpers.
 - Fix summary: `src/diagnostic/bench.c` の先頭コメントを、`main.c` includeモデルではなく `config.m4` による `--enable-grpc-bench` 限定コンパイルモデルの説明へ更新した。
-- Fix commit: `fd60db2`
+- Fix commit: `1642c64`
 - Verification: `git diff --check`: PASS. Phase 5 gates are recorded in `docs/issues/open/2026-05-29-c-maintainability-work-plan.md`.
 - Notes: This is a documentation/domain-boundary finding only. The actual build boundary still appears correct.
 

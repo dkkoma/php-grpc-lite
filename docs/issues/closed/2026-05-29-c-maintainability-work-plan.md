@@ -1,5 +1,5 @@
 ---
-Status: Open
+Status: Closed
 Owner: Codex
 Created: 2026-05-29
 Branch: c-practice-work-plan
@@ -586,3 +586,39 @@ HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表
 - Docker内のC unit、PHPT、C coverage、C static analysis、PHPUnitが通る。
 - HTTP/2/gRPCドメインモデルレビューでBlocker / High / Medium / Lowがnoneになる。
 - このissueに修正コミット、検証結果、レビュー結果を追記し、`Status: Closed` にして `docs/issues/closed/` へ移動する。
+
+## 完了記録
+
+終了: 2026-05-30 06:26 JST
+
+修正コミット:
+
+- `cb4439b` Phase 0: extension rootをrepository rootへ移行
+- `cbf8c5c` Phase 1: backend selectionとfranken-go経路を削除
+- `33500e5` Phase 2: pure core helperの直接includeを廃止
+- `de4c7c8` Phase 3: extension本体を複数翻訳単位化
+- `82979af` Phase 4: internal header境界を分割
+- `1642c64` Phase 5: C実装をsrc配下へ移動
+
+最終状態:
+
+- production `.c` の直接includeは廃止済み。
+- runtime backend selection / franken-go runtime pathは削除済み。
+- C unit / fuzzは `.c` includeではなくheader宣言と対象sourceの明示リンクへ移行済み。
+- `config.m4` はproduction / bench buildのsource listを明示している。
+- C実装と内部headerは `src/`、bench / diagnostic実装は `src/diagnostic/` へ整理済み。
+- `internal.h` は責務別headerのprivate aggregateに縮小済み。
+- `include/` は作らず、外部公開C APIは提供しない方針を維持した。
+
+最終検証:
+
+- Phase 5で通常build / extension load、bench build / bench entrypoint load、C unit、C static analysis、PHPT + C coverage、C fuzz smoke、PHPUnit、`git diff --check` がPASS。
+- Phase 3のmulti-TU化では代表ベンチ `spanner-shape --calls=300 --warmup-calls=20` のbefore/afterを実施し、明確な性能悪化は観測しなかった。
+- Phase 4 / Phase 5は宣言整理・ファイル移動中心でhot pathロジックを変えないため、代表ベンチbefore/after対象外と判断した。
+
+レビュー:
+
+- Phase 2: `docs/reviews/issues/2026-05-30-phase2-core-helper-boundary-domain-review.md`, Blocker/High/Medium/Low none
+- Phase 3: `docs/reviews/issues/2026-05-30-phase3-multi-tu-domain-review.md`, Blocker/High/Medium/Low none
+- Phase 4: `docs/reviews/issues/2026-05-30-phase4-header-boundary-domain-review.md`, Blocker/High/Medium/Low none
+- Phase 5: `docs/reviews/issues/2026-05-30-phase5-src-layout-domain-review.md`, initial Low 1 fixed, Blocker/High/Medium/Low none
