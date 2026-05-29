@@ -12,8 +12,8 @@ docker compose run --rm dev sh -lc '
 
     php_includes="$(php-config --includes)"
     pkg_includes="$(pkg-config --cflags libnghttp2 openssl)"
-    production_sources="main.c protocol_core.c status_core.c transport_core.c surface.c transport.c unary_call.c server_streaming_call.c bridge.c"
-    bench_sources="$production_sources diagnostic.c bench.c"
+    production_sources="main.c src/protocol_core.c src/status_core.c src/transport_core.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/bridge.c"
+    bench_sources="$production_sources src/diagnostic/diagnostic.c src/diagnostic/bench.c"
 
     cppcheck \
         --enable=warning,performance,portability \

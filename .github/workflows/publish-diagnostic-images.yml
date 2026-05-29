@@ -12,6 +12,7 @@ on:
       - "config.m4"
       - "*.c"
       - "*.h"
+      - "src/**"
       - "tests/phpt/**"
       - "tests/unit/**"
       - "tests/fuzz/**"

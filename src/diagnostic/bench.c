@@ -1,12 +1,12 @@
-#include "bridge.h"
+#include "../bridge.h"
 
 /*
  * Bench-only HTTP/2 transport entrypoints.
  *
- * This file is included from main.c intentionally. The benchmark harness uses
- * the same low-level HTTP/2 helpers and diagnostics as the production HTTP/2
- * transport, but those helpers should remain file-local instead of becoming a
- * wider extension ABI.
+ * config.m4 compiles this file only for --enable-grpc-bench builds. The
+ * benchmark harness uses the same low-level HTTP/2 helpers and diagnostics as
+ * the production HTTP/2 transport, but those helpers should remain file-local
+ * instead of becoming a wider extension ABI.
  */
 
 #define MAKE_NV(NAME, VALUE) {(uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, sizeof(VALUE) - 1, NGHTTP2_NV_FLAG_NONE}

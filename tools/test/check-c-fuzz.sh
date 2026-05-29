@@ -34,11 +34,11 @@ docker compose "${run_args[@]}" \
 
     clang -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function \
         -O1 -g -fno-omit-frame-pointer \
-        -I/workspace \
+        -I/workspace -I/workspace/src \
         -fsanitize=fuzzer,address,undefined \
         -o "$build_dir/fuzz_protocol_core" \
         /workspace/tests/fuzz/fuzz_protocol_core.c \
-        /workspace/protocol_core.c
+        /workspace/src/protocol_core.c
 
     "$build_dir/fuzz_protocol_core" "$corpus_dir" \
         -runs="${FUZZ_RUNS:-20000}" \

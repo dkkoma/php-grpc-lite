@@ -11,10 +11,10 @@ generated client / gax
      -> Grpc\UnaryCall / Grpc\ServerStreamingCall
   -> Grpc\Call
   -> main.c
-     -> surface.c
-     -> transport.c
-     -> unary_call.c / server_streaming_call.c
-     -> bridge.c
+     -> src/surface.c
+     -> src/transport.c
+     -> src/unary_call.c / src/server_streaming_call.c
+     -> src/bridge.c
      -> nghttp2 + socket / OpenSSL
 ```
 
@@ -29,12 +29,12 @@ HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレ
 3. `vendor/grpc/grpc/src/lib/UnaryCall.php`
 4. `vendor/grpc/grpc/src/lib/ServerStreamingCall.php`
 5. `main.c`
-6. `surface.c`
-7. `bridge.c`
-8. `unary_call.c`
-9. `server_streaming_call.c`
-10. `transport.c`
-11. `internal.h`
+6. `src/surface.c`
+7. `src/bridge.c`
+8. `src/unary_call.c`
+9. `src/server_streaming_call.c`
+10. `src/transport.c`
+11. `src/internal.h`
 
 ## 1. 生成クライアント相当
 
@@ -95,7 +95,7 @@ messageごとに `responses()` がpullするため、現在の実装はbatch dra
 
 ## 3. 拡張が登録するPHP surface
 
-`main.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。class/object実装は `surface.c`、official wrapperから呼ばれる `Grpc\Call` bridgeは `bridge.c` にあります。
+`main.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。class/object実装は `src/surface.c`、official wrapperから呼ばれる `Grpc\Call` bridgeは `src/bridge.c` にあります。
 
 | surface | 用途 |
 |---|---|
@@ -153,11 +153,11 @@ official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
 
 unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connection()` が走ります。server streamingは最初の `RECV_MESSAGE` でC stream resourceを開き、以後C helperで1 messageずつ返します。
 
-`bridge.c` は official wrapper の `Grpc\Call` batch API を受け、`unary_call.c` と `server_streaming_call.c` の production RPC helperへ委譲します。bench build限定のdiagnostic PHP関数は `bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
+`src/bridge.c` は official wrapper の `Grpc\Call` batch API を受け、`src/unary_call.c` と `src/server_streaming_call.c` の production RPC helperへ委譲します。bench build限定のdiagnostic PHP関数は `src/diagnostic/bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
 
 ## 6. HTTP/2 transport
 
-`transport.c` はC拡張内にincludeされるprivate implementationです。主な責務は次です。
+`src/transport.c` はC拡張内のprivate implementationです。主な責務は次です。
 
 - TCP connect、TLS/mTLS handshake、ALPN h2確認
 - nghttp2 session/callback設定

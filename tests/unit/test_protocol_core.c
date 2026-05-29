@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#include "../../protocol_core.h"
+#include "../../src/protocol_core.h"
 
 static int failures = 0;
 

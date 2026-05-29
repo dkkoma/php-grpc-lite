@@ -70,18 +70,18 @@ docker compose run --rm dev bash -lc '
     for test_source in /workspace/tests/unit/test_*.c; do
         test_name="$(basename "$test_source" .c)"
         case "$test_name" in
-            test_protocol_core) core_source=/workspace/protocol_core.c ;;
-            test_status_core) core_source=/workspace/status_core.c ;;
-            test_transport_core) core_source=/workspace/transport_core.c ;;
+            test_protocol_core) core_source=/workspace/src/protocol_core.c ;;
+            test_status_core) core_source=/workspace/src/status_core.c ;;
+            test_transport_core) core_source=/workspace/src/transport_core.c ;;
             *) echo "missing core source mapping for $test_name" >&2; exit 1 ;;
         esac
         core_name="$(basename "$core_source" .c)"
         cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -O0 -g --coverage \
-            -I/workspace $php_includes $pkg_includes \
+            -I/workspace -I/workspace/src $php_includes $pkg_includes \
             -c "$test_source" \
             -o "$c_unit_dir/$test_name.o"
         cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -O0 -g --coverage \
-            -I/workspace $php_includes $pkg_includes \
+            -I/workspace -I/workspace/src $php_includes $pkg_includes \
             -c "$core_source" \
             -o "$c_unit_dir/$test_name-$core_name.o"
         cc --coverage \
@@ -101,7 +101,7 @@ docker compose run --rm dev bash -lc '
         --output-file "$coverage_dir/raw.info" \
         --ignore-errors inconsistent \
         >/tmp/grpc-coverage-capture.log
-    lcov --extract "$coverage_dir/raw.info" "/workspace/*.c" "/workspace/*.h" \
+    lcov --extract "$coverage_dir/raw.info" "/workspace/*.c" "/workspace/*.h" "/workspace/src/*.c" "/workspace/src/*.h" "/workspace/src/diagnostic/*.c" "/workspace/src/diagnostic/*.h" \
         --output-file "$coverage_dir/ext-grpc-extracted.info" \
         --ignore-errors unused \
         >/tmp/grpc-coverage-extract.log

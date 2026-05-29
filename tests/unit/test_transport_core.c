@@ -3,11 +3,11 @@
 #include <stdint.h>
 #include <limits.h>
 
-#include "../../transport.h"
+#include "../../src/transport.h"
 #ifdef snprintf
 #undef snprintf
 #endif
-#include "../../transport_core.h"
+#include "../../src/transport_core.h"
 
 static int failures = 0;
 

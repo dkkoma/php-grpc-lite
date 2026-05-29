@@ -412,6 +412,60 @@ Status: Closed
 - HTTP/2/gRPC domain review: `docs/reviews/issues/2026-05-30-phase4-header-boundary-domain-review.md`
 - Result: Blocker/High/Medium/Low none
 
+### Phase 5: C source / internal headerの `src/` 移動
+
+Status: Closed
+
+開始: 2026-05-30 06:09 JST
+
+終了: 2026-05-30 06:23 JST
+
+目的:
+
+- `config.m4` と `main.c` はrepository rootに残し、production / bench C実装とinternal headerを `src/` 配下へ移す。
+- ファイル移動と参照更新に限定し、HTTP/2 transport / gRPC protocol / PHP surfaceのロジックは変更しない。
+- runner、coverage、static analysis、fuzz、docsの現行パスを `src/` 前提へ更新する。
+
+検証予定:
+
+- 通常build / extension load
+- bench build / benchmark entrypoint load
+- C unit
+- C static analysis
+- PHPT
+- C coverage
+- C fuzz smoke
+- PHPUnit
+
+実施内容:
+
+- production C source / internal headerを `src/` 配下へ移動した。
+- bench / diagnostic sourceを `src/diagnostic/` 配下へ移動した。
+- `config.m4`、unit / fuzz / coverage / static analysis / sanitizer runner、GitHub workflow path、codecov path、現行docsの参照を `src/` 前提へ更新した。
+- `main.c` はmodule entrypointとしてrepository rootに残し、責務別headerを `src/` からincludeする形にした。
+- `include/` は作らず、追加済みheaderはすべてextension内部APIとして `src/` 配下に置いた。
+
+性能確認:
+
+- 実行なし。
+- このphaseはファイル移動、include path、runner / docs参照更新、bench-onlyコメント修正に限定し、関数実体、compile source listのproduction/bench境界、hot pathロジックを変えないため、代表ベンチbefore/after対象外と判断した。
+
+検証:
+
+- `docker compose run --rm dev sh -lc 'cd /workspace && make distclean >/tmp/grpc-phase5-normal-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep src/*.lo src/*.o src/*.dep src/diagnostic/*.lo src/diagnostic/*.o src/diagnostic/*.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-phase5-normal-phpize.log && ./configure --enable-grpc >/tmp/grpc-phase5-normal-configure.log && make -j$(nproc)'`: PASS
+- `docker compose run --rm dev sh -lc 'cd /workspace && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);" && make distclean >/tmp/grpc-phase5-bench-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep src/*.lo src/*.o src/*.dep src/diagnostic/*.lo src/diagnostic/*.o src/diagnostic/*.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-phase5-bench-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-phase5-bench-configure.log && make -j$(nproc) >/tmp/grpc-phase5-bench-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") && function_exists(\"grpc_lite_bench_unary_batch\") ? 0 : 1);"'`: PASS
+- `./tools/test/check-c-unit.sh`: PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+- `./tools/test/check-c-coverage.sh`: PASS, PHPT 15/15, lines 76.9%, functions 94.5%
+- `FUZZ_RUNS=100 ./tools/test/check-c-fuzz.sh`: PASS
+- `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`: PASS, 30 tests / 109 assertions
+- `git diff --check`: PASS
+
+レビュー:
+
+- HTTP/2/gRPC domain review: `docs/reviews/issues/2026-05-30-phase5-src-layout-domain-review.md`
+- Result: initial Low 1 fixed; Blocker/High/Medium/Low none
+
 ## ディレクトリ構造案
 
 Phase 0後はrepository rootをextension rootとして扱う。次の整理では、PHP extensionとしての入口はroot直下に残し、C実装本体を `src/` へ移す。
@@ -423,6 +477,9 @@ repo root/
   main.c                  # MINIT/MSHUTDOWN/MINFO and module entry only
 
   src/
+    common.h
+    module.h
+    internal.h             # compatibility aggregate; prefer narrower headers
     surface.c
     surface.h             # PHP object surface internal declarations
     bridge.c
@@ -455,7 +512,6 @@ repo root/
       diagnostic.c
       diagnostic.h
       bench.c
-      bench.h
 
   tests/
     phpt/

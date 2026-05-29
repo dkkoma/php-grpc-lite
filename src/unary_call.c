@@ -1,6 +1,6 @@
 /* Unary gRPC client call execution over an HTTP/2 connection. */
 
-#include "diagnostic.h"
+#include "diagnostic/diagnostic.h"
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, const char *path, size_t path_len, zval *metadata, grpc_call *call, h2_connection *connection, grpc_lite_status_result *status_result, uint64_t start_unix_nanos, uint64_t total_started, uint64_t setup_us, uint64_t submit_us, uint64_t initial_send_us, uint64_t recv_loop_us, bool connection_reused, bool persistent_reused)

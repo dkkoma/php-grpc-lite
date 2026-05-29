@@ -65,11 +65,17 @@ docker compose run --build --rm \
 
     for test_source in /workspace/tests/unit/test_*.c; do
         test_name="$(basename "$test_source" .c)"
+        case "$test_name" in
+            test_protocol_core) core_source=/workspace/src/protocol_core.c ;;
+            test_status_core) core_source=/workspace/src/status_core.c ;;
+            test_transport_core) core_source=/workspace/src/transport_core.c ;;
+            *) echo "missing core source mapping for $test_name" >&2; exit 1 ;;
+        esac
         clang -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable \
             -O1 -g -fno-omit-frame-pointer $sanitizer_flags \
-            $php_includes $pkg_includes \
+            -I/workspace -I/workspace/src $php_includes $pkg_includes \
             -o "$unit_dir/$test_name" \
-            "$test_source" \
+            "$test_source" "$core_source" \
             $sanitizer_flags
         "$unit_dir/$test_name"
     done

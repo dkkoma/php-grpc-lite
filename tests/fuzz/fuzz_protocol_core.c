@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "../../protocol_core.h"
+#include "../../src/protocol_core.h"
 
 static long fuzz_timeout_us(const uint8_t *data, size_t size)
 {

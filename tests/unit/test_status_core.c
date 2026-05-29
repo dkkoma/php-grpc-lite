@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../../call.h"
-#include "../../status_core.h"
+#include "../../src/call.h"
+#include "../../src/status_core.h"
 
 static int failures = 0;
 
