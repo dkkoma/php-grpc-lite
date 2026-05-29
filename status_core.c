@@ -3,7 +3,10 @@
 #ifndef PHP_GRPC_LITE_STATUS_CORE_C
 #define PHP_GRPC_LITE_STATUS_CORE_C
 
-static int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
+#include "internal.h"
+#include "status_core.h"
+
+int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
 {
     if (call->timed_out) return GRPC_STATUS_DEADLINE_EXCEEDED;
     if (cancelled) return GRPC_STATUS_CANCELLED;

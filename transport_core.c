@@ -3,22 +3,12 @@
 #ifndef PHP_GRPC_LITE_TRANSPORT_CORE_C
 #define PHP_GRPC_LITE_TRANSPORT_CORE_C
 
-#define GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES (64 * 1024 * 1024)
-#define GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE 65535
-#define GRPC_LITE_HTTP2_MAX_WINDOW_SIZE 2147483647L
-#define GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE 16384
-#define GRPC_LITE_HTTP2_MAX_FRAME_SIZE 16777215
-#define GRPC_LITE_HTTP2_DEFAULT_MAX_HEADER_LIST_SIZE (64 * 1024)
-#define GRPC_LITE_MAX_REQUEST_METADATA_VALUES 256
-#define GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES 128
-#define GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES (64 * 1024)
-#define GRPC_LITE_DEFAULT_METADATA_SOFT_BYTES (8 * 1024)
-#define GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_MESSAGES 32
-#define GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_BYTES (8 * 1024 * 1024)
-#define GRPC_LITE_DEFAULT_METADATA_HARD_BYTES (16 * 1024)
-#define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
+#include "internal.h"
+#ifdef snprintf
+#undef snprintf
+#endif
 
-static zend_ulong hash_bytes(const char *data, size_t data_len)
+zend_ulong hash_bytes(const char *data, size_t data_len)
 {
     zend_ulong hash = (zend_ulong) 1469598103934665603ULL;
     size_t index;
@@ -33,7 +23,7 @@ static zend_ulong hash_bytes(const char *data, size_t data_len)
     return hash;
 }
 
-static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len)
+void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len)
 {
     if (authority != NULL && authority_len > 0) {
         size_t copy_len = authority_len < buffer_len - 1 ? authority_len : buffer_len - 1;
@@ -45,7 +35,7 @@ static void build_authority(char *buffer, size_t buffer_len, const char *host, z
     snprintf(buffer, buffer_len, "%s:%ld", host, port);
 }
 
-static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length)
+size_t effective_max_receive_message_bytes(zend_long max_receive_message_length)
 {
     if (max_receive_message_length == -1) {
         return SIZE_MAX;
@@ -56,7 +46,7 @@ static size_t effective_max_receive_message_bytes(zend_long max_receive_message_
     return GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES;
 }
 
-static uint32_t effective_http2_window_size(zend_long configured)
+uint32_t effective_http2_window_size(zend_long configured)
 {
     if (configured < GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE) {
         return GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE;
@@ -67,7 +57,7 @@ static uint32_t effective_http2_window_size(zend_long configured)
     return (uint32_t) configured;
 }
 
-static uint32_t effective_http2_max_frame_size(zend_long configured)
+uint32_t effective_http2_max_frame_size(zend_long configured)
 {
     if (configured < GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE) {
         return GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE;
@@ -78,7 +68,7 @@ static uint32_t effective_http2_max_frame_size(zend_long configured)
     return (uint32_t) configured;
 }
 
-static uint32_t effective_http2_max_header_list_size(zend_long configured)
+uint32_t effective_http2_max_header_list_size(zend_long configured)
 {
     if (configured < 0) {
         return 0;
@@ -89,7 +79,7 @@ static uint32_t effective_http2_max_header_list_size(zend_long configured)
     return (uint32_t) configured;
 }
 
-static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit)
+size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit)
 {
     if (hard_limit >= 0) {
         return (size_t) hard_limit;
@@ -107,7 +97,7 @@ static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_l
     return GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES;
 }
 
-static bool contains_nul_or_control(const char *value, size_t value_len)
+bool contains_nul_or_control(const char *value, size_t value_len)
 {
     size_t index;
 
@@ -123,7 +113,7 @@ static bool contains_nul_or_control(const char *value, size_t value_len)
     return false;
 }
 
-static bool contains_authority_forbidden_char(const char *value, size_t value_len)
+bool contains_authority_forbidden_char(const char *value, size_t value_len)
 {
     size_t index;
 
@@ -139,7 +129,7 @@ static bool contains_authority_forbidden_char(const char *value, size_t value_le
     return false;
 }
 
-static const char *validate_grpc_path(const char *path, size_t path_len)
+const char *validate_grpc_path(const char *path, size_t path_len)
 {
     bool second_slash_seen = false;
     size_t index;
@@ -159,7 +149,7 @@ static const char *validate_grpc_path(const char *path, size_t path_len)
     return second_slash_seen ? NULL : "invalid gRPC method path";
 }
 
-static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len)
+const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len)
 {
     char port_buf[32];
     int port_len;

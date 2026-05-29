@@ -16,10 +16,16 @@ docker compose run --rm dev bash -lc '
     pkg_includes="$(pkg-config --cflags libnghttp2 openssl)"
     for test_source in /workspace/tests/unit/test_*.c; do
         test_name="$(basename "$test_source" .c)"
+        case "$test_name" in
+            test_protocol_core) core_source=/workspace/protocol_core.c ;;
+            test_status_core) core_source=/workspace/status_core.c ;;
+            test_transport_core) core_source=/workspace/transport_core.c ;;
+            *) echo "missing core source mapping for $test_name" >&2; exit 1 ;;
+        esac
         cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -O0 -g \
-            $php_includes $pkg_includes \
+            -I/workspace $php_includes $pkg_includes \
             -o "$build_dir/$test_name" \
-            "$test_source"
+            "$test_source" "$core_source"
         "$build_dir/$test_name"
     done
 '

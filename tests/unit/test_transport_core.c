@@ -7,7 +7,7 @@
 #ifdef snprintf
 #undef snprintf
 #endif
-#include "../../transport_core.c"
+#include "../../transport_core.h"
 
 static int failures = 0;
 

@@ -69,12 +69,24 @@ docker compose run --rm dev bash -lc '
     : > "$coverage_dir/c-unit.log"
     for test_source in /workspace/tests/unit/test_*.c; do
         test_name="$(basename "$test_source" .c)"
+        case "$test_name" in
+            test_protocol_core) core_source=/workspace/protocol_core.c ;;
+            test_status_core) core_source=/workspace/status_core.c ;;
+            test_transport_core) core_source=/workspace/transport_core.c ;;
+            *) echo "missing core source mapping for $test_name" >&2; exit 1 ;;
+        esac
+        core_name="$(basename "$core_source" .c)"
         cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -O0 -g --coverage \
-            $php_includes $pkg_includes \
+            -I/workspace $php_includes $pkg_includes \
             -c "$test_source" \
             -o "$c_unit_dir/$test_name.o"
+        cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -O0 -g --coverage \
+            -I/workspace $php_includes $pkg_includes \
+            -c "$core_source" \
+            -o "$c_unit_dir/$test_name-$core_name.o"
         cc --coverage \
             "$c_unit_dir/$test_name.o" \
+            "$c_unit_dir/$test_name-$core_name.o" \
             -o "$c_unit_dir/$test_name"
         "$c_unit_dir/$test_name" | tee -a "$coverage_dir/c-unit.log"
     done

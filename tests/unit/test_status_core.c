@@ -2,7 +2,7 @@
 #include <string.h>
 
 #include "../../internal.h"
-#include "../../status_core.c"
+#include "../../status_core.h"
 
 static int failures = 0;
 

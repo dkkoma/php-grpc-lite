@@ -271,6 +271,45 @@ Status: Closed
 - composeは削除済みservice `dev-franken-grpc-go` の既存containerをorphanとして警告した。検証結果には影響しない。
 - `rg 'franken|FrankenGrpc|grpc_lite\.backend|GRPC_LITE_BACKEND|backend selection'` の現行残存は、FrankenPHP ZTS native benchmark、open/closed issue、historical review / benchmark / research docsに限定されている。
 
+### Phase 2: pure core helperの `.c` include廃止
+
+Status: Closed
+
+開始: 2026-05-30 00:04 JST
+
+終了: 2026-05-30 05:28 JST
+
+目的:
+
+- `protocol_core.c`、`status_core.c`、`transport_core.c` を直接includeするC unit / fuzz構造をやめる。
+- pure core helperを内部ヘッダ宣言 + 明示リンク対象にし、後続の複数翻訳単位化の前段を作る。
+- production extension buildでも pure core 3ファイルを独立したコンパイル対象にする。
+
+実施内容:
+
+- `protocol_core.h`、`status_core.h`、`transport_core.h` を追加した。
+- pure core helperのテスト対象symbolから `static` を外し、各 `.c` が対応headerを持つ形へ変更した。
+- `main.c` / `transport.c` から pure core `.c` includeを削除し、`config.m4` に `protocol_core.c status_core.c transport_core.c` を追加した。
+- C unit / fuzz / coverage runnerは、test sourceと対象core sourceを別ファイルとしてコンパイル・リンクする形へ変更した。
+- `transport_core.c` 単独リンク時にPHPの `snprintf` macroへ寄らないよう、core source内で `snprintf` macroを解除した。
+
+検証:
+
+- `docker version --format '{{.Server.Version}}'`: PASS, 29.4.0
+- `docker compose run --rm dev sh -lc 'cd /workspace && make distclean >/tmp/grpc-phase2-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-phase2-phpize.log && ./configure --enable-grpc >/tmp/grpc-phase2-configure.log && make -j$(nproc) >/tmp/grpc-phase2-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"'`: PASS
+- `docker compose run --rm dev sh -lc 'cd /workspace && make distclean >/tmp/grpc-phase2-bench-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-phase2-bench-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-phase2-bench-configure.log && make -j$(nproc) >/tmp/grpc-phase2-bench-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") && function_exists(\"grpc_lite_bench_unary_batch\") ? 0 : 1);"'`: PASS
+- `./tools/test/check-c-unit.sh`: PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+- `./tools/test/check-phpt.sh`: PASS, 15/15
+- `./tools/test/check-c-coverage.sh`: PASS, lines 76.3%, functions 94.5%
+- `FUZZ_RUNS=100 ./tools/test/check-c-fuzz.sh`: PASS
+- `docker compose restart spanner-emulator && docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`: PASS, 30 tests / 109 assertions
+
+レビュー:
+
+- HTTP/2/gRPC domain review: `docs/reviews/issues/2026-05-30-phase2-core-helper-boundary-domain-review.md`
+- Result: Blocker/High/Medium/Low none
+
 ## ディレクトリ構造案
 
 Phase 0後はrepository rootをextension rootとして扱う。次の整理では、PHP extensionとしての入口はroot直下に残し、C実装本体を `src/` へ移す。

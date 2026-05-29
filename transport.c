@@ -9,8 +9,6 @@
  * module registration stay in main.c.
  */
 
-#include "transport_core.c"
-
 #define GRPC_LITE_H2_WRITE_COALESCE_CAPACITY 16384
 #define GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE 4096
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
@@ -76,9 +74,9 @@ static uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
-static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
-static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
-static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
+int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
+bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
+bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
 static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);

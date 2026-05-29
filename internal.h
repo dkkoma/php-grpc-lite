@@ -39,6 +39,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "protocol_core.h"
+#include "transport_core.h"
+
 typedef struct _h2_connection h2_connection;
 typedef struct persistent_connection_entry persistent_connection_entry;
 typedef struct server_streaming_call_state server_streaming_call_state;
@@ -528,8 +531,6 @@ static void mark_connection_dead(h2_connection *connection, int error_code);
 static void set_connection_error_detail(h2_connection *connection, const char *detail);
 static void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
 static bool connection_usable(h2_connection *connection);
-static zend_ulong hash_bytes(const char *data, size_t data_len);
-static void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);
 static zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key);
 static persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
 static bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
@@ -538,8 +539,6 @@ static void remove_unusable_persistent_connection(const char *key, size_t key_le
 static int set_fd_nonblocking_mode(int fd, bool nonblocking);
 static int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
 static zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
-static size_t effective_max_receive_message_bytes(zend_long max_receive_message_length);
-static size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit);
 static int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
 static int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
@@ -563,15 +562,8 @@ static uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 static zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
-static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen);
-static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen);
-static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen);
-static int grpc_lite_hex_value(unsigned char ch);
-static size_t grpc_lite_format_timeout_us(char *buffer, size_t buffer_len, long timeout_us);
 static zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen);
-static int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled);
-static const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len);
-static const char *validate_grpc_path(const char *path, size_t path_len);
+int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled);
 static int init_request_headers(h2_request_headers *headers);
 static void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
 static void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);

@@ -10,7 +10,9 @@
 #include <string.h>
 #include <strings.h>
 
-static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen)
+#include "protocol_core.h"
+
+int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuelen)
 {
     int status = 0;
 
@@ -28,7 +30,7 @@ static int grpc_protocol_parse_status_value(const uint8_t *value, size_t valuele
     return status <= 16 ? status : -1;
 }
 
-static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen)
+bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t valuelen)
 {
     static const char prefix[] = "application/grpc";
     size_t prefix_len = sizeof(prefix) - 1;
@@ -42,12 +44,12 @@ static bool grpc_protocol_is_valid_content_type(const uint8_t *value, size_t val
     return (value[prefix_len] == '+' && valuelen > prefix_len + 1) || value[prefix_len] == ';';
 }
 
-static bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen)
+bool grpc_protocol_is_identity_encoding(const uint8_t *value, size_t valuelen)
 {
     return valuelen == sizeof("identity") - 1 && strncasecmp((const char *) value, "identity", sizeof("identity") - 1) == 0;
 }
 
-static int grpc_lite_hex_value(unsigned char ch)
+int grpc_lite_hex_value(unsigned char ch)
 {
     if (ch >= '0' && ch <= '9') {
         return ch - '0';
@@ -66,7 +68,7 @@ static long grpc_lite_ceil_div_timeout(long value, long unit)
     return value / unit + (value % unit != 0 ? 1 : 0);
 }
 
-static size_t grpc_lite_format_timeout_us(char *buffer, size_t buffer_len, long timeout_us)
+size_t grpc_lite_format_timeout_us(char *buffer, size_t buffer_len, long timeout_us)
 {
     long value;
     char unit;

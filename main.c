@@ -18,8 +18,6 @@ PHP_INI_BEGIN()
 PHP_INI_END()
 
 #include "surface.c"
-#include "protocol_core.c"
-#include "status_core.c"
 #include "transport.c"
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 #include "diagnostic.c"
