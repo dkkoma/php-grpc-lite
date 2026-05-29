@@ -417,24 +417,5 @@ services:
       - test-server
       - spanner-emulator
 
-  # Optional comparison environment for FrankenPHP + grpc-go backend. The Go
-  # backend is fetched from GitHub by ref so this path is CI-reproducible and
-  # does not depend on a sibling checkout.
-  dev-franken-grpc-go:
-    build:
-      context: .
-      dockerfile: Dockerfile.franken-grpc-go
-      args:
-        FRANKEN_GRPC_GO_CLIENT_REF: ${FRANKEN_GRPC_GO_CLIENT_REF:-main}
-    image: php-grpc-lite-dev-franken-grpc-go
-    volumes:
-      - .:/workspace
-    working_dir: /workspace
-    stdin_open: true
-    tty: true
-    depends_on:
-      - test-server
-      - spanner-emulator
-
 volumes:
   spanner-omni-data:

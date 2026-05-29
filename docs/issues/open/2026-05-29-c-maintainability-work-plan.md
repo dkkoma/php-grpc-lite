@@ -230,6 +230,47 @@ Status: Closed
 - PHPUnitの初回実行ではSpanner emulatorに既存instanceが残っていたため `ListInstancesTest` が1件失敗した。emulatorを再起動した再実行では全件PASS。
 - `rg 'ext/grpc|/workspace/ext/grpc|cd ext/grpc'` の残存は、過去issue / benchmark docs / backward-compatible tag build helper / Docker公式extension install先など、履歴または意図した互換用途に限定されている。
 
+### Phase 1: backend selection / franken-go runtime path削除
+
+Status: Closed
+
+開始: 2026-05-29
+
+終了: 2026-05-30 00:02 JST
+
+目的:
+
+- SPECのruntime transport 1系統方針に合わせ、`grpc_lite.backend` と `FrankenGrpc\*` delegationをproduction pathから削除する。
+- C分割前にChannel / Call lifecycleをnghttp2 HTTP/2 transportだけへ単純化する。
+- franken-go backend用のビルド、PHPT、runner、current design docを削除する。
+
+実施内容:
+
+- `grpc_lite.backend` INI、module global、phpinfo出力を削除した。
+- `GRPC_LITE_BACKEND_*`、`franken_channel`、`franken_server_streaming_call`、FrankenGrpc class lookup / method call helper、unary / server streaming delegation branchを削除した。
+- `Channel::__construct()` は常にHTTP/2 connection keyを作り、`Channel::close()` / `Call::cancel()` はnative resourceだけを扱う形にした。
+- `026-franken-go-backend.phpt`、`check-franken-go-backend.sh`、`tools/frankenphp-grpc-lite-run.sh`、`Dockerfile.franken-grpc-go`、`dev-franken-grpc-go` compose serviceを削除した。
+- benchmark runnerから `grpc_lite.backend=franken-go` 注入を削除し、計測ラベルとしての `benchmark.transport` だけを残した。
+- README、HTTP/2 transport design、OTEL instrumentation、benchmark README、AGENTSから現行transportとしてのfranken-go説明を削除した。
+- `docs/frankenphp-go-backend-design.md` と `docs/frankenphp-grpc-go-client-change-request.md` はcurrent design docとしては廃止した。
+- bench diagnostic recordの `backend` fieldは、現方針に合わせて `transport` fieldへ改名した。
+
+検証:
+
+- `docker compose run --rm dev sh -lc 'cd /workspace && make clean >/tmp/grpc-phase1-clean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep && phpize >/tmp/grpc-phase1-phpize.log && ./configure --enable-grpc >/tmp/grpc-phase1-configure.log && make -j$(nproc) >/tmp/grpc-phase1-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"'`: PASS
+- `docker compose run --rm dev sh -lc 'cd /workspace && make clean >/tmp/grpc-phase1-bench-clean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep && phpize >/tmp/grpc-phase1-bench-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-phase1-bench-configure.log && make -j$(nproc) >/tmp/grpc-phase1-bench-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") && function_exists(\"grpc_lite_bench_unary_batch\") ? 0 : 1);"'`: PASS
+- `./tools/test/check-c-unit.sh`: PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+- `./tools/test/check-phpt.sh`: PASS, 15/15
+- `./tools/test/check-c-coverage.sh`: PASS, lines 76.7%, functions 94.5%
+- `docker compose restart spanner-emulator && docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`: PASS, 30 tests / 109 assertions
+- `FUZZ_RUNS=100 ./tools/test/check-c-fuzz.sh`: PASS
+
+補足:
+
+- composeは削除済みservice `dev-franken-grpc-go` の既存containerをorphanとして警告した。検証結果には影響しない。
+- `rg 'franken|FrankenGrpc|grpc_lite\.backend|GRPC_LITE_BACKEND|backend selection'` の現行残存は、FrankenPHP ZTS native benchmark、open/closed issue、historical review / benchmark / research docsに限定されている。
+
 ## ディレクトリ構造案
 
 Phase 0後はrepository rootをextension rootとして扱う。次の整理では、PHP extensionとしての入口はroot直下に残し、C実装本体を `src/` へ移す。

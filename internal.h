@@ -87,11 +87,6 @@ typedef enum {
     GRPC_LITE_CREDENTIALS_DEFAULT = 2
 } grpc_lite_credentials_type;
 
-typedef enum {
-    GRPC_LITE_BACKEND_HTTP2 = 0,
-    GRPC_LITE_BACKEND_FRANKEN_GO = 1
-} grpc_lite_backend_type;
-
 typedef struct {
     grpc_lite_credentials_type type;
     zend_string *root_certs;
@@ -116,8 +111,6 @@ typedef struct {
     zend_long max_receive_message_length;
     size_t max_response_metadata_bytes;
     zval credentials;
-    zval franken_channel;
-    grpc_lite_backend_type backend;
     bool initialized;
     zend_object std;
 } grpc_lite_channel_obj;
@@ -131,7 +124,6 @@ typedef struct {
     zend_string *unary_response_payload;
     zval metadata;
     zval server_streaming_resource;
-    zval franken_server_streaming_call;
     zval initial_metadata;
     zval trailing_metadata;
     zval status;
@@ -626,7 +618,6 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     zend_long http2_max_header_list_size;
     zend_long server_streaming_read_ahead_max_messages;
     zend_long server_streaming_read_ahead_max_bytes;
-    char *backend;
 ZEND_END_MODULE_GLOBALS(grpc_lite)
 
 ZEND_EXTERN_MODULE_GLOBALS(grpc_lite)

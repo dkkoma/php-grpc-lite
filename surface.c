@@ -257,11 +257,9 @@ static zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
     zend_object_std_init(&obj->std, ce);
     object_properties_init(&obj->std, ce);
     ZVAL_UNDEF(&obj->credentials);
-    ZVAL_UNDEF(&obj->franken_channel);
     obj->port = 443;
     obj->max_receive_message_length = 0;
     obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(-1, -1);
-    obj->backend = GRPC_LITE_BACKEND_HTTP2;
     obj->std.handlers = &grpc_channel_handlers;
     return &obj->std;
 }
@@ -294,101 +292,10 @@ static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
     }
     zval_ptr_dtor(&obj->credentials);
     ZVAL_UNDEF(&obj->credentials);
-    zval_ptr_dtor(&obj->franken_channel);
-    ZVAL_UNDEF(&obj->franken_channel);
     obj->port = 443;
     obj->max_receive_message_length = 0;
     obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(-1, -1);
-    obj->backend = GRPC_LITE_BACKEND_HTTP2;
     obj->initialized = false;
-}
-
-static zend_class_entry *grpc_lite_find_class(const char *name, size_t name_len)
-{
-    zend_string *lower_name = zend_string_alloc(name_len, 0);
-    zend_class_entry *ce;
-    zend_str_tolower_copy(ZSTR_VAL(lower_name), name, name_len);
-    ZSTR_VAL(lower_name)[name_len] = '\0';
-    ce = zend_hash_find_ptr(EG(class_table), lower_name);
-    zend_string_release(lower_name);
-    return ce;
-}
-
-static bool grpc_lite_franken_go_available(bool require_internal)
-{
-    zend_class_entry *ce = grpc_lite_find_class("FrankenGrpc\\Channel", sizeof("FrankenGrpc\\Channel") - 1);
-    if (ce == NULL) {
-        return false;
-    }
-    return !require_internal || ce->type == ZEND_INTERNAL_CLASS;
-}
-
-static int grpc_lite_resolve_backend(zval *opts, grpc_lite_backend_type *backend)
-{
-    zval *backend_zv = zend_hash_str_find(Z_ARRVAL_P(opts), "grpc_lite.backend", sizeof("grpc_lite.backend") - 1);
-    const char *configured = backend_zv != NULL && Z_TYPE_P(backend_zv) == IS_STRING
-        ? Z_STRVAL_P(backend_zv)
-        : (PHP_GRPC_LITE_G(backend) != NULL ? PHP_GRPC_LITE_G(backend) : "auto");
-    size_t configured_len = strlen(configured);
-
-    if (configured_len == sizeof("auto") - 1 && strcasecmp(configured, "auto") == 0) {
-        *backend = grpc_lite_franken_go_available(true) ? GRPC_LITE_BACKEND_FRANKEN_GO : GRPC_LITE_BACKEND_HTTP2;
-        return SUCCESS;
-    }
-    if (configured_len == sizeof("http2") - 1 && strcasecmp(configured, "http2") == 0) {
-        *backend = GRPC_LITE_BACKEND_HTTP2;
-        return SUCCESS;
-    }
-    if ((configured_len == sizeof("franken-go") - 1 && strcasecmp(configured, "franken-go") == 0) ||
-        (configured_len == sizeof("franken_go") - 1 && strcasecmp(configured, "franken_go") == 0)) {
-        if (!grpc_lite_franken_go_available(false)) {
-            zend_throw_exception(NULL, "grpc_lite.backend=franken-go requires FrankenGrpc\\Channel", 0);
-            return FAILURE;
-        }
-        *backend = GRPC_LITE_BACKEND_FRANKEN_GO;
-        return SUCCESS;
-    }
-    zend_throw_exception(NULL, "grpc_lite.backend must be auto, http2, or franken-go", 0);
-    return FAILURE;
-}
-
-static int grpc_lite_call_method(zval *object, const char *method, size_t method_len, zval *retval, uint32_t param_count, zval params[])
-{
-    zval function_name;
-    ZVAL_STRINGL(&function_name, method, method_len);
-    ZVAL_UNDEF(retval);
-    if (call_user_function(NULL, object, &function_name, retval, param_count, params) != SUCCESS || EG(exception)) {
-        zval_ptr_dtor(&function_name);
-        zval_ptr_dtor(retval);
-        ZVAL_UNDEF(retval);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&function_name);
-    return SUCCESS;
-}
-
-static int grpc_lite_construct_franken_channel(grpc_lite_channel_obj *obj, zend_string *target, zval *opts)
-{
-    zend_class_entry *ce = grpc_lite_find_class("FrankenGrpc\\Channel", sizeof("FrankenGrpc\\Channel") - 1);
-    zval params[2];
-    zval retval;
-
-    if (ce == NULL) {
-        zend_throw_exception(NULL, "grpc_lite.backend=franken-go requires FrankenGrpc\\Channel", 0);
-        return FAILURE;
-    }
-    object_init_ex(&obj->franken_channel, ce);
-    ZVAL_STR_COPY(&params[0], target);
-    ZVAL_COPY(&params[1], opts);
-    if (grpc_lite_call_method(&obj->franken_channel, "__construct", sizeof("__construct") - 1, &retval, 2, params) != SUCCESS) {
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&params[1]);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&retval);
-    zval_ptr_dtor(&params[0]);
-    zval_ptr_dtor(&params[1]);
-    return SUCCESS;
 }
 
 static void grpc_lite_channel_free_object(zend_object *object)
@@ -540,7 +447,6 @@ PHP_METHOD(Channel, __construct)
     zval *absolute_max_metadata_size;
     zend_long max_metadata_size_value = -1;
     zend_long absolute_max_metadata_size_value = -1;
-    grpc_lite_backend_type backend = GRPC_LITE_BACKEND_HTTP2;
     grpc_lite_channel_obj *obj = Z_GRPC_LITE_CHANNEL_P(ZEND_THIS);
     const char *error_message;
 
@@ -560,10 +466,6 @@ PHP_METHOD(Channel, __construct)
         zend_throw_exception(NULL, "Channel options must include a ChannelCredentials instance", 0);
         RETURN_THROWS();
     }
-    if (grpc_lite_resolve_backend(opts, &backend) != SUCCESS) {
-        RETURN_THROWS();
-    }
-    obj->backend = backend;
     obj->target = zend_string_copy(target);
     if (split_target_to_host_port(target, &obj->host, &obj->port) != SUCCESS) {
         grpc_lite_channel_clear_fields(obj);
@@ -632,13 +534,7 @@ PHP_METHOD(Channel, __construct)
         zend_throw_exception(NULL, error_message, 0);
         RETURN_THROWS();
     }
-    if (obj->backend == GRPC_LITE_BACKEND_HTTP2) {
-        obj->connection_key = grpc_lite_build_channel_key(obj);
-    }
-    if (obj->backend == GRPC_LITE_BACKEND_FRANKEN_GO && grpc_lite_construct_franken_channel(obj, target, opts) != SUCCESS) {
-        grpc_lite_channel_clear_fields(obj);
-        RETURN_THROWS();
-    }
+    obj->connection_key = grpc_lite_build_channel_key(obj);
     obj->initialized = true;
 }
 
@@ -659,13 +555,6 @@ PHP_METHOD(Channel, close)
     if (!obj->initialized) {
         zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
         RETURN_THROWS();
-    }
-    if (obj->backend == GRPC_LITE_BACKEND_FRANKEN_GO) {
-        zval retval;
-        if (Z_TYPE(obj->franken_channel) == IS_OBJECT && grpc_lite_call_method(&obj->franken_channel, "close", sizeof("close") - 1, &retval, 0, NULL) == SUCCESS) {
-            zval_ptr_dtor(&retval);
-        }
-        return;
     }
     if (obj->connection_key == NULL) {
         zend_throw_exception(NULL, "Grpc\\Channel connection key is not initialized", 0);
@@ -716,7 +605,6 @@ static zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
     ZVAL_UNDEF(&obj->channel);
     ZVAL_UNDEF(&obj->credentials);
     ZVAL_UNDEF(&obj->server_streaming_resource);
-    ZVAL_UNDEF(&obj->franken_server_streaming_call);
     array_init(&obj->metadata);
     array_init(&obj->initial_metadata);
     array_init(&obj->trailing_metadata);
@@ -731,7 +619,6 @@ static void grpc_lite_call_free_object(zend_object *object)
     zval_ptr_dtor(&obj->channel);
     zval_ptr_dtor(&obj->credentials);
     zval_ptr_dtor(&obj->server_streaming_resource);
-    zval_ptr_dtor(&obj->franken_server_streaming_call);
     zval_ptr_dtor(&obj->metadata);
     zval_ptr_dtor(&obj->initial_metadata);
     zval_ptr_dtor(&obj->trailing_metadata);

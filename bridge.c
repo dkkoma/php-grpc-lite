@@ -332,132 +332,6 @@ static void grpc_lite_make_status_object(zval *status, int code, zend_string *de
     }
 }
 
-static int grpc_lite_read_franken_status(zval *status_object, int *code, zend_string **details, zval *metadata)
-{
-    zval *code_zv;
-    zval *details_zv;
-    zval *metadata_zv;
-    if (Z_TYPE_P(status_object) != IS_OBJECT) {
-        zend_throw_exception(NULL, "FrankenGrpc status must be an object", 0);
-        return FAILURE;
-    }
-    code_zv = zend_read_property(Z_OBJCE_P(status_object), Z_OBJ_P(status_object), "code", sizeof("code") - 1, 0, NULL);
-    details_zv = zend_read_property(Z_OBJCE_P(status_object), Z_OBJ_P(status_object), "details", sizeof("details") - 1, 0, NULL);
-    metadata_zv = zend_read_property(Z_OBJCE_P(status_object), Z_OBJ_P(status_object), "metadata", sizeof("metadata") - 1, 0, NULL);
-    if (code_zv == NULL || Z_TYPE_P(code_zv) != IS_LONG) {
-        zend_throw_exception(NULL, "FrankenGrpc status code must be an integer", 0);
-        return FAILURE;
-    }
-    *code = (int) Z_LVAL_P(code_zv);
-    *details = details_zv != NULL && Z_TYPE_P(details_zv) == IS_STRING ? zend_string_copy(Z_STR_P(details_zv)) : zend_string_copy(zend_empty_string);
-    grpc_lite_copy_metadata(metadata, metadata_zv);
-    return SUCCESS;
-}
-
-static int grpc_lite_perform_call_unary_franken_go(grpc_lite_call_obj *call)
-{
-    grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
-    zend_class_entry *ce = grpc_lite_find_class("FrankenGrpc\\UnaryCall", sizeof("FrankenGrpc\\UnaryCall") - 1);
-    zval unary_call;
-    zval params[3];
-    zval retval;
-    zval timeout_zv;
-    zval *payload_zv;
-    zval *status_zv;
-    zval *initial_metadata_zv;
-    zval *trailing_metadata_zv;
-    zval franken_status_metadata;
-    int status_code;
-    zend_string *details;
-
-    if (call->request_payload == NULL) {
-        zend_throw_exception(NULL, "Call has no request message", 0);
-        return FAILURE;
-    }
-    if (Z_TYPE(channel->franken_channel) != IS_OBJECT || ce == NULL) {
-        zend_throw_exception(NULL, "grpc_lite.backend=franken-go requires FrankenGrpc\\UnaryCall", 0);
-        return FAILURE;
-    }
-    if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
-        call->unary_performed = true;
-        return SUCCESS;
-    }
-    if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
-        return FAILURE;
-    }
-    grpc_lite_append_user_agent(channel, &call->metadata);
-
-    object_init_ex(&unary_call, ce);
-    ZVAL_COPY(&params[0], &channel->franken_channel);
-    ZVAL_STR_COPY(&params[1], call->method);
-    if (grpc_lite_call_method(&unary_call, "__construct", sizeof("__construct") - 1, &retval, 2, params) != SUCCESS) {
-        zval_ptr_dtor(&unary_call);
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&params[1]);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&retval);
-    zval_ptr_dtor(&params[0]);
-    zval_ptr_dtor(&params[1]);
-
-    ZVAL_STR_COPY(&params[0], call->request_payload);
-    ZVAL_COPY(&params[1], &call->metadata);
-    if (call->deadline_us > 0 && call->deadline_us != ZEND_LONG_MAX) {
-        ZVAL_DOUBLE(&timeout_zv, ((double) grpc_lite_call_timeout_us(call)) / 1000000.0);
-    } else {
-        ZVAL_NULL(&timeout_zv);
-    }
-    ZVAL_COPY_VALUE(&params[2], &timeout_zv);
-    if (grpc_lite_call_method(&unary_call, "start", sizeof("start") - 1, &retval, 3, params) != SUCCESS) {
-        zval_ptr_dtor(&unary_call);
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&params[1]);
-        zval_ptr_dtor(&params[2]);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&params[0]);
-    zval_ptr_dtor(&params[1]);
-    zval_ptr_dtor(&params[2]);
-    zval_ptr_dtor(&unary_call);
-
-    if (Z_TYPE(retval) != IS_OBJECT) {
-        zval_ptr_dtor(&retval);
-        zend_throw_exception(NULL, "FrankenGrpc unary result must be an object", 0);
-        return FAILURE;
-    }
-    payload_zv = zend_read_property(Z_OBJCE(retval), Z_OBJ(retval), "payload", sizeof("payload") - 1, 0, NULL);
-    status_zv = zend_read_property(Z_OBJCE(retval), Z_OBJ(retval), "status", sizeof("status") - 1, 0, NULL);
-    initial_metadata_zv = zend_read_property(Z_OBJCE(retval), Z_OBJ(retval), "initialMetadata", sizeof("initialMetadata") - 1, 0, NULL);
-    trailing_metadata_zv = zend_read_property(Z_OBJCE(retval), Z_OBJ(retval), "trailingMetadata", sizeof("trailingMetadata") - 1, 0, NULL);
-    if (payload_zv == NULL || Z_TYPE_P(payload_zv) != IS_STRING || status_zv == NULL) {
-        zval_ptr_dtor(&retval);
-        zend_throw_exception(NULL, "FrankenGrpc unary result has invalid shape", 0);
-        return FAILURE;
-    }
-
-    array_init(&franken_status_metadata);
-    if (grpc_lite_read_franken_status(status_zv, &status_code, &details, &franken_status_metadata) != SUCCESS) {
-        zval_ptr_dtor(&franken_status_metadata);
-        zval_ptr_dtor(&retval);
-        return FAILURE;
-    }
-    grpc_lite_copy_metadata(&call->initial_metadata, initial_metadata_zv);
-    grpc_lite_copy_metadata(&call->trailing_metadata, trailing_metadata_zv != NULL && Z_TYPE_P(trailing_metadata_zv) == IS_ARRAY ? trailing_metadata_zv : &franken_status_metadata);
-    zval_ptr_dtor(&call->status);
-    grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
-    call->initial_metadata_ready = true;
-    call->status_ready = true;
-    if (call->unary_response_payload != NULL) {
-        zend_string_release(call->unary_response_payload);
-    }
-    call->unary_response_payload = zend_string_copy(Z_STR_P(payload_zv));
-    call->unary_performed = true;
-    zend_string_release(details);
-    zval_ptr_dtor(&franken_status_metadata);
-    zval_ptr_dtor(&retval);
-    return SUCCESS;
-}
-
 static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
 {
     grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
@@ -474,9 +348,6 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     int status_code;
     zend_string *details;
 
-    if (channel->backend == GRPC_LITE_BACKEND_FRANKEN_GO) {
-        return grpc_lite_perform_call_unary_franken_go(call);
-    }
     if (call->request_payload == NULL) {
         zend_throw_exception(NULL, "Call has no request message", 0);
         return FAILURE;
@@ -588,68 +459,6 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     return SUCCESS;
 }
 
-static int grpc_lite_open_call_stream_franken_go(grpc_lite_call_obj *call)
-{
-    grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
-    zend_class_entry *ce = grpc_lite_find_class("FrankenGrpc\\ServerStreamingCall", sizeof("FrankenGrpc\\ServerStreamingCall") - 1);
-    zval params[3];
-    zval retval;
-    zval timeout_zv;
-
-    if (call->server_streaming_opened) {
-        return SUCCESS;
-    }
-    if (call->request_payload == NULL) {
-        zend_throw_exception(NULL, "Call has no request message", 0);
-        return FAILURE;
-    }
-    if (Z_TYPE(channel->franken_channel) != IS_OBJECT || ce == NULL) {
-        zend_throw_exception(NULL, "grpc_lite.backend=franken-go requires FrankenGrpc\\ServerStreamingCall", 0);
-        return FAILURE;
-    }
-    if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
-        return SUCCESS;
-    }
-    if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
-        return FAILURE;
-    }
-    grpc_lite_append_user_agent(channel, &call->metadata);
-
-    zval_ptr_dtor(&call->franken_server_streaming_call);
-    object_init_ex(&call->franken_server_streaming_call, ce);
-    ZVAL_COPY(&params[0], &channel->franken_channel);
-    ZVAL_STR_COPY(&params[1], call->method);
-    if (grpc_lite_call_method(&call->franken_server_streaming_call, "__construct", sizeof("__construct") - 1, &retval, 2, params) != SUCCESS) {
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&params[1]);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&retval);
-    zval_ptr_dtor(&params[0]);
-    zval_ptr_dtor(&params[1]);
-
-    ZVAL_STR_COPY(&params[0], call->request_payload);
-    ZVAL_COPY(&params[1], &call->metadata);
-    if (call->deadline_us > 0 && call->deadline_us != ZEND_LONG_MAX) {
-        ZVAL_DOUBLE(&timeout_zv, ((double) grpc_lite_call_timeout_us(call)) / 1000000.0);
-    } else {
-        ZVAL_NULL(&timeout_zv);
-    }
-    ZVAL_COPY_VALUE(&params[2], &timeout_zv);
-    if (grpc_lite_call_method(&call->franken_server_streaming_call, "start", sizeof("start") - 1, &retval, 3, params) != SUCCESS) {
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&params[1]);
-        zval_ptr_dtor(&params[2]);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&retval);
-    zval_ptr_dtor(&params[0]);
-    zval_ptr_dtor(&params[1]);
-    zval_ptr_dtor(&params[2]);
-    call->server_streaming_opened = true;
-    return SUCCESS;
-}
-
 static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
 {
     grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
@@ -658,9 +467,6 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     zend_long timeout_us = grpc_lite_call_timeout_us(call);
     grpc_lite_status_result setup_failure = {0};
 
-    if (channel->backend == GRPC_LITE_BACKEND_FRANKEN_GO) {
-        return grpc_lite_open_call_stream_franken_go(call);
-    }
     if (call->server_streaming_opened) {
         return SUCCESS;
     }
@@ -723,91 +529,8 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     return SUCCESS;
 }
 
-static int grpc_lite_server_streaming_next_franken_go(grpc_lite_call_obj *call, grpc_lite_streaming_next_result *result)
-{
-    zval retval;
-    memset(result, 0, sizeof(*result));
-    if (!call->server_streaming_opened && grpc_lite_open_call_stream_franken_go(call) != SUCCESS) {
-        return FAILURE;
-    }
-    if (call->status_ready) {
-        zval *code_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "code", sizeof("code") - 1, 0, NULL);
-        zval *details_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "details", sizeof("details") - 1, 0, NULL);
-        result->done = true;
-        result->status.code = (code_zv != NULL && Z_TYPE_P(code_zv) == IS_LONG) ? (int) Z_LVAL_P(code_zv) : GRPC_STATUS_UNKNOWN;
-        result->status.details = (details_zv != NULL && Z_TYPE_P(details_zv) == IS_STRING) ? zend_string_copy(Z_STR_P(details_zv)) : zend_string_copy(zend_empty_string);
-        grpc_lite_copy_metadata(&result->initial_metadata, &call->initial_metadata);
-        grpc_lite_copy_metadata(&result->trailing_metadata, &call->trailing_metadata);
-        return SUCCESS;
-    }
-    if (grpc_lite_call_method(&call->franken_server_streaming_call, "read", sizeof("read") - 1, &retval, 0, NULL) != SUCCESS) {
-        return FAILURE;
-    }
-    if (Z_TYPE(retval) == IS_STRING) {
-        result->payload = zend_string_copy(Z_STR(retval));
-        zval_ptr_dtor(&retval);
-        if (!call->initial_metadata_ready) {
-            zval metadata_retval;
-            if (grpc_lite_call_method(&call->franken_server_streaming_call, "getInitialMetadata", sizeof("getInitialMetadata") - 1, &metadata_retval, 0, NULL) == SUCCESS) {
-                grpc_lite_copy_metadata(&call->initial_metadata, &metadata_retval);
-                zval_ptr_dtor(&metadata_retval);
-                call->initial_metadata_ready = true;
-            }
-        }
-        grpc_lite_copy_metadata(&result->initial_metadata, &call->initial_metadata);
-        return SUCCESS;
-    }
-    if (Z_TYPE(retval) != IS_NULL) {
-        zval_ptr_dtor(&retval);
-        zend_throw_exception(NULL, "FrankenGrpc stream read must return string or null", 0);
-        return FAILURE;
-    }
-    zval_ptr_dtor(&retval);
-    result->done = true;
-    {
-        zval status_retval;
-        zval trailing_retval;
-        zval franken_status_metadata;
-        int status_code;
-        zend_string *details;
-        array_init(&franken_status_metadata);
-        if (grpc_lite_call_method(&call->franken_server_streaming_call, "getStatus", sizeof("getStatus") - 1, &status_retval, 0, NULL) != SUCCESS) {
-            zval_ptr_dtor(&franken_status_metadata);
-            return FAILURE;
-        }
-        if (grpc_lite_read_franken_status(&status_retval, &status_code, &details, &franken_status_metadata) != SUCCESS) {
-            zval_ptr_dtor(&status_retval);
-            zval_ptr_dtor(&franken_status_metadata);
-            return FAILURE;
-        }
-        if (grpc_lite_call_method(&call->franken_server_streaming_call, "getTrailingMetadata", sizeof("getTrailingMetadata") - 1, &trailing_retval, 0, NULL) != SUCCESS) {
-            zend_string_release(details);
-            zval_ptr_dtor(&status_retval);
-            zval_ptr_dtor(&franken_status_metadata);
-            return FAILURE;
-        }
-        grpc_lite_copy_metadata(&call->trailing_metadata, Z_TYPE(trailing_retval) == IS_ARRAY ? &trailing_retval : &franken_status_metadata);
-        zval_ptr_dtor(&call->status);
-        grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
-        call->status_ready = true;
-        result->status.code = status_code;
-        result->status.details = zend_string_copy(details);
-        grpc_lite_copy_metadata(&result->initial_metadata, &call->initial_metadata);
-        grpc_lite_copy_metadata(&result->trailing_metadata, &call->trailing_metadata);
-        zend_string_release(details);
-        zval_ptr_dtor(&trailing_retval);
-        zval_ptr_dtor(&status_retval);
-        zval_ptr_dtor(&franken_status_metadata);
-    }
-    return SUCCESS;
-}
-
 static int grpc_lite_server_streaming_next_for_call(grpc_lite_call_obj *call, grpc_lite_streaming_next_result *result)
 {
-    grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
-    if (channel->backend == GRPC_LITE_BACKEND_FRANKEN_GO) {
-        return grpc_lite_server_streaming_next_franken_go(call, result);
-    }
     if (!call->server_streaming_opened && grpc_lite_open_call_stream(call) != SUCCESS) {
         return FAILURE;
     }
@@ -1056,12 +779,6 @@ PHP_METHOD(Call, cancel)
     call->cancelled = true;
     if (call->server_streaming_opened && Z_TYPE(call->server_streaming_resource) == IS_RESOURCE) {
         server_streaming_call_cancel_resource(&call->server_streaming_resource);
-    }
-    if (Z_TYPE(call->franken_server_streaming_call) == IS_OBJECT) {
-        zval retval;
-        if (grpc_lite_call_method(&call->franken_server_streaming_call, "cancel", sizeof("cancel") - 1, &retval, 0, NULL) == SUCCESS) {
-            zval_ptr_dtor(&retval);
-        }
     }
 }
 

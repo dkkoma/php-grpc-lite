@@ -65,7 +65,7 @@ static void grpc_lite_diagnostic_build_unary_record(zval *record, const char *pa
     add_assoc_str(record, "rpc_method", zend_string_copy(method));
     add_assoc_string(record, "network_protocol_name", "http");
     add_assoc_string(record, "network_protocol_version", "2");
-    add_assoc_string(record, "backend", "http2");
+    add_assoc_string(record, "transport", "http2");
     add_assoc_long(record, "grpc_status_code", status->code);
     add_assoc_long(record, "http_status_code", call->http_status);
     add_assoc_str(record, "start_unix_nanos", strpprintf(0, "%" PRIu64, start_unix_nanos));
@@ -136,7 +136,7 @@ static bool grpc_lite_diagnostic_build_server_streaming_record(zval *record, ser
     add_assoc_str(record, "rpc_method", zend_string_copy(method));
     add_assoc_string(record, "network_protocol_name", "http");
     add_assoc_string(record, "network_protocol_version", "2");
-    add_assoc_string(record, "backend", "http2");
+    add_assoc_string(record, "transport", "http2");
     add_assoc_long(record, "grpc_status_code", status->code);
     add_assoc_long(record, "http_status_code", call->http_status);
     grpc_lite_diagnostic_add_uint64(record, "message_count", state->delivered_messages);
