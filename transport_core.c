@@ -3,7 +3,7 @@
 #ifndef PHP_GRPC_LITE_TRANSPORT_CORE_C
 #define PHP_GRPC_LITE_TRANSPORT_CORE_C
 
-#include "internal.h"
+#include "transport.h"
 #ifdef snprintf
 #undef snprintf
 #endif

@@ -1,6 +1,6 @@
-/* Benchmark diagnostic record helpers. Included by main.c. */
+/* Benchmark diagnostic record helpers. */
 
-#include "internal.h"
+#include "diagnostic.h"
 
 static uint64_t unix_time_nanos(void)
 {

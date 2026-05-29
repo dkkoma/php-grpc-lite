@@ -1,7 +1,7 @@
-#include "internal.h"
+#include "transport.h"
 
 /*
- * HTTP/2 transport helpers included by main.c.
+ * HTTP/2 transport helpers.
  *
  * This file intentionally shares main.c's static scope: it owns connection
  * lifecycle, socket/TLS I/O, nghttp2 callbacks, request header assembly,

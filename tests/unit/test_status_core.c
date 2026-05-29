@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../../internal.h"
+#include "../../call.h"
 #include "../../status_core.h"
 
 static int failures = 0;

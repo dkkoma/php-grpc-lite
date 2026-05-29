@@ -2,7 +2,8 @@
 # include "config.h"
 #endif
 
-#include "internal.h"
+#include "surface.h"
+#include "transport.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 

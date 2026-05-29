@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "bridge.h"
 
 /*
  * Bench-only HTTP/2 transport entrypoints.

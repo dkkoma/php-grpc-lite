@@ -1,6 +1,6 @@
-/* Official grpc/grpc wrapper bridge. Included by main.c. */
+/* Official grpc/grpc wrapper bridge. */
 
-#include "internal.h"
+#include "bridge.h"
 
 static void grpc_lite_mark_call_failed(grpc_lite_call_obj *call, int code, zend_string *details);
 

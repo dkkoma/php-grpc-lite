@@ -371,6 +371,47 @@ Status: Closed
 - HTTP/2/gRPC domain review: `docs/reviews/issues/2026-05-30-phase3-multi-tu-domain-review.md`
 - Result: Blocker/High/Medium/Low none
 
+### Phase 4: internal header境界の分割
+
+Status: Closed
+
+開始: 2026-05-30 05:55 JST
+
+終了: 2026-05-30 06:08 JST
+
+目的:
+
+- `internal.h` に集中しているcommon include、module globals、PHP surface object、call/transport state、call orchestration、bench diagnostic宣言を責務別ヘッダへ分ける。
+- `internal.h` は互換用の薄い集約ヘッダにし、後続のディレクトリ移動で各 `.c` が責務別ヘッダを直接includeできる前提を作る。
+- public install headerは作らず、追加ヘッダはすべてextension内部APIとして扱う。
+
+実施内容:
+
+- `common.h`、`module.h`、`surface.h`、`call.h`、`transport.h`、`unary_call.h`、`server_streaming_call.h`、`diagnostic.h`、`bridge.h` を追加した。
+- `internal.h` は互換用のprivate aggregate headerとして薄くし、責務別ヘッダを読むだけにした。
+- production / bench `.c` とC unitは、`internal.h` ではなく責務別ヘッダを直接includeする形へ変更した。
+- public install headerは追加していない。
+
+性能確認:
+
+- 実行なし。
+- このphaseは宣言移動とinclude先変更のみで、関数実体、linkage、compile source list、hot pathロジックを変えないため、代表ベンチbefore/after対象外と判断した。
+
+検証:
+
+- `docker compose run --rm dev sh -lc 'cd /workspace && make distclean >/tmp/grpc-phase4-normal2-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-phase4-normal2-phpize.log && ./configure --enable-grpc >/tmp/grpc-phase4-normal2-configure.log && make -j$(nproc) >/tmp/grpc-phase4-normal2-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"'`: PASS
+- `docker compose run --rm dev sh -lc 'cd /workspace && make distclean >/tmp/grpc-phase4-bench2-distclean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep Makefile config.h config.log config.status autom4te.cache include && phpize >/tmp/grpc-phase4-bench2-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-phase4-bench2-configure.log && make -j$(nproc) >/tmp/grpc-phase4-bench2-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") && function_exists(\"grpc_lite_bench_unary_batch\") ? 0 : 1);"'`: PASS
+- `./tools/test/check-c-unit.sh`: PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+- `./tools/test/check-c-coverage.sh`: PASS, PHPT 15/15, lines 77.3%, functions 95.0%
+- `FUZZ_RUNS=100 ./tools/test/check-c-fuzz.sh`: PASS
+- `docker compose restart spanner-emulator && docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`: PASS, 30 tests / 109 assertions
+
+レビュー:
+
+- HTTP/2/gRPC domain review: `docs/reviews/issues/2026-05-30-phase4-header-boundary-domain-review.md`
+- Result: Blocker/High/Medium/Low none
+
 ## ディレクトリ構造案
 
 Phase 0後はrepository rootをextension rootとして扱う。次の整理では、PHP extensionとしての入口はroot直下に残し、C実装本体を `src/` へ移す。

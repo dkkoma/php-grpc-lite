@@ -1,6 +1,7 @@
-/* PHP class/object surface for the grpc extension. Included by main.c. */
+/* PHP class/object surface for the grpc extension. */
 
-#include "internal.h"
+#include "surface.h"
+#include "transport.h"
 
 zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce)
 {

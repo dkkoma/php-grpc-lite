@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#include "../../internal.h"
+#include "../../transport.h"
 #ifdef snprintf
 #undef snprintf
 #endif

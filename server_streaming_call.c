@@ -1,6 +1,6 @@
-/* Server streaming gRPC client call execution over an HTTP/2 connection. Included by main.c. */
+/* Server streaming gRPC client call execution over an HTTP/2 connection. */
 
-#include "internal.h"
+#include "diagnostic.h"
 
 static void server_streaming_call_terminate_with_cancel(server_streaming_call_state *state)
 {

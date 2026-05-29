@@ -3,7 +3,7 @@
 #ifndef PHP_GRPC_LITE_STATUS_CORE_C
 #define PHP_GRPC_LITE_STATUS_CORE_C
 
-#include "internal.h"
+#include "call.h"
 #include "status_core.h"
 
 int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
