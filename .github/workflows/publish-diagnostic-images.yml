@@ -9,7 +9,12 @@ on:
       - "tools/diagnostics/laravel-fpm-spanner-bench/**"
       - "tools/benchmark/laravel-spanner-app/**"
       - "tools/benchmark/nginx/**"
-      - "ext/grpc/**"
+      - "config.m4"
+      - "*.c"
+      - "*.h"
+      - "tests/phpt/**"
+      - "tests/unit/**"
+      - "tests/fuzz/**"
       - "composer.json"
       - "composer.lock"
   workflow_dispatch:

@@ -13,7 +13,7 @@ docker compose run --rm dev bash -lc '
     rm -rf "$coverage_dir"
     mkdir -p "$coverage_dir/html"
 
-    cd /workspace/ext/grpc
+    cd /workspace
     make clean >/tmp/grpc-coverage-clean.log 2>&1 || true
     phpize >/tmp/grpc-coverage-phpize.log
     CFLAGS="-O0 -g --coverage" LDFLAGS="--coverage" ./configure --enable-grpc >/tmp/grpc-coverage-configure.log
@@ -21,8 +21,8 @@ docker compose run --rm dev bash -lc '
 
     cd /workspace
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }
-    php -d extension=/workspace/ext/grpc/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
-        || { echo "grpc extension failed to load from /workspace/ext/grpc/modules/grpc.so" >&2; exit 1; }
+    php -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
+        || { echo "grpc extension failed to load from /workspace/modules/grpc.so" >&2; exit 1; }
 
     php -r '\''
         foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060] as $port) {
@@ -47,7 +47,7 @@ docker compose run --rm dev bash -lc '
 
     cleanup_phpt_artifacts() {
         local test_file artifact_base
-        for test_file in ext/grpc/tests/*.phpt; do
+        for test_file in tests/phpt/*.phpt; do
             artifact_base="${test_file%.phpt}"
             rm -f \
                 "${artifact_base}.log" \
@@ -67,7 +67,7 @@ docker compose run --rm dev bash -lc '
     php_includes="$(php-config --includes)"
     pkg_includes="$(pkg-config --cflags libnghttp2 openssl)"
     : > "$coverage_dir/c-unit.log"
-    for test_source in /workspace/ext/grpc/tests/unit/test_*.c; do
+    for test_source in /workspace/tests/unit/test_*.c; do
         test_name="$(basename "$test_source" .c)"
         cc -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -O0 -g --coverage \
             $php_includes $pkg_includes \
@@ -81,19 +81,19 @@ docker compose run --rm dev bash -lc '
 
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
-        -d extension=/workspace/ext/grpc/modules/grpc.so \
-        /workspace/ext/grpc/tests | tee "$coverage_dir/phpt.log"
+        -d extension=/workspace/modules/grpc.so \
+        /workspace/tests/phpt | tee "$coverage_dir/phpt.log"
 
     lcov --capture \
         --directory /workspace \
         --output-file "$coverage_dir/raw.info" \
         --ignore-errors inconsistent \
         >/tmp/grpc-coverage-capture.log
-    lcov --extract "$coverage_dir/raw.info" "/workspace/ext/grpc/*" \
+    lcov --extract "$coverage_dir/raw.info" "/workspace/*.c" "/workspace/*.h" \
         --output-file "$coverage_dir/ext-grpc-extracted.info" \
         --ignore-errors unused \
         >/tmp/grpc-coverage-extract.log
-    lcov --remove "$coverage_dir/ext-grpc-extracted.info" "/workspace/ext/grpc/tests/*" \
+    lcov --remove "$coverage_dir/ext-grpc-extracted.info" "/workspace/tests/*" \
         --output-file "$coverage_dir/ext-grpc.info" \
         --ignore-errors unused \
         >/tmp/grpc-coverage-remove-tests.log

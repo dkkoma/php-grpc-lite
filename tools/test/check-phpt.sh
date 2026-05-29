@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.."
 
 docker compose run --rm dev bash -lc '
     set -euo pipefail
-    cd /workspace/ext/grpc
+    cd /workspace
     make clean >/tmp/grpc-phpt-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     phpize >/tmp/grpc-phpize.log
@@ -16,8 +16,8 @@ docker compose run --rm dev bash -lc '
     make -j$(nproc) >/tmp/grpc-make.log
     cd /workspace
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }
-    php -d extension=/workspace/ext/grpc/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
-        || { echo "grpc extension failed to load from /workspace/ext/grpc/modules/grpc.so" >&2; exit 1; }
+    php -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
+        || { echo "grpc extension failed to load from /workspace/modules/grpc.so" >&2; exit 1; }
     php -r '\''
         foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060] as $port) {
             $connected = false;
@@ -40,7 +40,7 @@ docker compose run --rm dev bash -lc '
     '\''
     cleanup_phpt_artifacts() {
         local test_file artifact_base
-        for test_file in ext/grpc/tests/*.phpt; do
+        for test_file in tests/phpt/*.phpt; do
             artifact_base="${test_file%.phpt}"
             rm -f \
                 "${artifact_base}.log" \
@@ -54,7 +54,7 @@ docker compose run --rm dev bash -lc '
     cleanup_phpt_artifacts
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
-        -d extension=/workspace/ext/grpc/modules/grpc.so \
-        /workspace/ext/grpc/tests
+        -d extension=/workspace/modules/grpc.so \
+        /workspace/tests/phpt
     cleanup_phpt_artifacts
 '

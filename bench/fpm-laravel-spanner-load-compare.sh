@@ -80,16 +80,16 @@ ensure_variant_extension() {
 
 build_grpc_extension() {
     local service="$1"
-    printf 'build ext/grpc service=%s\n' "$service"
+    printf 'build grpc extension service=%s\n' "$service"
     docker compose run --build --rm "$service" sh -lc '
         set -e
-        cd /workspace/ext/grpc
+        cd /workspace
         make clean >/tmp/php-grpc-lite-build-clean.log 2>&1 || true
         rm -rf .libs modules *.lo *.o
         phpize >/tmp/php-grpc-lite-build-phpize.log
         ./configure --enable-grpc >/tmp/php-grpc-lite-build-configure.log
         make -j"$(nproc)" >/tmp/php-grpc-lite-build-make.log
-        php -d extension=/workspace/ext/grpc/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"
+        php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"
     '
 }
 

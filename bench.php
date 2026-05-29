@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/../../vendor/autoload.php';
+require __DIR__ . '/vendor/autoload.php';
 
 if (!(extension_loaded('grpc'))) {
     fwrite(STDERR, "grpc extension is not loaded\n");
@@ -90,7 +90,7 @@ $requestBody = $splitGrpcFrame ? $payload : "\0" . pack('N', strlen($payload)) .
 $path = $rpc === 'server-stream' ? '/helloworld.Greeter/BenchServerStream' : '/helloworld.Greeter/BenchUnary';
 
 if (!function_exists('grpc_lite_bench_unary_batch')) {
-    fwrite(STDERR, "grpc_lite_bench_unary_batch is not available. Rebuild ext/grpc with PHP_GRPC_LITE_ENABLE_BENCH for this diagnostic script.\n");
+    fwrite(STDERR, "grpc_lite_bench_unary_batch is not available. Rebuild the root extension with PHP_GRPC_LITE_ENABLE_BENCH for this diagnostic script.\n");
     exit(2);
 }
 

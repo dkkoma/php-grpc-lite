@@ -39,7 +39,7 @@ mkdir -p "$out_dir"
 
 docker compose run --rm dev sh -lc "
     set -euo pipefail
-    cd /workspace/ext/grpc
+    cd /workspace
     phpize >/dev/null
     CFLAGS='$cflags' LDFLAGS='$ldflags' ./configure --enable-grpc >/dev/null
     make -j\$(nproc) >/dev/null

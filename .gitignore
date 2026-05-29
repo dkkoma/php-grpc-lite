@@ -55,6 +55,12 @@ run-tests.php
 tmp-php.ini
 
 # PHPT transient outputs
+tests/phpt/*.diff
+tests/phpt/*.exp
+tests/phpt/*.log
+tests/phpt/*.out
+tests/phpt/*.php
+tests/phpt/*.sh
 ext/grpc/tests/*.diff
 ext/grpc/tests/*.exp
 ext/grpc/tests/*.log

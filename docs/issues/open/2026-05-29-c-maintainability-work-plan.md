@@ -1,0 +1,349 @@
+---
+Status: Open
+Owner: Codex
+Created: 2026-05-29
+Branch: c-practice-work-plan
+Parent: docs/issues/open/2026-05-29-c-practice.md
+---
+
+# C実装保守性改善の作業計画
+
+## 目的
+
+`docs/issues/open/2026-05-29-c-practice.md` のCプロジェクト方針を、repository-root `grpc` extension 実装へ安全に適用する。
+
+主目的は、HTTP/2 / gRPC transport の互換性を維持したまま、翻訳単位、ヘッダ境界、internal API、単体テスト境界を明確にし、今後の保守・レビュー・静的解析をしやすくすることである。
+
+## 背景
+
+Phase 0開始前の実装は `main.c` が `surface.c`、`protocol_core.c`、`status_core.c`、`transport.c`、`unary_call.c`、`server_streaming_call.c`、`bridge.c`、bench buildでは `diagnostic.c` / `bench.c` も直接includeする構造になっている。
+
+さらに `transport.c` は `transport_core.c` をincludeし、C unit / fuzz testも `protocol_core.c`、`status_core.c`、`transport_core.c` を直接includeしている。これは現状の小さい拡張では動いているが、次の問題を持つ。
+
+- `.c` includeにより翻訳単位の境界が実装構造と一致しない。
+- `internal.h` がPHP surface、transport、protocol、bench診断、module globalsの大半を一括で公開している。
+- core helperの単体テストが「公開されたinternal API」ではなく `.c` の直接展開に依存している。
+- `static` 関数のスコープとモジュール間internal APIの区別が曖昧になりやすい。
+- `config.m4` / 静的解析 / coverage が `main.c` 単一翻訳単位前提になっている。
+
+加えて、現行コードには `grpc_lite.backend` INI / channel option、`GRPC_LITE_BACKEND_FRANKEN_GO`、`FrankenGrpc\*` への委譲経路、`franken-go` 専用PHPTが残っている。現在の `docs/SPEC.md` と AGENTS 方針ではruntime transportは nghttp2 + socket/TLS の1系統であり、transport選択optionやfallbackを持たないため、この残存経路はC分割以前に設計方針との不整合として扱う。
+
+一方で、現行のHTTP/2 transportはunary、server streaming、TLS、mTLS、deadline、metadata、persistent connection lifecycleまで実機検証済みであり、分割作業そのものがbehavior changeにならないよう段階を細かく分ける必要がある。
+
+## スコープ
+
+- repository rootの `.c` includeを段階的に廃止する。
+- SPECと衝突する `franken-go` backend / backend selectionを整理する。
+- `config.m4` でコンパイル対象 `.c` を明示する。
+- `internal.h` を責務別ヘッダへ分割する。
+- repository root直下に集中しているC実装を、責務が分かるディレクトリ構造へ段階的に整理する。
+- protocol / status / transport core helperを、`.c` includeなしでC unit / fuzz testから使えるinternal APIにする。
+- PHP extension surface、bridge、transport、call orchestration、diagnostic / benchの依存方向を文書化し、必要なヘッダ境界に反映する。
+- 分割後も通常buildと `--enable-grpc-bench` buildの両方を維持する。
+- 変更後にHTTP/2/gRPCドメインモデルレビューを実施する。
+
+## 非スコープ
+
+- gRPC API互換性の変更。
+- runtime transportの追加、libcurl fallback、transport選択optionの追加。
+- client streaming / bidi streamingの実装。
+- performance改善を目的にしたhotpath最適化。
+- root化後のC source/tests/support code以外の大規模ディレクトリ再編。
+- public install headerの提供。このrepositoryのC APIは当面すべてextension内部APIとして扱う。
+- FrankenPHP / FrankenGrpc backendの再導入。必要になった場合は、runtime transport 1系統方針を先にSPECで変更する。
+- docs / bench / tools の意味変更を伴う大規模再編。Phase 0ではpath移行に限定する。
+
+## 現状棚卸し
+
+- `.c` include:
+  - `main.c`: `surface.c`, `protocol_core.c`, `status_core.c`, `transport.c`, `diagnostic.c`, `unary_call.c`, `server_streaming_call.c`, `bridge.c`, `bench.c`
+  - `transport.c`: `transport_core.c`
+  - `tests/unit/test_protocol_core.c`: `../../protocol_core.c`
+  - `tests/unit/test_status_core.c`: `../../status_core.c`
+  - `tests/unit/test_transport_core.c`: `../../transport_core.c`
+  - `tests/fuzz/fuzz_protocol_core.c`: `../../protocol_core.c`
+- ビルド定義:
+  - `config.m4` は `PHP_NEW_EXTENSION(grpc, main.c, $ext_shared)` のみ。
+- ヘッダ:
+  - 実質的なinternal headerは `internal.h` 1つ。
+  - include guardはあるが、PHP / Zend、nghttp2、OpenSSL、socket、protocol helper、bench用構造体まで広く含む。
+- backend selection残存:
+  - `main.c`: `grpc_lite.backend` INI
+  - `internal.h`: `GRPC_LITE_BACKEND_FRANKEN_GO`, `franken_channel`, `franken_server_streaming_call`
+  - `surface.c`: `grpc_lite_resolve_backend()`, `grpc_lite_construct_franken_channel()`
+  - `bridge.c`: FrankenGrpc unary / server streaming delegation
+  - `tests/phpt/026-franken-go-backend.phpt`: `franken-go` backend behavior test
+- 主要な大きい翻訳対象:
+  - `transport.c`: 約3000行
+  - `bench.c`: 約2200行
+  - `bridge.c`: 約1100行
+  - `surface.c`: 約900行
+
+## 計画
+
+1. extension rootをrepository rootへ移すか判断し、採用する場合は最初に移行する。
+   - Xdebug / MongoDB PHP Driver のようにrepository rootを `phpize` 用のextension rootにする。
+   - 採用する場合、`composer.json` の `php-ext.build-path` は `.` に変更する。
+   - `config.m4`、extension entrypoint、C sources、PHPTをroot側へ移し、`cd ext/grpc && phpize` 前提を `phpize` 前提へ更新する。
+   - 既存 `src/` は PHP autoload用の `GrpcLite\OpenTelemetry\*` であり、C source用 `src/` と衝突するため先に退避または廃止方針を決める。
+   - root化する場合、このphaseではパス移動と参照更新だけを行い、backend削除や `.c` include廃止は混ぜない。
+
+2. SPEC不整合のあるbackend selectionを解消する。
+   - `grpc_lite.backend` INIとchannel optionを削除する。
+   - `GRPC_LITE_BACKEND_FRANKEN_GO` と `GRPC_LITE_BACKEND_HTTP2` のruntime分岐を削除し、HTTP/2 transportを唯一のruntime pathにする。
+   - `franken_channel` / `franken_server_streaming_call` と FrankenGrpc委譲helperを削除する。
+   - `026-franken-go-backend.phpt` を削除または現方針に合うテストへ置き換える。
+   - SPEC / code-reading-guide / PHPT期待値からbackend selectionの残存記述を消す。
+
+3. 現状の依存関係を固定する。
+   - `main.c` include順、各 `.c` が参照する型・関数・static globalを棚卸しする。
+   - `internal.h` の宣言を、PHP surface / protocol core / status core / transport core / transport / call orchestration / diagnosticに分類する。
+   - 先にドキュメントだけで dependency map を残す。
+
+4. pure core helperから `.c` includeをやめる。
+   - `protocol_core.h`、`status_core.h`、`transport_core.h` を追加する。
+   - C unit / fuzz testは `.c` ではなく `.h` をincludeする。
+   - `config.m4` とC unit runnerで `protocol_core.c`、`status_core.c`、`transport_core.c` を明示的にコンパイル・リンクする。
+   - ここではtransport本体やPHP surfaceには触れない。
+
+5. extension本体の複数翻訳単位buildへ移行する。
+   - `config.m4` の `PHP_NEW_EXTENSION` にproduction `.c` を列挙する。
+   - `main.c` からproduction `.c` includeを外す。
+   - `surface.h`、`bridge.h`、`transport.h`、`unary_call.h`、`server_streaming_call.h` など最小限のinternal headerを追加する。
+   - module globals、class entry、object handlers、resource idの所有元を明確にする。
+   - `static` globalのうち翻訳単位をまたいで共有が必要なものは、所有する `.c` と `extern` 宣言を明示する。
+
+6. bench / diagnostic buildを分離する。
+   - `--enable-grpc-bench` 時だけ `bench.c` / `diagnostic.c` をコンパイル対象に含める。
+   - production buildではdiagnostic PHP関数とbench構造体が公開・リンクされないことを維持する。
+   - bench用の内部APIがproduction pathへ漏れていないか確認する。
+
+7. `internal.h` を薄くする。
+   - commonな定数・前方宣言・module globalsだけを残す。
+   - PHP/Zend依存、nghttp2/OpenSSL依存、pure C helper依存を可能な範囲でヘッダ別に分ける。
+   - opaqueにできるstructはヘッダから実体を隠す。ただしZend object structなど、object handlersやfetch macroに必要なものは無理に隠さない。
+
+8. ディレクトリ構造を段階的に整理する。
+   - multi translation unit化が済んでから、ファイル移動だけのコミットを作る。
+   - `config.m4`、C unit runner、coverage、static analysis、fuzz buildの参照パスを同時に更新する。
+   - 移動コミットでは挙動変更を入れない。
+   - 既存レビューやdocsのリンク切れを更新する。
+
+9. 検証とレビューを実施する。
+   - 通常build、bench build、C unit、PHPT、PHPUnit、C coverage、C static analysisをDocker内で実行する。
+   - HTTP/2 transport / gRPC protocolに触るため、ドメインモデルレビューを実施し、レビュー指摘があれば `docs/reviews/issues/` に残す。
+
+## Root化判断
+
+repository rootをextension rootにする案は採用可能だが、独立した移行として扱う。
+
+採用時の目標構造:
+
+```text
+repo root/
+  config.m4
+  php_grpc.h
+  main.c
+  composer.json
+
+  src/
+    surface.c
+    surface.h
+    bridge.c
+    bridge.h
+    ...
+
+  tests/
+    phpt/
+    unit/
+    fuzz/
+
+  docs/
+  bench/
+  tools/
+```
+
+既存の `src/OpenTelemetry/*.php` はこの構造と衝突する。対応候補は次のいずれか。
+
+- `support/php/GrpcLite/OpenTelemetry/` などへ移し、Composer autoloadを `GrpcLite\\` => `support/php/GrpcLite/` に変更する。
+- `lib/GrpcLite/OpenTelemetry/` などへ移し、root `src/` をC専用にする。
+- このrepository packageはComposer runtime codeを提供しないというSPECへ完全に戻し、OpenTelemetry補助PHP classを別packageまたはdocs snippetへ切り出す。
+
+現時点では、root化するなら `src/` はC source用に予約し、PHP補助コードは `support/php/` へ退避する案を第一候補にする。理由は、`src/` がCとPHPで混在すると、PHP拡張単体repoとしてもCプロジェクトとしても意味が曖昧になるため。
+
+root化の完了条件:
+
+- repository rootで `phpize && ./configure --enable-grpc && make` が通る。
+- repository rootで `phpize && ./configure --enable-grpc --enable-grpc-bench && make` が通る。
+- `composer.json` の `php-ext.build-path` が `.` になっている。
+- `modules/grpc.so` 参照が `modules/grpc.so` へ移行されている。
+- `cd ext/grpc && phpize` 前提がrunnerから消えている。
+- `src/` がC source用で、PHP autoload用コードが別ディレクトリへ移っている、または削除されている。
+- `rg 'ext/grpc|/workspace/ext/grpc|cd ext/grpc'` の残存が、historical docs / research / review recordsなど意図したものだけになっている。
+
+## Phase管理
+
+### Phase 0: extension rootのrepository root化
+
+Status: Closed
+
+開始: 2026-05-29
+
+終了: 2026-05-29
+
+目的:
+
+- repository rootを `phpize` 用のextension rootにする。
+- 既存のPHP autoload用 `src/` を退避し、root `src/` を今後のC source用に予約する。
+- path移行だけを行い、HTTP/2 transportやPHP surfaceのロジックは変更しない。
+
+完了条件:
+
+- rootで通常buildとbench buildが通る。
+- 主要runnerが `modules/grpc.so` と root `tests/phpt` を参照する。
+- `composer.json` の `php-ext.build-path` が `.` である。
+- OpenTelemetry補助PHP classは `support/php/` へ移動し、autoloadが通る。
+- issueに検証結果と残存パス判断を記録する。
+
+実施内容:
+
+- `config.m4` とC extension sourceを `ext/grpc/` からrepository rootへ移動した。
+- PHPTを `tests/phpt/`、C unitを `tests/unit/`、fuzz harness / corpusを `tests/fuzz/` へ移動した。
+- `src/OpenTelemetry/` のPHP補助classを `support/php/GrpcLite/OpenTelemetry/` へ移動し、Composer autoloadを `GrpcLite\\` => `support/php/GrpcLite/` に変更した。
+- `composer.json` の `php-ext.build-path` を `.` に変更した。
+- runner、Dockerfile、compose、coverage、static analysis、README / SPEC / install docs の現行パスを root extension 前提へ更新した。
+
+検証:
+
+- `docker compose run --rm dev sh -lc 'cd /workspace && make clean >/tmp/grpc-root-clean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep && phpize >/tmp/grpc-root-phpize.log && ./configure --enable-grpc >/tmp/grpc-root-configure.log && make -j$(nproc) >/tmp/grpc-root-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") ? 0 : 1);"'`: PASS
+- `docker compose run --rm dev sh -lc 'cd /workspace && make clean >/tmp/grpc-root-bench-clean.log 2>&1 || true && rm -rf .libs modules *.lo *.o *.dep && phpize >/tmp/grpc-root-bench-phpize.log && ./configure --enable-grpc --enable-grpc-bench >/tmp/grpc-root-bench-configure.log && make -j$(nproc) >/tmp/grpc-root-bench-make.log && php -d extension=/workspace/modules/grpc.so -r "exit(extension_loaded(\"grpc\") && function_exists(\"grpc_lite_bench_unary_batch\") ? 0 : 1);"'`: PASS
+- `./tools/test/check-c-unit.sh`: PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+- `./tools/test/check-phpt.sh`: PASS, 16/16
+- `docker compose run --rm dev sh -lc 'cd /workspace && composer dump-autoload >/tmp/composer-dump-autoload.log && php -r "require \"vendor/autoload.php\"; exit(class_exists(\"GrpcLite\\\\OpenTelemetry\\\\TraceContextMetadata\") ? 0 : 1);"'`: PASS
+- `./tools/test/check-c-coverage.sh`: PASS, lines 76.5%, functions 95.2%
+- `docker compose restart spanner-emulator && docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`: PASS, 30 tests / 109 assertions
+- `FUZZ_RUNS=100 ./tools/test/check-c-fuzz.sh`: PASS
+
+補足:
+
+- PHPUnitの初回実行ではSpanner emulatorに既存instanceが残っていたため `ListInstancesTest` が1件失敗した。emulatorを再起動した再実行では全件PASS。
+- `rg 'ext/grpc|/workspace/ext/grpc|cd ext/grpc'` の残存は、過去issue / benchmark docs / backward-compatible tag build helper / Docker公式extension install先など、履歴または意図した互換用途に限定されている。
+
+## ディレクトリ構造案
+
+Phase 0後はrepository rootをextension rootとして扱う。次の整理では、PHP extensionとしての入口はroot直下に残し、C実装本体を `src/` へ移す。
+
+```text
+repo root/
+  config.m4
+  php_grpc.h              # extension module entry / module globals / shared constants
+  main.c                  # MINIT/MSHUTDOWN/MINFO and module entry only
+
+  src/
+    surface.c
+    surface.h             # PHP object surface internal declarations
+    bridge.c
+    bridge.h              # Grpc\Call batch bridge declarations
+    call.h                # shared call result/status structs
+    unary_call.c
+    unary_call.h
+    server_streaming_call.c
+    server_streaming_call.h
+    protocol.c
+    protocol.h            # gRPC framing/metadata/status internal API
+    status.c
+    status.h              # status taxonomy internal API
+    transport.c
+    transport.h           # HTTP/2 transport internal API
+
+    transport/
+      connection.c         # h2_connection lifecycle/cache, socket/TLS setup
+      connection.h
+      callbacks.c          # nghttp2 callbacks
+      callbacks.h
+      request_headers.c    # request metadata/header assembly
+      request_headers.h
+      response.c           # response frame/message/metadata processing
+      response.h
+      core.c               # pure helpers currently in transport_core.c
+      core.h
+
+    diagnostic/
+      diagnostic.c
+      diagnostic.h
+      bench.c
+      bench.h
+
+  tests/
+    phpt/
+    unit/
+    fuzz/
+```
+
+この案は最終形ではなく、最初の移動単位の目安とする。特に `transport.c` は現時点で責務が大きいため、最初は `src/transport.c` へ移すだけに留め、`transport/connection.c` などへの細分化はHTTP/2/gRPCドメインレビューとテストを挟んで別コミットにする。
+
+`include/` は外部公開C API用の名前として予約し、この作業では作らない。追加する `.h` はすべて `src/` 配下の内部ヘッダとして扱い、install対象にしない。
+
+移行順は次を基本にする。
+
+1. `tests/` 配下を `phpt/`, `unit/`, `fuzz/` に揃える。
+2. pure core helperを `src/protocol.c`, `src/status.c`, `src/transport/core.c` と対応する `src/**/*.h` へ移す。
+3. production `.c` を `src/` へ移す。
+4. bench / diagnostic `.c` を `src/diagnostic/` へ移す。
+5. transport本体を必要に応じて `src/transport/` 内で細分化する。
+
+## 進め方
+
+- 作業は小さなコミットに分ける。
+- 最初の実装コミットは backend selection削除に限定し、SPECのruntime transport 1系統方針と実装を揃える。
+- 次の実装コミットは pure core helperの `.c` include廃止に限定する。
+- extension本体の複数翻訳単位化は、function visibilityとstatic globalの調整が大きくなるため単独コミットにする。
+- bench / diagnostic分離はproduction buildとbench buildの差分確認を独立コミットにする。
+- ディレクトリ移動は、コンパイル単位化が安定してから実施する。移動とロジック変更を同じコミットにしない。
+- behavior changeが出た場合は、分割作業に混ぜず、別issueへ切り出す。
+
+## リスク
+
+- `static` 関数が翻訳単位をまたいで暗黙利用されているため、ヘッダ化時にinternal APIが過剰に広がる可能性がある。
+- `static` globalの所有元を誤ると、Zend class entry / object handlers / resource idの初期化順に影響する。
+- `--enable-grpc-bench` の条件付きコンパイルでproduction buildとの差分が壊れる可能性がある。
+- C unit / coverage runnerは現在 `.c` include前提のため、リンク対象の指定漏れでCI gateが壊れやすい。
+- `transport.c` はHTTP/2 connection lifecycle、gRPC frame parse、metadata、persistent cacheが近接しており、無理な分割はドメイン境界を悪化させる可能性がある。
+- backend selection削除はbehavior changeではなくSPEC整合と扱うが、既存PHPT期待値とphpinfo出力が変わるためテスト修正が必要になる。
+- ファイル移動によりdocs、review issue、coverage/static analysis runnerのパス参照が古くなる可能性がある。
+
+## 判断ログ
+
+- この作業は性能改善として扱わない。ベンチは回帰確認に留める。
+- C APIは外部公開しない。追加するヘッダは `src` 内のinternal APIであり、install対象にしない。外部公開C APIを持つまで `include/` は作らない。
+- 現方針では `franken-go` backendは残さない。もし再度必要になった場合は、C分割作業に混ぜず、SPEC変更と別issueから始める。
+- pure helperはPHP/Zend依存を減らせる優先候補だが、Zend allocatorや `zend_string` を使うhelperは無理にpure C化しない。
+- transport本体の責務分離は、`.c` include廃止後に別issueへ分ける可能性を残す。
+- 既存のHTTP/2/gRPC挙動を守ることを最優先し、構造改善のためにstatus taxonomy、deadline、metadata、connection lifecycleの意味を変えない。
+
+## 検証
+
+実装フェーズでは最低限以下を実行する。
+
+- `docker compose run --rm dev sh -lc 'phpize && ./configure --enable-grpc && make clean && make -j$(nproc)'`
+- `docker compose run --rm dev sh -lc 'phpize && ./configure --enable-grpc --enable-grpc-bench && make clean && make -j$(nproc)'`
+- `./tools/test/check-c-unit.sh`
+- `./tools/test/check-phpt.sh`
+- `./tools/test/check-c-coverage.sh`
+- `./tools/test/check-c-static-analysis.sh`
+- `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`
+
+HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表的なunary / server streaming / TLS / mTLS / deadline / metadata / persistent reuseのPHPTまたは統合テストを追加で実行する。
+
+## 完了条件
+
+- production buildで `main.c` や他のproduction `.c` が別のproduction `.c` をincludeしていない。
+- runtime backend selectionがなく、HTTP/2 transportだけがproduction call pathとして残っている。
+- C unit / fuzz testが `.c` includeではなくヘッダ宣言とリンク対象 `.o` に依存している。
+- `config.m4` がproduction / bench buildのコンパイル対象を明示している。
+- repository root配下のproduction source、internal header、diagnostic source、testsが責務別ディレクトリに整理されている。
+- `internal.h` の責務が縮小され、追加ヘッダのinclude guardと依存方向が明確である。
+- Docker内のC unit、PHPT、C coverage、C static analysis、PHPUnitが通る。
+- HTTP/2/gRPCドメインモデルレビューでBlocker / High / Medium / Lowがnoneになる。
+- このissueに修正コミット、検証結果、レビュー結果を追記し、`Status: Closed` にして `docs/issues/closed/` へ移動する。

@@ -2,7 +2,7 @@
 #define PHP_GRPC_LITE_INTERNAL_H
 
 /*
- * Private implementation header for php-grpc-lite ext/grpc.
+ * Private implementation header for php-grpc-lite grpc extension.
  * Not installed. Not a public C API.
  */
 

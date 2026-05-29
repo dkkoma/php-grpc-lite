@@ -31,8 +31,8 @@ namespace Grpc {
 
 namespace {
     require __DIR__ . '/helpers.inc';
-    require grpc_lite_phpt_repo_root() . '/src/OpenTelemetry/TraceContextMetadata.php';
-    require grpc_lite_phpt_repo_root() . '/src/OpenTelemetry/TraceContextInterceptor.php';
+    require grpc_lite_phpt_repo_root() . '/support/php/GrpcLite/OpenTelemetry/TraceContextMetadata.php';
+    require grpc_lite_phpt_repo_root() . '/support/php/GrpcLite/OpenTelemetry/TraceContextInterceptor.php';
 
     $metadata = \GrpcLite\OpenTelemetry\TraceContextMetadata::inject([
         'x-existing' => ['1'],

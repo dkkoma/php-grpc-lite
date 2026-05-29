@@ -20,7 +20,7 @@ docker compose "${run_args[@]}" \
 
     cd /workspace
     build_dir=/workspace/var/fuzz
-    seed_corpus_dir=/workspace/ext/grpc/tests/fuzz/corpus/protocol_core
+    seed_corpus_dir=/workspace/tests/fuzz/corpus/protocol_core
     corpus_dir=/workspace/var/fuzz/corpus/protocol_core
     artifact_dir=/workspace/var/fuzz/artifacts
 
@@ -36,7 +36,7 @@ docker compose "${run_args[@]}" \
         -O1 -g -fno-omit-frame-pointer \
         -fsanitize=fuzzer,address,undefined \
         -o "$build_dir/fuzz_protocol_core" \
-        /workspace/ext/grpc/tests/fuzz/fuzz_protocol_core.c
+        /workspace/tests/fuzz/fuzz_protocol_core.c
 
     "$build_dir/fuzz_protocol_core" "$corpus_dir" \
         -runs="${FUZZ_RUNS:-20000}" \

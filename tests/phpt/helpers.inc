@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 function grpc_lite_phpt_repo_root(): string
 {
-    return dirname(__DIR__, 3);
+    return dirname(__DIR__, 2);
 }
 
 function grpc_lite_phpt_autoload_path(): string

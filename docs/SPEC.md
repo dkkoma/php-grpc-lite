@@ -167,7 +167,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 - 開発時: ローカルビルド(`phpize && ./configure && make`)
 - 配布: PIE経由
   - root package自体を `type: php-ext` とし、`pie install dkkoma/php-grpc-lite` で `grpc.so` をbuild/installする。
-  - `php-ext.extension-name` は `grpc`、`php-ext.build-path` は `ext/grpc`。
+  - `php-ext.extension-name` は `grpc`、`php-ext.build-path` は `.`。
   - 高レベル `Grpc\*` wrapper は公式 `grpc/grpc` Composer packageをアプリ側で導入する。このrepository packageはComposer libraryとしてautoloadされるruntime codeを提供しない。
   - first releaseはsource buildを基本にし、pre-packaged binary配布はCI matrixとrelease artifact整備後に判断する。
 - 公式 `ext-grpc` 比較用artifact:
@@ -196,7 +196,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 | `Grpc\ClientStreamingCall` / `BidiStreamingCall` | Composer library | Composer library側で未実装例外 |
 | `Grpc\Interceptor*` / `CallInvoker` | Composer library | Composer library側 |
 
-現行実装では、高レベル wrapper は公式 `grpc/grpc` Composer package に一本化し、このrepositoryの `src/Grpc/` PHP互換層は持たない。`ext/grpc` は低レベルclass、constants、HTTP/2 transport、persistent connection lifecycleを担当する。
+現行実装では、高レベル wrapper は公式 `grpc/grpc` Composer package に一本化し、このrepositoryの `src/Grpc/` PHP互換層は持たない。repository rootの `grpc` extension は低レベルclass、constants、HTTP/2 transport、persistent connection lifecycleを担当する。
 
 ---
 

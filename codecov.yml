@@ -23,4 +23,5 @@ comment:
 flags:
   native-c:
     paths:
-      - ext/grpc/
+      - "*.c"
+      - "*.h"

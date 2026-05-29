@@ -29,4 +29,4 @@ RUN { \
 
 WORKDIR /workspace
 
-CMD ["php-fpm", "-F", "-d", "extension=/workspace/ext/grpc/modules/grpc.so"]
+CMD ["php-fpm", "-F", "-d", "extension=/workspace/modules/grpc.so"]

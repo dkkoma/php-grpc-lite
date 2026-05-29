@@ -8,7 +8,7 @@
 Current review status:
 
 - High-level PHP `Grpc\*` wrapper classes are provided by the official `grpc/grpc` Composer package.
-- HTTP/2 transport is provided by this repository's source-build extension in `ext/grpc/`.
+- HTTP/2 transport is provided by this repository's source-build extension at the repository root.
 - The source-built grpc extension builds a PHP module named `grpc` and produces `grpc.so`.
 - Official `ext-grpc` and this source-built grpc extension must not be loaded at the same time.
 - Default backend selection is `grpc_lite.backend=http2`: php-grpc-lite uses the built-in nghttp2 HTTP/2 backend unless `franken-go` is explicitly selected.
@@ -64,7 +64,7 @@ For local source builds without PIE:
 
 ```bash
 git clone <php-grpc-lite repository URL> php-grpc-lite
-cd php-grpc-lite/ext/grpc
+cd php-grpc-lite
 phpize
 ./configure --enable-grpc
 make -j"$(nproc)"
@@ -105,10 +105,10 @@ composer install
 ./tools/test/check-phpt.sh
 ./tools/test/check-c-fuzz.sh
 ./tools/test/check-c-coverage.sh
-docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit
 ```
 
-`check-native-development-gate.sh` runs the normal local gate: C static analysis, C unit boundary tests, PHPT integration tests, and a short libFuzzer smoke. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds `ext/grpc`, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-franken-go-backend.sh` smoke-tests the optional FrankenPHP grpc-go backend in the `dev-franken-grpc-go` compose service, whose image fetches `github.com/dkkoma/frankenphp-grpc-go-client` from GitHub by ref. `check-c-fuzz.sh` runs deterministic libFuzzer smoke for pure C protocol boundaries. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
+`check-native-development-gate.sh` runs the normal local gate: C static analysis, C unit boundary tests, PHPT integration tests, and a short libFuzzer smoke. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds the root extension, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-franken-go-backend.sh` smoke-tests the optional FrankenPHP grpc-go backend in the `dev-franken-grpc-go` compose service, whose image fetches `github.com/dkkoma/frankenphp-grpc-go-client` from GitHub by ref. `check-c-fuzz.sh` runs deterministic libFuzzer smoke for pure C protocol boundaries. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
 
 GitHub Actions runs the development gate and C coverage gate on push and pull request. Coverage is uploaded as a workflow artifact and to Codecov from `var/coverage/c-lcov/codecov.info`; configure `CODECOV_TOKEN` unless the Codecov repository setting allows tokenless public uploads.
 
@@ -121,8 +121,8 @@ Run static analysis for the C extension:
 Build/load the source-built grpc extension in Docker:
 
 ```bash
-docker compose run --rm dev sh -lc 'cd ext/grpc && phpize && ./configure --enable-grpc && make -j$(nproc)'
-docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
+docker compose run --rm dev sh -lc 'phpize && ./configure --enable-grpc && make -j$(nproc)'
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 ```
 
 Verify source install on the official Docker Hub `php` image:

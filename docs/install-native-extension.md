@@ -7,9 +7,9 @@
 ## Install model
 
 - PHP classes: 高レベル wrapper は公式 `grpc/grpc` Composer package が提供する。このpackage自体はComposer autoload用runtime codeを提供しない。
-- Native extension: このrepository package自体を `type: php-ext` としてPIEでbuild/installする。sourceは `ext/grpc/`。
+- Native extension: このrepository package自体を `type: php-ext` としてPIEでbuild/installする。sourceはrepository rootに置く。
 - Runtime transport: HTTP/2 transportのみ。release readiness is still gated by C extension memory/lifecycle QA.
-- Composer metadata: root package は `type: php-ext`、`php-ext.extension-name: grpc`、`php-ext.build-path: ext/grpc` を持つ。Composer libraryとしてautoloadされるruntime codeは提供しない。
+- Composer metadata: root package は `type: php-ext`、`php-ext.extension-name: grpc`、`php-ext.build-path: .` を持つ。Composer libraryとしてautoloadされるruntime codeは提供しない。
 - PIE packaging: `pie install dkkoma/php-grpc-lite` を主install経路にする。PIEは `phpize` / `./configure` / `make` / `make install` を実行する。
 - Rollback:
   - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc` を無効化し、公式側の `grpc.so` を有効化する。
@@ -59,11 +59,11 @@ composer require grpc/grpc
 
 ## Build source-built grpc extension without PIE
 
-PIEを使わずに検証する場合は、このrepositoryをcloneし、`ext/grpc/` をbuildする。
+PIEを使わずに検証する場合は、このrepositoryをcloneし、repository rootでbuildする。
 
 ```bash
 git clone <php-grpc-lite repository URL> php-grpc-lite
-cd php-grpc-lite/ext/grpc
+cd php-grpc-lite
 phpize
 ./configure --enable-grpc
 make -j"$(nproc)"
@@ -73,8 +73,8 @@ sudo make install
 開発container内で検証する場合:
 
 ```bash
-docker compose run --rm dev sh -lc 'cd ext/grpc && phpize && ./configure --enable-grpc && make -j$(nproc)'
-docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
+docker compose run --rm dev sh -lc 'phpize && ./configure --enable-grpc && make -j$(nproc)'
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
 ```
 
 公式 `php` image上でPIE install手順を検証する場合:
@@ -141,7 +141,7 @@ php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), define
 
 `extension_loaded("grpc")` だけでは公式 `ext-grpc` と区別できないため、`Grpc\VERSION` の値も確認する。
 
-通常buildでは production bridge のみを公開する。`ext/grpc/bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
+通常buildでは production bridge のみを公開する。`bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
 
 このrepositoryのDocker環境では、HTTP/2 stream lifecycle smokeも確認できる。
 

@@ -328,7 +328,7 @@ function workerCommand(string $implementation, string $target, string $autoload,
     $command = [PHP_BINARY];
     if ($implementation === 'php-grpc-lite') {
         $command[] = '-d';
-        $command[] = 'extension=/workspace/ext/grpc/modules/grpc.so';
+        $command[] = 'extension=/workspace/modules/grpc.so';
     }
     $command[] = __FILE__;
     $command[] = '--worker-case=' . $caseName;

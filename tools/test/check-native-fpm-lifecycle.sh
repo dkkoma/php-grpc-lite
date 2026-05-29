@@ -15,7 +15,7 @@ mkdir -p "$output_dir"
 json="$output_dir/native-fpm-lifecycle-$timestamp.json"
 
 docker compose run --rm dev sh -lc "
-    cd /workspace/ext/grpc &&
+    cd /workspace &&
     make -j2 >/tmp/grpc-make.log
 "
 
