@@ -10,6 +10,8 @@
  * Not installed. Not a public C API.
  */
 
+#include "../php_grpc.h"
+
 #include <php.h>
 #include <php_ini.h>
 #include <ext/standard/info.h>

@@ -1109,7 +1109,7 @@ PHP_FUNCTION(grpc_lite_multiplex_unary)
     nva[nvlen++] = (nghttp2_nv) MAKE_NV_L(":path", path, path_len);
     nva[nvlen++] = (nghttp2_nv) MAKE_NV("content-type", "application/grpc");
     nva[nvlen++] = (nghttp2_nv) MAKE_NV("te", "trailers");
-    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", "php-grpc-lite/0.1.0-dev");
+    nva[nvlen++] = (nghttp2_nv) MAKE_NV("user-agent", PHP_GRPC_LITE_BENCH_USER_AGENT);
 
     for (size_t i = 0; i < ctx.stream_count; i++) {
         nghttp2_data_provider data_provider;

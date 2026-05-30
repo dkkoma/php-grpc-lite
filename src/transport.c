@@ -2304,7 +2304,7 @@ void append_user_agent_request_header(h2_request_headers *headers, zend_string *
         append_request_header(headers, "user-agent", sizeof("user-agent") - 1, ZSTR_VAL(primary_user_agent), ZSTR_LEN(primary_user_agent));
         return;
     }
-    append_request_header(headers, "user-agent", sizeof("user-agent") - 1, "php-grpc-lite/0.1.0", sizeof("php-grpc-lite/0.1.0") - 1);
+    append_request_header(headers, "user-agent", sizeof("user-agent") - 1, PHP_GRPC_LITE_USER_AGENT, sizeof(PHP_GRPC_LITE_USER_AGENT) - 1);
 }
 
 static bool is_valid_custom_request_header_name_char(unsigned char ch)

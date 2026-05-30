@@ -128,7 +128,7 @@ Branch: feature/zts-formal-support
 
 - ZTSでのpersistent connection cacheはmodule globals上のthread-local cacheとして扱う。threadをまたいでsocket/sessionは共有しない。
 - TSanはthread-safety regression検出に有用だが、ZTS build/load互換性そのものの代替にはしない。ZTS PHPTを独立gateにする。
-- `Grpc\VERSION` / package versionとは別に、ZTS対応可否はPIE metadataとCI gateで管理する。
+- package / extension runtime versionとは別に、ZTS対応可否はPIE metadataとCI gateで管理する。
 - ZTS正式サポートでは機能互換だけでなくNTSとの代表性能比較をQA evidenceに含める。初期対象は `spanner-shape` と `metadata-header` とし、必要なら `tls-spanner-shape` / `large-streaming` を追加する。
 - ZTS thread並列QAは、serverが速すぎて競合が見えなくなることを避けるため `server_delay_ms=10` をdefaultにする。
 - thread並列の代表worker数は `1,2,8` に絞る。

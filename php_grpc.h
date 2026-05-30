@@ -3,7 +3,9 @@
 
 #include "php.h"
 
-#define PHP_GRPC_VERSION "0.1.0"
+#define PHP_GRPC_VERSION "0.0.12"
+#define PHP_GRPC_LITE_USER_AGENT "php-grpc-lite/" PHP_GRPC_VERSION
+#define PHP_GRPC_LITE_BENCH_USER_AGENT PHP_GRPC_LITE_USER_AGENT "-dev"
 
 extern zend_module_entry grpc_module_entry;
 #define phpext_grpc_ptr &grpc_module_entry

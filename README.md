@@ -101,7 +101,7 @@ Build/load the source-built grpc extension in Docker:
 
 ```bash
 docker compose run --rm dev sh -lc 'phpize && ./configure --enable-grpc && make -j$(nproc)'
-docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12");'
 ```
 
 Verify source install on the official Docker Hub `php` image:
@@ -109,7 +109,7 @@ Verify source install on the official Docker Hub `php` image:
 ```bash
 docker build -f Dockerfile.install-grpc -t php-grpc-lite-install-grpc .
 docker run --rm php-grpc-lite-install-grpc php -m | grep -x grpc
-docker run --rm php-grpc-lite-install-grpc php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
+docker run --rm php-grpc-lite-install-grpc php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12");'
 ```
 
 Verify PIE install on the official Docker Hub `php` image:
@@ -117,15 +117,15 @@ Verify PIE install on the official Docker Hub `php` image:
 ```bash
 docker build -f Dockerfile.install-pie -t php-grpc-lite-install-pie .
 docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
-docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.1.0");'
+docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12");'
 ```
 
 To verify a specific released package from Packagist:
 
 ```bash
 docker build -f Dockerfile.install-pie \
-  --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.2 \
-  -t php-grpc-lite-install-pie-0.0.2 .
+  --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.12 \
+  -t php-grpc-lite-install-pie-0.0.12 .
 ```
 
 Design and QA status:

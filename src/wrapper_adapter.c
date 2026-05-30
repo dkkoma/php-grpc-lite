@@ -240,7 +240,7 @@ static void grpc_lite_append_user_agent(grpc_lite_channel_obj *channel, zval *me
     if (channel->primary_user_agent != NULL && ZSTR_LEN(channel->primary_user_agent) > 0) {
         add_next_index_str(&values, zend_string_copy(channel->primary_user_agent));
     } else {
-        add_next_index_string(&values, "php-grpc-lite/0.1.0");
+        add_next_index_string(&values, PHP_GRPC_LITE_USER_AGENT);
     }
     zend_hash_str_update(Z_ARRVAL_P(metadata), "user-agent", sizeof("user-agent") - 1, &values);
 }
