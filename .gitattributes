@@ -15,7 +15,6 @@
 /phpbench.json export-ignore
 /phpunit.xml.dist export-ignore
 /poc export-ignore
-/src export-ignore
 /tests export-ignore
 /tools export-ignore
 /var export-ignore

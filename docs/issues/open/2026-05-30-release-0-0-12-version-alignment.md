@@ -42,11 +42,14 @@ Target-Release: 0.0.12
 - 2026-05-30 Phase 3 started.
 - 2026-05-30 Phase 3 completed: development gateとversion assertion付きPHPTを通過した。
 - 2026-05-30 Phase 4 started.
+- 2026-05-30 Phase 4 blocked: Packagist経由PIE install smokeでdist zipから `src/*` が除外されていることを検出した。
+- 2026-05-30 Phase 4 fix started: root layout後のC sourcesをdistへ含めるため `.gitattributes` の `/src export-ignore` を削除する。
 
 ## 検証
 
 - `./tools/test/check-native-development-gate.sh` passed.
 - `./tools/test/check-phpt.sh` passed after adding `phpversion("grpc")` / `Grpc\VERSION` assertions.
+- `docker build -f Dockerfile.install-pie --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.12 -t php-grpc-lite-install-pie-0.0.12 .` failed before `.gitattributes` fix because Packagist dist did not contain `src/*`.
 
 ## 判断ログ
 
