@@ -84,6 +84,7 @@ field mapだけなら:
 
 - 2026-05-31: `grpc_call` 分割はお手本化に有効だが、性能影響があり得るためdoc mapを先に作る。
 - 2026-05-31: 現時点では `grpc_call` を分割しない。single structを維持し、field ownership mapを教材・レビュー補助として使う。
+- 2026-05-31: field order / hot-cold layoutの評価は `docs/issues/open/2026-05-31-exemplar-grpc-call-field-layout-hotpath.md` へ切り出す。
 
 ## Close Criteria
 
