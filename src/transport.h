@@ -105,8 +105,6 @@ int set_fd_nonblocking_mode(int fd, bool nonblocking);
 int poll_timeout_ms_for_deadline(uint64_t deadline_abs_us);
 zend_long remaining_timeout_us_for_deadline(uint64_t deadline_abs_us);
 int poll_fd_until_deadline(int fd, short events, uint64_t deadline_abs_us);
-int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len);
-int configure_client_certificate(SSL_CTX *ctx, const char *cert, size_t cert_len, const char *key, size_t key_len);
 int configure_tls_connection(h2_connection *connection, const char *host, const char *tls_verify_name, size_t tls_verify_name_len, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us);
 ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
 ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
