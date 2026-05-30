@@ -27,16 +27,16 @@
 ### REVIEW-20260530-001: `transport_core.c` depends on full transport internals for an authority buffer size
 
 - Severity: `Low`
-- Status: `Open`
+- Status: `Closed`
 - Reviewer role: `Independent C translation-unit / hot-path boundary reviewer`
 - Finding: `src/transport_core.c` is documented as "Pure HTTP/2 transport helpers shared by the PHP extension and C unit tests", but it includes `src/transport.h` and reaches into `struct _h2_connection` layout only to obtain the size of `authority`. This makes the pure helper TU depend on the broad transport-private header, including nghttp2 callback/protocol declarations and stream/call ownership types.
 - Evidence: `src/transport_core.c:1`, `src/transport_core.c:6`, `src/transport_core.c:167`, `src/transport_core.c:172`, `src/transport.h:23`, `src/transport.h:31`, `src/transport.h:78-149`
 - Expected model: A pure core helper TU should depend on its own narrow header and shared constants, not on the concrete HTTP/2 connection struct. The authority buffer capacity is a transport identity/input limit and can be represented as a named constant shared by `h2_connection` and `validate_channel_inputs()`.
 - Why it matters: This is not a hot-path performance regression, but it weakens the purpose of the split. Any future change to `transport.h` now rebuilds and conceptually affects the pure helper TU, and the pure helper boundary can gradually become a dumping ground for transport internals. It also makes it harder to reason about which modules are allowed to know the full connection layout.
 - Recommended fix: Introduce a private constant such as `GRPC_LITE_AUTHORITY_MAX_BYTES` or `GRPC_LITE_AUTHORITY_BUFFER_SIZE` in `transport_core.h` or another narrow internal header. Use it for `h2_connection.authority` and for `validate_channel_inputs()`, then let `transport_core.c` include `transport_core.h` instead of `transport.h`.
-- Fix summary: `pending`
-- Fix commit: `pending`
-- Verification: `manual review only`
+- Fix summary: `GRPC_LITE_AUTHORITY_BUFFER_SIZE` を `src/transport_core.h` に追加し、`h2_connection.authority` と `validate_channel_inputs()` が同じ定数を参照する形に変更した。`src/transport_core.c` は `src/transport.h` ではなく `src/transport_core.h` をincludeするようになり、pure helper TUが `h2_connection` layoutを知る必要をなくした。
+- Fix commit: `d02bcd0`
+- Verification: 通常build、C unit、PHPT 15/15、C static analysis、`git diff --check` PASS。
 - Notes: This is intentionally Low because it does not move obvious per-frame/per-byte hot logic across a TU boundary.
 
 ## Review Notes

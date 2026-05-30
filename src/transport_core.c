@@ -3,7 +3,7 @@
 #ifndef PHP_GRPC_LITE_TRANSPORT_CORE_C
 #define PHP_GRPC_LITE_TRANSPORT_CORE_C
 
-#include "transport.h"
+#include "transport_core.h"
 #ifdef snprintf
 #undef snprintf
 #endif
@@ -164,12 +164,12 @@ const char *validate_channel_inputs(const char *key, size_t key_len, const char 
         return "invalid gRPC target port";
     }
     if (authority_len > 0) {
-        if (authority_len >= sizeof(((h2_connection *) 0)->authority) || contains_authority_forbidden_char(authority, authority_len)) {
+        if (authority_len >= GRPC_LITE_AUTHORITY_BUFFER_SIZE || contains_authority_forbidden_char(authority, authority_len)) {
             return "invalid gRPC authority";
         }
     } else {
         port_len = snprintf(port_buf, sizeof(port_buf), "%ld", (long) port);
-        if (port_len < 0 || host_len + 1 + (size_t) port_len >= sizeof(((h2_connection *) 0)->authority)) {
+        if (port_len < 0 || host_len + 1 + (size_t) port_len >= GRPC_LITE_AUTHORITY_BUFFER_SIZE) {
             return "gRPC authority is too long";
         }
     }

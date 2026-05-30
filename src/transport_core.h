@@ -20,6 +20,7 @@
 #define GRPC_LITE_DEFAULT_SERVER_STREAMING_READ_AHEAD_BYTES (8 * 1024 * 1024)
 #define GRPC_LITE_DEFAULT_METADATA_HARD_BYTES (16 * 1024)
 #define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
+#define GRPC_LITE_AUTHORITY_BUFFER_SIZE 512
 
 zend_ulong hash_bytes(const char *data, size_t data_len);
 void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len);

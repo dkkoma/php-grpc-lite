@@ -28,7 +28,7 @@ struct _h2_connection {
     SSL *ssl;
     nghttp2_session_callbacks *callbacks;
     nghttp2_session *session;
-    char authority[512];
+    char authority[GRPC_LITE_AUTHORITY_BUFFER_SIZE];
     bool dead;
     bool draining;
     bool detached_from_cache;
