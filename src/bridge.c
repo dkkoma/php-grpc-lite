@@ -767,34 +767,3 @@ PHP_METHOD(Call, startBatch)
         grpc_lite_add_event_status(return_value, &call->status);
     }
 }
-
-PHP_METHOD(Call, cancel)
-{
-    grpc_lite_call_obj *call = Z_GRPC_LITE_CALL_P(ZEND_THIS);
-    ZEND_PARSE_PARAMETERS_NONE();
-    if (!call->initialized) {
-        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
-        RETURN_THROWS();
-    }
-    call->cancelled = true;
-    if (call->server_streaming_opened && Z_TYPE(call->server_streaming_resource) == IS_RESOURCE) {
-        server_streaming_call_cancel_resource(&call->server_streaming_resource);
-    }
-}
-
-PHP_METHOD(Call, getPeer)
-{
-    grpc_lite_call_obj *call = Z_GRPC_LITE_CALL_P(ZEND_THIS);
-    grpc_lite_channel_obj *channel;
-    ZEND_PARSE_PARAMETERS_NONE();
-    if (!call->initialized || Z_TYPE(call->channel) != IS_OBJECT) {
-        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
-        RETURN_THROWS();
-    }
-    channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
-    if (!channel->initialized) {
-        zend_throw_exception(NULL, "Grpc\\Channel is not initialized", 0);
-        RETURN_THROWS();
-    }
-    RETURN_STR_COPY(channel->target);
-}
