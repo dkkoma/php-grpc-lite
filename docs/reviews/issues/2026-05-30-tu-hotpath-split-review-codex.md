@@ -35,7 +35,7 @@
 - Why it matters: This is not a hot-path performance regression, but it weakens the purpose of the split. Any future change to `transport.h` now rebuilds and conceptually affects the pure helper TU, and the pure helper boundary can gradually become a dumping ground for transport internals. It also makes it harder to reason about which modules are allowed to know the full connection layout.
 - Recommended fix: Introduce a private constant such as `GRPC_LITE_AUTHORITY_MAX_BYTES` or `GRPC_LITE_AUTHORITY_BUFFER_SIZE` in `transport_core.h` or another narrow internal header. Use it for `h2_connection.authority` and for `validate_channel_inputs()`, then let `transport_core.c` include `transport_core.h` instead of `transport.h`.
 - Fix summary: `GRPC_LITE_AUTHORITY_BUFFER_SIZE` を `src/transport_core.h` に追加し、`h2_connection.authority` と `validate_channel_inputs()` が同じ定数を参照する形に変更した。`src/transport_core.c` は `src/transport.h` ではなく `src/transport_core.h` をincludeするようになり、pure helper TUが `h2_connection` layoutを知る必要をなくした。
-- Fix commit: `d02bcd0`
+- Fix commit: `974766e`
 - Verification: 通常build、C unit、PHPT 15/15、C static analysis、`git diff --check` PASS。
 - Notes: This is intentionally Low because it does not move obvious per-frame/per-byte hot logic across a TU boundary.
 
