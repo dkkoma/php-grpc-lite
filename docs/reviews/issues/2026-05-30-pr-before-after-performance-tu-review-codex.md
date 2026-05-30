@@ -74,7 +74,7 @@
 - Why it matters: The code review did not identify an obvious non-LTO hot-path regression, but the PR intentionally changes compile/link boundaries. Without final HEAD-vs-base data, merge reviewers should avoid claiming the whole PR has proven neutral performance impact.
 - Recommended fix: Before merging or before making a durable performance claim, run a final same-environment benchmark of merge-base vs HEAD, at least `./bench/run.sh spanner-shape` with enough calls/repeats to distinguish noise from a few-microsecond p50 shift. Record run IDs, commands, p50/p99, environment, and the interpretation in the work-plan or a benchmark doc. If the result is noisy but not clearly worse, record that explicitly.
 - Fix summary: PR全体の最終代表ベンチとして、merge-base `b5592d4` とHEAD `41855e1` を同一Docker compose project / 同一test-serverで `spanner-shape --calls=1000 --warmup-calls=50` により2回ずつ比較し、結果をwork-plan issueへ記録した。p50は全shapeでほぼ同等または改善方向。p99はtail noiseが大きく、`select_1row_10col_streaming` のみHEAD側で悪化方向に見えたため、判断は「代表shapeのp50では明確な悪化なし、tailは継続観測」とした。
-- Fix commit: `pending`
+- Fix commit: `419db7a`
 - Verification: `pr-whole-before-20260530-spanner-shape`, `pr-whole-before2-20260530-spanner-shape`, `pr-whole-after-20260530-spanner-shape`, `pr-whole-after2-20260530-spanner-shape` をOTEL summaryで確認。
 - Notes: This is Low rather than Medium because the actual hot frame/callback logic remains in one TU, `config.m4` source separation is correct, and existing tests/build gates are broad.
 
