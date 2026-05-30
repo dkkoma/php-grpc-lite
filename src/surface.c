@@ -1,6 +1,7 @@
 /* PHP class/object surface for the grpc extension. */
 
 #include "surface.h"
+#include "bridge.h"
 #include "transport.h"
 
 zend_class_entry *grpc_ce_channel;
@@ -15,7 +16,6 @@ static zend_object_handlers grpc_channel_credentials_handlers;
 static zend_object_handlers grpc_call_credentials_handlers;
 static zend_object_handlers grpc_timeval_handlers;
 
-PHP_METHOD(Call, startBatch);
 PHP_METHOD(Call, cancel);
 PHP_METHOD(Call, getPeer);
 

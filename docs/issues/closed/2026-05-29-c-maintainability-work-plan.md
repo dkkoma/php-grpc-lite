@@ -611,6 +611,7 @@ HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表
 - `include/` は作らず、外部公開C APIは提供しない方針を維持した。
 - PR follow-upでPHP拡張repoの慣例に寄せ、rootのentrypoint sourceを `main.c` から `grpc.c` へrenameし、module declaration / version用の `php_grpc.h` を追加した。
 - PR follow-upで `Grpc\*` class registrationを `grpc_lite_register_surface_classes()` として `src/surface.c` 側へ寄せ、method table、object handlers、create/free callbacksを `static` に戻した。
+- PR follow-upで `Grpc\Call::startBatch()` のmethod implementation宣言を `src/bridge.h` へ移し、`surface.c` からbridgeへの依存をheaderで明示した。
 
 最終検証:
 
