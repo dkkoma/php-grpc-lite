@@ -11,17 +11,6 @@ ZEND_DECLARE_MODULE_GLOBALS(grpc_lite)
 
 int le_server_streaming_call_state;
 
-zend_class_entry *grpc_ce_channel;
-zend_class_entry *grpc_ce_call;
-zend_class_entry *grpc_ce_channel_credentials;
-zend_class_entry *grpc_ce_call_credentials;
-zend_class_entry *grpc_ce_timeval;
-zend_object_handlers grpc_channel_handlers;
-zend_object_handlers grpc_call_handlers;
-zend_object_handlers grpc_channel_credentials_handlers;
-zend_object_handlers grpc_call_credentials_handlers;
-zend_object_handlers grpc_timeval_handlers;
-
 PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("grpc_lite.http2_stream_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_stream_window_size, zend_grpc_lite_globals, grpc_lite_globals)
     STD_PHP_INI_ENTRY("grpc_lite.http2_connection_window_size", "8388608", PHP_INI_SYSTEM, OnUpdateLong, http2_connection_window_size, zend_grpc_lite_globals, grpc_lite_globals)
@@ -75,53 +64,17 @@ PHP_GSHUTDOWN_FUNCTION(grpc_lite)
 
 PHP_MINIT_FUNCTION(grpc_lite)
 {
-    zend_class_entry ce;
 #ifdef SIGPIPE
     signal(SIGPIPE, SIG_IGN);
 #endif
     REGISTER_INI_ENTRIES();
     le_server_streaming_call_state = zend_register_list_destructors_ex(server_streaming_call_state_dtor, NULL, "grpc_lite_server_streaming_call_state", module_number);
 
-    memcpy(&grpc_channel_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
-    grpc_channel_credentials_handlers.offset = XtOffsetOf(grpc_lite_channel_credentials_obj, std);
-    grpc_channel_credentials_handlers.free_obj = grpc_lite_channel_credentials_free_object;
-    grpc_channel_credentials_handlers.clone_obj = NULL;
-    INIT_CLASS_ENTRY(ce, "Grpc\\ChannelCredentials", channel_credentials_methods);
-    grpc_ce_channel_credentials = zend_register_internal_class(&ce);
-    grpc_ce_channel_credentials->create_object = grpc_lite_channel_credentials_create_object;
+    if (grpc_lite_register_surface_classes() != SUCCESS) {
+        return FAILURE;
+    }
 
-    memcpy(&grpc_call_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
-    grpc_call_credentials_handlers.offset = XtOffsetOf(grpc_lite_call_credentials_obj, std);
-    grpc_call_credentials_handlers.free_obj = grpc_lite_call_credentials_free_object;
-    grpc_call_credentials_handlers.clone_obj = NULL;
-    INIT_CLASS_ENTRY(ce, "Grpc\\CallCredentials", call_credentials_methods);
-    grpc_ce_call_credentials = zend_register_internal_class(&ce);
-    grpc_ce_call_credentials->create_object = grpc_lite_call_credentials_create_object;
-
-    memcpy(&grpc_timeval_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
-    grpc_timeval_handlers.offset = XtOffsetOf(grpc_lite_timeval_obj, std);
-    grpc_timeval_handlers.clone_obj = NULL;
-    INIT_CLASS_ENTRY(ce, "Grpc\\Timeval", timeval_methods);
-    grpc_ce_timeval = zend_register_internal_class(&ce);
-    grpc_ce_timeval->create_object = grpc_lite_timeval_create_object;
-
-    memcpy(&grpc_channel_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
-    grpc_channel_handlers.offset = XtOffsetOf(grpc_lite_channel_obj, std);
-    grpc_channel_handlers.free_obj = grpc_lite_channel_free_object;
-    grpc_channel_handlers.clone_obj = NULL;
-    INIT_CLASS_ENTRY(ce, "Grpc\\Channel", channel_methods);
-    grpc_ce_channel = zend_register_internal_class(&ce);
-    grpc_ce_channel->create_object = grpc_lite_channel_create_object;
-
-    memcpy(&grpc_call_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
-    grpc_call_handlers.offset = XtOffsetOf(grpc_lite_call_obj, std);
-    grpc_call_handlers.free_obj = grpc_lite_call_free_object;
-    grpc_call_handlers.clone_obj = NULL;
-    INIT_CLASS_ENTRY(ce, "Grpc\\Call", call_methods);
-    grpc_ce_call = zend_register_internal_class(&ce);
-    grpc_ce_call->create_object = grpc_lite_call_create_object;
-
-    REGISTER_STRING_CONSTANT("Grpc\\VERSION", "0.1.0", CONST_CS | CONST_PERSISTENT);
+    REGISTER_STRING_CONSTANT("Grpc\\VERSION", PHP_GRPC_VERSION, CONST_CS | CONST_PERSISTENT);
     REGISTER_LONG_CONSTANT("Grpc\\STATUS_OK", GRPC_STATUS_OK, CONST_CS | CONST_PERSISTENT);
     REGISTER_LONG_CONSTANT("Grpc\\STATUS_CANCELLED", GRPC_STATUS_CANCELLED, CONST_CS | CONST_PERSISTENT);
     REGISTER_LONG_CONSTANT("Grpc\\STATUS_UNKNOWN", GRPC_STATUS_UNKNOWN, CONST_CS | CONST_PERSISTENT);

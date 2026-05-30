@@ -3,7 +3,23 @@
 #include "surface.h"
 #include "transport.h"
 
-zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce)
+zend_class_entry *grpc_ce_channel;
+zend_class_entry *grpc_ce_call;
+zend_class_entry *grpc_ce_channel_credentials;
+zend_class_entry *grpc_ce_call_credentials;
+zend_class_entry *grpc_ce_timeval;
+
+static zend_object_handlers grpc_channel_handlers;
+static zend_object_handlers grpc_call_handlers;
+static zend_object_handlers grpc_channel_credentials_handlers;
+static zend_object_handlers grpc_call_credentials_handlers;
+static zend_object_handlers grpc_timeval_handlers;
+
+PHP_METHOD(Call, startBatch);
+PHP_METHOD(Call, cancel);
+PHP_METHOD(Call, getPeer);
+
+static zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce)
 {
     grpc_lite_channel_credentials_obj *obj = zend_object_alloc(sizeof(grpc_lite_channel_credentials_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -12,7 +28,7 @@ zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce)
     return &obj->std;
 }
 
-void grpc_lite_channel_credentials_free_object(zend_object *object)
+static void grpc_lite_channel_credentials_free_object(zend_object *object)
 {
     grpc_lite_channel_credentials_obj *obj = grpc_lite_channel_credentials_fetch(object);
     if (obj->root_certs != NULL) {
@@ -122,7 +138,7 @@ static zend_long grpc_lite_saturating_subtract(zend_long left, zend_long right)
     return grpc_lite_saturating_add(left, -right);
 }
 
-zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce)
+static zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce)
 {
     grpc_lite_call_credentials_obj *obj = zend_object_alloc(sizeof(grpc_lite_call_credentials_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -132,7 +148,7 @@ zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce)
     return &obj->std;
 }
 
-void grpc_lite_call_credentials_free_object(zend_object *object)
+static void grpc_lite_call_credentials_free_object(zend_object *object)
 {
     grpc_lite_call_credentials_obj *obj = grpc_lite_call_credentials_fetch(object);
     zval_ptr_dtor(&obj->callback);
@@ -157,7 +173,7 @@ PHP_METHOD(CallCredentials, createFromPlugin)
     ZVAL_COPY(&obj->callback, callback);
 }
 
-zend_object *grpc_lite_timeval_create_object(zend_class_entry *ce)
+static zend_object *grpc_lite_timeval_create_object(zend_class_entry *ce)
 {
     grpc_lite_timeval_obj *obj = zend_object_alloc(sizeof(grpc_lite_timeval_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -252,7 +268,7 @@ PHP_METHOD(Timeval, zero)
     Z_GRPC_LITE_TIMEVAL_P(return_value)->microseconds = 0;
 }
 
-zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
+static zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
 {
     grpc_lite_channel_obj *obj = zend_object_alloc(sizeof(grpc_lite_channel_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -299,7 +315,7 @@ static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
     obj->initialized = false;
 }
 
-void grpc_lite_channel_free_object(zend_object *object)
+static void grpc_lite_channel_free_object(zend_object *object)
 {
     grpc_lite_channel_obj *obj = grpc_lite_channel_fetch(object);
     grpc_lite_channel_clear_fields(obj);
@@ -598,7 +614,7 @@ PHP_METHOD(Channel, watchConnectivityState)
     RETURN_FALSE;
 }
 
-zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
+static zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
 {
     grpc_lite_call_obj *obj = zend_object_alloc(sizeof(grpc_lite_call_obj), ce);
     zend_object_std_init(&obj->std, ce);
@@ -614,7 +630,7 @@ zend_object *grpc_lite_call_create_object(zend_class_entry *ce)
     return &obj->std;
 }
 
-void grpc_lite_call_free_object(zend_object *object)
+static void grpc_lite_call_free_object(zend_object *object)
 {
     grpc_lite_call_obj *obj = grpc_lite_call_fetch(object);
     zval_ptr_dtor(&obj->channel);
@@ -682,6 +698,9 @@ PHP_METHOD(Call, setCredentials)
     ZVAL_COPY(&obj->credentials, credentials);
 }
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_no_args, 0, 0, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_channel_construct, 0, 0, 2)
     ZEND_ARG_TYPE_INFO(0, target, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, opts, IS_ARRAY, 0)
@@ -718,7 +737,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_timeval_other, 0, 0, 1)
     ZEND_ARG_OBJ_INFO(0, other, Grpc\\Timeval, 0)
 ZEND_END_ARG_INFO()
 
-const zend_function_entry channel_credentials_methods[] = {
+static const zend_function_entry channel_credentials_methods[] = {
     PHP_ME(ChannelCredentials, createInsecure, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_ME(ChannelCredentials, createSsl, arginfo_channel_credentials_create_ssl, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_ME(ChannelCredentials, createDefault, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
@@ -728,12 +747,12 @@ const zend_function_entry channel_credentials_methods[] = {
     PHP_FE_END
 };
 
-const zend_function_entry call_credentials_methods[] = {
+static const zend_function_entry call_credentials_methods[] = {
     PHP_ME(CallCredentials, createFromPlugin, arginfo_call_credentials_create_plugin, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_FE_END
 };
 
-const zend_function_entry timeval_methods[] = {
+static const zend_function_entry timeval_methods[] = {
     PHP_ME(Timeval, __construct, arginfo_timeval_construct, ZEND_ACC_PUBLIC)
     PHP_ME(Timeval, now, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_ME(Timeval, infFuture, arginfo_no_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
@@ -747,7 +766,7 @@ const zend_function_entry timeval_methods[] = {
     PHP_FE_END
 };
 
-const zend_function_entry channel_methods[] = {
+static const zend_function_entry channel_methods[] = {
     PHP_ME(Channel, __construct, arginfo_channel_construct, ZEND_ACC_PUBLIC)
     PHP_ME(Channel, getTarget, arginfo_no_args, ZEND_ACC_PUBLIC)
     PHP_ME(Channel, close, arginfo_no_args, ZEND_ACC_PUBLIC)
@@ -755,3 +774,72 @@ const zend_function_entry channel_methods[] = {
     PHP_ME(Channel, watchConnectivityState, arginfo_channel_watch_connectivity_state, ZEND_ACC_PUBLIC)
     PHP_FE_END
 };
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_call_construct, 0, 0, 3)
+    ZEND_ARG_OBJ_INFO(0, channel, Grpc\\Channel, 0)
+    ZEND_ARG_TYPE_INFO(0, method, IS_STRING, 0)
+    ZEND_ARG_OBJ_INFO(0, deadline, Grpc\\Timeval, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_call_start_batch, 0, 0, 1)
+    ZEND_ARG_TYPE_INFO(0, batch, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_call_set_credentials, 0, 0, 1)
+    ZEND_ARG_OBJ_INFO(0, credentials, Grpc\\CallCredentials, 0)
+ZEND_END_ARG_INFO()
+
+static const zend_function_entry call_methods[] = {
+    PHP_ME(Call, __construct, arginfo_call_construct, ZEND_ACC_PUBLIC)
+    PHP_ME(Call, startBatch, arginfo_call_start_batch, ZEND_ACC_PUBLIC)
+    PHP_ME(Call, setCredentials, arginfo_call_set_credentials, ZEND_ACC_PUBLIC)
+    PHP_ME(Call, cancel, arginfo_no_args, ZEND_ACC_PUBLIC)
+    PHP_ME(Call, getPeer, arginfo_no_args, ZEND_ACC_PUBLIC)
+    PHP_FE_END
+};
+
+int grpc_lite_register_surface_classes(void)
+{
+    zend_class_entry ce;
+
+    memcpy(&grpc_channel_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
+    grpc_channel_credentials_handlers.offset = XtOffsetOf(grpc_lite_channel_credentials_obj, std);
+    grpc_channel_credentials_handlers.free_obj = grpc_lite_channel_credentials_free_object;
+    grpc_channel_credentials_handlers.clone_obj = NULL;
+    INIT_CLASS_ENTRY(ce, "Grpc\\ChannelCredentials", channel_credentials_methods);
+    grpc_ce_channel_credentials = zend_register_internal_class(&ce);
+    grpc_ce_channel_credentials->create_object = grpc_lite_channel_credentials_create_object;
+
+    memcpy(&grpc_call_credentials_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
+    grpc_call_credentials_handlers.offset = XtOffsetOf(grpc_lite_call_credentials_obj, std);
+    grpc_call_credentials_handlers.free_obj = grpc_lite_call_credentials_free_object;
+    grpc_call_credentials_handlers.clone_obj = NULL;
+    INIT_CLASS_ENTRY(ce, "Grpc\\CallCredentials", call_credentials_methods);
+    grpc_ce_call_credentials = zend_register_internal_class(&ce);
+    grpc_ce_call_credentials->create_object = grpc_lite_call_credentials_create_object;
+
+    memcpy(&grpc_timeval_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
+    grpc_timeval_handlers.offset = XtOffsetOf(grpc_lite_timeval_obj, std);
+    grpc_timeval_handlers.clone_obj = NULL;
+    INIT_CLASS_ENTRY(ce, "Grpc\\Timeval", timeval_methods);
+    grpc_ce_timeval = zend_register_internal_class(&ce);
+    grpc_ce_timeval->create_object = grpc_lite_timeval_create_object;
+
+    memcpy(&grpc_channel_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
+    grpc_channel_handlers.offset = XtOffsetOf(grpc_lite_channel_obj, std);
+    grpc_channel_handlers.free_obj = grpc_lite_channel_free_object;
+    grpc_channel_handlers.clone_obj = NULL;
+    INIT_CLASS_ENTRY(ce, "Grpc\\Channel", channel_methods);
+    grpc_ce_channel = zend_register_internal_class(&ce);
+    grpc_ce_channel->create_object = grpc_lite_channel_create_object;
+
+    memcpy(&grpc_call_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
+    grpc_call_handlers.offset = XtOffsetOf(grpc_lite_call_obj, std);
+    grpc_call_handlers.free_obj = grpc_lite_call_free_object;
+    grpc_call_handlers.clone_obj = NULL;
+    INIT_CLASS_ENTRY(ce, "Grpc\\Call", call_methods);
+    grpc_ce_call = zend_register_internal_class(&ce);
+    grpc_ce_call->create_object = grpc_lite_call_create_object;
+
+    return SUCCESS;
+}

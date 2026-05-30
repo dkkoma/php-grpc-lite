@@ -95,7 +95,7 @@ messageごとに `responses()` がpullするため、現在の実装はbatch dra
 
 ## 3. 拡張が登録するPHP surface
 
-`grpc.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。class/object実装は `src/surface.c`、official wrapperから呼ばれる `Grpc\Call` bridgeは `src/bridge.c` にあります。
+`grpc.c` の `PHP_MINIT_FUNCTION(grpc_lite)` はmodule lifecycleとINI / constants登録を担当し、PHP class登録は `src/surface.c` の `grpc_lite_register_surface_classes()` に委譲します。class/object実装とmethod tableは `src/surface.c`、official wrapperから呼ばれる `Grpc\Call::startBatch()` bridgeは `src/bridge.c` にあります。
 
 | surface | 用途 |
 |---|---|

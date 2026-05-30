@@ -8,4 +8,6 @@
 extern zend_module_entry grpc_module_entry;
 #define phpext_grpc_ptr &grpc_module_entry
 
+extern const zend_function_entry grpc_lite_functions[];
+
 #endif /* PHP_GRPC_H */

@@ -70,11 +70,6 @@ extern zend_class_entry *grpc_ce_call;
 extern zend_class_entry *grpc_ce_channel_credentials;
 extern zend_class_entry *grpc_ce_call_credentials;
 extern zend_class_entry *grpc_ce_timeval;
-extern zend_object_handlers grpc_channel_handlers;
-extern zend_object_handlers grpc_call_handlers;
-extern zend_object_handlers grpc_channel_credentials_handlers;
-extern zend_object_handlers grpc_call_credentials_handlers;
-extern zend_object_handlers grpc_timeval_handlers;
 
 static inline grpc_lite_channel_credentials_obj *grpc_lite_channel_credentials_fetch(zend_object *obj)
 {
@@ -107,29 +102,6 @@ static inline grpc_lite_timeval_obj *grpc_lite_timeval_fetch(zend_object *obj)
 #define Z_GRPC_LITE_CALL_P(zv) grpc_lite_call_fetch(Z_OBJ_P((zv)))
 #define Z_GRPC_LITE_TIMEVAL_P(zv) grpc_lite_timeval_fetch(Z_OBJ_P((zv)))
 
-PHP_METHOD(Call, __construct);
-PHP_METHOD(Call, setCredentials);
-PHP_METHOD(Call, cancel);
-PHP_METHOD(Call, getPeer);
-
-ZEND_BEGIN_ARG_INFO_EX(arginfo_no_args, 0, 0, 0)
-ZEND_END_ARG_INFO()
-
-zend_object *grpc_lite_channel_credentials_create_object(zend_class_entry *ce);
-void grpc_lite_channel_credentials_free_object(zend_object *object);
-zend_object *grpc_lite_call_credentials_create_object(zend_class_entry *ce);
-void grpc_lite_call_credentials_free_object(zend_object *object);
-zend_object *grpc_lite_timeval_create_object(zend_class_entry *ce);
-zend_object *grpc_lite_channel_create_object(zend_class_entry *ce);
-void grpc_lite_channel_free_object(zend_object *object);
-zend_object *grpc_lite_call_create_object(zend_class_entry *ce);
-void grpc_lite_call_free_object(zend_object *object);
-
-extern const zend_function_entry channel_credentials_methods[];
-extern const zend_function_entry call_credentials_methods[];
-extern const zend_function_entry timeval_methods[];
-extern const zend_function_entry channel_methods[];
-extern const zend_function_entry call_methods[];
-extern const zend_function_entry grpc_lite_functions[];
+int grpc_lite_register_surface_classes(void);
 
 #endif /* PHP_GRPC_LITE_SURFACE_H */

@@ -798,27 +798,3 @@ PHP_METHOD(Call, getPeer)
     }
     RETURN_STR_COPY(channel->target);
 }
-
-ZEND_BEGIN_ARG_INFO_EX(arginfo_call_construct, 0, 0, 3)
-    ZEND_ARG_OBJ_INFO(0, channel, Grpc\\Channel, 0)
-    ZEND_ARG_TYPE_INFO(0, method, IS_STRING, 0)
-    ZEND_ARG_OBJ_INFO(0, deadline, Grpc\\Timeval, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_INFO_EX(arginfo_call_start_batch, 0, 0, 1)
-    ZEND_ARG_TYPE_INFO(0, batch, IS_ARRAY, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_INFO_EX(arginfo_call_set_credentials, 0, 0, 1)
-    ZEND_ARG_OBJ_INFO(0, credentials, Grpc\\CallCredentials, 0)
-ZEND_END_ARG_INFO()
-
-
-const zend_function_entry call_methods[] = {
-    PHP_ME(Call, __construct, arginfo_call_construct, ZEND_ACC_PUBLIC)
-    PHP_ME(Call, startBatch, arginfo_call_start_batch, ZEND_ACC_PUBLIC)
-    PHP_ME(Call, setCredentials, arginfo_call_set_credentials, ZEND_ACC_PUBLIC)
-    PHP_ME(Call, cancel, arginfo_no_args, ZEND_ACC_PUBLIC)
-    PHP_ME(Call, getPeer, arginfo_no_args, ZEND_ACC_PUBLIC)
-    PHP_FE_END
-};
