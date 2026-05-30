@@ -38,7 +38,7 @@
 | `docs/issues/closed/2026-05-31-exemplar-test-discoverability-and-gates.md` | 長いPHPT、PHPUnit CI、lifecycle/slow-consumer gate整理 | CI時間・flake riskあり |
 | `docs/issues/open/2026-05-31-exemplar-transport-header-boundaries.md` | `transport.h` / `common.h` のheader boundary整理 | 宣言移動のみならなし。hot path変更時は別途計測 |
 | `docs/issues/open/2026-05-31-exemplar-connection-ownership-model.md` | connection / stream / resource ownership invariant整理 | bookkeeping変更時は計測候補 |
-| `docs/issues/open/2026-05-31-exemplar-grpc-call-exchange-state-map.md` | `grpc_call` field mapと分割採否 | 高。実装時before/after必須 |
+| `docs/issues/closed/2026-05-31-exemplar-grpc-call-exchange-state-map.md` | `grpc_call` field mapと分割採否 | 高。実装時before/after必須 |
 | `docs/issues/open/2026-05-31-exemplar-protocol-classification-boundary.md` | protocol classification と transport action分離 | 高。実装時before/after必須 |
 
 ## Non-Goals
@@ -151,6 +151,7 @@
 - 2026-05-31: 作業単位ごとに6本の子issueへ分割。
 - 2026-05-31: fixture / verification / reading guide / fuzz README整備の子issueを完了。
 - 2026-05-31: test discoverability / gate整理の子issueを完了。
+- 2026-05-31: `grpc_call` exchange state mapの子issueを完了。field分割は未実施。
 
 ## Verification
 

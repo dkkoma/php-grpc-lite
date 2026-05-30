@@ -1,6 +1,6 @@
 # お手本化: grpc_call exchange state map と分割判断
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
 - Branch: main
 - Owner: Codex
@@ -60,12 +60,16 @@
 ## Progress
 
 - 2026-05-31: 親issueから `grpc_call` exchange state作業を子issue化。
+- 2026-05-31: `docs/grpc-call-exchange-state.md` を追加し、`grpc_call` fieldを責務、lifetime、hotnessで分類。
+- 2026-05-31: `docs/code-reading-guide.md` からfield mapへリンク。
+- 2026-05-31: sub-struct化は実装しない判断を記録。実装する場合はbefore/after benchmarkとdomain model review必須。
 
 ## Verification
 
 field mapだけなら:
 
-- `git diff --check`
+- `git diff --check`: PASS
+- ドキュメント変更のみ。C実装・field配置は未変更のため、C unit / PHPT / benchmarkは未実行。
 
 実装する場合:
 
@@ -79,6 +83,7 @@ field mapだけなら:
 ## Decision Log
 
 - 2026-05-31: `grpc_call` 分割はお手本化に有効だが、性能影響があり得るためdoc mapを先に作る。
+- 2026-05-31: 現時点では `grpc_call` を分割しない。single structを維持し、field ownership mapを教材・レビュー補助として使う。
 
 ## Close Criteria
 

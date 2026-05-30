@@ -91,7 +91,8 @@ HTTP/2 / gRPC transport、persistent connection、deadline、metadata/status、R
 9. `src/server_streaming_call.c`
 10. `src/transport.c`
 11. `src/grpc_exchange_state.h` / `src/grpc_result.h`
-12. `src/internal.h`
+12. `docs/grpc-call-exchange-state.md`
+13. `src/internal.h`
 
 ## 1. 生成クライアント相当
 
@@ -229,7 +230,7 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 
 protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。connection自体がdead/drainingでなければpersistent cacheには残します。
 
-1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
+1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
 
 ## 7. persistent connection
 
