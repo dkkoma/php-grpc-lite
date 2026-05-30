@@ -59,7 +59,7 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 | `payload-streaming` | streaming payload size 別の messages/sec と stream latency |
 | `metadata-header` | request / initial / trailing metadata 数別の unary latency |
 
-franken-go backend を含める場合は、対象suiteを明確にした専用runnerを追加する。通常比較は `compare.sh <suite>` を使う。
+通常比較は `compare.sh <suite>` を使う。
 
 ## ベンチ文書を書く基準
 

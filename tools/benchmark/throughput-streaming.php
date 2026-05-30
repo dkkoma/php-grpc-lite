@@ -84,9 +84,6 @@ $benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementatio
 register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $clientOptions = [];
-if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
-    $clientOptions['grpc_lite.backend'] = 'franken-go';
-}
 $client = StreamingBenchHelper::client($target, $clientOptions);
 $request = StreamingBenchHelper::request($messageCount, $payloadBytes, $serverDelayMs);
 $benchTelemetry->setContext('throughput_streaming', [

@@ -42,7 +42,7 @@ $client = new ExampleGrpcClient(
 
 ## Benchmark OTEL export
 
-Benchmark ベンチは任意で `otelop` へOTLP/HTTP exportできる。計測境界はphp-grpc-lite、公式 ext-grpc、franken-goで共通のPHP runner外側境界に揃える。
+Benchmark ベンチは任意で `otelop` へOTLP/HTTP exportできる。計測境界はphp-grpc-liteと公式 ext-grpcで共通のPHP runner外側境界に揃える。
 
 - RPC開始直前に `hrtime(true)` を取る。
 - RPC完了直後に `hrtime(true)` を取る。

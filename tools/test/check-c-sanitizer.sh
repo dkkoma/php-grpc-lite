@@ -63,13 +63,19 @@ docker compose run --build --rm \
     php_includes="$("$php_config_bin" --includes)"
     pkg_includes="$(pkg-config --cflags libnghttp2 openssl)"
 
-    for test_source in /workspace/ext/grpc/tests/unit/test_*.c; do
+    for test_source in /workspace/tests/unit/test_*.c; do
         test_name="$(basename "$test_source" .c)"
+        case "$test_name" in
+            test_protocol_core) core_source=/workspace/src/protocol_core.c ;;
+            test_status_core) core_source=/workspace/src/status_core.c ;;
+            test_transport_core) core_source=/workspace/src/transport_core.c ;;
+            *) echo "missing core source mapping for $test_name" >&2; exit 1 ;;
+        esac
         clang -D_GNU_SOURCE -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-variable \
             -O1 -g -fno-omit-frame-pointer $sanitizer_flags \
-            $php_includes $pkg_includes \
+            -I/workspace -I/workspace/src $php_includes $pkg_includes \
             -o "$unit_dir/$test_name" \
-            "$test_source" \
+            "$test_source" "$core_source" \
             $sanitizer_flags
         "$unit_dir/$test_name"
     done
@@ -78,7 +84,7 @@ docker compose run --build --rm \
         exit 0
     fi
 
-    cd /workspace/ext/grpc
+    cd /workspace
     make clean >/tmp/grpc-sanitizer-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     "$phpize_bin" >/tmp/grpc-sanitizer-phpize.log
@@ -90,8 +96,8 @@ docker compose run --build --rm \
 
     cd /workspace
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }
-    "${php_sanitized[@]}" -d extension=/workspace/ext/grpc/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
-        || { echo "grpc extension failed to load from /workspace/ext/grpc/modules/grpc.so" >&2; exit 1; }
+    "${php_sanitized[@]}" -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
+        || { echo "grpc extension failed to load from /workspace/modules/grpc.so" >&2; exit 1; }
 
     "${php_sanitized[@]}" -r '\''
         foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060] as $port) {
@@ -116,7 +122,7 @@ docker compose run --build --rm \
 
     cleanup_phpt_artifacts() {
         local test_file artifact_base
-        for test_file in ext/grpc/tests/*.phpt; do
+        for test_file in tests/phpt/*.phpt; do
             artifact_base="${test_file%.phpt}"
             rm -f \
                 "${artifact_base}.log" \
@@ -140,7 +146,7 @@ SH
 
     TEST_PHP_EXECUTABLE="$test_php" \
         "${php_sanitized[@]}" "$run_tests" -q \
-        -d extension=/workspace/ext/grpc/modules/grpc.so \
-        /workspace/ext/grpc/tests
+        -d extension=/workspace/modules/grpc.so \
+        /workspace/tests/phpt
     cleanup_phpt_artifacts
 '

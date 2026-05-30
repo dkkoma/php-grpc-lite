@@ -77,9 +77,6 @@ $benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementatio
 register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $clientOptions = [];
-if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
-    $clientOptions['grpc_lite.backend'] = 'franken-go';
-}
 $client = UnaryBenchHelper::client($target, $clientOptions);
 $request = UnaryBenchHelper::request($payloadBytes, $serverDelayMs);
 $benchTelemetry->setContext('throughput_unary', [

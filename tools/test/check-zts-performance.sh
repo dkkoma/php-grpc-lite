@@ -21,14 +21,14 @@ build_extension() {
     echo "== build extension for $label =="
     docker compose run --build --rm "$service" bash -lc '
         set -euo pipefail
-        cd /workspace/ext/grpc
+        cd /workspace
         make clean >/tmp/grpc-zts-perf-clean.log 2>&1 || true
         rm -rf .libs modules *.lo *.o *.dep
         phpize >/tmp/grpc-zts-perf-phpize.log
         ./configure --enable-grpc >/tmp/grpc-zts-perf-configure.log
         make -j$(nproc) >/tmp/grpc-zts-perf-make.log
         cd /workspace
-        php -d extension=/workspace/ext/grpc/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\''
+        php -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\''
     '
 }
 

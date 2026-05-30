@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Fast local development gate for changes touching ext/grpc C code or PHP
+# Fast local development gate for changes touching the grpc C extension or PHP
 # wrapper behavior. Release-only stress and Valgrind gates stay in
 # check-native-release-hardening.sh.
 #

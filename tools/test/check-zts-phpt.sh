@@ -11,7 +11,7 @@ docker compose run --build --rm dev-zts bash -lc '
     php -r '\''exit(PHP_ZTS ? 0 : 1);'\'' \
         || { echo "dev-zts PHP is not a ZTS build" >&2; exit 1; }
 
-    cd /workspace/ext/grpc
+    cd /workspace
     make clean >/tmp/grpc-zts-phpt-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     phpize >/tmp/grpc-zts-phpize.log
@@ -20,8 +20,8 @@ docker compose run --build --rm dev-zts bash -lc '
 
     cd /workspace
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }
-    php -d extension=/workspace/ext/grpc/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
-        || { echo "grpc extension failed to load from /workspace/ext/grpc/modules/grpc.so on ZTS PHP" >&2; exit 1; }
+    php -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
+        || { echo "grpc extension failed to load from /workspace/modules/grpc.so on ZTS PHP" >&2; exit 1; }
     php -r '\''
         foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060] as $port) {
             $connected = false;
@@ -45,7 +45,7 @@ docker compose run --build --rm dev-zts bash -lc '
 
     cleanup_phpt_artifacts() {
         local test_file artifact_base
-        for test_file in ext/grpc/tests/*.phpt; do
+        for test_file in tests/phpt/*.phpt; do
             artifact_base="${test_file%.phpt}"
             rm -f \
                 "${artifact_base}.log" \
@@ -60,7 +60,7 @@ docker compose run --build --rm dev-zts bash -lc '
     cleanup_phpt_artifacts
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
-        -d extension=/workspace/ext/grpc/modules/grpc.so \
-        /workspace/ext/grpc/tests
+        -d extension=/workspace/modules/grpc.so \
+        /workspace/tests/phpt
     cleanup_phpt_artifacts
 '

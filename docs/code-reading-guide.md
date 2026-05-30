@@ -1,6 +1,6 @@
 # コードリーディングガイド
 
-このガイドは、現行の `php-grpc-lite` を読むための入口です。過去の純PHP/libcurl経路は前提にせず、現在の公式 `grpc/grpc` wrapper + このrepositoryの `ext/grpc` 実装だけを扱います。
+このガイドは、現行の `php-grpc-lite` を読むための入口です。過去の純PHP/libcurl経路は前提にせず、現在の公式 `grpc/grpc` wrapper + repository rootに置かれた `grpc` extension実装だけを扱います。
 
 ## 全体像
 
@@ -10,11 +10,11 @@ generated client / gax
      -> Grpc\BaseStub
      -> Grpc\UnaryCall / Grpc\ServerStreamingCall
   -> Grpc\Call
-  -> ext/grpc/main.c
-     -> surface.c
-     -> transport.c
-     -> unary_call.c / server_streaming_call.c
-     -> bridge.c
+  -> grpc.c
+     -> src/surface.c
+     -> src/transport.c
+     -> src/unary_call.c / src/server_streaming_call.c
+     -> src/wrapper_adapter.c
      -> nghttp2 + socket / OpenSSL
 ```
 
@@ -28,13 +28,14 @@ HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレ
 2. `vendor/grpc/grpc/src/lib/BaseStub.php`
 3. `vendor/grpc/grpc/src/lib/UnaryCall.php`
 4. `vendor/grpc/grpc/src/lib/ServerStreamingCall.php`
-5. `ext/grpc/main.c`
-6. `ext/grpc/surface.c`
-7. `ext/grpc/bridge.c`
-8. `ext/grpc/unary_call.c`
-9. `ext/grpc/server_streaming_call.c`
-10. `ext/grpc/transport.c`
-11. `ext/grpc/internal.h`
+5. `grpc.c`
+6. `src/surface.c`
+7. `src/wrapper_adapter.c`
+8. `src/unary_call.c`
+9. `src/server_streaming_call.c`
+10. `src/transport.c`
+11. `src/grpc_exchange_state.h` / `src/grpc_result.h`
+12. `src/internal.h`
 
 ## 1. 生成クライアント相当
 
@@ -95,7 +96,7 @@ messageごとに `responses()` がpullするため、現在の実装はbatch dra
 
 ## 3. 拡張が登録するPHP surface
 
-`ext/grpc/main.c` の `PHP_MINIT_FUNCTION(grpc_lite)` が次を登録します。class/object実装は `ext/grpc/surface.c`、official wrapperから呼ばれる `Grpc\Call` bridgeは `ext/grpc/bridge.c` にあります。
+`grpc.c` の `PHP_MINIT_FUNCTION(grpc_lite)` はmodule lifecycleとINI / constants登録を担当し、PHP class登録は `src/surface.c` の `grpc_lite_register_surface_classes()` に委譲します。class/object実装、method table、`Grpc\Call` の単純なlifecycle/status参照methodは `src/surface.c`、official wrapperから呼ばれる `Grpc\Call::startBatch()` adapterは `src/wrapper_adapter.c` にあります。`src/surface.c` は `src/wrapper_adapter.h` を通じてそのmethod implementationを参照します。
 
 | surface | 用途 |
 |---|---|
@@ -153,11 +154,11 @@ official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
 
 unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connection()` が走ります。server streamingは最初の `RECV_MESSAGE` でC stream resourceを開き、以後C helperで1 messageずつ返します。
 
-`ext/grpc/bridge.c` は official wrapper の `Grpc\Call` batch API を受け、`ext/grpc/unary_call.c` と `ext/grpc/server_streaming_call.c` の production RPC helperへ委譲します。bench build限定のdiagnostic PHP関数は `ext/grpc/bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
+`src/wrapper_adapter.c` は official wrapper の `Grpc\Call` batch API を受け、`src/unary_call.c` と `src/server_streaming_call.c` の production RPC helperへ委譲します。bench build限定のdiagnostic PHP関数は `src/diagnostic/bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
 
 ## 6. HTTP/2 transport
 
-`ext/grpc/transport.c` はC拡張内にincludeされるprivate implementationです。主な責務は次です。
+`src/transport.c` はC拡張内のprivate implementationです。主な責務は次です。
 
 - TCP connect、TLS/mTLS handshake、ALPN h2確認
 - nghttp2 session/callback設定
@@ -172,6 +173,8 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 
 protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。connection自体がdead/drainingでなければpersistent cacheには残します。
 
+1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
+
 ## 7. persistent connection
 
 connection cacheはprocess-localです。FPMでは同一worker process内のrequestをまたいで再利用されます。processをまたぐ共有はしません。
@@ -184,8 +187,8 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 
 | テスト | 見るもの |
 |---|---|
-| `ext/grpc/tests/unit/*.c` | I/Oに依存しないgRPC protocol helperとstatus taxonomyのC unit gate |
-| `ext/grpc/tests/*.phpt` | C拡張surface、INI、object lifecycle、basic unary/server streaming、deadline status、TLS/mTLS baseline、protocol error、metadata/call credentials、transport control semantics、resource limitsのPHPT gate |
+| `tests/unit/*.c` | I/Oに依存しないgRPC protocol helperとstatus taxonomyのC unit gate |
+| `tests/phpt/*.phpt` | C拡張surface、INI、object lifecycle、basic unary/server streaming、deadline status、TLS/mTLS baseline、protocol error、metadata/call credentials、transport control semantics、resource limitsのPHPT gate |
 | `tests/Integration/DeadlineTest.php` | deadlineのelapsed/count/immediate timeoutなど、PHPT baselineより細かいclient-side挙動 |
 | `tests/Integration/CompressionTest.php` | server streaming compression、grpc-status併用、stream-local failure後のrecovery |
 | `tests/Integration/HttpValidationTest.php` | PHPT baselineにないcontent-type / grpc-status validation variants |
@@ -199,11 +202,11 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 標準検証コマンド:
 
 ```bash
-docker compose run --rm dev sh -lc 'cd ext/grpc && make -j$(nproc)'
+docker compose run --rm dev sh -lc 'make -j$(nproc)'
 ./tools/test/check-c-unit.sh
 ./tools/test/check-phpt.sh
 ./tools/test/check-c-coverage.sh
-docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit
 ```
 
 `check-c-unit.sh` は pure protocol helperとstatus taxonomyだけを直接検証します。`check-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw lifecycle fixture `:50055`〜`:50060` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-c-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/c-lcov/` にtraceとHTMLを出力します。

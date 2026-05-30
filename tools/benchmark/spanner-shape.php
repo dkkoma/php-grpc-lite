@@ -97,9 +97,6 @@ $benchTelemetry = BenchTelemetry::requiredFromEnvironment($suite, $implementatio
 register_shutdown_function([$benchTelemetry, 'shutdown']);
 
 $clientOptions = ['php_grpc_lite.native_response_mode' => $nativeResponseMode];
-if ($implementation === 'php-grpc-lite' && $transport === 'franken-go') {
-    $clientOptions['grpc_lite.backend'] = 'franken-go';
-}
 $clientOptions += tlsClientOptions($suite, $tlsRoot);
 $unaryClient = UnaryBenchHelper::client($target, $clientOptions);
 $streamingClient = StreamingBenchHelper::client($target, $clientOptions);

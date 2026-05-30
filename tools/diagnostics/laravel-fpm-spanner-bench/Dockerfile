@@ -60,7 +60,7 @@ ENV HOME=/var/www \
 
 FROM app-base AS lite
 
-RUN cd /workspace/ext/grpc \
+RUN cd /workspace \
     && phpize \
     && ./configure --enable-grpc \
     && make -j"$(nproc)" \

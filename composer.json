@@ -30,7 +30,7 @@
     },
     "autoload": {
         "psr-4": {
-            "GrpcLite\\": "src/"
+            "GrpcLite\\": "support/php/GrpcLite/"
         }
     },
     "autoload-dev": {
@@ -50,7 +50,7 @@
     },
     "php-ext": {
         "extension-name": "grpc",
-        "build-path": "ext/grpc",
+        "build-path": ".",
         "support-nts": true,
         "support-zts": true
     }

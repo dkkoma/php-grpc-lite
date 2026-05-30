@@ -35,11 +35,11 @@ printf 'action=%s iterations=%s project=%s instance=%s database=%s emulator_host
 
 docker compose run --rm fpm-lifecycle-profile sh -lc "
     mkdir -p /workspace/$log_dir
-    php -d extension=/workspace/ext/grpc/modules/grpc.so -d opcache.enable_cli=1 /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php
+    php -d extension=/workspace/modules/grpc.so -d opcache.enable_cli=1 /workspace/tools/benchmark/laravel-spanner-app/bin/startup-warmup.php
     valgrind \
         --tool=callgrind \
         --callgrind-out-file=/workspace/$log_dir/callgrind.out \
-        php -d extension=/workspace/ext/grpc/modules/grpc.so -d opcache.enable_cli=1 \
+        php -d extension=/workspace/modules/grpc.so -d opcache.enable_cli=1 \
         /workspace/tools/benchmark/laravel-spanner-app/bin/profile-action.php \
         '$action' \
         '$iterations'

@@ -33,7 +33,10 @@ git archive "$tag" | tar -x -C "$build_dir"
 
 docker compose run --rm dev sh -lc "
     set -euo pipefail
-    cd /workspace/$build_dir/ext/grpc
+    cd /workspace/$build_dir
+    if [[ ! -f config.m4 && -f ext/grpc/config.m4 ]]; then
+        cd ext/grpc
+    fi
     phpize >/dev/null
     ./configure >/dev/null
     make -j\$(nproc) >/dev/null

@@ -15,12 +15,12 @@ valgrind="${VALGRIND:-0}"
 valgrind_log="var/test-results/native-lifecycle-stress-${BENCH_TAG:-$(date +%Y%m%d-%H%M%S)}.valgrind.log"
 mkdir -p "$(dirname "$valgrind_log")"
 
-php_args="-d extension=/workspace/ext/grpc/modules/grpc.so"
+php_args="-d extension=/workspace/modules/grpc.so"
 tool_args="tools/benchmark/native-lifecycle-stress.php --iterations=$iterations --message-count=$message_count --payload-bytes=$payload_bytes --sleep-us=$sleep_us"
 
 if [[ "$valgrind" == "1" ]]; then
     docker compose run --rm dev sh -lc "
-        cd /workspace/ext/grpc &&
+        cd /workspace &&
         make clean >/tmp/grpc-lifecycle-clean.log 2>&1 || true &&
         rm -rf .libs modules *.lo *.o *.dep &&
         phpize >/tmp/grpc-lifecycle-phpize.log &&
@@ -34,7 +34,7 @@ if [[ "$valgrind" == "1" ]]; then
     echo "Valgrind log: $valgrind_log"
 else
     docker compose run --rm dev sh -lc "
-        cd /workspace/ext/grpc &&
+        cd /workspace &&
         make clean >/tmp/grpc-lifecycle-clean.log 2>&1 || true &&
         rm -rf .libs modules *.lo *.o *.dep &&
         phpize >/tmp/grpc-lifecycle-phpize.log &&

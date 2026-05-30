@@ -4,7 +4,7 @@
 
 ## プロジェクトの現在地
 
-- `php-grpc-lite` は公式 `ext-grpc` のドロップイン代替を目指す、公式 `grpc/grpc` PHP wrapper + source-built `ext/grpc` HTTP/2 transport 拡張による gRPC クライアント実装。
+- `php-grpc-lite` は公式 `ext-grpc` のドロップイン代替を目指す、公式 `grpc/grpc` PHP wrapper + repository rootでsource buildする `grpc` HTTP/2 transport 拡張による gRPC クライアント実装。
 - Runtime transport は nghttp2 の 1 系統。libcurl fallback / transport selection option / 環境変数による transport 切替は持たない。
 - unary、server streaming、TLS、mTLS、Spanner emulator 経路まで実機検証済み。
 - 設計判断と進捗は `docs/SPEC.md`、実装の読み方は `docs/code-reading-guide.md`、HTTP/2/gRPCドメインモデルレビューは `docs/protocol-model-review-guide.md`、レビュー指摘履歴は `docs/reviews/`、ベンチ結果は `docs/benchmarks/` を参照する。
@@ -44,10 +44,10 @@
 - C拡張PHPT: `./tools/test/check-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051`〜`50054`、raw lifecycle fixture ports `50055`〜`50060` をpreflightで必須にする。
 - C拡張C unit: `./tools/test/check-c-unit.sh`。I/Oに依存しないprotocol helperとstatus taxonomyを対象にする。
 - C拡張C coverage: `./tools/test/check-c-coverage.sh`。C unitとPHPTを実行し、`var/coverage/c-lcov/` にlcov traceとHTMLを出力する。
-- 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/ext/grpc/modules/grpc.so vendor/bin/phpunit`
+- 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`
 - C拡張静的解析: `./tools/test/check-c-static-analysis.sh`
 - 単独ベンチ: `./bench/run.sh <suite>`
-- ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner代表shapeは `spanner-shape`、実経路smoke/regressionは `spanner-real-client` を使う。franken-go backend を含める場合は対象suiteを明確にした専用runnerを追加する。
+- ext-grpc 比較: `./bench/compare.sh <suite>`。Spanner代表shapeは `spanner-shape`、実経路smoke/regressionは `spanner-real-client` を使う。
 - official ext-grpc を比較対象としてimageへ組み込む場合は、特にpatchやcustom instrumentationが必要ない限り `ghcr.io/dkkoma/ext-grpc-artifacts` の `grpc.so` artifactを使う。通常のdiagnostic/bench Dockerfileで `pecl install grpc` はしない。
 - artifact tagは `<grpc-version>-php<php-version>-<distro>-<arch>-<profile>`。通常比較ではCPU世代依存を避けるため `pecl` を使い、php-grpc-lite側も追加最適化flagなしの同等条件で比較する。`optimized-amd64-skylake` はamd64専用で、実CPUがSkylake相当以上であることを確認した明示的な最適化比較だけに使う。Dockerfileでは `EXT_GRPC_ARTIFACT_ARCH` build argでartifact archを明示する。
 - ベンチ結果を docs に反映する場合は、対向サーバ、環境、代表値、揺れ幅、判断を一緒に書く。

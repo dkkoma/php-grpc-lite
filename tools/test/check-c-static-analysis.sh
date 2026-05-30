@@ -12,6 +12,8 @@ docker compose run --rm dev sh -lc '
 
     php_includes="$(php-config --includes)"
     pkg_includes="$(pkg-config --cflags libnghttp2 openssl)"
+    production_sources="grpc.c src/protocol_core.c src/status_core.c src/transport_core.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/wrapper_adapter.c"
+    bench_sources="$production_sources src/diagnostic/diagnostic.c src/diagnostic/bench.c"
 
     cppcheck \
         --enable=warning,performance,portability \
@@ -25,7 +27,7 @@ docker compose run --rm dev sh -lc '
         --std=c99 \
         $php_includes \
         $pkg_includes \
-        ext/grpc/main.c
+        $production_sources
 
     cppcheck \
         --enable=warning,performance,portability \
@@ -40,5 +42,5 @@ docker compose run --rm dev sh -lc '
         -DPHP_GRPC_LITE_ENABLE_BENCH=1 \
         $php_includes \
         $pkg_includes \
-        ext/grpc/main.c
+        $bench_sources
 '

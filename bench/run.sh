@@ -52,7 +52,7 @@ run_benchmark_php() {
 
     local php_args=()
     if [[ "$implementation" == "php-grpc-lite" ]]; then
-        php_args=(-d extension=/workspace/ext/grpc/modules/grpc.so)
+        php_args=(-d extension=/workspace/modules/grpc.so)
         if [[ -n "${BENCH_PHP_EXTRA_INI_ARGS:-}" ]]; then
             # shellcheck disable=SC2206
             php_args+=(${BENCH_PHP_EXTRA_INI_ARGS})
