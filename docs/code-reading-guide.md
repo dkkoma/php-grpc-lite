@@ -232,6 +232,8 @@ protocol failure、compression unsupported、invalid content-type、invalid grpc
 
 1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
 
+`src/transport.h` は現時点ではHTTP/2 transportのprivate aggregate headerです。connection、persistent cache、nghttp2 callback、request header builder、response parser、server streaming resource stateなどのboundaryと将来の分割順は `docs/transport-header-boundaries.md` に整理しています。
+
 ## 7. persistent connection
 
 connection cacheはprocess-localです。FPMでは同一worker process内のrequestをまたいで再利用されます。processをまたぐ共有はしません。

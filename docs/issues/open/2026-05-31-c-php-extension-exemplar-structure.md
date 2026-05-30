@@ -152,6 +152,7 @@
 - 2026-05-31: fixture / verification / reading guide / fuzz README整備の子issueを完了。
 - 2026-05-31: test discoverability / gate整理の子issueを完了。
 - 2026-05-31: `grpc_call` exchange state mapの子issueを完了。field分割は未実施。
+- 2026-05-31: transport header boundaryの方針docを追加。宣言移動は未実施のため子issueはopen継続。
 
 ## Verification
 

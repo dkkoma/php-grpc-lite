@@ -52,24 +52,25 @@
 ## Performance Notes
 
 - 宣言移動とinclude整理だけならruntime性能影響は想定しない。
-- `static inline` 化、関数境界変更、構造体field配置変更、request/response hot pathの呼び出し変更を入れる場合は、このissueではなく性能計測付きの別issueに切り出す。
+- `static inline` 化、function boundary変更、構造体field配置変更、request/response hot pathの呼び出し変更を入れる場合は、このissueではなく性能計測付きの別issueに切り出す。
 
 ## Progress
 
 - 2026-05-31: 親issueからtransport header boundary作業を子issue化。
+- 2026-05-31: `docs/transport-header-boundaries.md` を追加し、現在のconsumer、target header group、`common.h` include policy、safe first splitを整理。
+- 2026-05-31: 実装の宣言移動は未実施。`h2_request_headers` などから小さく分割する方針を記録し、issueはopenのまま継続する。
 
 ## Verification
 
-- `./tools/test/check-c-static-analysis.sh`
-- `./tools/test/check-c-unit.sh`
-- `./tools/test/check-phpt.sh`
-- 通常build / bench build load
-- `git diff --check`
-- HTTP/2/gRPC domain model review
+- `git diff --check`: PASS
+- 現時点のcommitはドキュメント追加のみ。C実装、header include、struct layout、callback pathは未変更のため、C static analysis / C unit / PHPT / build / bench build loadは未実行。
+- HTTP/2/gRPC domain model review: docs-only boundary reviewとして、production / diagnostic boundary、connection / stream / call / resource scopeを `docs/protocol-model-review-guide.md` の観点で確認。実装変更なしのためBlocker / High / Medium / Lowはnone。
 
 ## Decision Log
 
 - 2026-05-31: このissueでは挙動変更なしのheader boundary整理を主対象にする。
+- 2026-05-31: `transport.h` をすぐ分割しない。まずaggregate headerを残したままnarrow headerを追加する方針とし、declaration moveごとに小issue/小コミットへ分ける。
+- 2026-05-31: runtime性能影響を避けるため、field order変更、`static inline` 化、callback/parser実装変更はこのissueの対象外とする。
 
 ## Close Criteria
 
