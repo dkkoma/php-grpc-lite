@@ -628,6 +628,25 @@ HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表
 - PR follow-upの `cancel()` / `getPeer()` surface移動後、通常build / `Grpc\Call` class load、PHPT 15/15、C static analysis、`git diff --check` を確認した。
 - PR follow-upの `wrapper_adapter` rename / `startBatch()` 先頭移動後、通常build / `Grpc\Call` class load、bench build / bench entrypoint load、PHPT 15/15、C static analysis、PHPUnit 30 tests / 109 assertions、`git diff --check` を確認した。
 - PR follow-upの `call.h` 責務別分割後、通常build、bench build、C unit、PHPT 15/15、C static analysis、PHPUnit 30 tests / 109 assertions、`git diff --check` を確認した。
+- PR全体の最終代表ベンチとして、merge-base `b5592d4` とHEAD `41855e1` を同一Docker compose project / 同一test-serverで `spanner-shape --calls=1000 --warmup-calls=50` により2回ずつ比較した。通常build条件は追加最適化flagなし。
+
+PR全体 representative benchmark:
+
+| measurement | base p50 avg us | head p50 avg us | p50判断 | base p99 avg us | head p99 avg us | p99判断 |
+|---|---:|---:|---|---:|---:|---|
+| `begin_txn_unary` | 31.1 | 26.5 | 改善方向 | 197.2 | 108.0 | 改善方向 |
+| `commit_txn_unary` | 27.8 | 28.7 | ほぼ同等 | 135.3 | 130.1 | ほぼ同等 |
+| `dml_delete_10col_streaming` | 26.5 | 23.3 | 改善方向 | 70.9 | 69.1 | ほぼ同等 |
+| `dml_insert_10col_streaming` | 24.9 | 24.5 | ほぼ同等 | 129.9 | 96.7 | 改善方向 |
+| `dml_update_10col_streaming` | 27.2 | 25.1 | 改善方向 | 89.5 | 77.2 | 改善方向 |
+| `select_1row_10col_streaming` | 26.6 | 27.4 | ほぼ同等 | 94.9 | 150.4 | tail悪化方向、継続観測 |
+
+run id:
+
+- base: `pr-whole-before-20260530-spanner-shape`, `pr-whole-before2-20260530-spanner-shape`
+- head: `pr-whole-after-20260530-spanner-shape`, `pr-whole-after2-20260530-spanner-shape`
+
+判断: p50は全shapeでほぼ同等または改善方向で、PR全体として明確な固定費悪化は観測しなかった。p99はtail noiseが大きく、`select_1row_10col_streaming` だけHEAD側で悪化方向に見えるため、性能中立を強く主張するのではなく「代表shapeのp50では明確な悪化なし、tailは継続観測」と扱う。
 
 レビュー:
 

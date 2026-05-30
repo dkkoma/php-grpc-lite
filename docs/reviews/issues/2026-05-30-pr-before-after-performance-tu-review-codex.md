@@ -66,16 +66,16 @@
 ### REVIEW-20260530-001: Final whole-PR performance evidence is only partial
 
 - Severity: `Low`
-- Status: `Open`
+- Status: `Closed`
 - Reviewer role: `PR-level C translation-unit, build/link, performance, and verification risk reviewer`
 - Finding: The PR records a useful Phase 3 benchmark around the key multi-TU transition, but it does not record a final whole-PR benchmark comparing the merge-base build to current HEAD. The recorded comparison is `33500e5` vs Phase 3 working tree with `spanner-shape --calls=300 --warmup-calls=20`; later follow-up changes and the full base-to-HEAD delta are covered by build/test gates, not by a final before/after benchmark.
 - Evidence: `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:337`, `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:341`, `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:342`, `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:355`, `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:624`, `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:625`
 - Expected model: A whole-PR before/after performance review should compare the local base/merge-base artifact and final HEAD artifact under the same benchmark runner, tag scheme, Docker image, source-build mode, and representative workload. For this PR, `spanner-shape` is the minimum useful transport-shape check; a longer or repeated run is better than one 300-call spot check.
 - Why it matters: The code review did not identify an obvious non-LTO hot-path regression, but the PR intentionally changes compile/link boundaries. Without final HEAD-vs-base data, merge reviewers should avoid claiming the whole PR has proven neutral performance impact.
 - Recommended fix: Before merging or before making a durable performance claim, run a final same-environment benchmark of merge-base vs HEAD, at least `./bench/run.sh spanner-shape` with enough calls/repeats to distinguish noise from a few-microsecond p50 shift. Record run IDs, commands, p50/p99, environment, and the interpretation in the work-plan or a benchmark doc. If the result is noisy but not clearly worse, record that explicitly.
-- Fix summary: `pending`
+- Fix summary: PR全体の最終代表ベンチとして、merge-base `b5592d4` とHEAD `41855e1` を同一Docker compose project / 同一test-serverで `spanner-shape --calls=1000 --warmup-calls=50` により2回ずつ比較し、結果をwork-plan issueへ記録した。p50は全shapeでほぼ同等または改善方向。p99はtail noiseが大きく、`select_1row_10col_streaming` のみHEAD側で悪化方向に見えたため、判断は「代表shapeのp50では明確な悪化なし、tailは継続観測」とした。
 - Fix commit: `pending`
-- Verification: Review-only. I did not run Docker benchmarks in this review.
+- Verification: `pr-whole-before-20260530-spanner-shape`, `pr-whole-before2-20260530-spanner-shape`, `pr-whole-after-20260530-spanner-shape`, `pr-whole-after2-20260530-spanner-shape` をOTEL summaryで確認。
 - Notes: This is Low rather than Medium because the actual hot frame/callback logic remains in one TU, `config.m4` source separation is correct, and existing tests/build gates are broad.
 
 ## Design Decisions
