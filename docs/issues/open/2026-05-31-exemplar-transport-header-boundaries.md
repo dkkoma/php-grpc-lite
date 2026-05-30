@@ -72,6 +72,7 @@
 - 2026-05-31: 親issueからtransport header boundary作業を子issue化。
 - 2026-05-31: `docs/transport-header-boundaries.md` を追加し、現在のconsumer、target header group、`common.h` include policy、safe first splitを整理。
 - 2026-05-31: 実装の宣言移動は未実施。`h2_request_headers` などから小さく分割する方針を記録し、issueはopenのまま継続する。
+- 2026-05-31: 最初の実装stepとして `docs/issues/closed/2026-05-31-exemplar-h2-request-headers-header-split.md` を完了。`h2_request_headers` typeとrequest header helper宣言をnarrow headerへ移動。
 
 ## Verification
 

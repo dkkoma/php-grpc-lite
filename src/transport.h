@@ -3,22 +3,9 @@
 
 #include "grpc_exchange_state.h"
 #include "grpc_result.h"
+#include "h2_request_headers.h"
 #include "protocol_core.h"
 #include "transport_core.h"
-
-typedef struct {
-    nghttp2_nv *nva;
-    size_t len;
-    size_t capacity;
-    zend_string **name_strings;
-    size_t name_count;
-    zend_string **value_strings;
-    size_t value_count;
-    size_t custom_value_count;
-    nghttp2_nv inline_nva[GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY];
-    zend_string *inline_name_strings[GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY];
-    zend_string *inline_value_strings[GRPC_LITE_REQUEST_HEADERS_INLINE_CAPACITY];
-} h2_request_headers;
 
 struct _h2_connection {
     int fd;
@@ -87,7 +74,6 @@ int register_grpc_call_stream(h2_connection *connection, grpc_call *call);
 void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call);
 int send_pending_h2_frames(h2_connection *connection, grpc_call *call);
 int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
-void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count);
 void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
 void destroy_server_streaming_call_state(server_streaming_call_state *state);
 void server_streaming_call_state_dtor(zend_resource *rsrc);
@@ -127,12 +113,6 @@ zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
 zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen);
 int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled);
-int init_request_headers(h2_request_headers *headers);
-void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
-void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
-void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
-int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
-void free_request_headers(h2_request_headers *headers);
 int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
