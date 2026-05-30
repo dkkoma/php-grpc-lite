@@ -1,7 +1,8 @@
 #ifndef PHP_GRPC_LITE_TRANSPORT_H
 #define PHP_GRPC_LITE_TRANSPORT_H
 
-#include "call.h"
+#include "grpc_exchange_state.h"
+#include "grpc_result.h"
 #include "protocol_core.h"
 #include "transport_core.h"
 

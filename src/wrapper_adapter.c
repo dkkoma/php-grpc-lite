@@ -1,5 +1,7 @@
 /* Official grpc/grpc wrapper adapter. */
 
+#include "diagnostic/diagnostic.h"
+#include "surface.h"
 #include "wrapper_adapter.h"
 
 static void grpc_lite_mark_call_failed(grpc_lite_call_obj *call, int code, zend_string *details);

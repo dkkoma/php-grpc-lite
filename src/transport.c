@@ -1,3 +1,4 @@
+#include "module.h"
 #include "transport.h"
 
 /*

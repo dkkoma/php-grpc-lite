@@ -484,7 +484,8 @@ repo root/
     surface.h             # PHP object surface internal declarations
     wrapper_adapter.c
     wrapper_adapter.h     # Grpc\Call startBatch wrapper adapter declarations
-    call.h                # shared call result/status structs
+    grpc_exchange_state.h # 1 RPC over 1 HTTP/2 streamの交換状態
+    grpc_result.h         # wrapper/orchestration result DTOs
     unary_call.c
     unary_call.h
     server_streaming_call.c
@@ -511,6 +512,7 @@ repo root/
     diagnostic/
       diagnostic.c
       diagnostic.h
+      bench_call.h        # bench build専用call metrics state
       bench.c
 
   tests/
@@ -614,6 +616,7 @@ HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表
 - PR follow-upで `Grpc\Call::startBatch()` のmethod implementation宣言を `src/wrapper_adapter.h` へ移し、`surface.c` からwrapper adapterへの依存をheaderで明示した。
 - PR follow-upで `Grpc\Call::cancel()` / `Grpc\Call::getPeer()` を `src/surface.c` へ移し、wrapper adapterは `startBatch()` のbatch adapterに絞った。
 - PR follow-upで `src/bridge.c` / `src/bridge.h` を `src/wrapper_adapter.c` / `src/wrapper_adapter.h` へrenameし、`startBatch()` をファイル先頭へ移動した。
+- PR follow-upで `src/call.h` を `src/grpc_exchange_state.h` / `src/grpc_result.h` / `src/diagnostic/bench_call.h` へ分割し、型名は変更せず責務単位のファイル名だけを整理した。
 
 最終検証:
 
@@ -624,6 +627,7 @@ HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表
 - PR follow-upのsurface registration整理後、通常build / `Grpc\Call` class load、bench build / bench entrypoint load、PHPT 15/15、C static analysis、PHPUnit 30 tests / 109 assertions、`git diff --check` を確認した。
 - PR follow-upの `cancel()` / `getPeer()` surface移動後、通常build / `Grpc\Call` class load、PHPT 15/15、C static analysis、`git diff --check` を確認した。
 - PR follow-upの `wrapper_adapter` rename / `startBatch()` 先頭移動後、通常build / `Grpc\Call` class load、bench build / bench entrypoint load、PHPT 15/15、C static analysis、PHPUnit 30 tests / 109 assertions、`git diff --check` を確認した。
+- PR follow-upの `call.h` 責務別分割後、通常build、bench build、C unit、PHPT 15/15、C static analysis、PHPUnit 30 tests / 109 assertions、`git diff --check` を確認した。
 
 レビュー:
 

@@ -1,4 +1,5 @@
-#include "../wrapper_adapter.h"
+#include "../surface.h"
+#include "diagnostic.h"
 
 /*
  * Bench-only HTTP/2 transport entrypoints.
