@@ -27,6 +27,7 @@ $client = new GreeterClient('test-server:50051', [
     'credentials' => ChannelCredentials::createInsecure(),
 ], $channel);
 
+// Scenario group 1: observe what request metadata reaches the fixture server.
 $serverSeen = static function (string $observedKey, array $metadata) use ($client): array {
     $call = $client->BenchUnary(new BenchRequest(), $metadata);
     [, $status] = $call->wait();
@@ -96,6 +97,7 @@ grpc_lite_phpt_assert_same($growValues, $serverStreamSeen('x-bench-grow', [
     'x-bench-grow' => $growValues,
 ]), 'server streaming metadata values across inline growth boundary');
 
+// Scenario group 2: startBatch must copy metadata before userland can mutate it.
 $rawMetadata = [
     'x-bench-observe-metadata-key' => ['x-bench-mutation'],
     'x-bench-mutation' => ['before'],
@@ -116,6 +118,7 @@ $rawEvent = $rawCall->startBatch([
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $rawEvent->status->code, 'raw metadata mutation status');
 grpc_lite_phpt_assert_same('before', $rawEvent->metadata['x-bench-seen-000-value-000-bin'][0] ?? null, 'metadata is isolated after startBatch');
 
+// Scenario group 3: invalid request metadata must fail before or during RPC start.
 $assertInvalidMetadata = static function (array $metadata) use ($client): void {
     grpc_lite_phpt_expect_throw(static function () use ($client, $metadata): void {
         $call = $client->BenchUnary(new BenchRequest(), $metadata);

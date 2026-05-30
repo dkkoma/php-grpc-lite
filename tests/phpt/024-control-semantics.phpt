@@ -25,6 +25,7 @@ $client = static function (string $target = 'test-server:50051'): GreeterClient 
     ]);
 };
 
+// Scenario group 1: malformed response frame and connection setup failure.
 [, $status] = $client('test-server:50057')->BenchUnary(new BenchRequest())->wait();
 grpc_lite_phpt_assert_true($status->code !== Grpc\STATUS_OK, 'malformed unary frame must fail');
 
@@ -39,6 +40,7 @@ foreach ($refusedStreamCall->responses() as $_reply) {
 grpc_lite_phpt_assert_same(0, $refusedStreamCount, 'connection refused stream count');
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $refusedStreamCall->getStatus()->code, 'connection refused stream status');
 
+// Scenario group 2: GOAWAY / EOF lifecycle and recovery.
 $goAwayAfterOk = $client('test-server:50055');
 [$response, $status] = $goAwayAfterOk->BenchUnary(new BenchRequest())->wait();
 grpc_lite_phpt_assert_true($response !== null, 'GOAWAY after OK response');
@@ -60,6 +62,7 @@ foreach ($eofStatuses as $index => $code) {
     }
 }
 
+// Scenario group 3: server-sent RST_STREAM must be stream-local and recoverable.
 $rstUnary = $client('test-server:50058');
 [$firstResponse, $firstStatus] = $rstUnary->BenchUnary(new BenchRequest())->wait();
 [$secondResponse, $secondStatus] = $rstUnary->BenchUnary(new BenchRequest())->wait();
@@ -89,6 +92,7 @@ grpc_lite_phpt_assert_same(null, $goAwayResponse, 'GOAWAY response');
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $goAwayStatus->code, 'GOAWAY status');
 grpc_lite_phpt_assert_same('HTTP/2 stream refused by GOAWAY', $goAwayStatus->details, 'GOAWAY details');
 
+// Scenario group 4: abandoning a server stream must not poison later RPCs.
 $mainClient = $client();
 $streamRequest = new BenchRequest();
 $streamRequest->setMessageCount(3);
