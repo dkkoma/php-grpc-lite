@@ -648,6 +648,22 @@ run id:
 
 判断: p50は全shapeでほぼ同等または改善方向で、PR全体として明確な固定費悪化は観測しなかった。p99はtail noiseが大きく、`select_1row_10col_streaming` だけHEAD側で悪化方向に見えるため、性能中立を強く主張するのではなく「代表shapeのp50では明確な悪化なし、tailは継続観測」と扱う。
 
+追加確認として、`select_1row_10col_streaming` を中心にp50 / p90 / p99を見た。OTELの保持上限により古いraw spanは一部再集計できないため、直近2ペアを比較対象にした。
+
+| run pair | variant | count | p50 us | p90 us | p99 us | max us |
+|---|---|---:|---:|---:|---:|---:|
+| pair 3 | base `b5592d4` | 1000 | 28.4 | 39.9 | 68.0 | 2360.2 |
+| pair 3 | head `41855e1` | 1000 | 25.0 | 42.3 | 66.3 | 1329.7 |
+| pair 4 | base `b5592d4` | 1000 | 25.6 | 43.4 | 61.9 | 1806.0 |
+| pair 4 | head `41855e1` | 1000 | 26.0 | 44.0 | 85.8 | 1274.4 |
+
+追加run id:
+
+- base: `pr-whole-before3-20260530-spanner-shape`, `pr-whole-before4-20260530-spanner-shape`
+- head: `pr-whole-after3-20260530-spanner-shape`, `pr-whole-after4-20260530-spanner-shape`
+
+追加判断: `select_1row_10col_streaming` のp50 / p90はbase/headでほぼ同等。p99はpair 3では同等、pair 4ではHEAD悪化方向で、tailは実装差分よりもrun間揺れの影響を強く受けている可能性がある。PR全体の判断は「p50/p90で明確な悪化なし、p99 tailは継続観測」に更新する。
+
 レビュー:
 
 - Phase 2: `docs/reviews/issues/2026-05-30-phase2-core-helper-boundary-domain-review.md`, Blocker/High/Medium/Low none
