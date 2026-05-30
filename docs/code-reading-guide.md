@@ -26,6 +26,60 @@ generated client / gax
 
 HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレビューする場合は、このガイドと併せて `docs/protocol-model-review-guide.md` を使います。
 
+### 初学者向け
+
+PHP拡張やCのtranslation unitに慣れていない場合は、まず「PHPから見えるsurface」と「それを守るテスト」だけを読む。
+
+1. `README.md`
+2. `docs/SPEC.md` の目的、スコープ、C extension architecture policy
+3. `grpc.c`
+4. `src/surface.c`
+5. `tests/phpt/001-load.phpt`
+6. `tests/phpt/003-timeval.phpt`
+7. `tests/phpt/010-unary.phpt`
+8. `tests/phpt/011-server-streaming.phpt`
+9. `docs/native-test-framework.md`
+
+この順序では、socket / nghttp2 / OpenSSLの詳細には入らず、PHP extensionのmodule lifecycle、class registration、object destructor、PHPTの基本を確認する。
+
+### 中級者向け
+
+Cのヘッダ境界、Zend object ownership、official wrapperとの接続を読む場合は、次を追加する。
+
+1. `config.m4`
+2. `php_grpc.h`
+3. `src/surface.h`
+4. `src/wrapper_adapter.c`
+5. `src/unary_call.c`
+6. `src/server_streaming_call.c`
+7. `src/grpc_result.h`
+8. `tests/unit/*.c`
+9. `docs/test-fixtures.md`
+10. `docs/verification-matrix.md`
+
+この順序では、`.c` を直接includeしない構造、internal header、`zend_string` / `zval` の所有権、`Grpc\Call::startBatch()` からproduction RPC helperへ流れる境界を確認する。
+
+### 上級者向け
+
+HTTP/2 / gRPC transport、persistent connection、deadline、metadata/status、RST_STREAM / GOAWAY / EOF lifecycleを読む場合は、次を読む。
+
+1. `docs/protocol-model-review-guide.md`
+2. `src/grpc_exchange_state.h`
+3. `src/transport.h`
+4. `src/transport.c`
+5. `src/transport_core.c`
+6. `src/status_core.c`
+7. `src/protocol_core.c`
+8. `tests/phpt/020-request-metadata-control.phpt`
+9. `tests/phpt/022-error-and-http-validation.phpt`
+10. `tests/phpt/024-control-semantics.phpt`
+11. `tests/Integration/MetadataCompatibilityTest.php`
+12. `tests/Integration/ControlSemanticsTest.php`
+
+この順序では、1 RPC over 1 HTTP/2 streamの交換状態、connection cache、nghttp2 callbacks、gRPC status taxonomy、metadata shape、stream-local failureとconnection failureの切り分けを確認する。
+
+### 実装全体の読み順
+
 1. `tests/Integration/Fixtures/GreeterClient.php`
 2. `vendor/grpc/grpc/src/lib/BaseStub.php`
 3. `vendor/grpc/grpc/src/lib/UnaryCall.php`

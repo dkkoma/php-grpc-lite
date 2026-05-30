@@ -34,7 +34,7 @@
 
 | Child issue | Scope | Performance risk |
 |---|---|---|
-| `docs/issues/open/2026-05-31-exemplar-docs-fixtures-and-reading-guide.md` | fixture catalog、verification matrix、reading guide、fuzz README | なし |
+| `docs/issues/closed/2026-05-31-exemplar-docs-fixtures-and-reading-guide.md` | fixture catalog、verification matrix、reading guide、fuzz README | なし |
 | `docs/issues/open/2026-05-31-exemplar-test-discoverability-and-gates.md` | 長いPHPT、PHPUnit CI、lifecycle/slow-consumer gate整理 | CI時間・flake riskあり |
 | `docs/issues/open/2026-05-31-exemplar-transport-header-boundaries.md` | `transport.h` / `common.h` のheader boundary整理 | 宣言移動のみならなし。hot path変更時は別途計測 |
 | `docs/issues/open/2026-05-31-exemplar-connection-ownership-model.md` | connection / stream / resource ownership invariant整理 | bookkeeping変更時は計測候補 |
@@ -149,6 +149,7 @@
 - 2026-05-31: プロジェクト全体、C source/header、PHPT/C unit/fuzz/PHPUnit/tools/testをread-only調査。
 - 2026-05-31: C/PHP拡張のお手本化に必要な改善を本issueへ整理。
 - 2026-05-31: 作業単位ごとに6本の子issueへ分割。
+- 2026-05-31: fixture / verification / reading guide / fuzz README整備の子issueを完了。
 
 ## Verification
 

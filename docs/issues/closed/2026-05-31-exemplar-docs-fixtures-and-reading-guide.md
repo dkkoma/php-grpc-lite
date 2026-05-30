@@ -1,6 +1,6 @@
 # お手本化: fixture / verification / reading guide整備
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
 - Branch: main
 - Owner: Codex
@@ -35,17 +35,24 @@
 ## Progress
 
 - 2026-05-31: 親issueからdocumentation-first作業を子issue化。
+- 2026-05-31: `docs/test-fixtures.md` を追加し、test-server ports、service methods、metadata controlsを一覧化。
+- 2026-05-31: `docs/verification-matrix.md` を追加し、主要semanticsと検証層の対応を一覧化。
+- 2026-05-31: `docs/code-reading-guide.md` に初学者 / 中級者 / 上級者向けの読み順を追加。
+- 2026-05-31: `tests/fuzz/README.md` を追加し、fuzz selectorとseed corpusを説明。
 
 ## Verification
 
-ドキュメント変更のみのため、最低限:
+- `git diff --check`: PASS
+- ドキュメント変更のみ。C実装・fixture server・test behaviorは未変更のため、PHPT/PHPUnitは未実行。
 
-- `git diff --check`
-- リンク先pathの存在確認
+## Close Summary
+
+実装変更なしで、fixture / verification / reading guide / fuzz corpusの発見性を改善した。
 
 ## Decision Log
 
 - 2026-05-31: このissueは性能影響なしのドキュメント整備として扱う。
+- 2026-05-31: matrix上で薄いcoverageはこのissueでは埋めず、該当子issueまたは将来issueのfollow-upとして明示する。
 
 ## Close Criteria
 
