@@ -1,6 +1,6 @@
 # 0.0.12 release and runtime version alignment
 
-Status: Open
+Status: Closed
 Branch: main
 Target-Release: 0.0.12
 
@@ -44,17 +44,30 @@ Target-Release: 0.0.12
 - 2026-05-30 Phase 4 started.
 - 2026-05-30 Phase 4 blocked: Packagist経由PIE install smokeでdist zipから `src/*` が除外されていることを検出した。
 - 2026-05-30 Phase 4 fix started: root layout後のC sourcesをdistへ含めるため `.gitattributes` の `/src export-ignore` を削除する。
+- 2026-05-30 Phase 4 completed: `0.0.12` tagをdist修正済みcommitへ差し替え、GitHub Release / Packagist referenceを確認した。
+- 2026-05-30 Phase 5 completed: Packagist経由PIE install smokeでbuild/loadとversion一致を確認した。
 
 ## 検証
 
 - `./tools/test/check-native-development-gate.sh` passed.
 - `./tools/test/check-phpt.sh` passed after adding `phpversion("grpc")` / `Grpc\VERSION` assertions.
 - `docker build -f Dockerfile.install-pie --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.12 -t php-grpc-lite-install-pie-0.0.12 .` failed before `.gitattributes` fix because Packagist dist did not contain `src/*`.
+- `git ls-remote --tags origin 0.0.12` => `6b0d578e735dd7a79ceac940436905faf3bae98b`.
+- `gh release view 0.0.12 --repo dkkoma/php-grpc-lite --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,url,name` => public, not draft, not prerelease.
+- Packagist `dkkoma/php-grpc-lite` `0.0.12` source/dist reference => `6b0d578e735dd7a79ceac940436905faf3bae98b`.
+- `docker build --no-cache -f Dockerfile.install-pie --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.12 -t php-grpc-lite-install-pie-0.0.12 .` passed. PIE built and loaded `grpc`, and `Grpc\VERSION === "0.0.12"` check passed.
 
 ## 判断ログ
 
 - `0.0.12` 以後、package tagとextension runtime versionは揃える。
 - 公式 `ext-grpc` versionとの一致は目的にしない。
+- root layout後、Packagist / GitHub dist zipにはC extension sources under `src/` が必要なため、`.gitattributes` で `/src export-ignore` しない。
+- 初回 `0.0.12` tagはdist zip不備を含むcommitを指していたため、ユーザー承認に基づき同じtagをdist修正済みcommitへ差し替えた。
+
+## 修正コミット
+
+- `6e0b676` `0.0.12 release: runtime versionをtagと揃える`
+- `6b0d578` `0.0.12 release: distにC sourcesを含める`
 
 ## 完了条件
 
