@@ -2,6 +2,8 @@
 
 このガイドは、現行の `php-grpc-lite` を読むための入口です。過去の純PHP/libcurl経路は前提にせず、現在の公式 `grpc/grpc` wrapper + repository rootに置かれた `grpc` extension実装だけを扱います。
 
+C extensionの構造に関する設計制約は [SPEC.md](./SPEC.md) の「C extension architecture policy」を基準にします。このガイドは、その前提で現在のファイル配置と読む順序を示します。
+
 ## 全体像
 
 ```text

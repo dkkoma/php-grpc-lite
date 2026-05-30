@@ -198,6 +198,18 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 
 現行実装では、高レベル wrapper は公式 `grpc/grpc` Composer package に一本化し、このrepositoryの `src/Grpc/` PHP互換層は持たない。repository rootの `grpc` extension は低レベルclass、constants、HTTP/2 transport、persistent connection lifecycleを担当する。
 
+### 5.5 C extension architecture policy
+
+repository rootをPHP extension rootとする。`config.m4`、`grpc.c`、`php_grpc.h` はrootに置く。production C implementationとinternal headersは `src/` に置き、bench / diagnostic C implementationは `src/diagnostic/` に置いて `--enable-grpc-bench` のときだけbuildする。`include/` は将来のexternal / public C API用に予約し、このextensionがinstallableなC APIを公開しない間は使わない。
+
+productionの `.c` は `config.m4` から個別のtranslation unitとしてcompileする。他のproduction `.c` を `#include` しない。共有するinternal declarationsは責務の狭い `src/*.h` に置き、外へ出す必要のないhelpersとdataはowning `.c` 内の `static` に閉じる。
+
+Public PHP compatibility surface、official wrapper adapter、call orchestration、HTTP/2 transport、pure protocol / status / transport-core helpers、diagnostic / bench codeはfilenameとheader boundaryで区別できる状態を保つ。normal production buildでbench / diagnostic PHP entrypointを公開しない。
+
+HTTP/2 frame処理、stream lifecycle、`SSL_connect` / `SSL_read` / `SSL_write`、deadline poll loop、ALPN `h2` handling、h2 connection lifecycleはtransport責務として `src/transport.c` に残す。TLS certificate / peer identity setupのようなcold pathかつ責務が独立している処理は、責務を明確にできる場合だけ分離する。
+
+C layout refactorはbehavioral compatibilityを変えない。status taxonomy、metadata shape、deadline、connection lifecycle、TLS / mTLS semantics、official wrapper APIを構造整理のついでに変更しない。hot pathに影響しうるC分割や関数境界変更では、代表benchのbefore / afterをissueへ記録する。
+
 ---
 
 ## 6. 未決事項
@@ -239,6 +251,7 @@ request metadata は transport へ渡す前に共通正規化する。key は lo
 
 ## 変更履歴
 
+- **2026-05-31**: C extension architecture policyを追加。root extension layout、translation unit/source list、internal header/public include境界、diagnostic build境界、transport/TLS setup分離、hot path変更時のbenchmark要件を明記。
 - **2026-04-25**: 初版作成。目的・スコープ・段階戦略・TLS/HTTP/2 方針・API 互換目標・開発環境を確定。
 - **2026-04-25**: Dockerfile および compose.yaml を追加。開発環境セクションに起動方法と同梱ツールを追記。
 - **2026-04-25**: API サーフェス調査(`docs/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。
