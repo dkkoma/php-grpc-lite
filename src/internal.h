@@ -7,6 +7,6 @@
  * Not installed. Not a public C API.
  */
 
-#include "bridge.h"
+#include "wrapper_adapter.h"
 
 #endif /* PHP_GRPC_LITE_INTERNAL_H */

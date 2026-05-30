@@ -133,7 +133,7 @@ PHP_RSHUTDOWN_FUNCTION(grpc_lite)
 PHP_MINFO_FUNCTION(grpc_lite)
 {
     php_info_print_table_start();
-    php_info_print_table_row(2, "grpc_lite bridge", "enabled");
+    php_info_print_table_row(2, "grpc_lite wrapper adapter", "enabled");
     php_info_print_table_row(2, "grpc_lite.http2_stream_window_size", INI_STR("grpc_lite.http2_stream_window_size"));
     php_info_print_table_row(2, "grpc_lite.http2_connection_window_size", INI_STR("grpc_lite.http2_connection_window_size"));
     php_info_print_table_row(2, "grpc_lite.http2_max_frame_size", INI_STR("grpc_lite.http2_max_frame_size"));

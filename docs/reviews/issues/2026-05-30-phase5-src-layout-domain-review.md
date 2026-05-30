@@ -45,7 +45,7 @@
 
 ## Evidence
 
-- `config.m4:15` keeps the production source list to `grpc.c` plus `src/protocol_core.c`, `src/status_core.c`, `src/transport_core.c`, `src/surface.c`, `src/transport.c`, `src/unary_call.c`, `src/server_streaming_call.c`, and `src/bridge.c`.
+- `config.m4:15` keeps the production source list to `grpc.c` plus `src/protocol_core.c`, `src/status_core.c`, `src/transport_core.c`, `src/surface.c`, `src/transport.c`, `src/unary_call.c`, `src/server_streaming_call.c`, and `src/wrapper_adapter.c`.
 - `config.m4:16`-`config.m4:17` adds `src/diagnostic/diagnostic.c` and `src/diagnostic/bench.c` only when `PHP_GRPC_BENCH` is enabled.
 - `grpc.c` includes `php_grpc.h`, `src/surface.h`, and `src/transport.h`; it does not include moved `.c` files.
 - `grpc.c` keeps the production PHP function table empty when bench entrypoints are not enabled.
@@ -55,12 +55,12 @@
 - `src/transport.h:22` onward keeps HTTP/2 connection state such as fd, TLS, nghttp2 session, dead/draining state, GOAWAY details, active stream table, and current I/O bookkeeping in `h2_connection`.
 - `src/transport.h:55` onward keeps server streaming resource state as a wrapper around one `grpc_call`, request buffer, delivery counters, and completion/cancel flags; it does not take over channel identity or unrelated stream state.
 - `src/unary_call.c:1` and `src/server_streaming_call.c:1` still name the call-type orchestration layer explicitly as unary and server streaming execution over an HTTP/2 connection.
-- `src/bridge.h:4` includes `src/diagnostic/diagnostic.h`, and `src/diagnostic/diagnostic.h:7`-`src/diagnostic/diagnostic.h:10` guards diagnostic declarations with `PHP_GRPC_LITE_ENABLE_BENCH`. This keeps symbols out of production builds, though the include dependency remains a residual boundary smell inherited from the pre-move header shape.
+- `src/wrapper_adapter.h:4` includes `src/diagnostic/diagnostic.h`, and `src/diagnostic/diagnostic.h:7`-`src/diagnostic/diagnostic.h:10` guards diagnostic declarations with `PHP_GRPC_LITE_ENABLE_BENCH`. This keeps symbols out of production builds, though the include dependency remains a residual boundary smell inherited from the pre-move header shape.
 
 ## Domain Model Assessment
 
 - Naming: Moving implementation files under `src/` and diagnostic files under `src/diagnostic/` improves the visible distinction between production extension internals and bench-only entrypoints. The existing `surface`, `call`, `transport`, `unary_call`, `server_streaming_call`, and `diagnostic` names still map to the repository's documented domain objects.
-- Responsibility boundary: `grpc.c` remains the module root for globals, INI, PHP class registration, and module lifecycle. `php_grpc.h` carries the module declaration and version macro. `src/surface.c` / `src/surface.h` remain PHP object surface, `src/bridge.c` remains official-wrapper batch mapping, `src/unary_call.c` and `src/server_streaming_call.c` remain call orchestration, and `src/transport.c` / `src/transport.h` remain HTTP/2 transport ownership.
+- Responsibility boundary: `grpc.c` remains the module root for globals, INI, PHP class registration, and module lifecycle. `php_grpc.h` carries the module declaration and version macro. `src/surface.c` / `src/surface.h` remain PHP object surface, `src/wrapper_adapter.c` remains official-wrapper batch mapping, `src/unary_call.c` and `src/server_streaming_call.c` remain call orchestration, and `src/transport.c` / `src/transport.h` remain HTTP/2 transport ownership.
 - Connection / stream / call / channel scope: The move does not collapse channel identity into `h2_connection`, move socket ownership into PHP call objects, or move per-call status/metadata into the persistent cache. `h2_connection`, `grpc_call`, `grpc_lite_channel_obj`, and `server_streaming_call_state` remain separate domain objects.
 - Flow-control: The layout move does not change the ownership of stream/connection window settings, WINDOW_UPDATE accounting, or receive queue limits. Flow-control state remains in the transport/call/server-streaming resource boundary rather than in the PHP surface.
 - Metadata / status / deadline: Request metadata, library-owned metadata, grpc-timeout/deadline conversion, response initial/trailing metadata, grpc-status resolution, and size-limit status mapping remain in the same call/transport helpers; the move only changes paths.
@@ -69,7 +69,7 @@
 
 ## Residual Risks
 
-- Production `.c` files still include `src/diagnostic/diagnostic.h` for bench-only helper declarations, and `src/bridge.h` points into `src/diagnostic/`. The declarations are guarded and do not expose production symbols, so this review does not classify it as a behavioral finding, but the dependency direction remains worth simplifying in a future header cleanup.
+- Production `.c` files still include `src/diagnostic/diagnostic.h` for bench-only helper declarations, and `src/wrapper_adapter.h` points into `src/diagnostic/`. The declarations are guarded and do not expose production symbols, so this review does not classify it as a behavioral finding, but the dependency direction remains worth simplifying in a future header cleanup.
 - This was a review-only pass. I did not rerun Docker-based build, PHPT, C unit, static analysis, coverage, or PHPUnit gates.
 
 ## Verification

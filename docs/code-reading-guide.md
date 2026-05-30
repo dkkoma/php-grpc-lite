@@ -14,7 +14,7 @@ generated client / gax
      -> src/surface.c
      -> src/transport.c
      -> src/unary_call.c / src/server_streaming_call.c
-     -> src/bridge.c
+     -> src/wrapper_adapter.c
      -> nghttp2 + socket / OpenSSL
 ```
 
@@ -30,7 +30,7 @@ HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレ
 4. `vendor/grpc/grpc/src/lib/ServerStreamingCall.php`
 5. `grpc.c`
 6. `src/surface.c`
-7. `src/bridge.c`
+7. `src/wrapper_adapter.c`
 8. `src/unary_call.c`
 9. `src/server_streaming_call.c`
 10. `src/transport.c`
@@ -95,7 +95,7 @@ messageごとに `responses()` がpullするため、現在の実装はbatch dra
 
 ## 3. 拡張が登録するPHP surface
 
-`grpc.c` の `PHP_MINIT_FUNCTION(grpc_lite)` はmodule lifecycleとINI / constants登録を担当し、PHP class登録は `src/surface.c` の `grpc_lite_register_surface_classes()` に委譲します。class/object実装、method table、`Grpc\Call` の単純なlifecycle/status参照methodは `src/surface.c`、official wrapperから呼ばれる `Grpc\Call::startBatch()` bridgeは `src/bridge.c` にあります。`src/surface.c` は `src/bridge.h` を通じてそのmethod implementationを参照します。
+`grpc.c` の `PHP_MINIT_FUNCTION(grpc_lite)` はmodule lifecycleとINI / constants登録を担当し、PHP class登録は `src/surface.c` の `grpc_lite_register_surface_classes()` に委譲します。class/object実装、method table、`Grpc\Call` の単純なlifecycle/status参照methodは `src/surface.c`、official wrapperから呼ばれる `Grpc\Call::startBatch()` adapterは `src/wrapper_adapter.c` にあります。`src/surface.c` は `src/wrapper_adapter.h` を通じてそのmethod implementationを参照します。
 
 | surface | 用途 |
 |---|---|
@@ -153,7 +153,7 @@ official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
 
 unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connection()` が走ります。server streamingは最初の `RECV_MESSAGE` でC stream resourceを開き、以後C helperで1 messageずつ返します。
 
-`src/bridge.c` は official wrapper の `Grpc\Call` batch API を受け、`src/unary_call.c` と `src/server_streaming_call.c` の production RPC helperへ委譲します。bench build限定のdiagnostic PHP関数は `src/diagnostic/bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
+`src/wrapper_adapter.c` は official wrapper の `Grpc\Call` batch API を受け、`src/unary_call.c` と `src/server_streaming_call.c` の production RPC helperへ委譲します。bench build限定のdiagnostic PHP関数は `src/diagnostic/bench.c` に閉じ込め、通常のwrapper経路は `Grpc\Call::startBatch()` 経由でC helperを直接呼びます。
 
 ## 6. HTTP/2 transport
 

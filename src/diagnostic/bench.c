@@ -1,4 +1,4 @@
-#include "../bridge.h"
+#include "../wrapper_adapter.h"
 
 /*
  * Bench-only HTTP/2 transport entrypoints.

@@ -141,7 +141,7 @@ php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), define
 
 `extension_loaded("grpc")` だけでは公式 `ext-grpc` と区別できないため、`Grpc\VERSION` の値も確認する。
 
-通常buildでは production bridge のみを公開する。`bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
+通常buildでは production wrapper adapter のみを公開する。`bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
 
 このrepositoryのDocker環境では、HTTP/2 stream lifecycle smokeも確認できる。
 

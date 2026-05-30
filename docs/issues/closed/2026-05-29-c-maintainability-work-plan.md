@@ -482,8 +482,8 @@ repo root/
     internal.h             # compatibility aggregate; prefer narrower headers
     surface.c
     surface.h             # PHP object surface internal declarations
-    bridge.c
-    bridge.h              # Grpc\Call batch bridge declarations
+    wrapper_adapter.c
+    wrapper_adapter.h     # Grpc\Call startBatch wrapper adapter declarations
     call.h                # shared call result/status structs
     unary_call.c
     unary_call.h
@@ -611,8 +611,9 @@ HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表
 - `include/` は作らず、外部公開C APIは提供しない方針を維持した。
 - PR follow-upでPHP拡張repoの慣例に寄せ、rootのentrypoint sourceを `main.c` から `grpc.c` へrenameし、module declaration / version用の `php_grpc.h` を追加した。
 - PR follow-upで `Grpc\*` class registrationを `grpc_lite_register_surface_classes()` として `src/surface.c` 側へ寄せ、method table、object handlers、create/free callbacksを `static` に戻した。
-- PR follow-upで `Grpc\Call::startBatch()` のmethod implementation宣言を `src/bridge.h` へ移し、`surface.c` からbridgeへの依存をheaderで明示した。
-- PR follow-upで `Grpc\Call::cancel()` / `Grpc\Call::getPeer()` を `src/surface.c` へ移し、`src/bridge.c` は `startBatch()` のbatch adapterに絞った。
+- PR follow-upで `Grpc\Call::startBatch()` のmethod implementation宣言を `src/wrapper_adapter.h` へ移し、`surface.c` からwrapper adapterへの依存をheaderで明示した。
+- PR follow-upで `Grpc\Call::cancel()` / `Grpc\Call::getPeer()` を `src/surface.c` へ移し、wrapper adapterは `startBatch()` のbatch adapterに絞った。
+- PR follow-upで `src/bridge.c` / `src/bridge.h` を `src/wrapper_adapter.c` / `src/wrapper_adapter.h` へrenameし、`startBatch()` をファイル先頭へ移動した。
 
 最終検証:
 
@@ -622,6 +623,7 @@ HTTP/2/gRPCドメインモデルに影響する差分が出た場合は、代表
 - PR follow-upの `main.c` -> `grpc.c` rename / `php_grpc.h` 追加後、通常build / extension load、bench build / bench entrypoint load、C static analysis、`git diff --check`、`.c` direct include残存なしを確認した。
 - PR follow-upのsurface registration整理後、通常build / `Grpc\Call` class load、bench build / bench entrypoint load、PHPT 15/15、C static analysis、PHPUnit 30 tests / 109 assertions、`git diff --check` を確認した。
 - PR follow-upの `cancel()` / `getPeer()` surface移動後、通常build / `Grpc\Call` class load、PHPT 15/15、C static analysis、`git diff --check` を確認した。
+- PR follow-upの `wrapper_adapter` rename / `startBatch()` 先頭移動後、通常build / `Grpc\Call` class load、bench build / bench entrypoint load、PHPT 15/15、C static analysis、PHPUnit 30 tests / 109 assertions、`git diff --check` を確認した。
 
 レビュー:
 

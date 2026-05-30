@@ -1,9 +1,9 @@
 /* PHP class/object surface for the grpc extension. */
 
 #include "surface.h"
-#include "bridge.h"
 #include "server_streaming_call.h"
 #include "transport.h"
+#include "wrapper_adapter.h"
 
 zend_class_entry *grpc_ce_channel;
 zend_class_entry *grpc_ce_call;

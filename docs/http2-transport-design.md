@@ -11,7 +11,7 @@
 ```text
 Grpc\BaseStub
   -> UnaryCall / ServerStreamingCall
-    -> Grpc\Call bridge
+    -> Grpc\Call wrapper adapter
       -> grpc_channel
         -> h2_connection
           -> socket / TLS

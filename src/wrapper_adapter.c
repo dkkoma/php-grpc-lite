@@ -1,8 +1,146 @@
-/* Official grpc/grpc wrapper bridge. */
+/* Official grpc/grpc wrapper adapter. */
 
-#include "bridge.h"
+#include "wrapper_adapter.h"
 
 static void grpc_lite_mark_call_failed(grpc_lite_call_obj *call, int code, zend_string *details);
+static int grpc_lite_store_send_batch(grpc_lite_call_obj *call, zval *ops);
+static void grpc_lite_mark_call_cancelled(grpc_lite_call_obj *call);
+static void grpc_lite_add_event_metadata(zval *event, zval *metadata);
+static void grpc_lite_add_event_message(zval *event, zend_string *message);
+static void grpc_lite_add_event_status(zval *event, zval *status);
+static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call);
+static int grpc_lite_server_streaming_next_for_call(grpc_lite_call_obj *call, grpc_lite_streaming_next_result *result);
+static void grpc_lite_copy_metadata(zval *dest, zval *src);
+static void grpc_lite_make_status_object(zval *status, int code, zend_string *details, zval *metadata);
+static void grpc_lite_trace_record_call(grpc_lite_call_obj *call, const char *event, const char *kind, int status_code, size_t request_bytes, size_t response_bytes, int persistent_reused);
+
+PHP_METHOD(Call, startBatch)
+{
+    zval *ops;
+    grpc_lite_call_obj *call = Z_GRPC_LITE_CALL_P(ZEND_THIS);
+    bool wants_initial_metadata = false;
+    bool wants_message = false;
+    bool wants_status = false;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY(ops)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (!call->initialized) {
+        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
+        RETURN_THROWS();
+    }
+
+    if (zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_INITIAL_METADATA) ||
+        zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_MESSAGE) ||
+        zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_CLOSE_FROM_CLIENT)) {
+        if (grpc_lite_store_send_batch(call, ops) != SUCCESS) {
+            RETURN_THROWS();
+        }
+    }
+
+    wants_initial_metadata = zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_INITIAL_METADATA);
+    wants_message = zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_MESSAGE);
+    wants_status = zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_STATUS_ON_CLIENT);
+
+    object_init(return_value);
+
+    if (call->cancelled) {
+        grpc_lite_mark_call_cancelled(call);
+        if (wants_initial_metadata) {
+            grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
+        }
+        if (wants_message) {
+            grpc_lite_add_event_message(return_value, NULL);
+        }
+        if (wants_status) {
+            grpc_lite_add_event_status(return_value, &call->status);
+        }
+        return;
+    }
+
+    if (call->status_ready) {
+        if (wants_initial_metadata) {
+            grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
+        }
+        if (wants_message) {
+            grpc_lite_add_event_message(return_value, NULL);
+        }
+        if (wants_status) {
+            grpc_lite_add_event_status(return_value, &call->status);
+        }
+        return;
+    }
+
+    if (wants_status) {
+        if (!call->unary_performed && !call->server_streaming_opened) {
+            if (grpc_lite_perform_call_unary(call) != SUCCESS) {
+                RETURN_THROWS();
+            }
+        } else if (call->server_streaming_opened && !call->status_ready) {
+            grpc_lite_streaming_next_result result;
+            do {
+                if (grpc_lite_server_streaming_next_for_call(call, &result) != SUCCESS) {
+                    RETURN_THROWS();
+                }
+                if (result.done) {
+                    if (!call->initial_metadata_ready) {
+                        grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
+                        call->initial_metadata_ready = true;
+                    }
+                    grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
+                    zval_ptr_dtor(&call->status);
+                    grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
+                    call->status_ready = true;
+                    grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", result.status.code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
+                }
+                grpc_lite_streaming_next_result_dtor(&result);
+            } while (!call->status_ready);
+        }
+    } else if (wants_message && !call->unary_performed) {
+        if (call->server_streaming_opened || !zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_STATUS_ON_CLIENT)) {
+            grpc_lite_streaming_next_result result;
+            if (grpc_lite_server_streaming_next_for_call(call, &result) != SUCCESS) {
+                RETURN_THROWS();
+            }
+            if (result.done) {
+                if (!call->initial_metadata_ready) {
+                    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
+                    call->initial_metadata_ready = true;
+                }
+                grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
+                zval_ptr_dtor(&call->status);
+                grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
+                call->status_ready = true;
+                grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", result.status.code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
+                grpc_lite_add_event_message(return_value, NULL);
+            } else {
+                if (!call->initial_metadata_ready) {
+                    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
+                    call->initial_metadata_ready = true;
+                }
+                grpc_lite_add_event_message(return_value, result.payload);
+            }
+            grpc_lite_streaming_next_result_dtor(&result);
+        } else {
+            if (grpc_lite_perform_call_unary(call) != SUCCESS) {
+                RETURN_THROWS();
+            }
+        }
+    }
+
+    if (wants_initial_metadata) {
+        grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
+    }
+    if (wants_message && call->unary_performed) {
+        grpc_lite_add_event_message(return_value, call->unary_response_payload);
+    } else if (wants_message && !zend_hash_str_exists(Z_OBJPROP_P(return_value), "message", sizeof("message") - 1)) {
+        grpc_lite_add_event_message(return_value, NULL);
+    }
+    if (wants_status) {
+        grpc_lite_add_event_status(return_value, &call->status);
+    }
+}
 
 static bool grpc_lite_trace_enabled(void)
 {
@@ -638,132 +776,4 @@ static int grpc_lite_store_send_batch(grpc_lite_call_obj *call, zval *ops)
     }
     call->sent = true;
     return SUCCESS;
-}
-
-PHP_METHOD(Call, startBatch)
-{
-    zval *ops;
-    grpc_lite_call_obj *call = Z_GRPC_LITE_CALL_P(ZEND_THIS);
-    bool wants_initial_metadata = false;
-    bool wants_message = false;
-    bool wants_status = false;
-
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_ARRAY(ops)
-    ZEND_PARSE_PARAMETERS_END();
-
-    if (!call->initialized) {
-        zend_throw_exception(NULL, "Grpc\\Call is not initialized", 0);
-        RETURN_THROWS();
-    }
-
-    if (zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_INITIAL_METADATA) ||
-        zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_MESSAGE) ||
-        zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_SEND_CLOSE_FROM_CLIENT)) {
-        if (grpc_lite_store_send_batch(call, ops) != SUCCESS) {
-            RETURN_THROWS();
-        }
-    }
-
-    wants_initial_metadata = zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_INITIAL_METADATA);
-    wants_message = zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_MESSAGE);
-    wants_status = zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_STATUS_ON_CLIENT);
-
-    object_init(return_value);
-
-    if (call->cancelled) {
-        grpc_lite_mark_call_cancelled(call);
-        if (wants_initial_metadata) {
-            grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
-        }
-        if (wants_message) {
-            grpc_lite_add_event_message(return_value, NULL);
-        }
-        if (wants_status) {
-            grpc_lite_add_event_status(return_value, &call->status);
-        }
-        return;
-    }
-
-    if (call->status_ready) {
-        if (wants_initial_metadata) {
-            grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
-        }
-        if (wants_message) {
-            grpc_lite_add_event_message(return_value, NULL);
-        }
-        if (wants_status) {
-            grpc_lite_add_event_status(return_value, &call->status);
-        }
-        return;
-    }
-
-    if (wants_status) {
-        if (!call->unary_performed && !call->server_streaming_opened) {
-            if (grpc_lite_perform_call_unary(call) != SUCCESS) {
-                RETURN_THROWS();
-            }
-        } else if (call->server_streaming_opened && !call->status_ready) {
-            grpc_lite_streaming_next_result result;
-            do {
-                if (grpc_lite_server_streaming_next_for_call(call, &result) != SUCCESS) {
-                    RETURN_THROWS();
-                }
-                if (result.done) {
-                    if (!call->initial_metadata_ready) {
-                        grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
-                        call->initial_metadata_ready = true;
-                    }
-                    grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
-                    zval_ptr_dtor(&call->status);
-                    grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
-                    call->status_ready = true;
-                    grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", result.status.code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
-                }
-                grpc_lite_streaming_next_result_dtor(&result);
-            } while (!call->status_ready);
-        }
-    } else if (wants_message && !call->unary_performed) {
-        if (call->server_streaming_opened || !zend_hash_index_exists(Z_ARRVAL_P(ops), GRPC_OP_RECV_STATUS_ON_CLIENT)) {
-            grpc_lite_streaming_next_result result;
-            if (grpc_lite_server_streaming_next_for_call(call, &result) != SUCCESS) {
-                RETURN_THROWS();
-            }
-            if (result.done) {
-                if (!call->initial_metadata_ready) {
-                    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
-                    call->initial_metadata_ready = true;
-                }
-                grpc_lite_copy_metadata(&call->trailing_metadata, &result.trailing_metadata);
-                zval_ptr_dtor(&call->status);
-                grpc_lite_make_status_object(&call->status, result.status.code, result.status.details, &call->trailing_metadata);
-                call->status_ready = true;
-                grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", result.status.code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
-                grpc_lite_add_event_message(return_value, NULL);
-            } else {
-                if (!call->initial_metadata_ready) {
-                    grpc_lite_copy_metadata(&call->initial_metadata, &result.initial_metadata);
-                    call->initial_metadata_ready = true;
-                }
-                grpc_lite_add_event_message(return_value, result.payload);
-            }
-            grpc_lite_streaming_next_result_dtor(&result);
-        } else {
-            if (grpc_lite_perform_call_unary(call) != SUCCESS) {
-                RETURN_THROWS();
-            }
-        }
-    }
-
-    if (wants_initial_metadata) {
-        grpc_lite_add_event_metadata(return_value, &call->initial_metadata);
-    }
-    if (wants_message && call->unary_performed) {
-        grpc_lite_add_event_message(return_value, call->unary_response_payload);
-    } else if (wants_message && !zend_hash_str_exists(Z_OBJPROP_P(return_value), "message", sizeof("message") - 1)) {
-        grpc_lite_add_event_message(return_value, NULL);
-    }
-    if (wants_status) {
-        grpc_lite_add_event_status(return_value, &call->status);
-    }
 }
