@@ -38,12 +38,24 @@
 
 所有権helper化はcleanup/error path中心なら性能影響は小さいが、active stream bookkeepingはRPC hot pathでも触るため、実装内容によってはbefore/after計測を行う。
 
-計測候補:
+### Benchmark Policy
+
+docs/state machine化だけならruntime benchmarkは不要。実装で `register_grpc_call_stream()`、`unregister_grpc_call_stream()`、nghttp2 stream user data、`stream_owner_count`、`connection_owned`、cache detach条件のいずれかを変える場合は、before/afterを必須にする。
+
+既存benchmarkでまず見るもの:
 
 - `spanner-shape`
-- unary 100B
-- server streaming small messages
-- PHPT lifecycle/control semantics
+- `./bench/run.sh cpu-micro --calls=20000 --warmup-calls=500`
+- `./bench/run.sh throughput-unary --duration=3 --payload-bytes=100`
+- `./bench/run.sh throughput-streaming --duration=3 --message-count=100 --payload-bytes=100`
+
+既存benchmarkで足りない場合に追加するcase:
+
+- `cpu-micro` に `tiny_unary_0b` と `tiny_streaming_1x0b` を追加し、payload処理よりstream registration / close固定費を見やすくする。
+- server streaming resource destructorやGC dropに触る場合は、性能benchmarkとは別に lifecycle stress をgate化するか、measurement-onlyとして結果をissueに記録する。
+- connection cache detach条件に触る場合は、reused clientとper-call clientを分けて見る。`cpu-micro` の `new_client_*` が足りなければ、connection reuse countを観測する小caseを追加する。
+
+採否は、代表benchでregressionがないことに加え、ownership invariantが読みやすくなることを条件にする。性能差が測定誤差内で、コードが複雑になるだけなら採用しない。
 
 ## Progress
 

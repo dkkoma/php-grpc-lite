@@ -54,6 +54,19 @@
 - 宣言移動とinclude整理だけならruntime性能影響は想定しない。
 - `static inline` 化、function boundary変更、構造体field配置変更、request/response hot pathの呼び出し変更を入れる場合は、このissueではなく性能計測付きの別issueに切り出す。
 
+### Benchmark Policy
+
+このissueで許容する実装は「宣言移動」「include整理」「aggregate header維持」に限定する。この範囲ではruntime benchmarkを採否条件にしない。代わりにbuild、static analysis、C unit、PHPTでinclude boundaryの破損がないことを確認する。
+
+少しでも次に触れる場合は、このissue内で続けず、before/after付きの子issueへ切り出す。
+
+| Change | Existing benchmark | Add case if needed |
+|---|---|---|
+| request header builderの関数境界変更 | `./bench/run.sh metadata-header`, `./bench/run.sh spanner-shape` | `cpu-micro` に metadata unary caseを追加 |
+| response parser / metadata callbackの関数境界変更 | `./bench/run.sh metadata-header`, `./bench/run.sh payload-streaming`, `./bench/run.sh large-streaming` | DATA fragmentation diagnosticを追加 |
+| socket/TLS I/O helperの関数境界変更 | `./bench/run.sh throughput-unary`, `./bench/run.sh rtt-unary`, `./bench/run.sh tls-spanner-shape` | TLS write/read attribution用の小caseを追加 |
+| struct field配置、inline化、cache policy変更 | このissueでは扱わない | 専用issueでlayout dumpとbefore/afterを定義 |
+
 ## Progress
 
 - 2026-05-31: 親issueからtransport header boundary作業を子issue化。

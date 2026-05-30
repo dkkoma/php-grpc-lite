@@ -40,13 +40,26 @@
 
 response DATA chunk processingとmetadata callback pathに関数境界や分岐が増える可能性があるため、実装前にbefore計測を取る。
 
-計測候補:
+### Benchmark Policy
 
-- unary 100B
-- server streaming small messages
-- large streaming
+docs棚卸しだけならruntime benchmarkは不要。実装でresponse parser、metadata callback、status resolution、RST_STREAM送信条件、connection dead/draining判定のいずれかを変える場合は、before/afterを必須にする。
+
+既存benchmarkでまず見るもの:
+
 - `spanner-shape`
 - `metadata-header`
+- `./bench/run.sh cpu-micro --calls=20000 --warmup-calls=500`
+- `./bench/run.sh payload-unary --payload-sizes=0,100,1024,102400`
+- `./bench/run.sh payload-streaming --streams=20 --message-count=100 --payload-sizes=0,100,1024`
+- parser/queueを動かす変更では `./bench/run.sh large-streaming`
+
+既存benchmarkで足りない場合に追加するcase:
+
+- invalid content-type、unsupported compression、malformed frame、message too large、metadata too largeを固定回数で流す `protocol-error-micro` または `cpu-micro` error/status caseを追加する。
+- `RST_STREAM` 送信条件やconnection drainingに触る場合は、raw lifecycle fixture ports `50055`-`50060` のPHPTだけでなく、短い繰り返しcaseでtail regressionを確認する。
+- DATA frame境界に依存するparser変更では、production benchmarkとは別に `PHP_GRPC_LITE_ENABLE_BENCH` diagnosticで fragmentation を見る。ただしbench buildはproduction layoutと異なるため、採否の主根拠にはしない。
+
+採否は、互換性維持を最優先にする。小さい性能改善があっても、status taxonomyやRST_STREAM / GOAWAY / EOF lifecycleの説明が弱くなる変更は採用しない。
 
 ## Progress
 

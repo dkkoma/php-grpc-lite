@@ -145,6 +145,25 @@
 | lifecycle/stress threshold追加 | gate時間や環境依存flakeに影響する | CI smoke time, local release hardening time |
 | PHPUnit CI追加 | CI時間とservice readinessに影響する | CI duration, flaky rate, Spanner emulator reset手順 |
 
+### Benchmark Selection Policy
+
+影響が少しでもありそうな作業は、次の順で判断する。
+
+1. 既存benchmarkで評価できるなら、それをbefore/afterに使う。
+2. 既存benchmarkでは対象hot pathが埋もれる場合は、実装前にsmall caseを追加する。
+3. benchmark追加自体もissue単位の作業として扱い、何を観測するためのcaseかを記録する。
+4. production buildとdiagnostic / bench buildでlayoutやcode pathが違う場合、diagnostic結果は原因分解の補助に留める。
+5. 改善が測定誤差内なら採用しない。構造の説明性だけで採用する場合も、少なくとも代表benchでregressionがないことを条件にする。
+
+残タスクごとの初期判断:
+
+| Remaining task | Use existing benchmark first | Add benchmark/case when |
+|---|---|---|
+| transport header declaration move | runtime benchmark不要。build/static analysis/C unit/PHPTを優先 | request/header/parser/I/Oの関数境界、inline、cache policyに触るなら別issueで追加 |
+| connection ownership helper | `cpu-micro`, `spanner-shape`, `throughput-unary`, `throughput-streaming` | stream registration/close固定費が埋もれるなら `tiny_unary_0b`, `tiny_streaming_1x0b` を追加 |
+| `grpc_call` field layout | `cpu-micro`, `metadata-header`, `payload-*`, `spanner-shape` | 0B, 10-message streaming, metadata CPU/call, error/status detail caseを追加 |
+| protocol classification boundary | `metadata-header`, `payload-*`, `large-streaming`, `spanner-shape`, `cpu-micro` | invalid protocol/error pathを固定回数で見る `protocol-error-micro` 相当を追加 |
+
 ## Progress
 
 - 2026-05-31: プロジェクト全体、C source/header、PHPT/C unit/fuzz/PHPUnit/tools/testをread-only調査。
@@ -155,6 +174,7 @@
 - 2026-05-31: `grpc_call` exchange state mapの子issueを完了。field分割は未実施。
 - 2026-05-31: transport header boundaryの方針docを追加。宣言移動は未実施のため子issueはopen継続。
 - 2026-05-31: `grpc_call` field layout hot path最適化をperformance-sensitiveな後続issueとして追加。
+- 2026-05-31: 残タスクごとに、既存benchmarkで判断する条件とsmall case追加が必要な条件を明文化。
 
 ## Verification
 
