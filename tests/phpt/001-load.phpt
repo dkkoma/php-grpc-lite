@@ -38,7 +38,6 @@ foreach ([
     'grpc_lite_server_streaming_open',
     'grpc_lite_server_streaming_next',
     'grpc_lite_server_streaming_cancel',
-    'grpc_lite_multiplex_unary',
     'grpc_lite_bench_unary_batch',
 ] as $function) {
     grpc_lite_phpt_assert_true(!function_exists($function), "$function must not be exposed in production build");

@@ -1,7 +1,8 @@
 /* Official grpc/grpc wrapper adapter. */
 
-#include "diagnostic/diagnostic.h"
+#include "server_streaming_call.h"
 #include "surface.h"
+#include "unary_call.h"
 #include "wrapper_adapter.h"
 
 static void grpc_lite_mark_call_failed(grpc_lite_call_obj *call, int code, zend_string *details);
@@ -230,19 +231,6 @@ static void grpc_lite_move_metadata(zval *dest, zval *src)
         return;
     }
     array_init(dest);
-}
-
-static void grpc_lite_append_user_agent(grpc_lite_channel_obj *channel, zval *metadata)
-{
-    zval values;
-    SEPARATE_ARRAY(metadata);
-    array_init(&values);
-    if (channel->primary_user_agent != NULL && ZSTR_LEN(channel->primary_user_agent) > 0) {
-        add_next_index_str(&values, zend_string_copy(channel->primary_user_agent));
-    } else {
-        add_next_index_string(&values, PHP_GRPC_LITE_USER_AGENT);
-    }
-    zend_hash_str_update(Z_ARRVAL_P(metadata), "user-agent", sizeof("user-agent") - 1, &values);
 }
 
 static bool grpc_lite_call_has_credentials_plugin(grpc_lite_call_obj *call)
@@ -776,6 +764,5 @@ static int grpc_lite_store_send_batch(grpc_lite_call_obj *call, zval *ops)
             call->unary_response_payload = NULL;
         }
     }
-    call->sent = true;
     return SUCCESS;
 }
