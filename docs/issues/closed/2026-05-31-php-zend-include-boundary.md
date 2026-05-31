@@ -1,8 +1,8 @@
 # PHP/Zend include boundary見直し
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
-- Branch: codex/exemplar-php-zend-include-boundary
+- Branch: codex/php-zend-include-boundary
 - Owner: Codex
 
 ## Background
@@ -60,26 +60,14 @@ C/PHP拡張のお手本としては、次の境界を読める状態にしたい
 
 ## Candidate Follow-up Tasks
 
-1. `tls_config.h` のincludeを薄くする
-   - `common.h` ではなくOpenSSLとstddef中心にできるか確認する。
-   - runtime挙動変更なしならbenchmark不要。
+このissueでは、本来あるべき姿と現状差分を `docs/design/php-zend-include-boundary.md` にまとめ、実作業は次の子issueへ分ける。
 
-2. `transport_core.h` のPHP scalar dependencyを整理する
-   - `zend_long` / `zend_ulong` を使う理由を明文化する。
-   - PHP INI / surface scalarをcore helperへ渡す境界として許容するか、内部型へ変換してから渡すかを判断する。
-   - signature変更を伴う場合はC unit中心に検証する。
-
-3. `h2_request_headers` を純HTTP/2 header blockとPHP metadata conversionへ分けるか検討する
-   - これは関数境界、ownership、allocation policyが変わる可能性がある。
-   - 進める場合はrequest header builder performance issueとしてbefore/afterを取る。
-
-4. `grpc_exchange_state.h` のPHP/Zend buffer依存をfield mapに沿って整理する
-   - `zend_string` / `smart_str` / queue payload ownershipを含むため、`grpc_call` field layout issueと連動する。
-   - layout変更を伴う場合はbefore/after必須。
-
-5. `common.h` のinclude policyをdocsへ反映する
-   - 何を入れてよいか、何をnarrow headerへ置くかを明文化する。
-   - docs-onlyならbenchmark不要。
+| Child issue | Scope | Performance risk |
+|---|---|---|
+| `docs/issues/open/2026-05-31-php-zend-include-boundary-mechanical-narrowing.md` | `tls_config.h`、`grpc_result.h`、`wrapper_adapter.h`、`diagnostic/bench_call.h` などの機械的include narrowing | なし。runtime挙動、signature、layoutを変えない |
+| `docs/issues/open/2026-05-31-php-zend-include-boundary-transport-core-scalar.md` | `transport_core.h` の `zend_long` / `zend_ulong` 依存をC scalar boundaryへ寄せる | 低。signature変更あり、C unit/PHPT必須 |
+| `docs/issues/open/2026-05-31-php-zend-include-boundary-common-policy.md` | `common.h` に残すもの、narrow headerへ逃がすもの、pure constants header要否を決める | なしから低。include変更するならbuild gate必須 |
+| `docs/issues/open/2026-05-31-php-zend-include-boundary-metadata-exchange-split.md` | request/response metadata conversionとexchange stateのdomain boundary split検討 | 高。before/after benchmarkとdomain model review必須 |
 
 ## Benchmark Policy
 
@@ -110,15 +98,35 @@ include整理だけならruntime benchmarkは不要。build/static analysis/C un
 ## Progress
 
 - 2026-05-31: `h2_request_headers.h` の `php.h` 依存をきっかけにissue化。
+- 2026-05-31: 専用ブランチ `codex/php-zend-include-boundary` を作成。
+- 2026-05-31: `src/common.h`、`transport_core.h`、`tls_config.h`、`grpc_exchange_state.h`、`h2_request_headers.h`、`transport.h`、PHP surface/diagnostic headersの依存をコードレベルで確認。
+- 2026-05-31: 本来あるべき層構造、現状差分、approach orderを `docs/design/php-zend-include-boundary.md` に追加。
+- 2026-05-31: 実作業を4本の子issueへ分割。
+
+## Completion Summary
+
+このissueでは、`php.h` 依存削減を「とにかくPHP/Zend includeを消す」作業として扱わず、C/PHP extensionとして自然な境界へ整理した。
+
+判断の要点:
+
+- PHP/Zend object lifecycle、`zval`、`zend_string` ownershipを持つ層ではPHP/Zend依存を許容する。
+- ただし、PHP/Zend依存を許容することと `common.h` を読むことは同義ではない。最終的には `common.h` からPHP/Zend関連includeを外し、PHP boundary headerが必要なPHP/Zend includeを直接読む。
+- `protocol_core.h` のようなpure C層は現状維持し、PHP/Zend依存を持ち込まない。
+- `transport_core.h` はtransport policy helperとしてPHP/Zend依存を外す価値が高い。これは単なるinclude整理ではなく、PHP scalar boundaryの設計変更として扱う。
+- `tls_config.h` のようにOpenSSLだけが必要なheaderは、mechanical include narrowingの最初の候補にする。
+- `h2_request_headers` や `grpc_exchange_state` の分割は、見通し改善の余地はあるがhot pathやownershipへ触るため、performance-sensitive issueとして扱う。
 
 ## Verification
 
-- issue作成のみ。コード変更なし。
+- docs-only。
+- `git diff --check` を実行する。
 
 ## Decision Log
 
 - 2026-05-31: `php.h` 依存削減は `h2_request_headers` 単体ではなく、header boundary全体の見直しとして扱う。
 - 2026-05-31: PHP/Zend型を扱うboundaryでは `php.h` 依存を許容する。一方でpure C / protocol coreへ不要なPHP/Zend依存を広げない。
+- 2026-05-31: 最終ゴールでは `common.h` からPHP/Zend関連includeを外す。PHP/Zend依存が必要なheaderは、`common.h` ではなく直接includeまたはPHP専用boundary headerを使う。
+- 2026-05-31: 機械的include narrowing、PHP scalar boundary整理、`common.h` policy、metadata/exchange state splitを混ぜずに子issueへ分ける。特にmetadata/exchange state splitはbefore/afterなしに進めない。
 
 ## Close Criteria
 
