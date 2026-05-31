@@ -1452,10 +1452,10 @@ h2_connection *create_h2_connection(const char *host, zend_long port, const char
 {
     h2_connection *connection;
     int rv;
-    uint32_t stream_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_stream_window_size));
-    uint32_t connection_window_size = effective_http2_window_size(PHP_GRPC_LITE_G(http2_connection_window_size));
-    uint32_t max_frame_size = effective_http2_max_frame_size(PHP_GRPC_LITE_G(http2_max_frame_size));
-    uint32_t max_header_list_size = effective_http2_max_header_list_size(PHP_GRPC_LITE_G(http2_max_header_list_size));
+    uint32_t stream_window_size = effective_http2_window_size((int64_t) PHP_GRPC_LITE_G(http2_stream_window_size));
+    uint32_t connection_window_size = effective_http2_window_size((int64_t) PHP_GRPC_LITE_G(http2_connection_window_size));
+    uint32_t max_frame_size = effective_http2_max_frame_size((int64_t) PHP_GRPC_LITE_G(http2_max_frame_size));
+    uint32_t max_header_list_size = effective_http2_max_header_list_size((int64_t) PHP_GRPC_LITE_G(http2_max_header_list_size));
 
     connection = pecalloc(1, sizeof(h2_connection), persistent);
     connection->persistent = persistent;
@@ -1532,7 +1532,7 @@ h2_connection *create_h2_connection(const char *host, zend_long port, const char
         destroy_h2_connection(connection);
         return NULL;
     }
-    build_authority(connection->authority, sizeof(connection->authority), host, port, authority, authority_len);
+    build_authority(connection->authority, sizeof(connection->authority), host, (int64_t) port, authority, authority_len);
     return connection;
 }
 

@@ -2053,7 +2053,7 @@ PHP_FUNCTION(grpc_lite_unary)
 
     (void) key;
     (void) key_len;
-    error_message = validate_channel_inputs("bench", sizeof("bench") - 1, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
+    error_message = validate_channel_inputs("bench", sizeof("bench") - 1, host, host_len, (int64_t) port, authority, authority_len, tls_verify_name, tls_verify_name_len);
     if (error_message != NULL) {
         zend_throw_exception(NULL, error_message, 0);
         RETURN_THROWS();
@@ -2094,7 +2094,7 @@ PHP_FUNCTION(grpc_lite_unary)
         RETURN_THROWS();
     }
 
-    if (grpc_lite_unary_call_perform_diagnostic_on_connection(connection, path, path_len, request, request_len, headers_zv, NULL, remaining_timeout_us, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), true, persistent_reused, return_value) != SUCCESS) {
+    if (grpc_lite_unary_call_perform_diagnostic_on_connection(connection, path, path_len, request, request_len, headers_zv, NULL, remaining_timeout_us, max_receive_message_length, effective_max_response_metadata_bytes((int64_t) -1, (int64_t) -1), true, persistent_reused, return_value) != SUCCESS) {
         if (connection != NULL && !connection_usable(connection)) {
             remove_unusable_persistent_connection(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), connection);
         }
@@ -2161,7 +2161,7 @@ PHP_FUNCTION(grpc_lite_server_streaming_open)
         RETURN_THROWS();
     }
 
-    if (server_streaming_call_open_resource(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), host, host_len, port, path, path_len, request, request_len, headers_zv, NULL, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, effective_max_response_metadata_bytes(-1, -1), authority, authority_len, tls_verify_name, tls_verify_name_len, return_value, NULL) != SUCCESS) {
+    if (server_streaming_call_open_resource(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), host, host_len, port, path, path_len, request, request_len, headers_zv, NULL, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, effective_max_response_metadata_bytes((int64_t) -1, (int64_t) -1), authority, authority_len, tls_verify_name, tls_verify_name_len, return_value, NULL) != SUCCESS) {
         zend_string_release(connection_key);
         RETURN_THROWS();
     }

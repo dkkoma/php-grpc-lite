@@ -274,7 +274,7 @@ static zend_object *grpc_lite_channel_create_object(zend_class_entry *ce)
     ZVAL_UNDEF(&obj->credentials);
     obj->port = 443;
     obj->max_receive_message_length = 0;
-    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(-1, -1);
+    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes((int64_t) -1, (int64_t) -1);
     obj->std.handlers = &grpc_channel_handlers;
     return &obj->std;
 }
@@ -309,7 +309,7 @@ static void grpc_lite_channel_clear_fields(grpc_lite_channel_obj *obj)
     ZVAL_UNDEF(&obj->credentials);
     obj->port = 443;
     obj->max_receive_message_length = 0;
-    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(-1, -1);
+    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes((int64_t) -1, (int64_t) -1);
     obj->initialized = false;
 }
 
@@ -533,13 +533,13 @@ PHP_METHOD(Channel, __construct)
         zend_throw_exception(NULL, "grpc.absolute_max_metadata_size must be greater than or equal to grpc.max_metadata_size", 0);
         RETURN_THROWS();
     }
-    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes(max_metadata_size_value, absolute_max_metadata_size_value);
+    obj->max_response_metadata_bytes = effective_max_response_metadata_bytes((int64_t) max_metadata_size_value, (int64_t) absolute_max_metadata_size_value);
     error_message = validate_channel_inputs(
         ZSTR_VAL(target),
         ZSTR_LEN(target),
         ZSTR_VAL(obj->host),
         ZSTR_LEN(obj->host),
-        obj->port,
+        (int64_t) obj->port,
         obj->authority != NULL ? ZSTR_VAL(obj->authority) : NULL,
         obj->authority != NULL ? ZSTR_LEN(obj->authority) : 0,
         obj->tls_verify_name != NULL ? ZSTR_VAL(obj->tls_verify_name) : NULL,

@@ -79,7 +79,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     call.max_response_messages = 1;
     call.request = (const uint8_t *) request;
     call.request_len = request_len;
-    call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
+    call.max_receive_message_bytes = effective_max_receive_message_bytes((int64_t) max_receive_message_length);
     call.max_response_metadata_bytes = max_response_metadata_bytes;
     call.method_path = zend_string_init(path, path_len, 0);
     grpc_protocol_set_message_header(&call, call.request_len);

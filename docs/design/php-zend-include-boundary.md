@@ -51,7 +51,7 @@
 |---|---|---|
 | `protocol_core.h` | C standard headersのみ | 現状維持。理想形に近い |
 | `status_core.h` | `grpc_call` forward + C bool | status taxonomyとしては十分薄い。`grpc_call` fieldへ依存する設計は現状許容 |
-| `transport_core.h` | C standard headersのみ。PHP由来のscalarは呼び出し側から `int64_t` / `uint64_t` のC scalarとして渡す | transport policy coreとしてPHP/Zendなしを維持 |
+| `transport_core.h` | C standard headersのみ。PHP由来のscalarはPHP/Zend-aware caller側で `int64_t` へ明示変換して渡す | transport policy coreとしてPHP/Zendなしを維持。portはここで `1..65535` を検証し、validated後の `uint16_t` 化は別判断 |
 | `tls_config.h` | `stddef.h` と OpenSSL headerを直接読む | OpenSSL helperとしてPHP/Zendなしを維持 |
 | `grpc_exchange_state.h` | `common.h`、`zend_string`、`smart_str`、`struct iovec` | PHP-owned exchange stateとしてPHP/Zend依存は自然。ただし `common.h` 経由は広すぎる |
 | `h2_request_headers.h` | `php.h` + nghttp2、`zval`、`zend_string` | PHP metadata to HTTP/2 header conversion boundaryとしてPHP-awareでよい |
