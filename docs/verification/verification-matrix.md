@@ -46,6 +46,8 @@ Legend:
 | status taxonomy priority | status only | status only | `tests/unit/test_status_core.c` |
 | transport入力limit / authority validation | input only | input only | `tests/unit/test_transport_core.c` |
 | ZTS build/load/PHPT | covered | covered | `.github/workflows/native-qa.yml`, `tools/test/check-zts-phpt.sh` |
+| ZTS representative performance | covered | covered | `tools/test/check-zts-performance.sh`, `docs/issues/closed/2026-05-28-zts-formal-support.md` |
+| ZTS thread parallel call path | covered | covered | `tools/test/check-zts-parallel-performance.sh`, `docs/issues/closed/2026-05-28-zts-formal-support.md` |
 
 ## Thin or intentionally separate coverage
 

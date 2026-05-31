@@ -4,6 +4,7 @@
 #include "common.h"
 
 ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
+    /* ZTS: module globals are thread-local; never share h2_connection/socket/session/SSL across threads. */
     HashTable persistent_connections;
     bool persistent_connections_initialized;
     zend_string *default_roots_pem;

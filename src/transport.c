@@ -350,12 +350,14 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
 
 static const char *grpc_lite_trace_file_path(void)
 {
+    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
     const char *path = getenv("GRPC_LITE_TRACE_FILE");
     return path != NULL && path[0] != '\0' ? path : NULL;
 }
 
 static bool grpc_lite_trace_wire_bytes_enabled(void)
 {
+    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
     const char *value = getenv("GRPC_LITE_TRACE_WIRE_BYTES");
     return value != NULL && value[0] != '\0' && value[0] != '0';
 }

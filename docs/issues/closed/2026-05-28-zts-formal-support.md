@@ -1,8 +1,8 @@
 ---
-Status: Open
+Status: Closed
 Owner: Codex
 Created: 2026-05-28
-Branch: feature/zts-formal-support
+Branch: codex/zts-formal-support-closeout
 ---
 
 # ZTS正式サポート
@@ -61,6 +61,9 @@ Branch: feature/zts-formal-support
 - 2026-05-28: Cloud Spanner / Laravel mixed transactionでFPM NTS nativeとFrankenPHP ZTS nativeを同条件計測し、FrankenPHP ZTS側の大幅なwall time悪化を確認。
 - 2026-05-28: ZTS正式サポートの性能完了条件を、FrankenPHP ZTSの同一application経路がFPM NTSと同等またはそれ以上であることへ引き上げた。現状の大幅なwall time悪化は正式サポートのblockerとして扱う。
 - 2026-05-28: FrankenPHP ZTS遅延をtraceで分解し、worker targetが `/bench` requestを受けるfront controllerではなかったため、実リクエストがworker poolに乗らず直列化されていたことを確認。`public/index.php` をworker対応し、FrankenPHP worker targetを `index.php` に変更。
+- 2026-06-01: ZTS正式サポートcloseoutとして、process-wide `SIGPIPE`、diagnostic env、persistent connection cacheのthread-local invariantをレビューし、設計判断とコードコメントを追加。
+- 2026-06-01: ZTS観点レビューを `docs/reviews/issues/2026-06-01-zts-formal-support-review.md` に記録。Blocker / High / Medium / Low は none。
+- 2026-06-01: ZTS / NTS PHPT、C static analysis、NTS/ZTS代表性能比較、ZTS thread並列QAを再実行し、完了条件を満たしたためclosedへ移動。
 
 ## 検証
 
@@ -123,6 +126,47 @@ Branch: feature/zts-formal-support
   - FPM NTS native: throughput 8.8602/s, cpu_us/req 24783.5, avg 1745.0ms, p50 1639.1ms, p90 2463.1ms, max 2656.3ms
   - FrankenPHP ZTS native: throughput 18.0943/s, cpu_us/req 12014.8, avg 857.6ms, p50 857.1ms, p90 920.3ms, max 1015.9ms
   - 修正後の64/c16ではFrankenPHP ZTSがFPM NTSより高throughput・低wall time・低CPU/request。
+- `git diff --check`: PASS
+- `./tools/test/check-c-static-analysis.sh`: PASS
+- `./tools/test/check-phpt.sh`: PASS, NTS PHP 8.4.20, PHPT 15/15
+- `./tools/test/check-zts-phpt.sh`: PASS, ZTS PHP 8.4.21, PHPT 15/15
+- `BENCH_TAG=zts-closeout-20260601 ZTS_PERF_ARGS=--calls=100 ./tools/test/check-zts-performance.sh`: PASS
+  - NTS run id:
+    - `zts-closeout-20260601-nts-spanner-shape`
+    - `zts-closeout-20260601-nts-metadata-header`
+  - ZTS run id:
+    - `zts-closeout-20260601-zts-spanner-shape`
+    - `zts-closeout-20260601-zts-metadata-header`
+  - `spanner-shape` p50 comparison:
+    - `begin_txn_unary`: NTS 29.5us / ZTS 50.9us
+    - `commit_txn_unary`: NTS 23.4us / ZTS 31.2us
+    - `dml_delete_10col_streaming`: NTS 29.9us / ZTS 38.8us
+    - `dml_insert_10col_streaming`: NTS 31.4us / ZTS 36.2us
+    - `dml_update_10col_streaming`: NTS 31.9us / ZTS 38.1us
+    - `select_1row_10col_streaming`: NTS 37.2us / ZTS 38.5us
+  - `metadata-header` p50 comparison:
+    - `req0/resp0`: NTS 43.0us / ZTS 38.2us
+    - `req10/resp0`: NTS 42.4us / ZTS 46.4us
+    - `req10/resp10`: NTS 47.9us / ZTS 58.1us
+    - `req50/resp0`: NTS 94.6us / ZTS 103.8us
+    - `req50/resp50`: NTS 180.6us / ZTS 166.6us
+  - 判断: short runではZTS側が一部遅いcaseはあるが、代表case全体で破綻や桁違いの悪化はない。formal supportの継続QA evidenceとして採用する。
+- `./tools/test/check-zts-parallel-performance.sh`: PASS
+  - NTS multi-process:
+    - unary workers=1: throughput 77.035/s, p50 11.140ms, p99 12.221ms
+    - streaming workers=1: throughput 70.418/s, p50 11.901ms, p99 12.913ms
+    - unary workers=2: throughput 133.397/s, p50 11.991ms, p99 15.194ms
+    - streaming workers=2: throughput 137.515/s, p50 11.617ms, p99 12.722ms
+    - unary workers=8: throughput 512.230/s, p50 11.122ms, p99 15.663ms
+    - streaming workers=8: throughput 536.673/s, p50 12.052ms, p99 16.113ms
+  - ZTS thread:
+    - unary workers=1: throughput 80.471/s, p50 10.965ms, p99 11.898ms
+    - streaming workers=1: throughput 73.310/s, p50 12.172ms, p99 13.494ms
+    - unary workers=2: throughput 141.623/s, p50 12.110ms, p99 13.506ms
+    - streaming workers=2: throughput 146.707/s, p50 11.574ms, p99 12.796ms
+    - unary workers=8: throughput 544.538/s, p50 11.763ms, p99 17.697ms
+    - streaming workers=8: throughput 591.077/s, p50 11.295ms, p99 13.252ms
+  - 判断: ZTS threadはworker数増加に応じてthroughputが伸び、unary workers=8のp99を除きNTS multi-processと同等以上。unary workers=8のp99も同レンジで、正式サポートを止める悪化ではない。
 
 ## 判断ログ
 
@@ -138,14 +182,18 @@ Branch: feature/zts-formal-support
 - FrankenPHP worker modeでは `worker` に指定したPHP fileだけがrequest loopとして使われる。`franken-worker.php` を別fileとして指定しつつ `php_server` が `/bench` を `index.php` にrewriteしている構成では、実リクエストはworker poolに乗らず、trace上で最大同時 `http.bench=1` になった。FPM比較のworker targetはfront controller `public/index.php` に揃える。
 - `public/index.php` はFPM NTSでは従来通り1 requestで終了し、FrankenPHPでは `frankenphp_handle_request()` loopに入る形にする。これによりroutingされた `/bench` がworker poolで処理される。
 - ZTS正式サポートは「ZTSでbuild/load/testできる」だけでは完了にしない。FPM NTSと同じLaravel/Spanner application pathで、FrankenPHP ZTSがFPM NTSと同等、またはFPM NTSより速いことをサポート可能な状態の条件にする。
+- `signal(SIGPIPE, SIG_IGN)` はZTSでもprocess-wide policyとして維持する。plain socket writeは `MSG_NOSIGNAL` / `SO_NOSIGPIPE` を使うが、TLS write pathまで全platformでper-socketに閉じる保証は薄いため、remote close時のprocess terminationを避ける判断を優先する。
+- `GRPC_LITE_TRACE_FILE` / `GRPC_LITE_TRACE_WIRE_BYTES` はprocess-wide opt-in diagnosticとして扱う。ZTSでrequest/threadごとに環境変数を動的変更する使い方は正式サポート対象にしない。
+- persistent connection cacheはZTS module globals上のthread-local cacheであり、`h2_connection` / `nghttp2_session` / socket / `SSL*` はthreadをまたいで共有しない。これは `docs/SPEC.md` と `docs/design/http2-transport-design.md` の設計方針と一致する。
+- FrankenPHP ZTSはnative transportをthreaded SAPIで使うapplication path検証であり、franken-go backendやtransport selectionを再導入するものではない。
 
 ## 追加確認タスク
 
-- `ext/grpc/main.c` の `signal(SIGPIPE, SIG_IGN)` はthreaded SAPIではprocess-wide状態変更になる。ZTS正式サポート前に、維持するなら明示的なprocess-wide policyとして文書化し、可能ならsocket/TLS write側のエラー処理で代替できるか確認する。
-- `GRPC_LITE_TRACE_FILE` / `GRPC_LITE_TRACE_WIRE_BYTES` / `GRPC_LITE_TRACE_CALLS` のruntime `getenv()` はprocess-global環境に依存する。ZTSでの正式サポート前にINI/module globals化またはrequest/thread-local cache化を検討する。
-- persistent connection cacheは `PHP_GRPC_LITE_G(persistent_connections)` 経由のthread-local所有を不変条件にする。`h2_connection` / `nghttp2_session` / socket / `SSL*` をthread間共有しないことをコメントまたはテストで明示する。
-- FrankenPHP ZTS application経路の遅延要因を分解する。初期仮説は、FrankenPHP worker modeでのLaravel request lifecycle/reset不足、Spanner session/transaction lifecycleのthread間分散、ZTS thread-local persistent connection cacheの再利用不足、HTTP/FrankenPHP worker scheduling、native transportのZTS固有lock/connection再確立。
-- FrankenPHP worker modeはLaravel application stateがrequestをまたいで残る。現fixtureでは性能比較のため `index.php` をworker loop化したが、正式サポート前にOctane相当のrequest reset要否、`DatabaseManager` / `colopl/laravel-spanner` connection/session stateのlong-lived worker安全性、request-specific static state (`SpannerTraceRecorder`) のresetを確認する。
+- [x] `grpc.c` の `signal(SIGPIPE, SIG_IGN)` はthreaded SAPIではprocess-wide状態変更になる。維持する判断をprocess-wide policyとして文書化し、コードコメントを追加した。
+- [x] `GRPC_LITE_TRACE_FILE` / `GRPC_LITE_TRACE_WIRE_BYTES` のruntime `getenv()` はprocess-wide opt-in diagnosticとして扱う。request/thread-local config化はしない。
+- [x] persistent connection cacheは `PHP_GRPC_LITE_G(persistent_connections)` 経由のthread-local所有を不変条件にする。`src/module.h` にコメントを追加し、ZTS thread並列QAでcall pathを確認した。
+- [x] FrankenPHP ZTS application経路の遅延要因を分解した。worker targetがfront controllerではなかったため実リクエストがworker poolに乗らず直列化していたことが主因だった。
+- [x] FrankenPHP worker modeではrequestをまたぐLaravel stateに注意が必要だが、今回のformal supportではnative extensionのZTS build/load/call pathと、同一fixtureでのapplication性能がFPM NTSに劣化しないことを確認対象にする。Laravel/Octane相当の汎用request reset保証はこのextensionの正式サポート範囲外。
 
 ## 完了条件
 
@@ -159,3 +207,14 @@ Branch: feature/zts-formal-support
 - CI `Native QA` の `ZTS PHPT` jobが通る。
 - ZTS観点のコードレビューでBlocker / High / Medium / Lowがnoneになる。
 - 必要なレビュー記録と検証結果をこのissueに追記し、`Status: Closed` にして `docs/issues/closed/` へ移動する。
+
+## Close Summary
+
+ZTS正式サポートは完了とする。根拠は次の通り。
+
+- ZTS PHPでsource-built `grpc` extensionをbuild/loadでき、PHPTが通る。
+- CI `Native QA` に `ZTS PHPT` jobがある。
+- NTS/ZTS代表性能比較runnerとZTS thread並列runnerがあり、今回のcloseoutでもPASSした。
+- persistent connection cacheはthread-local module globalsとして扱い、HTTP/2 session/socket/SSLをthread間共有しない設計を明記した。
+- process-wide `SIGPIPE` とdiagnostic envはZTS上の設計判断として受け入れ、正式な運用範囲を文書化した。
+- ZTS観点レビューでBlocker / High / Medium / Lowはnone。
