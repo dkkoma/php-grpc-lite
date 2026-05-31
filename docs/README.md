@@ -13,6 +13,7 @@
 | [http2-transport-decision.md](./design/http2-transport-decision.md) | libcurl / PoC / nghttp2比較後にHTTP/2 transport 1系統へ決めた判断 |
 | [http2-transport-design.md](./design/http2-transport-design.md) | nghttp2 + socket/TLS transportの現在の設計 |
 | [transport-header-boundaries.md](./design/transport-header-boundaries.md) | `transport.h`、`common.h`、transport internal headerの境界方針 |
+| [php-zend-include-boundary.md](./design/php-zend-include-boundary.md) | PHP/Zend依存を許容する層とpure C寄りに保つ層の境界方針 |
 | [grpc-call-exchange-state.md](./design/grpc-call-exchange-state.md) | `grpc_call` field、connection / stream ownership、hot path上の責務map |
 | [protocol-classification-boundary.md](./design/protocol-classification-boundary.md) | gRPC protocol failure分類とHTTP/2 transport actionの責務境界 |
 
