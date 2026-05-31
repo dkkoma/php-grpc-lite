@@ -1,11 +1,12 @@
 # PHP/Zend include boundary: transport_core scalar boundary
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
-- Branch: TBD
+- Branch: codex/php-zend-transport-core-scalar
 - Owner: Codex
 - Parent: docs/issues/closed/2026-05-31-php-zend-include-boundary.md
 - Related-Design: docs/design/php-zend-include-boundary.md
+- Fix Commit: this commit
 
 ## Background
 
@@ -53,6 +54,26 @@ function boundaryやallocationを増やさない限りbenchmarkは不要。
 ## Decision Log
 
 - 2026-05-31: このissueはinclude整理ではなく、PHP scalar boundaryの設計変更として扱う。小さい変更だがC/PHP境界の教材価値は高い。
+- 2026-05-31: `transport_core.h` から `php.h` を外し、`zend_long` は `int64_t`、`zend_ulong hash_bytes()` は `uint64_t` へ置き換える。64-bit PHPでは実質的に同じ値域を保ち、32-bit PHPではC unitからPHP userlandでは渡れない大きな値も検証できるため、上限飽和とport拒否をC unitで明示する。
+- 2026-05-31: `hash_bytes()` は現在Zend HashTable key用途ではなく、test以外で未使用である。PHP word幅に合わせた `zend_ulong` ではなく、transport core側のstable 64-bit FNV-1a helperとして定義し直し、固定値テストで意味を明示する。
+- 2026-05-31: `port` は将来的にはvalidated後のtransport内部で `uint16_t` にできるが、このissueでは呼び出し側のchurnを抑え、`validate_channel_inputs()` と `build_authority()` の入力を `int64_t` にする。`validate_channel_inputs()` は `-1`、`0`、`65536`、`INT64_MAX` を拒否し、`1`、`65535` を許可する。
+- 2026-05-31: function boundaryやallocationは増やしていないため、benchmarkは不要と判断した。挙動維持はC unitとPHPTで確認する。
+
+## Progress
+
+- `src/transport_core.h` をC standard headersだけで読める形にした。
+- `src/transport_core.c` に必要な `<inttypes.h>`、`<stdio.h>`、`<string.h>` を直接includeした。
+- `tests/unit/test_transport_core.c` から `transport.h` 依存を外し、`transport_core.h` 単体のinclude境界を検証できる形にした。
+- C unitに `INT64_MAX`、`UINT32_MAX + 1`、port境界、`hash_bytes()` の固定値を追加した。
+- `docs/design/php-zend-include-boundary.md` の `transport_core.h` 現状表を更新した。
+
+## Verification Result
+
+- `git diff --check`: passed
+- `docker compose run --rm dev sh -lc 'make -j$(nproc)'`: passed
+- `./tools/test/check-c-static-analysis.sh`: passed
+- `./tools/test/check-c-unit.sh`: passed
+- `./tools/test/check-phpt.sh`: passed, 15/15
 
 ## Close Criteria
 

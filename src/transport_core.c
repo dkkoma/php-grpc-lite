@@ -4,13 +4,18 @@
 #define PHP_GRPC_LITE_TRANSPORT_CORE_C
 
 #include "transport_core.h"
+
+#include <inttypes.h>
+#include <stdio.h>
+#include <string.h>
+
 #ifdef snprintf
 #undef snprintf
 #endif
 
-zend_ulong hash_bytes(const char *data, size_t data_len)
+uint64_t hash_bytes(const char *data, size_t data_len)
 {
-    zend_ulong hash = (zend_ulong) 1469598103934665603ULL;
+    uint64_t hash = UINT64_C(1469598103934665603);
     size_t index;
 
     if (data == NULL || data_len == 0) {
@@ -18,12 +23,12 @@ zend_ulong hash_bytes(const char *data, size_t data_len)
     }
     for (index = 0; index < data_len; index++) {
         hash ^= (unsigned char) data[index];
-        hash *= (zend_ulong) 1099511628211ULL;
+        hash *= UINT64_C(1099511628211);
     }
     return hash;
 }
 
-void build_authority(char *buffer, size_t buffer_len, const char *host, zend_long port, const char *authority, size_t authority_len)
+void build_authority(char *buffer, size_t buffer_len, const char *host, int64_t port, const char *authority, size_t authority_len)
 {
     if (authority != NULL && authority_len > 0) {
         size_t copy_len = authority_len < buffer_len - 1 ? authority_len : buffer_len - 1;
@@ -32,10 +37,10 @@ void build_authority(char *buffer, size_t buffer_len, const char *host, zend_lon
         return;
     }
 
-    snprintf(buffer, buffer_len, "%s:%ld", host, (long) port);
+    snprintf(buffer, buffer_len, "%s:%" PRId64, host, port);
 }
 
-size_t effective_max_receive_message_bytes(zend_long max_receive_message_length)
+size_t effective_max_receive_message_bytes(int64_t max_receive_message_length)
 {
     if (max_receive_message_length == -1) {
         return SIZE_MAX;
@@ -46,7 +51,7 @@ size_t effective_max_receive_message_bytes(zend_long max_receive_message_length)
     return GRPC_LITE_DEFAULT_MAX_RECEIVE_MESSAGE_BYTES;
 }
 
-uint32_t effective_http2_window_size(zend_long configured)
+uint32_t effective_http2_window_size(int64_t configured)
 {
     if (configured < GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE) {
         return GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE;
@@ -57,7 +62,7 @@ uint32_t effective_http2_window_size(zend_long configured)
     return (uint32_t) configured;
 }
 
-uint32_t effective_http2_max_frame_size(zend_long configured)
+uint32_t effective_http2_max_frame_size(int64_t configured)
 {
     if (configured < GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE) {
         return GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE;
@@ -68,20 +73,23 @@ uint32_t effective_http2_max_frame_size(zend_long configured)
     return (uint32_t) configured;
 }
 
-uint32_t effective_http2_max_header_list_size(zend_long configured)
+uint32_t effective_http2_max_header_list_size(int64_t configured)
 {
     if (configured < 0) {
         return 0;
     }
-    if ((zend_ulong) configured > UINT32_MAX) {
+    if (configured > UINT32_MAX) {
         return UINT32_MAX;
     }
     return (uint32_t) configured;
 }
 
-size_t effective_max_response_metadata_bytes(zend_long soft_limit, zend_long hard_limit)
+size_t effective_max_response_metadata_bytes(int64_t soft_limit, int64_t hard_limit)
 {
     if (hard_limit >= 0) {
+        if ((uint64_t) hard_limit > (uint64_t) SIZE_MAX) {
+            return SIZE_MAX;
+        }
         return (size_t) hard_limit;
     }
     if (soft_limit >= 0) {
@@ -149,7 +157,7 @@ const char *validate_grpc_path(const char *path, size_t path_len)
     return second_slash_seen ? NULL : "invalid gRPC method path";
 }
 
-const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len)
+const char *validate_channel_inputs(const char *key, size_t key_len, const char *host, size_t host_len, int64_t port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len)
 {
     char port_buf[32];
     int port_len;
@@ -168,7 +176,7 @@ const char *validate_channel_inputs(const char *key, size_t key_len, const char 
             return "invalid gRPC authority";
         }
     } else {
-        port_len = snprintf(port_buf, sizeof(port_buf), "%ld", (long) port);
+        port_len = snprintf(port_buf, sizeof(port_buf), "%" PRId64, port);
         if (port_len < 0 || host_len + 1 + (size_t) port_len >= GRPC_LITE_AUTHORITY_BUFFER_SIZE) {
             return "gRPC authority is too long";
         }
