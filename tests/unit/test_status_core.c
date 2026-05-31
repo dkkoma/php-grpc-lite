@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "../../src/grpc_exchange_state.h"
+#include "../../src/grpc_constants.h"
 #include "../../src/status_core.h"
 
 static int failures = 0;

@@ -43,15 +43,16 @@ call siteを移行する間、`src/transport.h` はbackward-compatibleなaggrega
 
 ## `common.h` include policy
 
-`src/common.h` はrepository全体で共有するprivate基盤だけに限定する。
+`src/common.h` はrepository全体で共有するprivate基盤だけに限定する。現時点では移行期間のaggregateとしてPHP/Zendやtransport周辺headerも含むが、新しいheaderの標準入口にはしない。
 
-- PHP/Zendのbase includeとmodule config。
-- すでに事実上globalになっているstandard library / system header。
-- surface、wrapper、transportで共有するgRPC status / operation constant。
+- build configやextension rootなど、既存のaggregate利用で必要なinclude。
+- すでに事実上globalになっているstandard library / system header。ただし新しいnarrow headerでは直接includeを優先する。
+- surface、wrapper、transportで共有するgRPC status / operation constant。これはpure constants headerへ分け、`common.h` は互換のために読む。
 - domain固有ではない、project-wideなcapacity constant。
 
 狭いdomainに属するsymbolは `common.h` へ追加しない。
 
+- PHP/Zend base includeは、最終的には `common.h` から外す。PHP/Zend型が必要なheaderは、直接 `php.h` や必要なZend headerを読むか、PHP専用の薄いboundary headerを使う。
 - HTTP/2 window / metadata / cache limit policyは `transport_core.h` に置く。
 - gRPC wire parsing helperは `protocol_core.h` に置く。
 - call exchange stateは `grpc_exchange_state.h` に置く。
