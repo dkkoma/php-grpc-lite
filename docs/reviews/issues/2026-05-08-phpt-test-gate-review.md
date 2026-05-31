@@ -7,7 +7,7 @@
 - `bench/check-native-phpt.sh`
 - `AGENTS.md`
 - `README.md`
-- `docs/code-reading-guide.md`
+- `docs/guides/code-reading-guide.md`
 
 ## Reviewer Role
 
@@ -130,11 +130,11 @@
 - Status: `Fixed`
 - Reviewer role: `CI/test architecture reviewer for PHP C extension`
 - Finding: docsはPHPT/PHPUnitコマンドを列挙しているが、PHPTの役割、必要サービス、skip/fail policyが不明確。
-- Evidence: `README.md`, `docs/code-reading-guide.md`, `AGENTS.md`
+- Evidence: `README.md`, `docs/guides/code-reading-guide.md`, `AGENTS.md`
 - Expected model: PHPTはC拡張surface + transport smoke、PHPUnitは広いintegration/release compatibilityとして位置づける。
 - Why it matters: CI設計者がPHPTだけで全integration coverageと誤解する可能性がある。
 - Recommended fix: PHPTカテゴリ、必要service、CI順序、PHPUnitとの責務分離をdocsへ明記する。
-- Fix summary: `AGENTS.md`, `README.md`, `docs/code-reading-guide.md` にPHPT gateとPHPUnit integrationの位置づけを追記した。
+- Fix summary: `AGENTS.md`, `README.md`, `docs/guides/code-reading-guide.md` にPHPT gateとPHPUnit integrationの位置づけを追記した。
 - Fix commit: `this commit`
 - Verification: document review
 

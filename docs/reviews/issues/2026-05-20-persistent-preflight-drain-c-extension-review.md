@@ -4,9 +4,9 @@
 
 - `ext/grpc/transport.c`
 - `docs/issues/open/2026-05-20-persistent-preflight-drain.md`
-- `docs/protocol-model-review-guide.md`
-- `docs/http2-transport-design.md`
-- `docs/code-reading-guide.md`
+- `docs/verification/protocol-model-review-guide.md`
+- `docs/design/http2-transport-design.md`
+- `docs/guides/code-reading-guide.md`
 
 ## Reviewer Role
 
@@ -24,7 +24,7 @@
 - Status: `Fixed`
 - Reviewer role: `PHP extension / C safety reviewer`
 - Finding: `drain_pending_connection_data_for_reuse()` は受信bytesを `nghttp2_session_mem_recv()` に渡すが、その結果queueされる `SETTINGS ACK` / `PING ACK` / `WINDOW_UPDATE` / `RST_STREAM` などを `send_pending_h2_frames()` でflushしないまま `connection_usable()` なら再利用可として返す。
-- Evidence: `ext/grpc/transport.c:884` で `nghttp2_session_mem_recv()` を呼び、`ext/grpc/transport.c:890` 以降は `nghttp2_session_want_write()` / `send_pending_h2_frames()` を確認せずにloop継続または成功する。実装issue側は `docs/issues/open/2026-05-20-persistent-preflight-drain.md:27` でACK等のflushをscopeに入れている。プロトコルレビュー基準も `docs/protocol-model-review-guide.md:154` でpending control frame / ACK / WINDOW_UPDATEの必要時flushを要求している。
+- Evidence: `ext/grpc/transport.c:884` で `nghttp2_session_mem_recv()` を呼び、`ext/grpc/transport.c:890` 以降は `nghttp2_session_want_write()` / `send_pending_h2_frames()` を確認せずにloop継続または成功する。実装issue側は `docs/issues/open/2026-05-20-persistent-preflight-drain.md:27` でACK等のflushをscopeに入れている。プロトコルレビュー基準も `docs/verification/protocol-model-review-guide.md:154` でpending control frame / ACK / WINDOW_UPDATEの必要時flushを要求している。
 - Expected model: preflight drainはidle connectionを「次RPCに渡してよいHTTP/2 connection state」へ戻す責務を持つため、inbound control frame処理で発生したoutbound control frameも同じpreflight lifecycle内でflushし、flush失敗はconnection failureとして扱う。
 - Why it matters: ACKやflow-control更新を未flushのまま新規RPCを開始すると、wire stateがpreflight完了済みという診断・設計とずれる。次RPCのrequest送信時に偶然flushされる場合もあるが、preflightの責務が「inboundだけ処理してoutboundは次RPCへ持ち越す」状態になり、send failureやprotocol pressureの原因を新規RPCに誤帰属しやすい。
 - Recommended fix: `preflight_persistent_connection()` / `drain_pending_connection_data_for_reuse()` に現在RPCのdeadlineを渡し、drain後に `nghttp2_session_want_write(connection->session)` がtrueなら `send_pending_h2_frames(connection, NULL)` 相当をそのdeadlineで実行する。既存 `send_pending_h2_frames(connection, NULL)` は `setup_deadline_abs_us` を使うため、persistent reuse時には過去deadlineになり得る点も同時に直す。

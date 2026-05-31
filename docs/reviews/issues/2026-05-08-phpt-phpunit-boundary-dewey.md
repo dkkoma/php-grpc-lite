@@ -7,7 +7,7 @@
 - `tests/Integration/*.php`
 - `tests/Integration/Spanner/*.php`
 - `bench/check-native-phpt.sh`
-- `docs/code-reading-guide.md`
+- `docs/guides/code-reading-guide.md`
 - `docs/reviews/issues/2026-05-08-phpt-phpunit-boundary-dewey.md`
 - `docs/reviews/issues/2026-05-08-phpt-phpunit-boundary-self-review.md`
 
@@ -42,13 +42,13 @@
 - Status: `Fixed`
 - Reviewer role: `PHP extension test architecture reviewer`
 - Finding: The code-reading guide lists PHPUnit files that no longer exist after PHPT migration and still presents some migrated low-level slices as PHPUnit responsibilities.
-- Evidence: `docs/code-reading-guide.md`
+- Evidence: `docs/guides/code-reading-guide.md`
 - Expected model: Test documentation should describe the current split: PHPT owns extension surface and deterministic transport/protocol smoke; PHPUnit owns higher-level integration, wrapper/interceptor behavior, Spanner emulator, complex control semantics, and compatibility/limit variants.
 - Why it matters: Stale test names and overlapping responsibility descriptions make the release gate harder to understand and can cause future reviewers to restore duplicate PHPUnit coverage or look for deleted files.
 - Recommended fix: Update the test table to remove deleted `UnaryTest.php`, `ServerStreamingTest.php`, and `MetadataControlTest.php` entries, and describe remaining PHPUnit files by the distinct higher-level behavior they still own after PHPT migration.
 - Fix summary: direct baseline duplicateを追加削減し、`CompressionTest.php` / `HttpValidationTest.php` / `MetadataCompatibilityTest.php` はPHPT baselineにないvariant、recovery、limit、server-streaming互換に絞った。
 - Fix commit: `this commit`
-- Verification: review of `docs/code-reading-guide.md` against current `tests/Integration` inventory
+- Verification: review of `docs/guides/code-reading-guide.md` against current `tests/Integration` inventory
 - Notes: `README.md` and `AGENTS.md` accurately state the high-level PHPT/PHPUnit command split.
 
 ## Review Result

@@ -6,7 +6,7 @@
 - `ext/grpc/tests/004-object-lifecycle.phpt`
 - `ext/grpc/tests/023-metadata-and-call-credentials.phpt`
 - `ext/grpc/tests/026-franken-go-backend.phpt`
-- `docs/protocol-model-review-guide.md`
+- `docs/verification/protocol-model-review-guide.md`
 - `docs/issues/closed/2026-05-17-call-credentials-insecure-security.md`
 
 ## Reviewer Role

@@ -1,6 +1,6 @@
 # Verification matrix
 
-このmatrixは、HTTP/2 / gRPC semanticsをどのverification layerが守っているかを読むための入口である。詳細なレビュー観点は `docs/protocol-model-review-guide.md`、fixtureの意味は `docs/test-fixtures.md` を参照する。
+このmatrixは、HTTP/2 / gRPC semanticsをどのverification layerが守っているかを読むための入口である。詳細なレビュー観点は `docs/verification/protocol-model-review-guide.md`、fixtureの意味は `docs/verification/test-fixtures.md` を参照する。
 
 Legend:
 

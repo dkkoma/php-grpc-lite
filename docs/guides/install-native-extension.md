@@ -184,7 +184,7 @@ Sanitizer / fuzz gateを単独で実行する場合:
 
 Sanitizer runnerは専用の Clang sanitizer PHP image 上で実行する。ASan/UBSanとTSanはC unitとPHPTを通す。MSanはDebian配布のOpenSSL/nghttp2がMSan instrumentationなしのため、pure C core unitに限定する。Leak検出はValgrind側に寄せるため、ASan leak detectorは無効化する。
 
-native extension test frameworkの全体方針は `docs/native-test-framework.md` を参照する。
+native extension test frameworkの全体方針は `docs/verification/native-test-framework.md` を参照する。
 
 release hardeningでSanitizerを一時的に外す場合だけ、`SKIP_SANITIZER=1` を指定する。
 

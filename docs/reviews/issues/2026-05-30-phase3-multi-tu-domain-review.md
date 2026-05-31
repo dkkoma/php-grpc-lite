@@ -60,7 +60,7 @@
 
 ## Verification
 
-- Review-only inspection of uncommitted diff, adjacent C files, `docs/SPEC.md`, `docs/code-reading-guide.md`, `docs/protocol-model-review-guide.md`, and the Phase 3 work-plan section.
+- Review-only inspection of uncommitted diff, adjacent C files, `docs/SPEC.md`, `docs/guides/code-reading-guide.md`, `docs/verification/protocol-model-review-guide.md`, and the Phase 3 work-plan section.
 - `git diff --check`: PASS.
 - `rg -n '#include ".*\.c"' main.c surface.c bridge.c transport.c unary_call.c server_streaming_call.c diagnostic.c bench.c protocol_core.c status_core.c transport_core.c tests/unit tests/fuzz`: no matches.
 - Docker-based test gates were not rerun in this review session. Parent verification reported normal build/load, bench build/load, C unit, static analysis, PHPT 15/15, C coverage lines 76.8% funcs 94.5%, fuzz 100 runs, PHPUnit 30/109.

@@ -62,10 +62,10 @@
 |---|---|---|---|
 | 0 | 純 PHP PoC。libcurl + ext-curl で HTTP/2 を喋り、gRPC framing を PHP で実装。`Grpc\` 互換 API を提供 | unary と server streaming の sample が動く | **2026-04-25 完了** |
 | 1 | ベンチマーク基盤整備 | レイテンシ/スループット/メモリ計測を継続比較できる | **2026-04-28 完了**。Docker ローカル実行・ログ保存・JSON/TSV 抽出・baseline check/update・ext-grpc 比較入口を整備済み |
-| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | Benchmark PoC比較により HTTP/2 transport 方向に決定。詳細は `docs/http2-transport-decision.md` |
-| 3 | nghttp2 直接呼び出しに置き換え | runtime transportからlibcurlを外し、HTTP/2 transport 1系統にする | 実装中。drop-in releaseにはpackaging / lifecycle / memory QAのrelease gateを置く。詳細は `docs/http2-transport-design.md` / `docs/release-qa-checklist.md` |
+| 2 | ホットパスの拡張化(framing, metadata, status 解釈) | ベンチで純 PHP より明確に速い | Benchmark PoC比較により HTTP/2 transport 方向に決定。詳細は `docs/design/http2-transport-decision.md` |
+| 3 | nghttp2 直接呼び出しに置き換え | runtime transportからlibcurlを外し、HTTP/2 transport 1系統にする | 実装中。drop-in releaseにはpackaging / lifecycle / memory QAのrelease gateを置く。詳細は `docs/design/http2-transport-design.md` / `docs/verification/release-qa-checklist.md` |
 
-release default nghttp2 のQA判定は `docs/release-qa-checklist.md` に集約する。
+release default nghttp2 のQA判定は `docs/verification/release-qa-checklist.md` に集約する。
 
 各フェーズの遷移はベンチマーク結果で判断する。2026-05時点ではPhase 3の本線を HTTP/2 transport 1系統とし、libcurl runtime routeは残さない。
 
@@ -107,7 +107,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 ### 4.5 API 互換性
 
 `google/gax` および `google/cloud-*` が利用する `Grpc\` 名前空間 API を網羅する。
-詳細な呼び出し仕様は [`docs/api-surface.md`](./api-surface.md) を参照(2026-04-25 にソース調査で裏取り済み)。
+詳細な呼び出し仕様は [`docs/design/api-surface.md`](./design/api-surface.md) を参照(2026-04-25 にソース調査で裏取り済み)。
 
 #### 拡張モジュール名(重要)
 
@@ -214,7 +214,7 @@ C layout refactorはbehavioral compatibilityを変えない。status taxonomy、
 
 ## 6. 未決事項
 
-- [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/api-surface.md` で完了(2026-04-25)
+- [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/design/api-surface.md` で完了(2026-04-25)
 - [x] ~~`Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)~~ → official wrapperの `call_credentials_callback` から `Grpc\Call::setCredentials()` 経由でmetadataを生成する。
 - [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
 - [x] ~~`ServerStreamingCall::responses()` Generator の実装戦略~~ → HTTP/2 stream resourceをGeneratorがpullし、message単位でyieldする。slow consumer時はread/WINDOW_UPDATE進行を抑え、stream resource destructor / `cancel()` で `RST_STREAM(CANCEL)` を送る。
@@ -245,7 +245,7 @@ request metadata は transport へ渡す前に共通正規化する。key は lo
 
 `content-type`、`te`、`user-agent`、`grpc-status`、`grpc-message`、`grpc-status-details-bin`、`grpc-timeout`、`grpc-encoding`、`grpc-accept-encoding` は library-owned metadata とし、user metadata からは送信しない。`grpc-timeout` は call option `timeout` からのみ生成し、`user-agent` は channel option `grpc.primary_user_agent` からのみ生成する。
 
-互換性・制御系の実装時チェックリストは `docs/compatibility-control-checklist.md` に集約する。性能ベンチに入れる項目は `docs/benchmarks/README.md` に置き、deadline/error/cancellation などの semantics 検証と混ぜない。
+互換性・制御系の実装時チェックリストは `docs/verification/compatibility-control-checklist.md` に集約する。性能ベンチに入れる項目は `docs/benchmarks/README.md` に置き、deadline/error/cancellation などの semantics 検証と混ぜない。
 
 ---
 
@@ -254,7 +254,7 @@ request metadata は transport へ渡す前に共通正規化する。key は lo
 - **2026-05-31**: C extension architecture policyを追加。root extension layout、translation unit/source list、internal header/public include境界、diagnostic build境界、transport/TLS setup分離、hot path変更時のbenchmark要件を明記。
 - **2026-04-25**: 初版作成。目的・スコープ・段階戦略・TLS/HTTP/2 方針・API 互換目標・開発環境を確定。
 - **2026-04-25**: Dockerfile および compose.yaml を追加。開発環境セクションに起動方法と同梱ツールを追記。
-- **2026-04-25**: API サーフェス調査(`docs/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。
+- **2026-04-25**: API サーフェス調査(`docs/design/api-surface.md`)を実施し §4.5 を更新。主な確定事項: 拡張モジュール名は `grpc`(gax の `extension_loaded('grpc')` チェックのため)、`Grpc\Gcp\*` は別パッケージで範囲外、Status オブジェクトの正確な形(`code`/`details`/`metadata`)を確定。
 - **2026-04-25**: `Grpc\Timeval` をレガシーユーザーコード互換のため Phase 0 から薄く実装する方針に変更(API サーフェス §2.3 の補足参照)。
 - **2026-04-25**: PoC スパイク完了(`poc/`)。unary・server streaming ともに libcurl + HTTP/2 prior knowledge で疎通成功。`§4.2 重要な前提`を実機検証結果で更新し、`responses()` Generator の実装戦略を未決事項に追加。
 - **2026-04-25**: server streaming Generator 戦略を `curl_multi_*` ベースに決定(`poc/client/server_streaming_multi.php` で incremental yield を実機検証)。§4.2 に Call 種別ごとの libcurl 利用パターン表を追加。
@@ -270,11 +270,11 @@ request metadata は transport へ渡す前に共通正規化する。key は lo
 - **2026-04-27**: ホットパス分解スクリプトを追加し、通常 RPC ベンチを汚さずに framing / header parse / protobuf merge / streaming frame split をローカル CPU 計測できるようにした。結果、unary framing と header parse はサブ μs で主因ではなく、streaming frame split は buffer を message ごとに `substr()` で詰める実装が 1000 messages で 1.239 ms まで伸びることを確認。`ServerStreamingCall` を buffer offset + pending offset 方式に変更し、同じ分解計測では 1000 messages split が 54.422 μs まで下がった。実 RPC では count=1000 が 1.40 ms → 1.357 ms と小幅改善で、残る支配要因は libcurl callback / `curl_multi_*` / Generator / protobuf object 生成側。詳細: `docs/benchmarks/hot-path-breakdown-2026-04-27.md`。
 - **2026-04-27**: Phase 1 ベンチ基盤を再整理。`bench/run.sh` を通常入口として追加し、`lite` / `ext` / `compare` / `cold` / `warm` / `stream` / `stream-smoke` / `hot-path` の各スイートを Docker compose 内で実行して `var/bench-results/` にログ保存できるようにした。`bench/compare.sh` も互換入口として同じ実装へ委譲する。`tools/parse-phpbench-aggregate.php` で PHPBench aggregate ログを JSON/TSV に抽出し、`mode_ns`、`mem_peak_bytes`、`rstdev_percent` を機械比較できる形にした。`tools/compare-benchmark-baseline.php` と `bench/baselines/regression.json` を追加し、`cold` / `warm` / `stream-smoke` で php-grpc-lite 自身の回帰判定を実行できるようにした。Phase 1 はローカル再現基盤まで進行、CI のしきい値判定は残タスク。
 - **2026-04-27**: PHPBench artifact 生成を `bench/phpbench-with-artifacts.sh` に分離。PHPBench 実行、aggregate parse、JSON/TSV 保存、任意の regression baseline 比較を同一コンテナ内で完結させ、ホストに `tee` したログを直後に別コンテナから bind mount 経由で parse する構成を廃止した。これにより bind mount 反映待ちの retry と `bash -c` に埋め込んだ ext-grpc 実行処理を不要にした。
-- **2026-04-27**: `docs/code-reading-guide.md` を現行実装に合わせて更新。対象 commit を Phase 1 時点へ進め、server streaming の buffer offset / pending offset 実装、Channel-scoped curl handle reuse、mTLS/Spanner 検証、ベンチ基盤への参照を反映した。あわせて gRPC ライブラリとしての自己レビューを追加し、現状は非圧縮 unary + server streaming の最小実装として妥当だが、trailers-only error、`grpc-message` percent decode、HTTP status/content-type validation、client-side deadline、圧縮対応、binary metadata 互換は未達として明示した。
+- **2026-04-27**: `docs/guides/code-reading-guide.md` を現行実装に合わせて更新。対象 commit を Phase 1 時点へ進め、server streaming の buffer offset / pending offset 実装、Channel-scoped curl handle reuse、mTLS/Spanner 検証、ベンチ基盤への参照を反映した。あわせて gRPC ライブラリとしての自己レビューを追加し、現状は非圧縮 unary + server streaming の最小実装として妥当だが、trailers-only error、`grpc-message` percent decode、HTTP status/content-type validation、client-side deadline、圧縮対応、binary metadata 互換は未達として明示した。
 - **2026-04-28**: Phase 1 のベンチ追加を完了扱いに整理。既存の `cold` / `warm` / `stream` / `stream-smoke` / `hot-path` に加え、実用性能軸として `stream-slow`、`metadata`、`tls` を追加し、php-grpc-lite vs 公式 ext-grpc の実測結果を `docs/benchmarks/` に記録した。手元運用・継続比較基盤は完成とし、残タスクは CI で回す smoke の選定、regression baseline 運用、`mem_peak` の回帰判定に限定する。
 - **2026-04-28**: regression baseline 運用入口として `bench/baseline.sh` を追加。`check` は `cold` / `warm` / `stream-smoke` の php-grpc-lite 側だけを実行して `bench/baselines/regression.json` と比較し、`mode_ns` と `mem_peak_bytes` の回帰を判定する。`update` は意図した性能変化や環境変更を受け入れる時だけ現在値から baseline を更新する。Phase 1 の残タスクは CI で `check` をどのタイミングで回すかの決定に絞る。
 - **2026-04-28**: Phase 1 を完了扱いに変更。CI 実行設定は通常の保守運用タスクとして残すが、Phase 1 の完了条件はローカルで再現可能な継続比較、公式 ext-grpc 比較、php-grpc-lite 自身の regression baseline 運用が揃った時点で満たしたと判断する。C 拡張化へ直接入らず、`docs/benchmarks/measurement-plan-benchmark.md` の多軸計測で persistent pool / per-frame streaming / per-byte decode / header parser などの優先順位を決める。
-- **2026-05-03**: HTTP/2 transport MVP比較を実施。current libcurl transport、HTTP/2 direct MVP PoC、公式 ext-grpcをlarge request unary / server streaming代表形状で比較し、default transportはHTTP/2経路へ進める判断に更新した。その後、実装とQAを単純化するためlibcurl runtime経路は削除し、transportはHTTP/2 1系統に絞る方針へ更新した。MVP scopeは upload no-copy + poll loop、response compact/ring buffer、direct payload assembly。詳細: `docs/research/http2-transport-mvp-comparison-2026-05-03.md`、`docs/http2-transport-decision.md`、`docs/http2-transport-design.md`。
+- **2026-05-03**: HTTP/2 transport MVP比較を実施。current libcurl transport、HTTP/2 direct MVP PoC、公式 ext-grpcをlarge request unary / server streaming代表形状で比較し、default transportはHTTP/2経路へ進める判断に更新した。その後、実装とQAを単純化するためlibcurl runtime経路は削除し、transportはHTTP/2 1系統に絞る方針へ更新した。MVP scopeは upload no-copy + poll loop、response compact/ring buffer、direct payload assembly。詳細: `docs/research/http2-transport-mvp-comparison-2026-05-03.md`、`docs/design/http2-transport-decision.md`、`docs/design/http2-transport-design.md`。
 - **2026-05-03**: HTTP/2 transportのactual `UnaryCall::wait()` / `ServerStreamingCall::responses()` surfaceを測るvariantを比較runnerへ追加し、`100×100KiB` server streaming例外形状のfocused repeat runnerを追加した。HTTP/2 wrapperからserver stats trailer相当も公開し、PoC APIだけでなく本体surface経由でclient/server timingを並べられるようにした。詳細: `docs/research/native-surface-repeat-2026-05-03.md`。
 - **2026-05-03**: HTTP/2 control semanticsをMVP surfaceで進めた。bench専用buildの `grpc_lite_bench_unary_batch()` にdeadlineを追加してHTTP/2制御系を検証し、PHP wrapperでは `STATUS_DEADLINE_EXCEEDED`、API-level `cancel()`、missing `grpc-status` の `STATUS_UNKNOWN` 合成、HTTP/2 stream resetの基本status変換、TLS/mTLS明示未対応時の `STATUS_UNAVAILABLE` を扱う。server streamingはまだbatch drain後yieldなので、transport-level `RST_STREAM` と真のbackpressureはproduction streaming resource化後に残す。詳細: `docs/research/native-control-semantics-2026-05-03.md`。
 - **2026-05-04**: HTTP/2 server streamingをC stream resource化し、`ServerStreamingCall::responses()` が `grpc_lite_server_streaming_next()` をpullしてmessageごとにyieldする経路へ切り替えた。`cancel()` は `RST_STREAM(CANCEL)` を送る。small SELECT代表形状(`1x100B` / `1x1KiB` / `1x4KiB` / `1x10KiB`)ではHTTP/2がcurl/ext-grpcよりp50/p99とも良好、Spanner DML unary shapeでもHTTP/2が最良。一方、`100x100KiB` server streamingなどlarge response surfaceではPoC direct/compactやext-grpcに対して未解明の差が残る。詳細: `docs/research/native-stream-resource-2026-05-04.md`。

@@ -151,5 +151,5 @@ unary は両者 ~1.5 ns/byte で同等。streaming は ext-grpc が速い(per-by
 
 - ベースライン(php-grpc-lite 単独): [baseline-2026-04-26.md](./baseline-2026-04-26.md)
 - 設計判断: [../SPEC.md](../SPEC.md)
-- 実装ガイド: [../code-reading-guide.md](../code-reading-guide.md)
+- 実装ガイド: [../guides/code-reading-guide.md](../guides/code-reading-guide.md)
 - 比較スクリプト: [../../bench/compare.sh](../../bench/compare.sh)

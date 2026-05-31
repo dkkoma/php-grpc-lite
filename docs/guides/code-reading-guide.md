@@ -2,7 +2,7 @@
 
 このガイドは、現行の `php-grpc-lite` を読むための入口です。過去の純PHP/libcurl経路は前提にせず、現在の公式 `grpc/grpc` wrapper + repository rootに置かれた `grpc` extension実装だけを扱います。
 
-C extensionの構造に関する設計制約は [SPEC.md](./SPEC.md) の「C extension architecture policy」を基準にします。このガイドは、その前提で現在のファイル配置と読む順序を示します。
+C extensionの構造に関する設計制約は [SPEC.md](../SPEC.md) の「C extension architecture policy」を基準にします。このガイドは、その前提で現在のファイル配置と読む順序を示します。
 
 ## 全体像
 
@@ -24,7 +24,7 @@ generated client / gax
 
 ## 読む順序
 
-HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレビューする場合は、このガイドと併せて `docs/protocol-model-review-guide.md` を使います。
+HTTP/2/gRPCのドメインモデル、命名、責務境界、状態機械をレビューする場合は、このガイドと併せて `docs/verification/protocol-model-review-guide.md` を使います。
 
 ### 初学者向け
 
@@ -38,7 +38,7 @@ PHP拡張やCのtranslation unitに慣れていない場合は、まず「PHPか
 6. `tests/phpt/003-timeval.phpt`
 7. `tests/phpt/010-unary.phpt`
 8. `tests/phpt/011-server-streaming.phpt`
-9. `docs/native-test-framework.md`
+9. `docs/verification/native-test-framework.md`
 
 この順序では、socket / nghttp2 / OpenSSLの詳細には入らず、PHP extensionのmodule lifecycle、class registration、object destructor、PHPTの基本を確認する。
 
@@ -54,8 +54,8 @@ Cのヘッダ境界、Zend object ownership、official wrapperとの接続を読
 6. `src/server_streaming_call.c`
 7. `src/grpc_result.h`
 8. `tests/unit/*.c`
-9. `docs/test-fixtures.md`
-10. `docs/verification-matrix.md`
+9. `docs/verification/test-fixtures.md`
+10. `docs/verification/verification-matrix.md`
 
 この順序では、`.c` を直接includeしない構造、internal header、`zend_string` / `zval` の所有権、`Grpc\Call::startBatch()` からproduction RPC helperへ流れる境界を確認する。
 
@@ -63,8 +63,8 @@ Cのヘッダ境界、Zend object ownership、official wrapperとの接続を読
 
 HTTP/2 / gRPC transport、persistent connection、deadline、metadata/status、RST_STREAM / GOAWAY / EOF lifecycleを読む場合は、次を読む。
 
-1. `docs/protocol-model-review-guide.md`
-2. `docs/grpc-call-exchange-state.md`
+1. `docs/verification/protocol-model-review-guide.md`
+2. `docs/design/grpc-call-exchange-state.md`
 3. `src/grpc_exchange_state.h`
 4. `src/transport.h`
 5. `src/transport.c`
@@ -92,7 +92,7 @@ HTTP/2 / gRPC transport、persistent connection、deadline、metadata/status、R
 9. `src/server_streaming_call.c`
 10. `src/transport.c`
 11. `src/grpc_exchange_state.h` / `src/grpc_result.h`
-12. `docs/grpc-call-exchange-state.md`
+12. `docs/design/grpc-call-exchange-state.md`
 13. `src/internal.h`
 
 ## 1. 生成クライアント相当
@@ -231,9 +231,9 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 
 protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。connection自体がdead/drainingでなければpersistent cacheには残します。
 
-1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
+1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/design/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
 
-`src/transport.h` は現時点ではHTTP/2 transportのprivate aggregate headerです。connection、persistent cache、nghttp2 callback、request header builder、response parser、server streaming resource stateなどのboundaryと将来の分割順は `docs/transport-header-boundaries.md` に整理しています。
+`src/transport.h` は現時点ではHTTP/2 transportのprivate aggregate headerです。connection、persistent cache、nghttp2 callback、request header builder、response parser、server streaming resource stateなどのboundaryと将来の分割順は `docs/design/transport-header-boundaries.md` に整理しています。
 
 ## 7. persistent connection
 

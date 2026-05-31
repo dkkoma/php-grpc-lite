@@ -71,7 +71,7 @@ make -j"$(nproc)"
 sudo make install
 ```
 
-Full install notes, verification commands, rollback notes, and large-streaming guidance are in `docs/install-native-extension.md`.
+Full install notes, verification commands, rollback notes, and large-streaming guidance are in `docs/guides/install-native-extension.md`. The documentation entrypoint is `docs/README.md`.
 
 ## Development
 
@@ -130,6 +130,7 @@ docker build -f Dockerfile.install-pie \
 
 Design and QA status:
 
+- `docs/README.md`
 - `docs/SPEC.md`
-- `docs/http2-transport-decision.md`
-- `docs/release-qa-checklist.md`
+- `docs/design/http2-transport-decision.md`
+- `docs/verification/release-qa-checklist.md`

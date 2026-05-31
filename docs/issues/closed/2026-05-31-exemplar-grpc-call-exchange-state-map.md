@@ -60,8 +60,8 @@
 ## Progress
 
 - 2026-05-31: 親issueから `grpc_call` exchange state作業を子issue化。
-- 2026-05-31: `docs/grpc-call-exchange-state.md` を追加し、`grpc_call` fieldを責務、lifetime、hotnessで分類。
-- 2026-05-31: `docs/code-reading-guide.md` からfield mapへリンク。
+- 2026-05-31: `docs/design/grpc-call-exchange-state.md` を追加し、`grpc_call` fieldを責務、lifetime、hotnessで分類。
+- 2026-05-31: `docs/guides/code-reading-guide.md` からfield mapへリンク。
 - 2026-05-31: sub-struct化は実装しない判断を記録。実装する場合はbefore/after benchmarkとdomain model review必須。
 
 ## Verification

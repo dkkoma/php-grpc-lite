@@ -9,8 +9,8 @@
 - `ext/grpc/tests/002-ini.phpt`
 - `ext/grpc/tests/029-trace-file.phpt`
 - `ext/grpc/tests/unit/test_transport_core.c`
-- `docs/code-reading-guide.md`
-- `docs/http2-transport-design.md`
+- `docs/guides/code-reading-guide.md`
+- `docs/design/http2-transport-design.md`
 - `docs/issues/open/2026-05-26-http2-settings-frame-and-header-list-size.md`
 
 ## Reviewer Role

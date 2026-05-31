@@ -45,8 +45,8 @@ PHPT、PHPUnit、C unit、fuzz、sanitizer、ZTS、release hardeningの層は強
 - 2026-05-31: 親issueからtest discoverability作業を子issue化。
 - 2026-05-31: `020-request-metadata-control.phpt` にscenario group commentを追加。
 - 2026-05-31: `024-control-semantics.phpt` にscenario group commentを追加。
-- 2026-05-31: `docs/native-test-framework.md` に PHPUnit integration と slow-consumer measurement-only の扱いを追記。
-- 2026-05-31: `docs/release-qa-checklist.md` に measurement-only checks を追記。
+- 2026-05-31: `docs/verification/native-test-framework.md` に PHPUnit integration と slow-consumer measurement-only の扱いを追記。
+- 2026-05-31: `docs/verification/release-qa-checklist.md` に measurement-only checks を追記。
 
 ## Verification
 

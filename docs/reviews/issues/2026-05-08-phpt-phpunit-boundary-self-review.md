@@ -9,7 +9,7 @@
 - `bench/check-native-phpt.sh`
 - `AGENTS.md`
 - `README.md`
-- `docs/code-reading-guide.md`
+- `docs/guides/code-reading-guide.md`
 
 ## Reviewer Role
 

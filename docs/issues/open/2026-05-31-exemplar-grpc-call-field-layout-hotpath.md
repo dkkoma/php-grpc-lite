@@ -9,7 +9,7 @@
 
 ## Background
 
-`docs/grpc-call-exchange-state.md` で `grpc_call` のfield責務、lifetime、hotnessを整理した。次の段階として、現在の `struct _grpc_call` のfield orderがhot pathに対して妥当かを測定し、必要ならlayoutを調整する。
+`docs/design/grpc-call-exchange-state.md` で `grpc_call` のfield責務、lifetime、hotnessを整理した。次の段階として、現在の `struct _grpc_call` のfield orderがhot pathに対して妥当かを測定し、必要ならlayoutを調整する。
 
 `grpc_call` は1 RPC over 1 HTTP/2 streamの交換状態であり、unaryではstack上、server streamingでは `server_streaming_call_state` resource内に置かれる。nghttp2 callback、DATA chunk parser、request body callback、status resolution、server streaming queueで頻繁に参照されるため、field order変更は単なる可読性改善ではなく性能変更として扱う。
 

@@ -66,4 +66,4 @@
 - `poc/test-server/main.go` がfixture behaviorの一次ソース。
 - `tests/phpt/helpers.inc` はPHPTからtest-server到達性を確認する。
 - `tools/test/check-phpt.sh` と `tools/test/check-c-coverage.sh` は `50051`-`50060` を必須preflightとして扱う。
-- fixture behaviorを変える場合は、該当PHPT/PHPUnitだけでなく `docs/verification-matrix.md` も更新する。
+- fixture behaviorを変える場合は、該当PHPT/PHPUnitだけでなく `docs/verification/verification-matrix.md` も更新する。

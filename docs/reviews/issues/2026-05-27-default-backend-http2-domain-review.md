@@ -5,7 +5,7 @@
 - `ext/grpc/main.c`
 - `ext/grpc/tests/002-ini.phpt`
 - `README.md`
-- `docs/http2-transport-design.md`
+- `docs/design/http2-transport-design.md`
 - `docs/frankenphp-go-backend-design.md`
 - `docs/frankenphp-grpc-go-client-change-request.md`
 - `docs/issues/open/2026-05-27-default-backend-http2.md`

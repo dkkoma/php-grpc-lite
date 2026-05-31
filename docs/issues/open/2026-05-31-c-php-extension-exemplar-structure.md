@@ -57,18 +57,18 @@
 
 性能影響なし。先に着手してよい。
 
-- `docs/test-fixtures.md` を追加する。
+- `docs/verification/test-fixtures.md` を追加する。
   - `50051`: normal h2c gRPC
   - `50052`: TLS
   - `50053`: mTLS
   - `50054`: non-gRPC h2c / HTTP validation
   - `50055`-`50060`: raw lifecycle fixtures
   - `x-bench-*` metadata trigger、expected status、owning PHPT/PHPUnitを表にする。
-- `docs/verification-matrix.md` を追加する。
+- `docs/verification/verification-matrix.md` を追加する。
   - unary / server streaming × deadline / metadata / status / compression / resource limit / RST_STREAM / GOAWAY / EOF / TLS / mTLS / slow consumer / ZTS。
   - PHPT / PHPUnit / C unit / fuzz / sanitizer / release gateの対応をリンクする。
   - 未カバーまたは薄いセルを明示する。
-- `docs/code-reading-guide.md` に beginner / intermediate / advanced の読み順を追加する。
+- `docs/guides/code-reading-guide.md` に beginner / intermediate / advanced の読み順を追加する。
 - `tests/fuzz/README.md` を追加し、selector byte、seed corpus、CI smokeの目的を説明する。
 
 ### 2. Test discoverability improvements
@@ -189,7 +189,7 @@
 - `./tools/test/check-phpt.sh`
 - `./tools/test/check-c-coverage.sh`
 - `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`
-- HTTP/2/gRPC transportに触る変更では `docs/protocol-model-review-guide.md` に沿ったdomain model review
+- HTTP/2/gRPC transportに触る変更では `docs/verification/protocol-model-review-guide.md` に沿ったdomain model review
 - 性能影響がある変更では同条件のbefore/after benchmark
 
 ## Decision Log
@@ -201,8 +201,8 @@
 
 ## Close Criteria
 
-- `docs/test-fixtures.md` が追加され、fixture port、metadata trigger、expected behavior、owning testsが分かる。
-- `docs/verification-matrix.md` が追加され、主要HTTP/2/gRPC semanticsとテスト/gateの対応が分かる。
+- `docs/verification/test-fixtures.md` が追加され、fixture port、metadata trigger、expected behavior、owning testsが分かる。
+- `docs/verification/verification-matrix.md` が追加され、主要HTTP/2/gRPC semanticsとテスト/gateの対応が分かる。
 - code reading guideに習熟度別の読み順が追加される。
 - fuzz corpus semanticsがREADME化される。
 - `transport.h` の分割方針が実装または明示的な後続issueへ切り出される。

@@ -14,9 +14,9 @@
 
 ## Goals
 
-- `docs/test-fixtures.md` を追加し、fixture port、service mode、trigger metadata、expected behavior、owning testsを一覧化する。
-- `docs/verification-matrix.md` を追加し、主要HTTP/2/gRPC semanticsと検証層の対応を一覧化する。
-- `docs/code-reading-guide.md` に beginner / intermediate / advanced の読み順を追加する。
+- `docs/verification/test-fixtures.md` を追加し、fixture port、service mode、trigger metadata、expected behavior、owning testsを一覧化する。
+- `docs/verification/verification-matrix.md` を追加し、主要HTTP/2/gRPC semanticsと検証層の対応を一覧化する。
+- `docs/guides/code-reading-guide.md` に beginner / intermediate / advanced の読み順を追加する。
 - `tests/fuzz/README.md` を追加し、fuzz harness selector、seed corpus、CI smokeの意味を説明する。
 
 ## Non-Goals
@@ -28,16 +28,16 @@
 ## Plan
 
 1. `poc/test-server/main.go`、`tests/phpt/*`、`tests/Integration/*`、`tools/test/*` を参照してfixture catalogを作る。
-2. `docs/protocol-model-review-guide.md` と `docs/compatibility-control-checklist.md` の観点をverification matrixへ落とす。
-3. `docs/code-reading-guide.md` に習熟度別の読み順を追加する。
+2. `docs/verification/protocol-model-review-guide.md` と `docs/verification/compatibility-control-checklist.md` の観点をverification matrixへ落とす。
+3. `docs/guides/code-reading-guide.md` に習熟度別の読み順を追加する。
 4. `tests/fuzz/README.md` にselector byteとseed corpusの役割を記録する。
 
 ## Progress
 
 - 2026-05-31: 親issueからdocumentation-first作業を子issue化。
-- 2026-05-31: `docs/test-fixtures.md` を追加し、test-server ports、service methods、metadata controlsを一覧化。
-- 2026-05-31: `docs/verification-matrix.md` を追加し、主要semanticsと検証層の対応を一覧化。
-- 2026-05-31: `docs/code-reading-guide.md` に初学者 / 中級者 / 上級者向けの読み順を追加。
+- 2026-05-31: `docs/verification/test-fixtures.md` を追加し、test-server ports、service methods、metadata controlsを一覧化。
+- 2026-05-31: `docs/verification/verification-matrix.md` を追加し、主要semanticsと検証層の対応を一覧化。
+- 2026-05-31: `docs/guides/code-reading-guide.md` に初学者 / 中級者 / 上級者向けの読み順を追加。
 - 2026-05-31: `tests/fuzz/README.md` を追加し、fuzz selectorとseed corpusを説明。
 
 ## Verification

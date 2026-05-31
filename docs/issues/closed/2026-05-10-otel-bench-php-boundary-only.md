@@ -33,7 +33,7 @@ C拡張内部telemetry recordをactive spanへ付与する設計は、`random_by
 - C拡張runtime telemetry API、telemetry INI、PHP telemetry adapterを削除した。
 - C拡張側に残すのはbench build限定のdiagnostic record helperだけにした。
 - `otelop-summary.php` はspan durationだけを表示し、内部duration列を削除した。
-- `docs/opentelemetry-instrumentation.md` はtrace context metadata注入とbenchmark OTEL exportのみを説明する最終形に直した。
+- `docs/guides/opentelemetry-instrumentation.md` はtrace context metadata注入とbenchmark OTEL exportのみを説明する最終形に直した。
 
 ## Verification
 

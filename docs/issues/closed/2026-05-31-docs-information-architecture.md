@@ -1,8 +1,8 @@
 # docs情報設計: 入口、階層、リンク方針の整理
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
-- Branch: codex/docs-information-architecture-issue
+- Branch: codex/docs-information-architecture
 - Owner: Codex
 - Parent: none
 - Related:
@@ -14,7 +14,7 @@
 
 お手本化作業の中で、`grpc_call` field map、connection / stream ownership、transport design、code reading guideなど、近い粒度のドキュメントが増えた。
 
-内容としては必要でも、`docs/` 直下へ説明したい単位でファイルを追加すると、どれが入口で、どれが設計書で、どれが読み物で、どれが検証資料なのかが分かりにくい。今回の `connection-stream-ownership.md` 案も、既存の `docs/grpc-call-exchange-state.md` と `docs/http2-transport-design.md` に近い内容があり、独立docとして追加すると重複して見通しが悪くなることが分かった。
+内容としては必要でも、`docs/` 直下へ説明したい単位でファイルを追加すると、どれが入口で、どれが設計書で、どれが読み物で、どれが検証資料なのかが分かりにくい。今回の `connection-stream-ownership.md` 案も、既存の `docs/design/grpc-call-exchange-state.md` と `docs/design/http2-transport-design.md` に近い内容があり、独立docとして追加すると重複して見通しが悪くなることが分かった。
 
 このissueでは、個別docの中身ではなく、docs全体の情報設計を扱う。
 
@@ -56,6 +56,14 @@
 5. 移動する場合はリンク更新と `rg` による参照確認を行う。
 6. 以後のドキュメント追加方針を短く明文化する。
 
+## Progress
+
+- 2026-05-31: `docs/` 直下、`benchmarks/`、`issues/`、`reviews/`、`research/` を棚卸しし、現行docを current design、reading guide、verification、records に分類。
+- 2026-05-31: `docs/README.md` を追加し、docs全体の入口、主要docへのリンク、Placement Policy、Directory Policyを明文化。
+- 2026-05-31: root `README.md` と `AGENTS.md` から `docs/README.md` を参照するよう更新。
+- 2026-05-31: 現行設計docを `docs/design/`、読み方・install系docを `docs/guides/`、検証・review gate系docを `docs/verification/` へ移動。
+- 2026-05-31: `SPEC.md` は最上位仕様として `docs/` 直下に残し、`benchmarks/`、`issues/`、`reviews/`、`research/` は既存階層を維持。
+
 ## Performance Notes
 
 docs構造とリンク整理のみならruntime performanceへの影響はない。
@@ -64,15 +72,18 @@ docs構造とリンク整理のみならruntime performanceへの影響はない
 
 ## Verification
 
-- `rg` による旧path参照確認
-- `git diff --check`
-- docs-onlyならPHPT / PHPUnit / benchmarkは不要
-- path移動を含む場合は、少なくとも関連scriptやREADME参照のsmoke確認を行う
+- `rg` による旧path参照確認: PASS
+- Markdown local link check for `README.md`, `AGENTS.md`, `docs/**/*.md`: PASS
+- `git diff --check`: PASS
+- docs-only。C実装、PHP wrapper、test behavior、runner pathは変更していないため、PHPT / PHPUnit / benchmarkは不要。
 
 ## Decision Log
 
-- 2026-05-31: `docs/connection-stream-ownership.md` 案は既存docと重複するため、独立docではなく `docs/grpc-call-exchange-state.md` へ統合した。
+- 2026-05-31: `docs/connection-stream-ownership.md` 案は既存docと重複するため、独立docではなく `docs/design/grpc-call-exchange-state.md` へ統合した。
 - 2026-05-31: 同種の重複を避けるため、docs全体の入口、階層、リンク方針を独立issueとして扱う。
+- 2026-05-31: `docs/README.md` をdocs全体の入口にする。
+- 2026-05-31: `docs/` 直下には `README.md` と `SPEC.md` を残し、current design、guides、verificationは階層化する。
+- 2026-05-31: `benchmarks/`、`issues/`、`reviews/`、`research/` は既存階層を維持する。
 
 ## Close Criteria
 

@@ -195,7 +195,7 @@ HTTP/2 transportで通す必要があるもの:
 - max receive message length
 - compression unsupported explicit error
 
-互換性・制御系は `docs/compatibility-control-checklist.md` に沿って追加する。HTTP/2 surfaceではTLS/mTLS、metadata/status/compression/error semanticsの代表条件を検証済み。実装進捗や検証途中の制限は `docs/research/` に残し、このdesign docには最終設計として満たすべき形だけを書く。
+互換性・制御系は `docs/verification/compatibility-control-checklist.md` に沿って追加する。HTTP/2 surfaceではTLS/mTLS、metadata/status/compression/error semanticsの代表条件を検証済み。実装進捗や検証途中の制限は `docs/research/` に残し、このdesign docには最終設計として満たすべき形だけを書く。
 
 ## Benchmark Requirements
 

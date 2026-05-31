@@ -12,7 +12,7 @@
 - `tools/test/check-c-unit.sh`
 - `tools/test/check-c-coverage.sh`
 - `README.md`
-- `docs/code-reading-guide.md`
+- `docs/guides/code-reading-guide.md`
 
 ## Reviewer Role
 

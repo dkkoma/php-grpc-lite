@@ -30,7 +30,7 @@ Go test-server の `BenchUnary` は request metadata の制御ヘッダを読み
 - request metadata だけなら 50 keys までは ext-grpc とほぼ同等までに収まる。
 - response metadata が 50 initial + 50 trailing まで増えると、PHP 側の header line parse と array 構築の固定費が見える。
 - mem_peak は他の bench と同じ傾向で、php-grpc-lite は ext-grpc より約 0.9 mb 大きい。
-- binary metadata は性能 bench に混ぜず、まず `docs/compatibility-control-checklist.md` の metadata compatibility として ext-grpc 互換を確認する。
+- binary metadata は性能 bench に混ぜず、まず `docs/verification/compatibility-control-checklist.md` の metadata compatibility として ext-grpc 互換を確認する。
 
 ## 4. 生成物
 

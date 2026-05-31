@@ -6,8 +6,8 @@
 - `grpc.c`
 - `src/`
 - `src/diagnostic/`
-- `docs/code-reading-guide.md`
-- `docs/protocol-model-review-guide.md`
+- `docs/guides/code-reading-guide.md`
+- `docs/verification/protocol-model-review-guide.md`
 - Phase 5 layout move plus PR follow-up: C source/internal headers under `src/`, diagnostic bench files under `src/diagnostic`, repository root retaining `config.m4`, `php_grpc.h`, and `grpc.c`
 
 ## Reviewer Role
@@ -74,5 +74,5 @@
 
 ## Verification
 
-- Reviewed the Phase 5 diff, moved source/header layout, `config.m4`, `grpc.c`, `php_grpc.h`, `src/diagnostic/bench.c`, `src/diagnostic/diagnostic.h`, representative production headers, `docs/SPEC.md`, `docs/code-reading-guide.md`, `docs/protocol-model-review-guide.md`, and prior review issue style.
+- Reviewed the Phase 5 diff, moved source/header layout, `config.m4`, `grpc.c`, `php_grpc.h`, `src/diagnostic/bench.c`, `src/diagnostic/diagnostic.h`, representative production headers, `docs/SPEC.md`, `docs/guides/code-reading-guide.md`, `docs/verification/protocol-model-review-guide.md`, and prior review issue style.
 - Original review pass did not edit implementation files. PR follow-up later renamed the module entrypoint source to `grpc.c` and added `php_grpc.h`; this review record was updated to reflect the final PR layout.

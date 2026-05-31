@@ -64,7 +64,7 @@ I do not see any actionable Blocker, High, Medium, or Low finding for this PR. T
 - Status: `Accepted`
 - Reviewer role: `Domain/modeling and maintainability reviewer`
 - Finding: The before/after tradeoff is favorable and no production-code change is required before merge from a domain/modeling standpoint.
-- Evidence: `config.m4:15-19` lists explicit production and bench-only sources; `grpc.c:65-77` delegates PHP class registration and keeps module lifecycle/constants in the entrypoint; `docs/code-reading-guide.md:97-157` documents the current surface/wrapper adapter/transport split; `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:605-630` records final state and verification.
+- Evidence: `config.m4:15-19` lists explicit production and bench-only sources; `grpc.c:65-77` delegates PHP class registration and keeps module lifecycle/constants in the entrypoint; `docs/guides/code-reading-guide.md:97-157` documents the current surface/wrapper adapter/transport split; `docs/issues/closed/2026-05-29-c-maintainability-work-plan.md:605-630` records final state and verification.
 - Expected model: The extension should expose official `Grpc\` low-level surface while keeping Composer wrapper adaptation, call orchestration, HTTP/2 transport, and bench diagnostics in distinguishable internal boundaries.
 - Why it matters: This PR is primarily maintainability work. The important question is whether the new boundaries make future protocol and lifecycle reviews easier without fragmenting responsibilities beyond recognition.
 - Recommended fix: No required fix. Merge is reasonable if the team accepts the residual broad `transport.h` / large `grpc_call` tradeoff.

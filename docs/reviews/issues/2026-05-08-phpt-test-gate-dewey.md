@@ -10,7 +10,7 @@
 - `docs/reviews/issues/`
 - `AGENTS.md`
 - `README.md`
-- `docs/code-reading-guide.md`
+- `docs/guides/code-reading-guide.md`
 
 ## Reviewer Role
 

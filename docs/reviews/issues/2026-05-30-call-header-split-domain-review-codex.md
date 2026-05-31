@@ -4,7 +4,7 @@
 
 - `src/call.h` rename/split into `src/grpc_exchange_state.h`, `src/grpc_result.h`, and `src/diagnostic/bench_call.h`
 - Adjacent includes in `src/transport.h`, `src/status_core.c`, `src/unary_call.h`, `src/server_streaming_call.h`, `src/wrapper_adapter.h`, `src/wrapper_adapter.c`, and `tests/unit/test_status_core.c`
-- Current docs references in `docs/code-reading-guide.md` and `docs/protocol-model-review-guide.md`
+- Current docs references in `docs/guides/code-reading-guide.md` and `docs/verification/protocol-model-review-guide.md`
 
 ## Reviewer Role
 

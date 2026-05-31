@@ -7,7 +7,7 @@
 - `ext/grpc/tests/023-metadata-and-call-credentials.phpt`
 - `ext/grpc/tests/029-trace-file.phpt`
 - `tools/benchmark/spanner-commit-cli.php`
-- `docs/protocol-model-review-guide.md`
+- `docs/verification/protocol-model-review-guide.md`
 
 ## Reviewer Role
 

@@ -76,5 +76,5 @@
 
 ## Verification
 
-- Review-only inspection of the current uncommitted diff, newly added split headers, adjacent C files, `docs/SPEC.md`, `docs/code-reading-guide.md`, `docs/protocol-model-review-guide.md`, and the Phase 4 work-plan section.
+- Review-only inspection of the current uncommitted diff, newly added split headers, adjacent C files, `docs/SPEC.md`, `docs/guides/code-reading-guide.md`, `docs/verification/protocol-model-review-guide.md`, and the Phase 4 work-plan section.
 - Docker-based gates were not rerun in this review session. Parent verification reported normal build/load, bench build/load, C unit, static analysis, coverage + PHPT 15/15 lines 77.3% funcs 95.0%, fuzz 100, and PHPUnit 30/109.

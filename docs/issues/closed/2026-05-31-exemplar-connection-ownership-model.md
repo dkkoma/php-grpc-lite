@@ -60,7 +60,7 @@ docs/state machine化だけならruntime benchmarkは不要。実装で `registe
 ## Progress
 
 - 2026-05-31: 親issueからownership model作業を子issue化。
-- 2026-05-31: `docs/grpc-call-exchange-state.md` にconnection / stream ownership節を追加し、registration / unregistration、unary、server streaming、cache detach/destroy、GOAWAY/RST_STREAMの所有権状態を既存のfield mapへ統合。
+- 2026-05-31: `docs/design/grpc-call-exchange-state.md` にconnection / stream ownership節を追加し、registration / unregistration、unary、server streaming、cache detach/destroy、GOAWAY/RST_STREAMの所有権状態を既存のfield mapへ統合。
 - 2026-05-31: 実装helper化は行わない。現状ではdocs/state machine化で完了条件を満たすと判断。
 
 ## Verification

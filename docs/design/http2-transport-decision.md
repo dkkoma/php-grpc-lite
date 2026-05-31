@@ -33,9 +33,9 @@ HTTP/2 transportをdrop-in release defaultにする前に満たす条件:
 
 PHP userland codeはComposerで導入し、source-built grpc extensionはこのrepositoryの `ext/grpc/` をclone後にsource buildする。Composer install時にsource-built grpc extensionを自動buildしない。extension未導入環境で黙って別transportへfallbackして動かすのではなく、install/load段階で `extension_loaded('grpc')` を確認する。
 
-release QA の判定表は `docs/release-qa-checklist.md` に集約する。
+release QA の判定表は `docs/verification/release-qa-checklist.md` に集約する。
 
-install手順は `docs/install-native-extension.md` に集約する。
+install手順は `docs/guides/install-native-extension.md` に集約する。
 
 ## MVP Scope
 
