@@ -1,7 +1,10 @@
 #ifndef PHP_GRPC_LITE_DIAGNOSTIC_BENCH_CALL_H
 #define PHP_GRPC_LITE_DIAGNOSTIC_BENCH_CALL_H
 
-#include "../common.h"
+#include <php.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 typedef struct {
