@@ -1,8 +1,8 @@
 # C/PHP拡張のお手本プロジェクト化
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
-- Branch: main
+- Branch: codex/exemplar-parent-close
 - Owner: Codex
 
 ## Background
@@ -41,6 +41,7 @@
 | `docs/issues/closed/2026-05-31-exemplar-grpc-call-exchange-state-map.md` | `grpc_call` field mapと分割採否 | 高。実装時before/after必須 |
 | `docs/issues/closed/2026-05-31-exemplar-grpc-call-field-layout-hotpath.md` | `grpc_call` field order / hot-cold layoutの測定と採否 | 高。実装時before/after必須 |
 | `docs/issues/closed/2026-05-31-exemplar-protocol-classification-boundary.md` | protocol classification と transport action分離 | 高。実装時before/after必須 |
+| `docs/issues/closed/2026-05-31-protocol-classification-runtime-boundary-refactor.md` | protocol classification boundaryのruntime反映試行とreject記録 | 高。before/after実施、採用せず |
 
 ## Non-Goals
 
@@ -177,12 +178,29 @@
 - 2026-05-31: 残タスクごとに、既存benchmarkで判断する条件とsmall case追加が必要な条件を明文化。
 - 2026-05-31: transport header boundary issueを完了。`h2_request_headers` 分離は採用し、persistent connection cache分離はreject。
 - 2026-05-31: connection / stream ownership model issueを完了。`grpc_call` field mapへstate machineを統合し、helper化は採用しない判断を記録。
+- 2026-05-31: protocol classification runtime boundary refactorは `RST_STREAM` submit helper化を試行したが、性能面で良くなる根拠が薄く、見通し改善も限定的なためrejectとして閉じた。
+- 2026-05-31: お手本化親issueの子issueをすべて完了またはreject判断済みにしたため、親issueをclosedへ移動。
+
+## Completion Summary
+
+この親issueでは、C/PHP拡張のお手本として必要な改善を、影響の小さいdocumentation/test discoverabilityから、性能影響のあるruntime候補まで子issue単位に分けて処理した。
+
+完了した内容:
+
+- fixture catalog、verification matrix、reading guide、fuzz READMEを整備した。
+- test discoverabilityとgate整理を進め、長いPHPTやlifecycle/slow-consumer検証の位置づけを明確にした。
+- transport header boundaryを整理し、採用した宣言移動とrejectした分割案を記録した。
+- connection / stream / resource ownership modelを文書化し、helper化しない判断を記録した。
+- `grpc_call` exchange state mapとfield layout hot path分析を行い、layout変更は採用しない判断を記録した。
+- protocol classification boundaryを文書化し、runtime helper化案はbefore/after検証のうえrejectした。
+
+このissueでruntime codeへ残した変更は、子issueごとに検証済みの小さい変更に限定した。性能に良くなる根拠が薄いruntime helper化や、見通し改善が限定的なheader分割は採用していない。
 
 ## Verification
 
-現時点では調査とissue作成のみ。コード変更・テスト実行なし。
+この親issueを閉じる変更自体はdocs-only。
 
-今後の標準検証候補:
+子issueで実施した主な検証:
 
 - `./tools/test/check-native-development-gate.sh`
 - `./tools/test/check-c-unit.sh`
@@ -191,6 +209,7 @@
 - `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`
 - HTTP/2/gRPC transportに触る変更では `docs/verification/protocol-model-review-guide.md` に沿ったdomain model review
 - 性能影響がある変更では同条件のbefore/after benchmark
+- この親issue close commitでは `git diff --check` を実行する。
 
 ## Decision Log
 
@@ -198,6 +217,7 @@
 - 2026-05-31: 性能影響があり得る構造変更は、documentation/test discoverability作業から切り分け、before/after計測なしに採用しない。
 - 2026-05-31: `transport.h` / `grpc_call` の広さは現時点の実装上のBlockerではないが、お手本プロジェクトとしては主要な改善対象とする。
 - 2026-05-31: 親issueは全体方針と進捗管理に限定し、実装・検証・close判定は子issue単位で行う。
+- 2026-05-31: お手本化の初回作業セットは完了。残る `PHP/Zend include boundary見直し` は、この親issueとは独立した継続issueとして扱う。
 
 ## Close Criteria
 
