@@ -1,0 +1,100 @@
+name: Release prebuilt grpc.so artifacts
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach artifacts to"
+        required: true
+
+concurrency:
+  group: release-prebuilt-artifacts-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build php${{ matrix.php-version }} ${{ matrix.thread-safety }} ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version:
+          - "8.4"
+          - "8.5"
+        thread-safety:
+          - nts
+          - zts
+        distro:
+          - trixie
+        arch:
+          - amd64
+          - arm64
+
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64,arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build artifact
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          ./tools/release/build-prebuilt-artifact.sh \
+            "$RELEASE_TAG" \
+            "${{ matrix.php-version }}" \
+            "${{ matrix.thread-safety }}" \
+            "${{ matrix.distro }}" \
+            "${{ matrix.arch }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: php-grpc-lite-${{ github.event.release.tag_name || inputs.tag }}-php${{ matrix.php-version }}-${{ matrix.thread-safety }}-${{ matrix.distro }}-${{ matrix.arch }}
+          path: dist/release-artifacts/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Attach artifacts to release
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+    timeout-minutes: 15
+
+    steps:
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-artifacts
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-artifacts
+          find downloaded-artifacts -name '*.tar.gz' -type f -exec cp {} dist/release-artifacts/ \;
+          cd dist/release-artifacts
+          sha256sum *.tar.gz > SHA256SUMS
+          ls -la
+
+      - name: Attach release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" dist/release-artifacts/*.tar.gz dist/release-artifacts/SHA256SUMS --clobber

@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1.7
+
+ARG PHP_IMAGE=php:8.4-cli-trixie
+FROM --platform=$TARGETPLATFORM ${PHP_IMAGE} AS build
+
+ARG VERSION
+ARG RELEASE_TAG
+ARG PHP_VERSION
+ARG THREAD_SAFETY
+ARG DISTRO=trixie
+ARG TARGETARCH
+ARG SOURCE_REF
+ARG SOURCE_SHA
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        autoconf \
+        build-essential \
+        libnghttp2-dev \
+        libssl-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . /usr/src/php-grpc-lite
+WORKDIR /usr/src/php-grpc-lite
+
+RUN set -eux; \
+    if [ "$THREAD_SAFETY" = "zts" ]; then \
+        php -r 'exit(PHP_ZTS ? 0 : 1);'; \
+    else \
+        php -r 'exit(PHP_ZTS ? 1 : 0);'; \
+    fi
+
+RUN set -eux; \
+    make distclean >/tmp/php-grpc-lite-release-distclean.log 2>&1 || true; \
+    rm -rf .libs modules *.lo *.o *.dep src/*.lo src/*.o src/*.dep src/diagnostic/*.lo src/diagnostic/*.o src/diagnostic/*.dep Makefile config.h config.log config.status autom4te.cache include; \
+    phpize >/tmp/php-grpc-lite-release-phpize.log; \
+    ./configure --enable-grpc >/tmp/php-grpc-lite-release-configure.log; \
+    make -j"$(nproc)" >/tmp/php-grpc-lite-release-make.log
+
+RUN set -eux; \
+    mkdir -p /artifacts; \
+    cp modules/grpc.so /artifacts/grpc.so; \
+    php -d extension=/artifacts/grpc.so -r 'exit(extension_loaded("grpc") ? 0 : 1);'; \
+    VERSION="$VERSION" \
+    RELEASE_TAG="$RELEASE_TAG" \
+    PHP_VERSION_REQUESTED="$PHP_VERSION" \
+    THREAD_SAFETY="$THREAD_SAFETY" \
+    DISTRO="$DISTRO" \
+    TARGETARCH="$TARGETARCH" \
+    SOURCE_REF="$SOURCE_REF" \
+    SOURCE_SHA="$SOURCE_SHA" \
+    php -d extension=/artifacts/grpc.so -r '$meta = [ \
+        "project" => "php-grpc-lite", \
+        "version" => getenv("VERSION"), \
+        "release_tag" => getenv("RELEASE_TAG"), \
+        "php_version" => getenv("PHP_VERSION_REQUESTED"), \
+        "php_version_full" => PHP_VERSION, \
+        "thread_safety" => PHP_ZTS ? "zts" : "nts", \
+        "requested_thread_safety" => getenv("THREAD_SAFETY"), \
+        "distro" => getenv("DISTRO"), \
+        "arch" => getenv("TARGETARCH"), \
+        "extension" => "grpc", \
+        "extension_version" => phpversion("grpc"), \
+        "extension_dir" => ini_get("extension_dir"), \
+        "artifact" => "grpc.so", \
+        "source_ref" => getenv("SOURCE_REF"), \
+        "source_sha" => getenv("SOURCE_SHA"), \
+    ]; echo json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), PHP_EOL;' > /artifacts/metadata.json
+
+FROM scratch
+COPY --from=build /artifacts /artifacts
