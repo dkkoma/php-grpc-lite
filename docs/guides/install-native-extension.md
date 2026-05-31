@@ -47,6 +47,49 @@ PIEはComposerの通常download経路を使う。安定版ではPackagist/GitHub
 
 PIEが自動で有効化しない環境では、install先に合わせて `extension=grpc` をPHP設定へ追加する。
 
+## Prebuilt release artifacts
+
+GitHub Releaseには、検証や差し替え確認のためのprebuilt `grpc.so` artifactも添付する。PIE / source buildが主install経路であることは変わらない。prebuilt artifactは、同じPHP minor version、NTS/ZTS、distro、architectureの環境でだけ使う。
+
+asset名:
+
+```text
+php-grpc-lite-<version>-php<php-version>-<nts|zts>-trixie-<arch>.tar.gz
+```
+
+初期セット:
+
+```text
+php-grpc-lite-<version>-php8.4-nts-trixie-amd64.tar.gz
+php-grpc-lite-<version>-php8.4-nts-trixie-arm64.tar.gz
+php-grpc-lite-<version>-php8.4-zts-trixie-amd64.tar.gz
+php-grpc-lite-<version>-php8.4-zts-trixie-arm64.tar.gz
+php-grpc-lite-<version>-php8.5-nts-trixie-amd64.tar.gz
+php-grpc-lite-<version>-php8.5-nts-trixie-arm64.tar.gz
+php-grpc-lite-<version>-php8.5-zts-trixie-amd64.tar.gz
+php-grpc-lite-<version>-php8.5-zts-trixie-arm64.tar.gz
+```
+
+tarball layout:
+
+```text
+artifacts/grpc.so
+artifacts/metadata.json
+SHA256SUMS
+```
+
+例:
+
+```bash
+version=0.0.13
+asset="php-grpc-lite-${version}-php8.4-nts-trixie-amd64.tar.gz"
+curl -LO "https://github.com/dkkoma/php-grpc-lite/releases/download/${version}/${asset}"
+tar -xzf "$asset"
+php -d extension="$PWD/artifacts/grpc.so" -r 'var_dump(extension_loaded("grpc"), Grpc\VERSION);'
+```
+
+公式 `ext-grpc` や別ABIの `grpc.so` と混ぜない。PHP 8.4 NTS向けartifactはPHP 8.4 NTS向けであり、PHP 8.5やZTS環境では使わない。
+
 ## PHP userland wrapper
 
 アプリケーションにはComposerでPHP codeを入れる。
