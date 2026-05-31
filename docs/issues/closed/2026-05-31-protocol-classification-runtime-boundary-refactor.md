@@ -1,8 +1,8 @@
 # protocol classification runtime boundary refactor
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
-- Branch: TBD
+- Branch: codex/protocol-classification-runtime-boundary-rejected-note
 - Owner: Codex
 - Related-Design: docs/design/protocol-classification-boundary.md
 - Parent: docs/issues/open/2026-05-31-c-php-extension-exemplar-structure.md
@@ -94,10 +94,42 @@ parser/queue helper境界を動かす場合:
 ## Progress
 
 - 2026-05-31: docs-only boundary整理の後続runtime refactor issueとして作成。
+- 2026-05-31: `codex/protocol-classification-runtime-boundary-refactor` で `RST_STREAM` submit helper集約を試行し、ユーザー判断でreject。
+
+## Trial Summary
+
+試行ブランチ:
+
+- `codex/protocol-classification-runtime-boundary-refactor`
+- commit: `08a69ad protocol分類: RST_STREAM helperを集約`
+
+試行内容:
+
+- `nghttp2_submit_rst_stream()` の直接呼び出しを `grpc_lite_submit_rst_stream_if_open()` に集約した。
+- helperは `session != NULL`、`call != NULL`、`stream_id > 0` のguardと `nghttp2_submit_rst_stream()` submitだけを担当する形にした。
+- `src/server_streaming_call.c` からも使うため、`static` helperではなくinternal headerである `src/transport.h` に宣言を追加する形になった。
+
+検証:
+
+- `git diff --check`: pass
+- `./tools/test/check-c-static-analysis.sh`: pass
+- `./tools/test/check-c-unit.sh`: pass
+- `./tools/test/check-phpt.sh`: pass, 15/15
+- affected PHPUnit integration: pass, 16 tests / 50 assertions
+- before/after benchmarkを実行
+- HTTP/2/gRPC domain model review: 指摘なし
+
+reject理由:
+
+- このhelper化は、呼ばれるpathでは必ず `grpc_lite_submit_rst_stream_if_open()` の関数呼び出しを1段増やす。
+- OK path中心のbenchでは明確な悪化は確認できなかったが、性能面で良くなる構造的な根拠は薄い。
+- 可読性改善も限定的で、`nghttp2_submit_rst_stream()` のguardを直接読むより大きく見通しが良くなるとは判断しなかった。
+- お手本プロジェクトとしては、性能に良くなる可能性がほぼなく、抽象化の利益も小さいruntime helperを採用しない方が妥当。
 
 ## Decision Log
 
 - 2026-05-31: `docs/design/protocol-classification-boundary.md` の内容を即runtime変更へ進めるとhot pathに影響する可能性があるため、独立issueとしてbefore/after計測付きで扱う。
+- 2026-05-31: `RST_STREAM` submit helper集約案はreject。実装ブランチはmergeしない。protocol classification boundaryは文書化された指針として残し、runtime codeは現状の直接呼び出しを維持する。
 
 ## Close Criteria
 
