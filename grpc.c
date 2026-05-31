@@ -65,6 +65,12 @@ PHP_GSHUTDOWN_FUNCTION(grpc_lite)
 PHP_MINIT_FUNCTION(grpc_lite)
 {
 #ifdef SIGPIPE
+    /*
+     * ZTS policy: this is a process-wide setting. Keep it explicit here because
+     * TLS writes cannot be made SIGPIPE-proof per socket on every supported
+     * platform, while plain socket writes still use MSG_NOSIGNAL/SO_NOSIGPIPE
+     * where available.
+     */
     signal(SIGPIPE, SIG_IGN);
 #endif
     REGISTER_INI_ENTRIES();
