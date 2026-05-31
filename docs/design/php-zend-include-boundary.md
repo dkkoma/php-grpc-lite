@@ -52,13 +52,13 @@
 | `protocol_core.h` | C standard headersのみ | 現状維持。理想形に近い |
 | `status_core.h` | `grpc_call` forward + C bool | status taxonomyとしては十分薄い。`grpc_call` fieldへ依存する設計は現状許容 |
 | `transport_core.h` | `php.h` for `zend_long` / `zend_ulong` | policy helperとしてはPHP/Zend依存が濃い。最初の本命改善候補 |
-| `tls_config.h` | `common.h`経由でPHP/Zend/nghttp2/socketまで読む | OpenSSL helperとしては過剰。機械的に薄くできる候補 |
+| `tls_config.h` | `stddef.h` と OpenSSL headerを直接読む | OpenSSL helperとしてPHP/Zendなしを維持 |
 | `grpc_exchange_state.h` | `common.h`、`zend_string`、`smart_str`、`struct iovec` | PHP-owned exchange stateとしてPHP/Zend依存は自然。ただし `common.h` 経由は広すぎる |
 | `h2_request_headers.h` | `php.h` + nghttp2、`zval`、`zend_string` | PHP metadata to HTTP/2 header conversion boundaryとしてPHP-awareでよい |
-| `grpc_result.h` | `common.h`、`zend_string`、`zval` | PHP result bridgeなのでPHP/Zend依存が自然。ただし `common.h` は広い |
+| `grpc_result.h` | `php.h`、`stdbool.h`、`zend_string`、`zval` | PHP result bridgeなのでPHP/Zend依存が自然。`common.h` には戻さない |
 | `transport.h` | transport aggregate | 移行中のaggregateとして許容。これ以上新しい責務を足さない |
 | `module.h` / `surface.h` / `wrapper_adapter.h` | PHP/Zend surface | PHP/Zend依存が自然 |
-| `diagnostic/*.h` | bench/PHP types | diagnostic boundaryとして許容。ただしproduction coreへ逆流させない |
+| `diagnostic/*.h` | bench/PHP types。`bench_call.h` は必要なPHP/C scalar headerを直接読む | diagnostic boundaryとして許容。ただしproduction coreへ逆流させない |
 
 ## Gap Analysis
 
@@ -153,6 +153,14 @@ PHP/Zend boundaryから外したいfile/groupは次の通り。
 | `src/common.h` | PHP/Zendなし。C standard headers、config、project-wide constants中心へ縮小する |
 
 まだ完全に固定していない境界は、`unary_call.*`、`server_streaming_call.*`、`h2_request_headers.*`、response metadata/result bridgeである。これらはPHP object/resource orchestrationとtransport executionの両方に触れているため、単純なinclude整理だけで理想形へは行かない。分ける場合は、関数境界、ownership、allocation、hot pathへの影響を子issueで検証してから採否を決める。
+
+## `common.h` policy
+
+`common.h` は移行期間のprivate aggregateとして残すが、新しいheaderの標準入口にはしない。新しいnarrow headerは、C standard / PHP/Zend / nghttp2 / OpenSSL / socket/system headerのうち実際に使うものを直接読む。
+
+`common.h` に新しいdomain-specific struct、transport policy constant、diagnostic-only symbol、nghttp2 callbackやTLS helper専用のincludeを追加しない。PHP/Zend型だけが必要なheaderも、`common.h` ではなく `php.h` や必要なZend headerを直接読む。
+
+gRPC status codeとbatch op constantsは `src/grpc_constants.h` に分ける。これは `common.h` のPHP/Zend依存を外す前段の足場であり、これだけで `status_core.c` やexchange stateがpure Cになるわけではない。
 
 ## Approach Order
 

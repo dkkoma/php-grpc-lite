@@ -1,11 +1,12 @@
 # PHP/Zend include boundary: common.h policy
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
-- Branch: TBD
+- Branch: codex/php-zend-common-policy
 - Owner: Codex
 - Parent: docs/issues/closed/2026-05-31-php-zend-include-boundary.md
 - Related-Design: docs/design/php-zend-include-boundary.md
+- Fix Commit: this commit
 
 ## Background
 
@@ -65,6 +66,24 @@ headerを追加またはinclude変更する場合:
 ## Decision Log
 
 - 2026-05-31: `common.h` はすぐに消す対象ではないが、最終的にはPHP/Zend関連includeも外す。PHP/Zend boundaryには直接includeまたは別の薄いPHP専用headerを使う。
+- 2026-05-31: `src/grpc_constants.h` を追加し、gRPC status codeとbatch op constantsをPHP/Zend非依存のheaderへ分けた。これは `common.h` からPHP/Zend includeを外す前段の足場であり、`status_core.c` やexchange stateがこの変更だけでpure C化されるわけではない。
+- 2026-05-31: `docs/design/transport-header-boundaries.md` に残っていた「`common.h` がPHP/Zend base includeを持つ」前提を、移行期間のaggregateとしては許容するが最終的には外す方針へ修正した。
+- 2026-05-31: `docs/design/php-zend-include-boundary.md` の現状表を、mechanical narrowing後の `tls_config.h`、`grpc_result.h`、`diagnostic/bench_call.h` に合わせて更新した。
+
+## Progress
+
+- `src/common.h` に、移行期間のaggregateであり新しいnarrow headerやPHP/Zend boundaryの標準入口にしない方針をコメントとして追加した。
+- `src/grpc_constants.h` を追加し、既存の `common.h` は互換のためこのheaderを読む形にした。
+- `status_core.c` と `tests/unit/test_status_core.c` から、status constantsの依存先として `grpc_constants.h` を明示的に読むようにした。
+- `docs/design/php-zend-include-boundary.md` と `docs/design/transport-header-boundaries.md` の `common.h` 方針を揃えた。
+
+## Verification Result
+
+- `git diff --check`: passed
+- `docker compose run --rm dev sh -lc 'make -j$(nproc)'`: passed
+- `./tools/test/check-c-static-analysis.sh`: passed
+- `./tools/test/check-c-unit.sh`: passed
+- `./tools/test/check-phpt.sh`: passed, 15/15
 
 ## Close Criteria
 

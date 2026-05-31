@@ -8,8 +8,14 @@
 /*
  * Shared private includes and constants for php-grpc-lite.
  * Not installed. Not a public C API.
+ *
+ * common.h is a transitional aggregate. New narrow headers should include the
+ * C/PHP/Zend/nghttp2/OpenSSL headers they actually use, and must not use this
+ * file as the default PHP/Zend boundary. Do not add new domain-specific
+ * structs, transport policy constants, or diagnostic-only symbols here.
  */
 
+#include "grpc_constants.h"
 #include "../php_grpc.h"
 
 #include <php.h>
@@ -44,30 +50,5 @@
 #include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
-
-#define GRPC_STATUS_OK 0
-#define GRPC_STATUS_CANCELLED 1
-#define GRPC_STATUS_UNKNOWN 2
-#define GRPC_STATUS_INVALID_ARGUMENT 3
-#define GRPC_STATUS_DEADLINE_EXCEEDED 4
-#define GRPC_STATUS_NOT_FOUND 5
-#define GRPC_STATUS_ALREADY_EXISTS 6
-#define GRPC_STATUS_PERMISSION_DENIED 7
-#define GRPC_STATUS_RESOURCE_EXHAUSTED 8
-#define GRPC_STATUS_FAILED_PRECONDITION 9
-#define GRPC_STATUS_ABORTED 10
-#define GRPC_STATUS_OUT_OF_RANGE 11
-#define GRPC_STATUS_UNIMPLEMENTED 12
-#define GRPC_STATUS_INTERNAL 13
-#define GRPC_STATUS_UNAVAILABLE 14
-#define GRPC_STATUS_DATA_LOSS 15
-#define GRPC_STATUS_UNAUTHENTICATED 16
-
-#define GRPC_OP_SEND_INITIAL_METADATA 0
-#define GRPC_OP_SEND_MESSAGE 1
-#define GRPC_OP_SEND_CLOSE_FROM_CLIENT 2
-#define GRPC_OP_RECV_INITIAL_METADATA 4
-#define GRPC_OP_RECV_MESSAGE 5
-#define GRPC_OP_RECV_STATUS_ON_CLIENT 6
 
 #endif /* PHP_GRPC_LITE_COMMON_H */

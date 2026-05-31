@@ -4,6 +4,7 @@
 #define PHP_GRPC_LITE_STATUS_CORE_C
 
 #include "grpc_exchange_state.h"
+#include "grpc_constants.h"
 #include "status_core.h"
 
 int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
