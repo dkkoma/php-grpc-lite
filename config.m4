@@ -12,7 +12,7 @@ if test "$PHP_GRPC" != "no"; then
   if test "$PHP_GRPC_BENCH" != "no"; then
     AC_DEFINE(PHP_GRPC_LITE_ENABLE_BENCH, 1, [Enable php-grpc-lite benchmark-only entrypoints])
   fi
-  PHP_GRPC_SOURCES="grpc.c src/protocol_core.c src/status_core.c src/transport_core.c src/tls_config.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/wrapper_adapter.c"
+  PHP_GRPC_SOURCES="grpc.c src/protocol_core.c src/status_core.c src/transport_core.c src/tls_config.c src/h2_request_headers.c src/request_metadata.c src/response_metadata.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/wrapper_adapter.c"
   if test "$PHP_GRPC_BENCH" != "no"; then
     PHP_GRPC_SOURCES="$PHP_GRPC_SOURCES src/diagnostic/diagnostic.c src/diagnostic/bench.c"
   fi

@@ -68,14 +68,15 @@ HTTP/2 / gRPC transport、persistent connection、deadline、metadata/status、R
 3. `src/grpc_exchange_state.h`
 4. `src/transport.h`
 5. `src/transport.c`
-6. `src/transport_core.c`
-7. `src/status_core.c`
-8. `src/protocol_core.c`
-9. `tests/phpt/020-request-metadata-control.phpt`
-10. `tests/phpt/022-error-and-http-validation.phpt`
-11. `tests/phpt/024-control-semantics.phpt`
-12. `tests/Integration/MetadataCompatibilityTest.php`
-13. `tests/Integration/ControlSemanticsTest.php`
+6. `src/h2_request_headers.c` / `src/request_metadata.c` / `src/response_metadata.c`
+7. `src/transport_core.c`
+8. `src/status_core.c`
+9. `src/protocol_core.c`
+10. `tests/phpt/020-request-metadata-control.phpt`
+11. `tests/phpt/022-error-and-http-validation.phpt`
+12. `tests/phpt/024-control-semantics.phpt`
+13. `tests/Integration/MetadataCompatibilityTest.php`
+14. `tests/Integration/ControlSemanticsTest.php`
 
 この順序では、1 RPC over 1 HTTP/2 streamの交換状態、connection cache、nghttp2 callbacks、gRPC status taxonomy、metadata shape、stream-local failureとconnection failureの切り分けを確認する。
 
@@ -91,8 +92,9 @@ HTTP/2 / gRPC transport、persistent connection、deadline、metadata/status、R
 8. `src/unary_call.c`
 9. `src/server_streaming_call.c`
 10. `src/transport.c`
-11. `src/grpc_exchange_state.h` / `src/grpc_result.h`
-12. `docs/design/grpc-call-exchange-state.md`
+11. `src/h2_request_headers.c` / `src/request_metadata.c` / `src/response_metadata.c`
+12. `src/grpc_exchange_state.h` / `src/grpc_result.h`
+13. `docs/design/grpc-call-exchange-state.md`
 13. `src/internal.h`
 
 ## 1. 生成クライアント相当
@@ -220,9 +222,6 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 
 - TCP connect、TLS/mTLS handshake、ALPN h2確認
 - nghttp2 session/callback設定
-- request header validation/filtering
-- `*-bin` request metadataのbase64 wire encoding
-- response `*-bin` metadataのbase64 decode
 - gRPC 5B frame parse/build
 - deadlineをconnect、TLS handshake、read/write poll loopへ適用
 - client receive stream / connection windowを8MiBに広げ、large responseでWINDOW_UPDATE待ちを減らす
@@ -230,6 +229,8 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 - GOAWAY / EOF / RST_STREAM / protocol failure時のHTTP/2 connection lifecycle管理
 
 protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。connection自体がdead/drainingでなければpersistent cacheには残します。
+
+request header storageは `src/h2_request_headers.c`、user metadata `zval` からHTTP/2 headerへの変換は `src/request_metadata.c`、response metadata listとPHP array変換は `src/response_metadata.c` に分けています。`h2_request_headers` と response metadata list は `zend_string` をownerとして持つためPHP/Zend-awareなexchange stateですが、socket/TLS/nghttp2 connection lifecycleとは別責務です。
 
 1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/design/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
 

@@ -26,9 +26,9 @@ typedef struct {
 void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers, size_t header_count);
 int init_request_headers(h2_request_headers *headers);
 void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen);
+int append_owned_request_header(h2_request_headers *headers, zend_string *name, zend_string *value);
 void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us);
 void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent);
-int append_custom_request_headers(h2_request_headers *headers, zval *headers_zv);
 void free_request_headers(h2_request_headers *headers);
 
 #endif /* PHP_GRPC_LITE_H2_REQUEST_HEADERS_H */
