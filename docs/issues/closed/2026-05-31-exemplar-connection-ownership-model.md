@@ -1,6 +1,6 @@
 # お手本化: connection / stream ownership model整理
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
 - Branch: main
 - Owner: Codex
@@ -60,18 +60,21 @@ docs/state machine化だけならruntime benchmarkは不要。実装で `registe
 ## Progress
 
 - 2026-05-31: 親issueからownership model作業を子issue化。
+- 2026-05-31: `docs/grpc-call-exchange-state.md` にconnection / stream ownership節を追加し、registration / unregistration、unary、server streaming、cache detach/destroy、GOAWAY/RST_STREAMの所有権状態を既存のfield mapへ統合。
+- 2026-05-31: 実装helper化は行わない。現状ではdocs/state machine化で完了条件を満たすと判断。
 
 ## Verification
 
-- `./tools/test/check-phpt.sh`
-- `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit`
-- `./tools/test/check-c-static-analysis.sh`
-- 必要に応じてrepresentative benchmark before/after
-- HTTP/2/gRPC domain model review
+- `git diff --check`: PASS
+- docs-only。`register_grpc_call_stream()`、`unregister_grpc_call_stream()`、owner clear、cache detach条件、runtime pathは変更していないためPHPT/PHPUnit/benchmarkは不要。
+- HTTP/2/gRPC domain model review: docs-only ownership reviewとして、connection / stream / call / resource scope、RST_STREAM / GOAWAY lifecycle、persistent cache detachとdestroy条件を確認。実装変更なしのためBlocker / High / Medium / Lowはnone。
 
 ## Decision Log
 
 - 2026-05-31: 所有権モデル整理は教材価値が高いが、hot pathに触る場合は性能計測対象にする。
+- 2026-05-31: このissueではhelper化を採用しない。`active_stream_count` と `stream_owner_count` の意味、unaryとserver streamingの `call->connection` の違いをdocsで明確にする方が、現時点ではお手本として読みやすい。
+- 2026-05-31: persistent cacheの分離は `transport header boundary` issueでreject済み。ここではcache entry削除後のconnection lifetimeをstate machineとして説明する。
+- 2026-05-31: 新規docを増やすと既存の `grpc_call` field mapと重複するため、独立した `connection-stream-ownership.md` は作らず既存docへ統合する。
 
 ## Close Criteria
 

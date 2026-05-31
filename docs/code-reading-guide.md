@@ -64,17 +64,18 @@ Cのヘッダ境界、Zend object ownership、official wrapperとの接続を読
 HTTP/2 / gRPC transport、persistent connection、deadline、metadata/status、RST_STREAM / GOAWAY / EOF lifecycleを読む場合は、次を読む。
 
 1. `docs/protocol-model-review-guide.md`
-2. `src/grpc_exchange_state.h`
-3. `src/transport.h`
-4. `src/transport.c`
-5. `src/transport_core.c`
-6. `src/status_core.c`
-7. `src/protocol_core.c`
-8. `tests/phpt/020-request-metadata-control.phpt`
-9. `tests/phpt/022-error-and-http-validation.phpt`
-10. `tests/phpt/024-control-semantics.phpt`
-11. `tests/Integration/MetadataCompatibilityTest.php`
-12. `tests/Integration/ControlSemanticsTest.php`
+2. `docs/grpc-call-exchange-state.md`
+3. `src/grpc_exchange_state.h`
+4. `src/transport.h`
+5. `src/transport.c`
+6. `src/transport_core.c`
+7. `src/status_core.c`
+8. `src/protocol_core.c`
+9. `tests/phpt/020-request-metadata-control.phpt`
+10. `tests/phpt/022-error-and-http-validation.phpt`
+11. `tests/phpt/024-control-semantics.phpt`
+12. `tests/Integration/MetadataCompatibilityTest.php`
+13. `tests/Integration/ControlSemanticsTest.php`
 
 この順序では、1 RPC over 1 HTTP/2 streamの交換状態、connection cache、nghttp2 callbacks、gRPC status taxonomy、metadata shape、stream-local failureとconnection failureの切り分けを確認する。
 

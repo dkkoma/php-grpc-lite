@@ -37,7 +37,7 @@
 | `docs/issues/closed/2026-05-31-exemplar-docs-fixtures-and-reading-guide.md` | fixture catalog、verification matrix、reading guide、fuzz README | なし |
 | `docs/issues/closed/2026-05-31-exemplar-test-discoverability-and-gates.md` | 長いPHPT、PHPUnit CI、lifecycle/slow-consumer gate整理 | CI時間・flake riskあり |
 | `docs/issues/closed/2026-05-31-exemplar-transport-header-boundaries.md` | `transport.h` / `common.h` のheader boundary整理 | 宣言移動のみならなし。hot path変更時は別途計測 |
-| `docs/issues/open/2026-05-31-exemplar-connection-ownership-model.md` | connection / stream / resource ownership invariant整理 | bookkeeping変更時は計測候補 |
+| `docs/issues/closed/2026-05-31-exemplar-connection-ownership-model.md` | connection / stream / resource ownership invariant整理 | bookkeeping変更時は計測候補 |
 | `docs/issues/closed/2026-05-31-exemplar-grpc-call-exchange-state-map.md` | `grpc_call` field mapと分割採否 | 高。実装時before/after必須 |
 | `docs/issues/open/2026-05-31-exemplar-grpc-call-field-layout-hotpath.md` | `grpc_call` field order / hot-cold layoutの測定と採否 | 高。実装時before/after必須 |
 | `docs/issues/open/2026-05-31-exemplar-protocol-classification-boundary.md` | protocol classification と transport action分離 | 高。実装時before/after必須 |
@@ -176,6 +176,7 @@
 - 2026-05-31: `grpc_call` field layout hot path最適化をperformance-sensitiveな後続issueとして追加。
 - 2026-05-31: 残タスクごとに、既存benchmarkで判断する条件とsmall case追加が必要な条件を明文化。
 - 2026-05-31: transport header boundary issueを完了。`h2_request_headers` 分離は採用し、persistent connection cache分離はreject。
+- 2026-05-31: connection / stream ownership model issueを完了。`grpc_call` field mapへstate machineを統合し、helper化は採用しない判断を記録。
 
 ## Verification
 

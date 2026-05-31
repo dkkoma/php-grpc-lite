@@ -30,6 +30,28 @@
 | unary | `grpc_lite_unary_call_perform_core_on_connection()` のstack上 | call実行中はcaller-owned bytesを `request` / `request_len` から参照する | `body` に蓄積し、`grpc_lite_unary_result` へcopyする |
 | server streaming | `server_streaming_call_state` resource内に埋め込む | zend stringは `server_streaming_call_state->request` がowner。`grpc_call.request` はそこを指す | payloadは `response_queue_*` にqueueし、wrapper adapterのpull pathが取り出す |
 
+## Connection / stream ownership
+
+`grpc_call` はHTTP/2 streamとしてconnectionへ登録される間、connection lifetimeのownerも1つ持つ。ここで重要なのは、callback lookup用のactive登録と、connection破棄を遅延するowner countを同じ意味にしないことである。
+
+`register_grpc_call_stream(connection, call)` は、stream id確定後の所有権確立点である。成功時はnghttp2 stream user dataに `call` を登録し、`call->connection`、`stream_registered`、`connection_owned` を設定し、connectionのactive stream list、`active_stream_count`、`stream_owner_count` を更新する。
+
+`unregister_grpc_call_stream(call)` はactive登録だけを外す。nghttp2 stream user dataとactive stream listから `call` を外し、`stream_registered` と `active_stream_count` を更新するが、`stream_owner_count` は減らさない。stream close callback、GOAWAY、RST_STREAMでactive登録が外れた後でも、status resolution、result construction、resource cleanupがconnection情報を読むことがあるためである。
+
+owner countを減らすのはowner clear系の責務である。unaryの `grpc_call` はstack上にあり、`clear_connection_call_owner()` は `connection_owned` を落として `stream_owner_count` を減らすが、`call->connection` は `NULL` にしない。server streamingの `grpc_call` はPHP resourceに埋め込まれるため、`clear_connection_server_streaming_call_state_owner()` はownerを解放した後に `state->call.connection` を `NULL` にする。
+
+persistent connection cache entryは、connectionの唯一のownerではない。cacheから外したconnectionでも `stream_owner_count > 0` なら即時破棄せず、`detached_from_cache` として最後のowner clearまで残す。最後に `stream_owner_count == 0` になった時点で `destroy_detached_connection_if_unowned()` が破棄できる。
+
+この領域のinvariantは次の通り。
+
+- `stream_registered == true` なら、nghttp2 stream user dataとactive stream listに登録されている。
+- `active_stream_count` はcallback lookup対象のstream数であり、connection lifetime owner数ではない。
+- `connection_owned == true` なら、その `grpc_call` は `stream_owner_count` を1つ持つ。
+- owner clearは `connection_owned == true` のときだけ `stream_owner_count` を減らす。
+- detached connectionは `stream_owner_count == 0` になるまで破棄しない。
+- unaryの `call->connection` はowner clear後もstack lifetime内で残り得る。
+- server streamingの `state->call.connection` はowner clear時に `NULL` にする。
+
 ## Why not split immediately
 
 `grpc_call` はsub-struct化したくなる対象だが、直接分割すると性能影響が出やすい。
