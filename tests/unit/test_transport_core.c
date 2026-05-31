@@ -1,12 +1,9 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 #include <limits.h>
 
-#include "../../src/transport.h"
-#ifdef snprintf
-#undef snprintf
-#endif
 #include "../../src/transport_core.h"
 
 static int failures = 0;
@@ -67,19 +64,23 @@ static void test_effective_limits(void)
     ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE, effective_http2_window_size(GRPC_LITE_HTTP2_DEFAULT_WINDOW_SIZE));
     ASSERT_UINT32(8 * 1024 * 1024, effective_http2_window_size(8 * 1024 * 1024));
     ASSERT_UINT32(GRPC_LITE_HTTP2_MAX_WINDOW_SIZE, effective_http2_window_size(GRPC_LITE_HTTP2_MAX_WINDOW_SIZE + 1L));
+    ASSERT_UINT32(GRPC_LITE_HTTP2_MAX_WINDOW_SIZE, effective_http2_window_size(INT64_MAX));
     ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE, effective_http2_max_frame_size(0));
     ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE, effective_http2_max_frame_size(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE - 1));
     ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE, effective_http2_max_frame_size(GRPC_LITE_HTTP2_DEFAULT_MAX_FRAME_SIZE));
     ASSERT_UINT32(65536, effective_http2_max_frame_size(65536));
     ASSERT_UINT32(GRPC_LITE_HTTP2_MAX_FRAME_SIZE, effective_http2_max_frame_size(GRPC_LITE_HTTP2_MAX_FRAME_SIZE + 1L));
+    ASSERT_UINT32(GRPC_LITE_HTTP2_MAX_FRAME_SIZE, effective_http2_max_frame_size(INT64_MAX));
     ASSERT_UINT32(0, effective_http2_max_header_list_size(-1));
     ASSERT_UINT32(0, effective_http2_max_header_list_size(0));
     ASSERT_UINT32(GRPC_LITE_HTTP2_DEFAULT_MAX_HEADER_LIST_SIZE, effective_http2_max_header_list_size(GRPC_LITE_HTTP2_DEFAULT_MAX_HEADER_LIST_SIZE));
-    ASSERT_UINT32(UINT32_MAX, effective_http2_max_header_list_size((zend_long) UINT32_MAX + 1L));
+    ASSERT_UINT32(UINT32_MAX, effective_http2_max_header_list_size((int64_t) UINT32_MAX + 1));
+    ASSERT_UINT32(UINT32_MAX, effective_http2_max_header_list_size(INT64_MAX));
 
     ASSERT_SIZE(4096, effective_max_response_metadata_bytes(1024, 4096));
     ASSERT_SIZE(GRPC_LITE_DEFAULT_METADATA_HARD_BYTES, effective_max_response_metadata_bytes(1024, -1));
     ASSERT_SIZE(20480, effective_max_response_metadata_bytes(16384, -1));
+    ASSERT_SIZE((uint64_t) INT64_MAX > (uint64_t) SIZE_MAX ? SIZE_MAX : (size_t) INT64_MAX, effective_max_response_metadata_bytes(1024, INT64_MAX));
     ASSERT_SIZE(GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES, effective_max_response_metadata_bytes(-1, -1));
 }
 
@@ -92,13 +93,13 @@ static void test_authority_identity(void)
     ASSERT_STR("example.test:443", authority);
 
     memset(authority, 0, sizeof(authority));
+    build_authority(authority, sizeof(authority), "example.test", 65535, NULL, 0);
+    ASSERT_STR("example.test:65535", authority);
+
+    memset(authority, 0, sizeof(authority));
     build_authority(authority, sizeof(authority), "example.test", 443, "override.test", strlen("override.test"));
     ASSERT_STR("override.test", authority);
 
-    ASSERT_SIZE(0, hash_bytes(NULL, 0));
-    ASSERT_SIZE(0, hash_bytes("", 0));
-    ASSERT_BOOL(true, hash_bytes("authority-a", strlen("authority-a")) == hash_bytes("authority-a", strlen("authority-a")));
-    ASSERT_BOOL(true, hash_bytes("authority-a", strlen("authority-a")) != hash_bytes("authority-b", strlen("authority-b")));
 }
 
 static void test_grpc_path_validation(void)
@@ -116,7 +117,7 @@ static void test_grpc_path_validation(void)
 static void test_channel_input_validation(void)
 {
     char long_key[514];
-    char long_host[sizeof(((h2_connection *) 0)->authority)];
+    char long_host[GRPC_LITE_AUTHORITY_BUFFER_SIZE];
     memset(long_key, 'k', sizeof(long_key));
     memset(long_host, 'h', sizeof(long_host));
 
@@ -128,8 +129,12 @@ static void test_channel_input_validation(void)
     ASSERT_STR("invalid grpc_lite connection key", validate_channel_inputs("bad\nkey", strlen("bad\nkey"), "test-server", strlen("test-server"), 50051, NULL, 0, NULL, 0));
     ASSERT_STR("invalid gRPC target host", validate_channel_inputs("key", 3, "", 0, 50051, NULL, 0, NULL, 0));
     ASSERT_STR("invalid gRPC target host", validate_channel_inputs("key", 3, "bad\177host", strlen("bad\177host"), 50051, NULL, 0, NULL, 0));
+    ASSERT_STR("invalid gRPC target port", validate_channel_inputs("key", 3, "test-server", strlen("test-server"), -1, NULL, 0, NULL, 0));
     ASSERT_STR("invalid gRPC target port", validate_channel_inputs("key", 3, "test-server", strlen("test-server"), 0, NULL, 0, NULL, 0));
+    ASSERT_NULL(validate_channel_inputs("key", 3, "test-server", strlen("test-server"), 1, NULL, 0, NULL, 0));
+    ASSERT_NULL(validate_channel_inputs("key", 3, "test-server", strlen("test-server"), 65535, NULL, 0, NULL, 0));
     ASSERT_STR("invalid gRPC target port", validate_channel_inputs("key", 3, "test-server", strlen("test-server"), 65536, NULL, 0, NULL, 0));
+    ASSERT_STR("invalid gRPC target port", validate_channel_inputs("key", 3, "test-server", strlen("test-server"), INT64_MAX, NULL, 0, NULL, 0));
     ASSERT_STR("invalid gRPC authority", validate_channel_inputs("key", 3, "test-server", strlen("test-server"), 50051, "user@authority", strlen("user@authority"), NULL, 0));
     ASSERT_STR("invalid gRPC authority", validate_channel_inputs("key", 3, "test-server", strlen("test-server"), 50051, "authority/path", strlen("authority/path"), NULL, 0));
     ASSERT_STR("gRPC authority is too long", validate_channel_inputs("key", 3, long_host, sizeof(long_host), 50051, NULL, 0, NULL, 0));

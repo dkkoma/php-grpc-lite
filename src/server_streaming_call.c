@@ -32,7 +32,7 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
     zend_long remaining_timeout_us = 0;
     int rv;
 
-    error_message = validate_channel_inputs(key, key_len, host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len);
+    error_message = validate_channel_inputs(key, key_len, host, host_len, (int64_t) port, authority, authority_len, tls_verify_name, tls_verify_name_len);
     if (error_message != NULL) {
         zend_throw_exception(NULL, error_message, 0);
         return FAILURE;
@@ -91,7 +91,7 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
     state->call.http_status = -1;
     state->call.request = (const uint8_t *) ZSTR_VAL(state->request);
     state->call.request_len = ZSTR_LEN(state->request);
-    state->call.max_receive_message_bytes = effective_max_receive_message_bytes(max_receive_message_length);
+    state->call.max_receive_message_bytes = effective_max_receive_message_bytes((int64_t) max_receive_message_length);
     state->call.max_response_metadata_bytes = max_response_metadata_bytes;
     state->call.deadline_abs_us = deadline_abs_us > 0 ? deadline_abs_us : 0;
     state->call.method_path = zend_string_init(path, path_len, 0);
