@@ -1,7 +1,8 @@
 #ifndef PHP_GRPC_LITE_GRPC_RESULT_H
 #define PHP_GRPC_LITE_GRPC_RESULT_H
 
-#include "common.h"
+#include <php.h>
+#include <stdbool.h>
 
 typedef struct {
     int code;

@@ -1,5 +1,10 @@
 #include "tls_config.h"
 
+#include <limits.h>
+#include <stdbool.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+
 static int add_pem_certs_to_store(X509_STORE *store, const char *pem, size_t pem_len)
 {
     if (pem_len > INT_MAX) {

@@ -4,7 +4,7 @@
 - Created: 2026-05-31
 - Branch: TBD
 - Owner: Codex
-- Parent: docs/issues/open/2026-05-31-php-zend-include-boundary.md
+- Parent: docs/issues/closed/2026-05-31-php-zend-include-boundary.md
 - Related-Design: docs/design/php-zend-include-boundary.md
 
 ## Background

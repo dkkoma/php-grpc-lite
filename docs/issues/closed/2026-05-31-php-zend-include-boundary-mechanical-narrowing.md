@@ -1,10 +1,10 @@
 # PHP/Zend include boundary: mechanical include narrowing
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
-- Branch: TBD
+- Branch: codex/php-zend-mechanical-narrowing
 - Owner: Codex
-- Parent: docs/issues/open/2026-05-31-php-zend-include-boundary.md
+- Parent: docs/issues/closed/2026-05-31-php-zend-include-boundary.md
 - Related-Design: docs/design/php-zend-include-boundary.md
 
 ## Background
@@ -44,6 +44,7 @@
 ## Verification
 
 - `git diff --check`
+- `docker compose run --rm dev sh -lc 'make -j$(nproc)'`
 - `./tools/test/check-c-static-analysis.sh`
 - `./tools/test/check-c-unit.sh`
 - `./tools/test/check-phpt.sh`
@@ -53,6 +54,24 @@ runtime挙動変更なしのためbenchmarkは不要。
 ## Decision Log
 
 - 2026-05-31: まずは挙動変更なしのinclude narrowingとして扱う。PHP/Zend依存が必要なheaderから `php.h` を消すことは目的にしない。
+- 2026-05-31: 対象は `tls_config.h`、`grpc_result.h`、`wrapper_adapter.h`、`diagnostic/bench_call.h` に限定した。signature、struct layout、function boundary、allocation policyは変更しない。
+- 2026-05-31: `tls_config.h` はOpenSSL型と `size_t` だけを公開するため、`common.h` を外して `<stddef.h>` と `<openssl/ssl.h>` を直接読む形にした。`tls_config.c` は `INT_MAX`、`true`、OpenSSL PEM/error helperを使うため、必要なincludeを `.c` 側へ移した。
+- 2026-05-31: `grpc_result.h` と `wrapper_adapter.h` はPHP-aware headerとして残すが、`common.h` 全体ではなく `<php.h>` と必要なC standard headerだけを読む形にした。
+- 2026-05-31: `diagnostic/bench_call.h` はbench-onlyのPHP-aware headerとして `<php.h>`、`<stdbool.h>`、`<stddef.h>`、`<stdint.h>` を直接読む形にした。
+
+## Progress
+
+- 2026-05-31: `src/tls_config.h`、`src/grpc_result.h`、`src/wrapper_adapter.h`、`src/diagnostic/bench_call.h` から `common.h` 依存を削除。
+- 2026-05-31: `src/tls_config.c` にTLS helper実装で必要なOpenSSL/C standard includeを追加。
+
+## Verification Results
+
+- `git diff --check`: pass
+- `docker compose run --rm dev sh -lc 'make -j$(nproc)'`: pass
+- `./tools/test/check-c-static-analysis.sh`: pass
+- `./tools/test/check-c-unit.sh`: pass
+- `./tools/test/check-phpt.sh`: pass, 15/15
+- Benchmark: not run。include narrowingのみでruntime挙動、signature、layout、function boundaryを変更していないため不要。
 
 ## Close Criteria
 
