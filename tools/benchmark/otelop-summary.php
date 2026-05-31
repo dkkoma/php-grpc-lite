@@ -89,6 +89,7 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
                 $shape,
                 (string) ($attributes['benchmark.implementation'] ?? ''),
                 (string) ($attributes['benchmark.transport'] ?? '-'),
+                (string) ($attributes['benchmark.repeat_index'] ?? ''),
             ];
             $key = implode("\t", $keyParts);
             $cpuGroups[$key] = [
@@ -97,6 +98,7 @@ for ($offset = 0; ; $offset += min($limit, 1000)) {
                 'shape' => $shape,
                 'implementation' => $keyParts[3],
                 'transport' => $keyParts[4],
+                'repeat_index' => $keyParts[5],
                 'calls' => (int) ($attributes['benchmark.calls'] ?? 0),
                 'cpu_total_us_per_call' => (float) ($attributes['benchmark.cpu_total_us_per_call'] ?? 0.0),
                 'cpu_user_us_per_call' => (float) ($attributes['benchmark.cpu_user_us_per_call'] ?? 0.0),
@@ -164,25 +166,27 @@ if ($cpuGroups !== []) {
     ksort($cpuGroups);
     echo "\nCPU summary spans\n";
     printf(
-        "%-28s %-24s %-18s %-14s %8s %14s %14s %14s %14s\n",
+        "%-28s %-24s %-18s %-14s %8s %8s %14s %14s %14s %14s\n",
         'suite',
         'measurement',
         'shape',
         'variant',
+        'repeat',
         'calls',
         'cpu_us/call',
         'user_us/call',
         'sys_us/call',
         'wall_us/call',
     );
-    printf("%'-145s\n", '');
+    printf("%'-154s\n", '');
     foreach ($cpuGroups as $group) {
         printf(
-            "%-28s %-24s %-18s %-14s %8d %14.1f %14.1f %14.1f %14.1f\n",
+            "%-28s %-24s %-18s %-14s %8s %8d %14.1f %14.1f %14.1f %14.1f\n",
             $group['suite'],
             $group['measurement'],
             $group['shape'],
             variantName($group['implementation'], $group['transport']),
+            $group['repeat_index'] === '' ? '-' : $group['repeat_index'],
             $group['calls'],
             $group['cpu_total_us_per_call'],
             $group['cpu_user_us_per_call'],

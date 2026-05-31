@@ -20,6 +20,7 @@ $target = 'test-server:50051';
 $autoload = 'vendor/autoload.php';
 $calls = 5000;
 $warmupCalls = 100;
+$repeatRuns = 1;
 $nativeResponseMode = 'stream';
 $transport = 'native';
 $tlsRoot = '';
@@ -50,6 +51,10 @@ for ($argIndex = 0; $argIndex < count($args); $argIndex++) {
         $warmupCalls = (int) ($args[++$argIndex] ?? -1);
     } elseif (str_starts_with($arg, '--warmup-calls=')) {
         $warmupCalls = (int) substr($arg, strlen('--warmup-calls='));
+    } elseif ($arg === '--repeat-runs') {
+        $repeatRuns = (int) ($args[++$argIndex] ?? 0);
+    } elseif (str_starts_with($arg, '--repeat-runs=')) {
+        $repeatRuns = (int) substr($arg, strlen('--repeat-runs='));
     } elseif ($arg === '--native-response-mode') {
         $nativeResponseMode = $args[++$argIndex] ?? '';
     } elseif (str_starts_with($arg, '--native-response-mode=')) {
@@ -74,8 +79,8 @@ if ($suite === 'tls-cpu-micro' && $target === 'test-server:50051') {
 if ($suite === '' || $implementation === '' || $target === '' || $autoload === '') {
     usage('suite, implementation, target, and autoload are required');
 }
-if ($calls <= 0 || $warmupCalls < 0) {
-    usage('calls and warmup-calls must be valid');
+if ($calls <= 0 || $warmupCalls < 0 || $repeatRuns <= 0) {
+    usage('calls, warmup-calls, and repeat-runs must be valid');
 }
 if (!is_file($autoload)) {
     throw new RuntimeException("autoload file not found: $autoload");
@@ -91,6 +96,15 @@ $unaryClient = UnaryBenchHelper::client($target, $clientOptions);
 $streamingClient = StreamingBenchHelper::client($target, $clientOptions);
 
 $cases = [
+    [
+        'name' => 'tiny_unary_0b',
+        'call_type' => 'unary',
+        'client_scope' => 'reused',
+        'request' => unaryRequest(0, 0),
+        'request_bytes' => 0,
+        'response_bytes' => 0,
+        'message_count' => 1,
+    ],
     [
         'name' => 'small_unary_100b',
         'call_type' => 'unary',
@@ -108,6 +122,19 @@ $cases = [
         'request_bytes' => 100,
         'response_bytes' => 100,
         'message_count' => 1,
+    ],
+    [
+        'name' => 'metadata_unary_req10_resp10_32b',
+        'call_type' => 'unary',
+        'client_scope' => 'reused',
+        'request' => unaryRequest(100, 100),
+        'metadata' => metadataRequest(10, 10, 32),
+        'request_bytes' => 100,
+        'response_bytes' => 100,
+        'message_count' => 1,
+        'request_metadata_count' => 10,
+        'response_metadata_count' => 10,
+        'metadata_value_bytes' => 32,
     ],
     [
         'name' => 'begin_txn_unary',
@@ -137,6 +164,15 @@ $cases = [
         'message_count' => 1,
     ],
     [
+        'name' => 'tiny_streaming_1x0b',
+        'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
+        'request' => streamingRequest(1, 0, 0),
+        'request_bytes' => 0,
+        'response_bytes' => 0,
+        'message_count' => 1,
+    ],
+    [
         'name' => 'new_client_streaming_1x100b',
         'call_type' => 'server_streaming',
         'client_scope' => 'per_call',
@@ -144,6 +180,15 @@ $cases = [
         'request_bytes' => 100,
         'response_bytes' => 100,
         'message_count' => 1,
+    ],
+    [
+        'name' => 'small_streaming_10x100b',
+        'call_type' => 'server_streaming',
+        'client_scope' => 'reused',
+        'request' => streamingRequest(10, 100, 100),
+        'request_bytes' => 100,
+        'response_bytes' => 100,
+        'message_count' => 10,
     ],
     [
         'name' => 'small_streaming_100x100b',
@@ -193,53 +238,59 @@ $cases = [
 ];
 
 printf(
-    "%-32s %-16s %8s %14s %14s %14s %14s\n",
+    "%-36s %-16s %8s %8s %14s %14s %14s %14s\n",
     'measurement',
     'type',
+    'repeat',
     'calls',
     'cpu_us/call',
     'user_us/call',
     'sys_us/call',
     'wall_us/call',
 );
-printf("%'-116s\n", '');
+printf("%'-129s\n", '');
 
 foreach ($cases as $case) {
-    $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $transport, isTlsSuite($suite)) + [
-        'benchmark.call_type' => $case['call_type'],
-        'benchmark.request_bytes' => $case['request_bytes'],
-        'benchmark.response_bytes' => $case['response_bytes'],
-        'benchmark.message_count' => $case['message_count'],
-        'benchmark.client_scope' => $case['client_scope'],
-        'benchmark.native_response_mode' => $nativeResponseMode,
-        'benchmark.operation_shape' => $case['name'],
-    ]);
+    for ($repeatIndex = 1; $repeatIndex <= $repeatRuns; $repeatIndex++) {
+        $benchTelemetry->setContext($case['name'], commonContext($target, $calls, $warmupCalls, $repeatRuns, $transport, isTlsSuite($suite)) + [
+            'benchmark.call_type' => $case['call_type'],
+            'benchmark.request_bytes' => $case['request_bytes'],
+            'benchmark.response_bytes' => $case['response_bytes'],
+            'benchmark.message_count' => $case['message_count'],
+            'benchmark.client_scope' => $case['client_scope'],
+            'benchmark.native_response_mode' => $nativeResponseMode,
+            'benchmark.operation_shape' => $case['name'],
+            'benchmark.repeat_index' => $repeatIndex,
+        ] + metadataContext($case));
 
-    runWarmup($case, $unaryClient, $streamingClient, $target, $clientOptions, $warmupCalls);
-    $result = measureCase($case, $unaryClient, $streamingClient, $target, $clientOptions, $calls);
+        runWarmup($case, $unaryClient, $streamingClient, $target, $clientOptions, $warmupCalls);
+        $result = measureCase($case, $unaryClient, $streamingClient, $target, $clientOptions, $calls);
 
-    printf(
-        "%-32s %-16s %8d %14.1f %14.1f %14.1f %14.1f\n",
-        $case['name'],
-        $case['call_type'],
-        $calls,
-        $result['cpu_total_us_per_call'],
-        $result['cpu_user_us_per_call'],
-        $result['cpu_sys_us_per_call'],
-        $result['wall_us_per_call'],
-    );
+        printf(
+            "%-36s %-16s %8d %8d %14.1f %14.1f %14.1f %14.1f\n",
+            $case['name'],
+            $case['call_type'],
+            $repeatIndex,
+            $calls,
+            $result['cpu_total_us_per_call'],
+            $result['cpu_user_us_per_call'],
+            $result['cpu_sys_us_per_call'],
+            $result['wall_us_per_call'],
+        );
 
-    $benchTelemetry->recordMetricSpan('CpuMicroSummary', $result['start_ns'], $result['end_ns'], [
-        'benchmark.metric_kind' => 'cpu_summary',
-        'benchmark.cpu_total_us' => $result['cpu_total_us'],
-        'benchmark.cpu_user_us' => $result['cpu_user_us'],
-        'benchmark.cpu_sys_us' => $result['cpu_sys_us'],
-        'benchmark.cpu_total_us_per_call' => $result['cpu_total_us_per_call'],
-        'benchmark.cpu_user_us_per_call' => $result['cpu_user_us_per_call'],
-        'benchmark.cpu_sys_us_per_call' => $result['cpu_sys_us_per_call'],
-        'benchmark.wall_total_us' => $result['wall_total_us'],
-        'benchmark.wall_us_per_call' => $result['wall_us_per_call'],
-    ]);
+        $benchTelemetry->recordMetricSpan('CpuMicroSummary', $result['start_ns'], $result['end_ns'], [
+            'benchmark.metric_kind' => 'cpu_summary',
+            'benchmark.repeat_index' => $repeatIndex,
+            'benchmark.cpu_total_us' => $result['cpu_total_us'],
+            'benchmark.cpu_user_us' => $result['cpu_user_us'],
+            'benchmark.cpu_sys_us' => $result['cpu_sys_us'],
+            'benchmark.cpu_total_us_per_call' => $result['cpu_total_us_per_call'],
+            'benchmark.cpu_user_us_per_call' => $result['cpu_user_us_per_call'],
+            'benchmark.cpu_sys_us_per_call' => $result['cpu_sys_us_per_call'],
+            'benchmark.wall_total_us' => $result['wall_total_us'],
+            'benchmark.wall_us_per_call' => $result['wall_us_per_call'],
+        ] + metadataContext($case));
+    }
 }
 
 echo "OTEL CPU summary spans exported.\n";
@@ -257,15 +308,50 @@ function streamingRequest(int $messageCount, int $requestBytes, int $responseByt
 }
 
 /** @return array<string, int|string> */
-function commonContext(string $target, int $calls, int $warmupCalls, string $transport, bool $tls): array
+function commonContext(string $target, int $calls, int $warmupCalls, int $repeatRuns, string $transport, bool $tls): array
 {
     return [
         'benchmark.target' => $target,
         'benchmark.calls' => $calls,
         'benchmark.warmup_calls' => $warmupCalls,
+        'benchmark.repeat_runs' => $repeatRuns,
         'benchmark.transport' => $transport,
         'benchmark.security' => $tls ? 'tls' : 'h2c',
         'benchmark.cpu_source' => 'getrusage',
+    ];
+}
+
+/** @return array<string, list<string>> */
+function metadataRequest(int $requestMetadataCount, int $responseMetadataCount, int $valueBytes): array
+{
+    $metadata = [
+        'x-bench-response-metadata-count' => [(string) $responseMetadataCount],
+        'x-bench-response-metadata-value-bytes' => [(string) $valueBytes],
+    ];
+    $value = metadataValue($valueBytes);
+    for ($index = 0; $index < $requestMetadataCount; $index++) {
+        $metadata[sprintf('x-bench-request-%03d', $index)] = [$value];
+    }
+
+    return $metadata;
+}
+
+function metadataValue(int $size): string
+{
+    if ($size <= 0) {
+        return '';
+    }
+
+    return substr(str_repeat('abcdefghijklmnopqrstuvwxyz', intdiv($size + 25, 26)), 0, $size);
+}
+
+/** @param array<string, mixed> $case */
+function metadataContext(array $case): array
+{
+    return [
+        'benchmark.request_metadata_count' => $case['request_metadata_count'] ?? 0,
+        'benchmark.response_metadata_count' => $case['response_metadata_count'] ?? 0,
+        'benchmark.metadata_value_bytes' => $case['metadata_value_bytes'] ?? 0,
     ];
 }
 
@@ -317,7 +403,7 @@ function runOneCall(array $case, object $unaryClient, object $streamingClient, s
         if ($case['client_scope'] === 'per_call') {
             $unaryClient = UnaryBenchHelper::client($target, $clientOptions);
         }
-        UnaryBenchHelper::call($unaryClient, $case['request']);
+        UnaryBenchHelper::callDetailed($unaryClient, $case['request'], $case['metadata'] ?? []);
         return;
     }
 
@@ -358,6 +444,6 @@ function rusageTimeUs(array $usage, string $prefix): float
 function usage(string $message): never
 {
     fwrite(STDERR, $message . "\n\n");
-    fwrite(STDERR, "Usage: php tools/benchmark/cpu-micro.php --suite=cpu-micro|tls-cpu-micro --implementation=php-grpc-lite [--calls=5000] [--warmup-calls=100] [--tls-root=...]\n");
+    fwrite(STDERR, "Usage: php tools/benchmark/cpu-micro.php --suite=cpu-micro|tls-cpu-micro --implementation=php-grpc-lite [--calls=5000] [--warmup-calls=100] [--repeat-runs=1] [--tls-root=...]\n");
     exit(2);
 }
