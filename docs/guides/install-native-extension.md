@@ -117,7 +117,7 @@ sudo make install
 
 ```bash
 docker compose run --rm dev sh -lc 'phpize && ./configure --enable-grpc && make -j$(nproc)'
-docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12");'
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13");'
 ```
 
 公式 `php` image上でPIE install手順を検証する場合:
@@ -125,15 +125,15 @@ docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_
 ```bash
 docker build -f Dockerfile.install-pie -t php-grpc-lite-install-pie .
 docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
-docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12");'
+docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13");'
 ```
 
 特定release packageをPackagist経由で検証する場合:
 
 ```bash
 docker build -f Dockerfile.install-pie \
-  --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.12 \
-  -t php-grpc-lite-install-pie-0.0.12 .
+  --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.13 \
+  -t php-grpc-lite-install-pie-0.0.13 .
 ```
 
 ## Enable extension
@@ -145,7 +145,7 @@ PIEまたは `make install` が出力したinstall先に合わせて、必要な
 ```bash
 echo 'extension=grpc' | sudo tee /etc/php/conf.d/20-php-grpc-lite.ini
 php -m | grep '^grpc$'
-php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12");'
+php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13");'
 ```
 
 公式 `ext-grpc` が既に有効な環境では、先に公式側の `extension=grpc` 設定を外す。同名moduleなので同時loadはできない。
@@ -173,13 +173,13 @@ Pub/Sub StreamingPull など bidi streaming を使うclientは、現時点では
 ## Verification
 
 ```bash
-php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12", class_exists(Grpc\\Channel::class));'
+php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13", class_exists(Grpc\\Channel::class));'
 ```
 
 期待値:
 
 - `extension_loaded("grpc") === true`
-- `defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.12"`
+- `defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13"`
 - `class_exists(Grpc\Channel::class) === true`
 
 `extension_loaded("grpc")` だけでは公式 `ext-grpc` と区別できないため、`Grpc\VERSION` の値も確認する。
