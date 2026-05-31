@@ -50,7 +50,6 @@ typedef struct {
     zval trailing_metadata;
     zval status;
     uint64_t trace_started_us;
-    bool sent;
     bool unary_performed;
     bool server_streaming_opened;
     bool initial_metadata_ready;
