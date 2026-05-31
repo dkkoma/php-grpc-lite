@@ -9,7 +9,7 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
     }
     free_queued_response_payloads(&state->call);
     if (connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection) && state->call.stream_id > 0) {
-        int rv = nghttp2_submit_rst_stream(state->call.connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, NGHTTP2_CANCEL);
+        int rv = grpc_lite_submit_rst_stream_if_open(state->call.connection->session, &state->call, NGHTTP2_CANCEL);
         if (rv == 0) {
             rv = send_pending_h2_frames(state->call.connection, &state->call);
         }

@@ -45,6 +45,7 @@ ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
 static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out);
 ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
 int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
+int grpc_lite_submit_rst_stream_if_open(nghttp2_session *session, grpc_call *call, uint32_t error_code);
 h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
 h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
 void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
@@ -292,7 +293,7 @@ void cancel_active_server_streaming_call_state(server_streaming_call_state *stat
     if (state == NULL || state->completed || !connection_owned_by_server_streaming_call_state(state->call.connection, state) || !connection_usable(state->call.connection) || state->call.stream_id <= 0) {
         return;
     }
-    rv = nghttp2_submit_rst_stream(state->call.connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, error_code);
+    rv = grpc_lite_submit_rst_stream_if_open(state->call.connection->session, &state->call, error_code);
     if (rv != 0) {
         mark_connection_dead(state->call.connection, rv);
         return;
@@ -328,6 +329,14 @@ void destroy_server_streaming_call_state(server_streaming_call_state *state)
     }
     cleanup_grpc_call(&state->call);
     efree(state);
+}
+
+int grpc_lite_submit_rst_stream_if_open(nghttp2_session *session, grpc_call *call, uint32_t error_code)
+{
+    if (session == NULL || call == NULL || call->stream_id <= 0) {
+        return 0;
+    }
+    return nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, error_code);
 }
 
 void server_streaming_call_state_dtor(zend_resource *rsrc)
@@ -2002,9 +2011,7 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
     } else if (frame->hd.type == NGHTTP2_PUSH_PROMISE && frame->hd.stream_id == call->stream_id) {
         call->malformed_response_frame = true;
         call->discard_response_body = true;
-        if (session != NULL && call->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_PROTOCOL_ERROR);
-        }
+        grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_PROTOCOL_ERROR);
     }
     return 0;
 }
@@ -2454,9 +2461,7 @@ int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, gr
     if (call->grpc_status_seen) {
         call->invalid_grpc_status = true;
         call->discard_response_body = true;
-        if (session != NULL && call->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-        }
+        grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
         return 0;
     }
 
@@ -2478,34 +2483,26 @@ int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, gr
             if (call->max_response_messages > 0 && ++call->response_message_count > call->max_response_messages) {
                 call->malformed_response_frame = true;
                 call->discard_response_body = true;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 return 0;
             }
             if (call->response_header_buf[0] > 1) {
                 call->malformed_response_frame = true;
                 call->discard_response_body = true;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 return 0;
             }
             if (call->response_header_buf[0] == 1) {
                 call->compressed_response_seen = true;
                 call->discard_response_body = true;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 return 0;
             }
             call->response_payload_offset = 0;
             if ((size_t) call->response_payload_len > call->max_receive_message_bytes) {
                 call->response_message_too_large = true;
                 call->discard_response_body = true;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 return 0;
             }
             if (call->response_payload_len == 0) {
@@ -2539,9 +2536,7 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
     if (call->grpc_status_seen) {
         call->invalid_grpc_status = true;
         call->discard_response_body = true;
-        if (session != NULL && call->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-        }
+        grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
         return 0;
     }
 
@@ -2566,9 +2561,7 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 continue;
             }
             if ((size_t) call->response_payload_len > call->max_receive_message_bytes) {
@@ -2578,9 +2571,7 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
                 call->response_current_compressed = false;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 call->response_payload_offset = 0;
                 continue;
             }
@@ -2592,9 +2583,7 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
                 call->response_current_compressed = false;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 continue;
             }
             if (call->response_header_buf[0] == 1) {
@@ -2604,9 +2593,7 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
                 call->response_current_compressed = false;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
+                grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
                 continue;
             }
             if (server_streaming_read_ahead_limit_would_exceed(call, call->response_payload_len)) {
@@ -2696,9 +2683,7 @@ static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *ses
     call->response_payload_len = 0;
     call->response_payload_offset = 0;
     call->response_current_compressed = false;
-    if (session != NULL && call->stream_id > 0) {
-        nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-    }
+    grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
 }
 
 int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload)
@@ -2754,9 +2739,7 @@ int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *na
         call->discard_response_body = true;
         if (call->stream_id > 0) {
             nghttp2_session *session = call->connection != NULL ? call->connection->session : NULL;
-            if (session != NULL) {
-                nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-            }
+            grpc_lite_submit_rst_stream_if_open(session, call, NGHTTP2_CANCEL);
         }
         return 0;
     }
