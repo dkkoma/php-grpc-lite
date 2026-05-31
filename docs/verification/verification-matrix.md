@@ -57,7 +57,7 @@ Legend:
 | Slow-consumer memory gate | diagnostic scriptはあるが、gateかmeasurement-onlyかの扱いを明確にする必要がある | `docs/issues/open/2026-05-31-exemplar-test-discoverability-and-gates.md` |
 | Lifecycle FD/RSS thresholds | release scriptはlifecycle checkを実行するが、threshold enforcementの扱いを明確にする必要がある | `docs/issues/open/2026-05-31-exemplar-test-discoverability-and-gates.md` |
 | `grpc_call` field ownership | behavior testではcoveredだが、field mapとしては未文書化 | `docs/issues/open/2026-05-31-exemplar-grpc-call-exchange-state-map.md` |
-| Protocol classification vs transport action | behaviorとしてはcoveredだが、responsibility boundaryがまだ見えづらい | `docs/issues/open/2026-05-31-exemplar-protocol-classification-boundary.md` |
+| Protocol classification vs transport action | behaviorとしてはcovered。責務境界は `docs/design/protocol-classification-boundary.md` に文書化済み | future runtime refactor issue if needed |
 
 ## Gate mapping
 

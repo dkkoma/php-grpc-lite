@@ -14,6 +14,7 @@
 | [http2-transport-design.md](./design/http2-transport-design.md) | nghttp2 + socket/TLS transportの現在の設計 |
 | [transport-header-boundaries.md](./design/transport-header-boundaries.md) | `transport.h`、`common.h`、transport internal headerの境界方針 |
 | [grpc-call-exchange-state.md](./design/grpc-call-exchange-state.md) | `grpc_call` field、connection / stream ownership、hot path上の責務map |
+| [protocol-classification-boundary.md](./design/protocol-classification-boundary.md) | gRPC protocol failure分類とHTTP/2 transport actionの責務境界 |
 
 ## Reading Guides
 
