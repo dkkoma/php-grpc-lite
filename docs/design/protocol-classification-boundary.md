@@ -132,3 +132,5 @@ runtime codeを変更する場合の最低gate:
 - HTTP/2/gRPC domain model review
 
 docs-onlyの棚卸しではruntime benchmarkは不要である。
+
+Runtime refactorは `docs/issues/open/2026-05-31-protocol-classification-runtime-boundary-refactor.md` で扱う。
