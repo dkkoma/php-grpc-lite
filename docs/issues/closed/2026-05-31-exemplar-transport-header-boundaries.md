@@ -1,6 +1,6 @@
 # お手本化: transport header boundary整理
 
-- Status: Open
+- Status: Closed
 - Created: 2026-05-31
 - Branch: main
 - Owner: Codex
@@ -73,11 +73,14 @@
 - 2026-05-31: `docs/transport-header-boundaries.md` を追加し、現在のconsumer、target header group、`common.h` include policy、safe first splitを整理。
 - 2026-05-31: 実装の宣言移動は未実施。`h2_request_headers` などから小さく分割する方針を記録し、issueはopenのまま継続する。
 - 2026-05-31: 最初の実装stepとして `docs/issues/closed/2026-05-31-exemplar-h2-request-headers-header-split.md` を完了。`h2_request_headers` typeとrequest header helper宣言をnarrow headerへ移動。
+- 2026-05-31: `persistent_connection_cache` header splitは検討したが、`h2_connection` lifetime、module globals、surface側key生成、transport側preflight/detachがまたがり、headerだけ分けると実装ownerが曖昧になるためreject。
+- 2026-05-31: これ以上の細かいheader分割は、このissueでは進めない。残る読みづらさは `connection / stream ownership model` issueでstate machineとownership invariantとして扱う。
 
 ## Verification
 
 - `git diff --check`: PASS
-- 現時点のcommitはドキュメント追加のみ。C実装、header include、struct layout、callback pathは未変更のため、C static analysis / C unit / PHPT / build / bench build loadは未実行。
+- `h2_request_headers` 宣言分離: `./tools/test/check-c-static-analysis.sh`, `./tools/test/check-c-unit.sh`, `./tools/test/check-phpt.sh` PASS。詳細は `docs/issues/closed/2026-05-31-exemplar-h2-request-headers-header-split.md`。
+- このclose commitはdocs-only。C実装、header include、struct layout、callback pathは変更しないため追加benchmarkは不要。
 - HTTP/2/gRPC domain model review: docs-only boundary reviewとして、production / diagnostic boundary、connection / stream / call / resource scopeを `docs/protocol-model-review-guide.md` の観点で確認。実装変更なしのためBlocker / High / Medium / Lowはnone。
 
 ## Decision Log
@@ -85,6 +88,7 @@
 - 2026-05-31: このissueでは挙動変更なしのheader boundary整理を主対象にする。
 - 2026-05-31: `transport.h` をすぐ分割しない。まずaggregate headerを残したままnarrow headerを追加する方針とし、declaration moveごとに小issue/小コミットへ分ける。
 - 2026-05-31: runtime性能影響を避けるため、field order変更、`static inline` 化、callback/parser実装変更はこのissueの対象外とする。
+- 2026-05-31: headerは細かく分ければお手本になるわけではない。明確なdata objectとinit/free pairを持つ `h2_request_headers` は分離を採用したが、persistent connection cacheはcross-cuttingなownershipを隠すだけになるため採用しない。
 
 ## Close Criteria
 
