@@ -26,15 +26,6 @@ static int failures = 0;
     } \
 } while (0)
 
-#define ASSERT_UINT64(expected, actual) do { \
-    uint64_t expected_value = (uint64_t) (expected); \
-    uint64_t actual_value = (uint64_t) (actual); \
-    if (expected_value != actual_value) { \
-        fprintf(stderr, "%s:%d: expected %" PRIu64 ", got %" PRIu64 "\n", __FILE__, __LINE__, expected_value, actual_value); \
-        failures++; \
-    } \
-} while (0)
-
 #define ASSERT_UINT32(expected, actual) do { \
     uint32_t expected_value = (uint32_t) (expected); \
     uint32_t actual_value = (uint32_t) (actual); \
@@ -109,12 +100,6 @@ static void test_authority_identity(void)
     build_authority(authority, sizeof(authority), "example.test", 443, "override.test", strlen("override.test"));
     ASSERT_STR("override.test", authority);
 
-    ASSERT_SIZE(0, hash_bytes(NULL, 0));
-    ASSERT_SIZE(0, hash_bytes("", 0));
-    ASSERT_UINT64(UINT64_C(16437540923676722826), hash_bytes("authority-a", strlen("authority-a")));
-    ASSERT_UINT64(UINT64_C(16437539824165094615), hash_bytes("authority-b", strlen("authority-b")));
-    ASSERT_BOOL(true, hash_bytes("authority-a", strlen("authority-a")) == hash_bytes("authority-a", strlen("authority-a")));
-    ASSERT_BOOL(true, hash_bytes("authority-a", strlen("authority-a")) != hash_bytes("authority-b", strlen("authority-b")));
 }
 
 static void test_grpc_path_validation(void)

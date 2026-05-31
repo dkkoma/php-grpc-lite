@@ -21,7 +21,6 @@
 #define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
 #define GRPC_LITE_AUTHORITY_BUFFER_SIZE 512
 
-uint64_t hash_bytes(const char *data, size_t data_len);
 void build_authority(char *buffer, size_t buffer_len, const char *host, int64_t port, const char *authority, size_t authority_len);
 size_t effective_max_receive_message_bytes(int64_t max_receive_message_length);
 uint32_t effective_http2_window_size(int64_t configured);

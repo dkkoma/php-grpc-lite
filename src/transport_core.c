@@ -13,21 +13,6 @@
 #undef snprintf
 #endif
 
-uint64_t hash_bytes(const char *data, size_t data_len)
-{
-    uint64_t hash = UINT64_C(1469598103934665603);
-    size_t index;
-
-    if (data == NULL || data_len == 0) {
-        return 0;
-    }
-    for (index = 0; index < data_len; index++) {
-        hash ^= (unsigned char) data[index];
-        hash *= UINT64_C(1099511628211);
-    }
-    return hash;
-}
-
 void build_authority(char *buffer, size_t buffer_len, const char *host, int64_t port, const char *authority, size_t authority_len)
 {
     if (authority != NULL && authority_len > 0) {
