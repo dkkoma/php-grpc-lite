@@ -1,6 +1,6 @@
 # Root dev artifact layout
 
-Status: Open
+Status: Closed
 
 ## 目的
 
@@ -38,6 +38,7 @@ repository rootにある開発・検証・診断用artifactを用途別directory
 - 2026-06-01: `bench.php` を `tools/benchmark/extension-bench.php` へ移動し、autoload pathを更新。
 - 2026-06-01: `phpunit.xml.dist` を `tests/phpunit.xml.dist` へ移動し、bootstrap / testsuite pathを更新。
 - 2026-06-01: compose / CI / release build script / README / current guideの参照を更新。
+- 2026-06-01: ユーザー判断によりmainへマージする。
 
 ## 検証
 
@@ -65,6 +66,10 @@ repository rootにある開発・検証・診断用artifactを用途別directory
 - `composer.json`、`config.m4`、`grpc.c`、`php_grpc.h` はpackage / extension build surfaceなのでrootに残す。
 - `.gitattributes` は現在 `/Dockerfile` / `/Dockerfile.*` をexport-ignoreしている。Dockerfile群を `docker/` に移した後もComposer distへ入れないため、`/docker` をexport-ignoreへ追加する。
 - `phpunit.xml.dist` はroot慣習もあるが、このrepositoryではDocker内の検証コマンドをdocs / AGENTS / CIで明示しているため、`tests/phpunit.xml.dist` に移して `vendor/bin/phpunit -c tests/phpunit.xml.dist` を標準にする。
+
+## 修正コミット
+
+- `62fee08` `Root整理: 開発用artifactを用途別directoryへ移動`
 
 ## 完了条件
 
