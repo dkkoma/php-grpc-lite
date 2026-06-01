@@ -1,6 +1,6 @@
 # Release asset upload repository context
 
-Status: Open
+Status: Closed
 Target-Release: 0.0.13
 
 ## 目的
@@ -34,15 +34,35 @@ publish jobはartifactをdownloadしてreleaseへuploadするだけなので、s
 
 - 2026-06-01: issue作成。
 - 2026-06-01: `gh release upload` に `--repo dkkoma/php-grpc-lite` を追加。
+- 2026-06-01: 修正をmainへ取り込み、`0.0.13` releaseに対してworkflowを再実行。
 
 ## 検証
 
 - `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release-prebuilt-artifacts.yml"); puts "yaml ok"'`: PASS
 - `git diff --check`: PASS
+- failed run確認:
+  - run: `26727833084`
+  - build matrix: PASS
+  - publish job: FAIL
+  - failed step: `Attach release assets`
+  - error: `failed to run git: fatal: not a git repository`
+- fixed run確認:
+  - run: `26728548774`
+  - event: `workflow_dispatch`
+  - input tag: `0.0.13`
+  - build matrix: PASS
+  - publish job: PASS
+- `gh release view 0.0.13 --repo dkkoma/php-grpc-lite --json tagName,targetCommitish,url,assets`: PASS
+  - assets: 8 tarballs + `SHA256SUMS`
 
 ## 判断ログ
 
 - publish jobにcheckoutを追加する案もあるが、uploadに必要なのはrepository指定だけなので、Git checkoutを増やさず `--repo` を明示する。
+
+## 修正コミット
+
+- `83f87f5` `Release artifact: upload先repositoryを明示`
+- `5344e24` `Merge branch 'codex/fix-release-asset-upload-repo'`
 
 ## 完了条件
 

@@ -1,6 +1,6 @@
 # 0.0.13 release version alignment
 
-Status: Open
+Status: Closed
 Target-Release: 0.0.13
 
 ## 目的
@@ -34,6 +34,8 @@ Target-Release: 0.0.13
 
 - 2026-06-01: issue作成。
 - 2026-06-01: `PHP_GRPC_VERSION` と現在release向けinstall検証例を `0.0.13` に更新。
+- 2026-06-01: `0.0.13` GitHub Releaseを作成。
+- 2026-06-01: 修正済みrelease artifact workflowを `workflow_dispatch` / `tag=0.0.13` で再実行し、release assets添付を確認。
 
 ## 検証
 
@@ -43,10 +45,31 @@ Target-Release: 0.0.13
   - `extension_loaded("grpc")`: `true`
   - `Grpc\VERSION === "0.0.13"`: `true`
   - `phpversion("grpc")`: `0.0.13`
+- `gh release view 0.0.13 --repo dkkoma/php-grpc-lite --json tagName,targetCommitish,url,assets`: PASS
+  - release URL: `https://github.com/dkkoma/php-grpc-lite/releases/tag/0.0.13`
+  - assets: 8 tarballs + `SHA256SUMS`
+- `gh run watch 26728548774 --repo dkkoma/php-grpc-lite --exit-status`: PASS
+  - build matrix: php8.4/php8.5 x nts/zts x amd64/arm64
+  - publish job: PASS
+- representative asset inspection:
+  - asset: `php-grpc-lite-0.0.13-php8.4-nts-trixie-arm64.tar.gz`
+  - layout: `artifacts/grpc.so`, `artifacts/metadata.json`, `SHA256SUMS`
+  - `metadata.version`: `0.0.13`
+  - `metadata.release_tag`: `0.0.13`
+  - `metadata.thread_safety`: `nts`
+  - `metadata.arch`: `arm64`
+  - `metadata.extension_version`: `0.0.13`
+  - `metadata.source_sha`: `f6b6612514c0b3012521eddb3774510af29f2898`
 
 ## 判断ログ
 
 - `0.0.13` releaseでは、runtime versionが `0.0.12` のままになる状態を避けるため、tag作成前にversion alignmentを独立commitとして扱う。
+- 初回 `release.published` run `26727833084` は、8本のbuild matrixは成功したがpublish jobで失敗した。原因は別issue `2026-06-01-release-asset-upload-repo-context.md` で修正した。
+
+## 修正コミット
+
+- `36741b3` `0.0.13 release: runtime versionをtagと揃える`
+- `f6b6612` `Merge branch 'codex/release-0-0-13-version'`
 
 ## 完了条件
 
