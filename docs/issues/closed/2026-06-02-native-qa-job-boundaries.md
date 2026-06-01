@@ -1,6 +1,6 @@
 # Native QA job boundaries
 
-Status: Open
+Status: Closed
 Branch: codex/native-qa-job-boundaries
 
 ## 目的
@@ -60,6 +60,15 @@ GitHub Actions の `Native QA` を、`Development gate` という詰め合わせ
 - `FUZZ_RUNS=100 ./tools/test/check-crash-ub.sh`: PASS
 - `rg -n "check-native-development-gate|run-vm-compare|check-c-fuzz|C fuzz smoke|fuzz smoke|libFuzzer smoke" README.md docs/README.md docs/guides docs/verification tests/fuzz tools .github -g '*.md' -g '*.sh' -g '*.yml'`: no matches
 - tracked shell scriptの未参照確認: 追加の未参照scriptなし
+- Branch CI `Native QA` workflow_dispatch `26788512556`: PASS
+  - `Static analysis`: PASS
+  - `NTS PHPT + C coverage`: PASS
+  - `ZTS PHPT`: PASS
+  - `Crash/UB check`: PASS
+
+## 修正コミット
+
+- `10df4b5 Native QAを目的別jobへ整理`
 
 ## 判断ログ
 
