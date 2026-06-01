@@ -74,9 +74,10 @@ jobs:
 
     steps:
       - name: Download workflow artifacts
-        uses: actions/download-artifact@v7
-        with:
-          path: downloaded-artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo dkkoma/php-grpc-lite --dir downloaded-artifacts
 
       - name: Prepare release assets
         run: |
