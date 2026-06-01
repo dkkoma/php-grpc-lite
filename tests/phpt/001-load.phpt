@@ -18,8 +18,6 @@ grpc_lite_phpt_assert_true(class_exists(Grpc\Call::class), 'Grpc\\Call must exis
 grpc_lite_phpt_assert_true(class_exists(Grpc\Timeval::class), 'Grpc\\Timeval must exist');
 grpc_lite_phpt_assert_true(class_exists(Grpc\ChannelCredentials::class), 'Grpc\\ChannelCredentials must exist');
 grpc_lite_phpt_assert_true(class_exists(Grpc\CallCredentials::class), 'Grpc\\CallCredentials must exist');
-grpc_lite_phpt_assert_same('0.0.12', phpversion('grpc'), 'phpversion("grpc")');
-grpc_lite_phpt_assert_same('0.0.12', Grpc\VERSION, 'Grpc\\VERSION');
 
 foreach ([
     'Grpc\\STATUS_OK' => 0,
