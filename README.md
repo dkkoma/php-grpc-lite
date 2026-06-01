@@ -79,17 +79,17 @@ Run tests in Docker:
 
 ```bash
 composer install
-./tools/test/check-native-development-gate.sh
+./tools/test/check-c-static-analysis.sh
 ./tools/test/check-c-unit.sh
 ./tools/test/check-phpt.sh
-./tools/test/check-c-fuzz.sh
+./tools/test/check-crash-ub.sh
 ./tools/test/check-c-coverage.sh
 docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist
 ```
 
-`check-native-development-gate.sh` runs the normal local gate: C static analysis, C unit boundary tests, PHPT integration tests, and a short libFuzzer smoke. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds the root extension, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-c-fuzz.sh` runs deterministic libFuzzer smoke for pure C protocol boundaries. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
+`check-c-static-analysis.sh` runs the C extension static analysis. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds the root extension, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-crash-ub.sh` runs generated-input checks under ASan/UBSan to detect crashes and undefined behavior. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
 
-GitHub Actions runs the development gate and C coverage gate on push and pull request. Coverage is uploaded as a workflow artifact and to Codecov from `var/coverage/c-lcov/codecov.info`; configure `CODECOV_TOKEN` unless the Codecov repository setting allows tokenless public uploads.
+GitHub Actions `Native QA` runs purpose-specific jobs on push and pull request: `Static analysis`, `NTS PHPT + C coverage`, `ZTS PHPT`, and `Crash/UB check`. Coverage is uploaded as a workflow artifact and to Codecov from `var/coverage/c-lcov/codecov.info`; configure `CODECOV_TOKEN` unless the Codecov repository setting allows tokenless public uploads.
 
 Run static analysis for the C extension:
 

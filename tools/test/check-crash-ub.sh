@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Run deterministic libFuzzer smoke targets for C protocol boundaries.
-# This is a development/release gate, not an open-ended fuzzing campaign.
+# Run deterministic generated-input checks under ASan/UBSan.
+# This is a development/release crash/UB gate, not an open-ended fuzzing campaign.
 #
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-run_args=(run --rm)
+run_args=(run --rm --no-deps)
 if [[ "${COMPOSE_RUN_BUILD:-1}" != "0" ]]; then
     run_args+=(--build)
 fi
