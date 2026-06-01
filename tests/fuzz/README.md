@@ -37,7 +37,7 @@ runnerは実行前にcommitted seedを `var/fuzz/corpus/` へcopyする。fuzzer
 実行コマンド:
 
 ```bash
-./tools/test/check-c-fuzz.sh
+./tools/test/check-crash-ub.sh
 ```
 
-`FUZZ_RUNS` はdeterministic smoke runの回数を制御する。CIとdevelopment gateでは短く保つ。長時間のfuzz campaignは手動で実行し、明確な新しいboundary seedを追加できる場合だけcommitする。
+`FUZZ_RUNS` はdeterministic smoke runの回数を制御する。CIとCrash/UB checkでは短く保つ。長時間のfuzz campaignは手動で実行し、明確な新しいboundary seedを追加できる場合だけcommitする。

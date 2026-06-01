@@ -15,9 +15,9 @@ echo "== native static analysis =="
 echo "== native C unit boundary tests =="
 ./tools/test/check-c-unit.sh
 
-echo "== native C protocol fuzz smoke =="
+echo "== native Crash/UB check =="
 FUZZ_RUNS="${RELEASE_FUZZ_RUNS:-50000}" \
-    ./tools/test/check-c-fuzz.sh
+    ./tools/test/check-crash-ub.sh
 
 if [[ "${SKIP_SANITIZER:-0}" != "1" ]]; then
     echo "== native ASan/UBSan =="

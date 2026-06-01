@@ -202,7 +202,7 @@ BENCH_TAG=release-hardening ./tools/test/check-native-release-hardening.sh
 
 - C extension static analysis (`cppcheck`)
 - C unit boundary tests
-- libFuzzer protocol smoke
+- Crash/UB check
 - Sanitizer C unit / PHPT (`ASan/UBSan`, `TSan`)
 - MSan C core unit
 - lifecycle stress smoke
@@ -210,19 +210,22 @@ BENCH_TAG=release-hardening ./tools/test/check-native-release-hardening.sh
 - long lifecycle stress
 - PHP-FPM request boundaryでのpersistent connection reuse確認
 
-development gateを単独で実行する場合:
+目的別gateを単独で実行する場合:
 
 ```bash
-./tools/test/check-native-development-gate.sh
+./tools/test/check-c-static-analysis.sh
+./tools/test/check-c-unit.sh
+./tools/test/check-phpt.sh
+./tools/test/check-crash-ub.sh
 ```
 
-Sanitizer / fuzz gateを単独で実行する場合:
+Sanitizer / Crash/UB gateを単独で実行する場合:
 
 ```bash
 ./tools/test/check-c-sanitizer.sh
 ./tools/test/check-c-msan.sh
 ./tools/test/check-c-tsan.sh
-./tools/test/check-c-fuzz.sh
+./tools/test/check-crash-ub.sh
 ```
 
 Sanitizer runnerは専用の Clang sanitizer PHP image 上で実行する。ASan/UBSanとTSanはC unitとPHPTを通す。MSanはDebian配布のOpenSSL/nghttp2がMSan instrumentationなしのため、pure C core unitに限定する。Leak検出はValgrind側に寄せるため、ASan leak detectorは無効化する。

@@ -65,10 +65,10 @@ Legend:
 
 | gate | command | protects |
 |---|---|---|
-| development gate | `./tools/test/check-native-development-gate.sh` | C static analysis、C unit、PHPT、短時間fuzz smoke |
+| C static analysis | `./tools/test/check-c-static-analysis.sh` | C extension static analysis |
 | C unit | `./tools/test/check-c-unit.sh` | pure protocol/status/transport helper boundary |
 | PHPT | `./tools/test/check-phpt.sh` | extension load、PHP-visible low-level surface、local transport behavior |
-| C fuzz smoke | `./tools/test/check-c-fuzz.sh` | 短時間のdeterministic fuzz runでprotocol helperのrobustnessを見る |
+| Crash/UB check | `./tools/test/check-crash-ub.sh` | 生成入力をASan/UBSan付きで短時間実行し、crash / undefined behaviorを検出する |
 | C coverage | `./tools/test/check-c-coverage.sh` | C unit + PHPTによるC line/function coverage |
 | PHPUnit integration | `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` | wrapper/API compatibilityとSpanner emulator path |
 | Release hardening | `./tools/test/check-native-release-hardening.sh` | sanitizer、Valgrind、lifecycle、FPM request-boundary hardening |

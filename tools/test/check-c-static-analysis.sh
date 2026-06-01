@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-docker compose run --rm dev sh -lc '
+docker compose run --rm --no-deps dev sh -lc '
     cd /workspace
     command -v cppcheck >/dev/null || { echo "cppcheck is not installed in the dev image" >&2; exit 127; }
 
