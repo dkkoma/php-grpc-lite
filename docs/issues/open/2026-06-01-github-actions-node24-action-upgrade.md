@@ -30,7 +30,7 @@ GitHub-hosted runnerではNode.js 24への移行が進んでおり、release wor
 
 - `actions/checkout@v4` -> `actions/checkout@v5`
 - `actions/upload-artifact@v4` -> `actions/upload-artifact@v6`
-- `actions/download-artifact@v4` -> `actions/download-artifact@v7`
+- release artifact workflowのdownload stepは `actions/download-artifact` ではなく `gh run download` を使う。
 - `docker/setup-buildx-action@v3` -> `docker/setup-buildx-action@v4`
 
 ## 非スコープ
@@ -50,17 +50,21 @@ GitHub-hosted runnerではNode.js 24への移行が進んでおり、release wor
 
 - 2026-06-01: issue作成。
 - 2026-06-01: 対象workflowのaction versionをNode 24対応版へ更新。
+- 2026-06-01: `actions/download-artifact@v7` はNode.js 20 warningは出さないが `Buffer()` deprecation warningを出したため、release artifact workflowのdownload stepを `gh run download` に変更。
 
 ## 検証
 
 - `ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f) }; puts "yaml ok"'`: PASS
 - `git diff --check`: PASS
 - `rg -n "actions/checkout@v4|actions/upload-artifact@v4|actions/download-artifact@v4|docker/setup-buildx-action@v3" .github/workflows`: no matches
+- `gh run watch 26729615608 --repo dkkoma/php-grpc-lite --exit-status`: PASS
+  - Node.js 20 deprecation warning: not observed
+  - `actions/download-artifact@v7` step emitted `Buffer()` deprecation warning; follow-up change replaces this step with `gh run download`.
 
 ## 判断ログ
 
 - `actions/checkout` は最新の `v6` も存在するが、credential保存位置変更の挙動差分をこのissueに混ぜないため、Node 24対応目的として `v5` に留める。
-- artifact actionsはNode 24がdefault runtimeになるversionへ上げるため、`upload-artifact@v6` / `download-artifact@v7` を使う。
+- `actions/download-artifact@v7` はNode 24対応だが、release workflowでは警告を完全に避けるため `gh run download` に置き換える。
 
 ## 完了条件
 
