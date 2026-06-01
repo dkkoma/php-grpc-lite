@@ -97,4 +97,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          gh release upload "$RELEASE_TAG" dist/release-artifacts/*.tar.gz dist/release-artifacts/SHA256SUMS --clobber
+          gh release upload "$RELEASE_TAG" dist/release-artifacts/*.tar.gz dist/release-artifacts/SHA256SUMS --repo dkkoma/php-grpc-lite --clobber
