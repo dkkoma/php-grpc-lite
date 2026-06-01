@@ -84,7 +84,7 @@ composer install
 ./tools/test/check-phpt.sh
 ./tools/test/check-c-fuzz.sh
 ./tools/test/check-c-coverage.sh
-docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist
 ```
 
 `check-native-development-gate.sh` runs the normal local gate: C static analysis, C unit boundary tests, PHPT integration tests, and a short libFuzzer smoke. `check-c-unit.sh` runs focused C unit tests for pure protocol helpers and status taxonomy. `check-phpt.sh` builds the root extension, verifies the local Go test-server ports, and runs PHPT tests for the extension surface, transport control semantics, TLS/mTLS, and resource limits. `check-c-fuzz.sh` runs deterministic libFuzzer smoke for pure C protocol boundaries. `check-c-coverage.sh` runs the C unit and PHPT gates with gcov/lcov instrumentation and writes reports under `var/coverage/c-lcov/`. PHPUnit remains the broader integration/release compatibility suite.
@@ -107,7 +107,7 @@ docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_
 Verify source install on the official Docker Hub `php` image:
 
 ```bash
-docker build -f Dockerfile.install-grpc -t php-grpc-lite-install-grpc .
+docker build -f docker/Dockerfile.install-grpc -t php-grpc-lite-install-grpc .
 docker run --rm php-grpc-lite-install-grpc php -m | grep -x grpc
 docker run --rm php-grpc-lite-install-grpc php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13");'
 ```
@@ -115,7 +115,7 @@ docker run --rm php-grpc-lite-install-grpc php -r 'var_dump(extension_loaded("gr
 Verify PIE install on the official Docker Hub `php` image:
 
 ```bash
-docker build -f Dockerfile.install-pie -t php-grpc-lite-install-pie .
+docker build -f docker/Dockerfile.install-pie -t php-grpc-lite-install-pie .
 docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
 docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13");'
 ```
@@ -123,7 +123,7 @@ docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grp
 To verify a specific released package from Packagist:
 
 ```bash
-docker build -f Dockerfile.install-pie \
+docker build -f docker/Dockerfile.install-pie \
   --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.13 \
   -t php-grpc-lite-install-pie-0.0.13 .
 ```

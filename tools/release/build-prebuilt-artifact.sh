@@ -92,7 +92,7 @@ docker buildx build \
     --build-arg "SOURCE_REF=$source_ref" \
     --build-arg "SOURCE_SHA=$source_sha" \
     --output "type=local,dest=$rootfs_dir" \
-    -f Dockerfile.release-artifact \
+    -f docker/Dockerfile.release-artifact \
     .
 
 test -f "$rootfs_dir/artifacts/grpc.so"

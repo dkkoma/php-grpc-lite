@@ -123,7 +123,7 @@ docker compose run --rm dev php -d extension=/workspace/modules/grpc.so -r 'var_
 公式 `php` image上でPIE install手順を検証する場合:
 
 ```bash
-docker build -f Dockerfile.install-pie -t php-grpc-lite-install-pie .
+docker build -f docker/Dockerfile.install-pie -t php-grpc-lite-install-pie .
 docker run --rm php-grpc-lite-install-pie php -m | grep -x grpc
 docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grpc"), defined("Grpc\\VERSION") && constant("Grpc\\VERSION") === "0.0.13");'
 ```
@@ -131,7 +131,7 @@ docker run --rm php-grpc-lite-install-pie php -r 'var_dump(extension_loaded("grp
 特定release packageをPackagist経由で検証する場合:
 
 ```bash
-docker build -f Dockerfile.install-pie \
+docker build -f docker/Dockerfile.install-pie \
   --build-arg PHP_GRPC_LITE_PACKAGE=dkkoma/php-grpc-lite:0.0.13 \
   -t php-grpc-lite-install-pie-0.0.13 .
 ```
@@ -184,7 +184,7 @@ php -r 'require "vendor/autoload.php"; var_dump(extension_loaded("grpc"), define
 
 `extension_loaded("grpc")` だけでは公式 `ext-grpc` と区別できないため、`Grpc\VERSION` の値も確認する。
 
-通常buildでは production wrapper adapter のみを公開する。`bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
+通常buildでは production wrapper adapter のみを公開する。`tools/benchmark/extension-bench.php` 用の診断entrypointが必要な場合だけ、開発用途として `./configure --enable-grpc --enable-grpc-bench` でbuildする。
 
 このrepositoryのDocker環境では、HTTP/2 stream lifecycle smokeも確認できる。
 

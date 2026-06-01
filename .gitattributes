@@ -5,6 +5,7 @@
 /.gitignore export-ignore
 /Dockerfile export-ignore
 /Dockerfile.* export-ignore
+/docker export-ignore
 /_research export-ignore
 /bench export-ignore
 /bench-comparison export-ignore

@@ -266,7 +266,7 @@ docker compose run --rm dev sh -lc 'make -j$(nproc)'
 ./tools/test/check-c-unit.sh
 ./tools/test/check-phpt.sh
 ./tools/test/check-c-coverage.sh
-docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit
+docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist
 ```
 
 `check-c-unit.sh` は pure protocol helperとstatus taxonomyだけを直接検証します。`check-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw lifecycle fixture `:50055`〜`:50060` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-c-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/c-lcov/` にtraceとHTMLを出力します。

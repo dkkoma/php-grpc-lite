@@ -1,6 +1,8 @@
 services:
   dev:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     image: php-grpc-lite-dev
     volumes:
       - .:/workspace
@@ -14,7 +16,7 @@ services:
   dev-zts:
     build:
       context: .
-      dockerfile: Dockerfile.zts
+      dockerfile: docker/Dockerfile.zts
     image: php-grpc-lite-dev-zts
     volumes:
       - .:/workspace
@@ -28,7 +30,7 @@ services:
   dev-sanitizer:
     build:
       context: .
-      dockerfile: Dockerfile.sanitizer
+      dockerfile: docker/Dockerfile.sanitizer
       args:
         SANITIZER: address-undefined
     image: php-grpc-lite-dev-sanitizer
@@ -44,7 +46,7 @@ services:
   dev-msan:
     build:
       context: .
-      dockerfile: Dockerfile.sanitizer
+      dockerfile: docker/Dockerfile.sanitizer
       args:
         SANITIZER: memory
     image: php-grpc-lite-dev-msan
@@ -60,7 +62,7 @@ services:
   dev-tsan:
     build:
       context: .
-      dockerfile: Dockerfile.sanitizer
+      dockerfile: docker/Dockerfile.sanitizer
       args:
         SANITIZER: thread
     image: php-grpc-lite-dev-tsan
@@ -76,7 +78,7 @@ services:
   fpm-lifecycle:
     build:
       context: .
-      dockerfile: Dockerfile.fpm
+      dockerfile: docker/Dockerfile.fpm
     image: php-grpc-lite-fpm-lifecycle
     volumes:
       - .:/workspace
@@ -88,7 +90,7 @@ services:
   fpm-ext-grpc:
     build:
       context: .
-      dockerfile: Dockerfile.fpm-ext-grpc
+      dockerfile: docker/Dockerfile.fpm-ext-grpc
     image: php-grpc-lite-fpm-ext-grpc
     volumes:
       - .:/workspace
@@ -100,7 +102,7 @@ services:
   fpm-lifecycle-16:
     build:
       context: .
-      dockerfile: Dockerfile.fpm
+      dockerfile: docker/Dockerfile.fpm
       args:
         FPM_MAX_CHILDREN: 16
     image: php-grpc-lite-fpm-lifecycle-16
@@ -136,7 +138,7 @@ services:
   fpm-lifecycle-profile:
     build:
       context: .
-      dockerfile: Dockerfile.fpm-profile
+      dockerfile: docker/Dockerfile.fpm-profile
     image: php-grpc-lite-fpm-lifecycle-profile
     cpus: 4.0
     volumes:
@@ -170,7 +172,7 @@ services:
   fpm-lifecycle-callgrind:
     build:
       context: .
-      dockerfile: Dockerfile.fpm-profile
+      dockerfile: docker/Dockerfile.fpm-profile
     image: php-grpc-lite-fpm-lifecycle-profile
     cpus: 4.0
     volumes:
@@ -205,7 +207,7 @@ services:
   fpm-ext-grpc-16:
     build:
       context: .
-      dockerfile: Dockerfile.fpm-ext-grpc
+      dockerfile: docker/Dockerfile.fpm-ext-grpc
       args:
         FPM_MAX_CHILDREN: 16
     image: php-grpc-lite-fpm-ext-grpc-16
@@ -296,7 +298,7 @@ services:
   franken-zts-laravel-native:
     build:
       context: .
-      dockerfile: Dockerfile.franken-zts
+      dockerfile: docker/Dockerfile.franken-zts
     image: php-grpc-lite-franken-zts-laravel-native
     cpus: 4.0
     volumes:
@@ -346,7 +348,7 @@ services:
   loadgen:
     build:
       context: .
-      dockerfile: Dockerfile.loadgen
+      dockerfile: docker/Dockerfile.loadgen
     image: php-grpc-lite-loadgen
 
   test-server:
@@ -406,7 +408,7 @@ services:
   dev-ext-grpc:
     build:
       context: .
-      dockerfile: Dockerfile.ext-grpc
+      dockerfile: docker/Dockerfile.ext-grpc
     image: php-grpc-lite-dev-ext-grpc
     volumes:
       - .:/workspace

@@ -36,7 +36,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: docker/Dockerfile
           tags: php-grpc-lite-dev:latest
           load: true
           cache-from: type=gha,scope=dev
@@ -56,7 +56,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.sanitizer
+          file: docker/Dockerfile.sanitizer
           tags: php-grpc-lite-dev-sanitizer:latest
           load: true
           build-args: |
@@ -92,7 +92,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: docker/Dockerfile
           tags: php-grpc-lite-dev:latest
           load: true
           cache-from: type=gha,scope=dev
@@ -161,7 +161,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.zts
+          file: docker/Dockerfile.zts
           tags: php-grpc-lite-dev-zts:latest
           load: true
           cache-from: type=gha,scope=dev-zts
