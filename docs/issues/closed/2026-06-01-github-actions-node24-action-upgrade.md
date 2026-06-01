@@ -1,6 +1,6 @@
 # GitHub Actions Node 24 action upgrade
 
-Status: Open
+Status: Closed
 Target-Release: 0.0.13 follow-up
 
 ## 目的
@@ -51,6 +51,7 @@ GitHub-hosted runnerではNode.js 24への移行が進んでおり、release wor
 - 2026-06-01: issue作成。
 - 2026-06-01: 対象workflowのaction versionをNode 24対応版へ更新。
 - 2026-06-01: `actions/download-artifact@v7` はNode.js 20 warningは出さないが `Buffer()` deprecation warningを出したため、release artifact workflowのdownload stepを `gh run download` に変更。
+- 2026-06-01: `workflow_dispatch` / `tag=0.0.13` でrelease artifact workflowを再実行し、warningが残らないことを確認。
 
 ## 検証
 
@@ -60,11 +61,25 @@ GitHub-hosted runnerではNode.js 24への移行が進んでおり、release wor
 - `gh run watch 26729615608 --repo dkkoma/php-grpc-lite --exit-status`: PASS
   - Node.js 20 deprecation warning: not observed
   - `actions/download-artifact@v7` step emitted `Buffer()` deprecation warning; follow-up change replaces this step with `gh run download`.
+- `gh run view 26729678769 --repo dkkoma/php-grpc-lite --json status,conclusion,jobs,url`: PASS
+  - conclusion: `success`
+  - build matrix: php8.4/php8.5 x nts/zts x amd64/arm64
+  - publish job: PASS
+- `gh run view 26729678769 --repo dkkoma/php-grpc-lite --log | rg -i "Node\\.js 20|deprecated|deprecation|node20|node 20|Buffer\\(\\)"`: no matches
+- `gh release view 0.0.13 --repo dkkoma/php-grpc-lite --json url,assets`: PASS
+  - assets: 8 tarballs + `SHA256SUMS`
 
 ## 判断ログ
 
 - `actions/checkout` は最新の `v6` も存在するが、credential保存位置変更の挙動差分をこのissueに混ぜないため、Node 24対応目的として `v5` に留める。
 - `actions/download-artifact@v7` はNode 24対応だが、release workflowでは警告を完全に避けるため `gh run download` に置き換える。
+
+## 修正コミット
+
+- `f40e99b` `GitHub Actions: Node 24対応actionへ更新`
+- `818634a` `Merge branch 'codex/actions-node24-upgrade'`
+- `aff5fd3` `GitHub Actions: artifact downloadをgh CLIに置換`
+- `6201ba7` `Merge branch 'codex/actions-artifact-download-gh-cli'`
 
 ## 完了条件
 
