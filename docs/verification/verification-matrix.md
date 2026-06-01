@@ -70,6 +70,6 @@ Legend:
 | PHPT | `./tools/test/check-phpt.sh` | extension load、PHP-visible low-level surface、local transport behavior |
 | C fuzz smoke | `./tools/test/check-c-fuzz.sh` | 短時間のdeterministic fuzz runでprotocol helperのrobustnessを見る |
 | C coverage | `./tools/test/check-c-coverage.sh` | C unit + PHPTによるC line/function coverage |
-| PHPUnit integration | `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit` | wrapper/API compatibilityとSpanner emulator path |
+| PHPUnit integration | `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` | wrapper/API compatibilityとSpanner emulator path |
 | Release hardening | `./tools/test/check-native-release-hardening.sh` | sanitizer、Valgrind、lifecycle、FPM request-boundary hardening |
 | ZTS PHPT | `./tools/test/check-zts-phpt.sh` | ZTS build/load/PHPT compatibility |

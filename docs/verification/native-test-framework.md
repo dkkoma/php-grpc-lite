@@ -14,7 +14,7 @@ repository rootの `grpc` extension は PHP extension として壊れ方が PHP 
 | ZTS performance comparison | `./tools/test/check-zts-performance.sh` | representative benchmarkをNTS/ZTS同条件で実行し、ZTS固有の性能差をOTEL run idで比較する |
 | ZTS parallel call path | `./tools/test/check-zts-parallel-performance.sh` | NTS multi-processとZTS threadでPHP userlandからunary/server streaming call pathを並列実行し、thread並列時のthroughput/latencyを比較する |
 | Valgrind / lifecycle | `./tools/test/check-c-valgrind.sh` / lifecycle scripts | sanitizerでは見落としやすいrelease lifecycle leak、FD/RSS増加、request-boundary reuseを検証する |
-| PHPUnit integration | `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit` | official wrapper / fixture client / Spanner emulatorを含む広い互換性を検証する。現時点ではlocal/release compatibility suiteであり、Native QA必須jobではない |
+| PHPUnit integration | `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` | official wrapper / fixture client / Spanner emulatorを含む広い互換性を検証する。現時点ではlocal/release compatibility suiteであり、Native QA必須jobではない |
 | slow-consumer比較 | `./tools/test/check-native-slow-consumer.sh` | slow consumer時の観測用比較。現時点ではthreshold付きgateではなくmeasurement-only |
 
 ## Development gate

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/vendor/autoload.php';
+require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
 if (!(extension_loaded('grpc'))) {
     fwrite(STDERR, "grpc extension is not loaded\n");
