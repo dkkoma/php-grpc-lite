@@ -50,7 +50,7 @@ symbol visibility tightening を含む現在のブランチ先端を `0.0.14` re
 
 ## 修正コミット
 
-- pending
+- `3b8dd44` `0.0.14 release: runtime versionをtagと揃える`
 
 ## 完了条件
 
