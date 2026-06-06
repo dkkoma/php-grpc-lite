@@ -13,6 +13,17 @@ services:
       - test-server
       - spanner-emulator
 
+  dev-optimizer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.optimizer
+    image: php-grpc-lite-dev-optimizer
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
   dev-zts:
     build:
       context: .
