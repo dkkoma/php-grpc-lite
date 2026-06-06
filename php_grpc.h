@@ -3,7 +3,7 @@
 
 #include "php.h"
 
-#define PHP_GRPC_VERSION "0.0.13"
+#define PHP_GRPC_VERSION "0.0.14"
 #define PHP_GRPC_LITE_USER_AGENT "php-grpc-lite/" PHP_GRPC_VERSION
 #define PHP_GRPC_LITE_BENCH_USER_AGENT PHP_GRPC_LITE_USER_AGENT "-dev"
 
