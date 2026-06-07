@@ -18,16 +18,16 @@
 ### REVIEW-20260607-001: response header helper collapses distinct protocol concepts behind a generic state name
 
 - Severity: `Medium`
-- Status: `Open`
+- Status: `Fixed`
 - Reviewer role: `HTTP/2 / gRPC domain model reviewer`
 - Finding: `apply_response_header_state()` does not model one clear domain transition. It mixes gRPC trailer/status semantics, HTTP response validation state, unsupported compression handling, metadata trailing classification, and response body discard side effects under the generic name "state". The caller computes `trailing` before calling it, then passes `&trailing` so the helper can mutate the metadata classification as a side effect. This makes the order of "classify header block", "apply special header semantics", and "persist metadata entry" less explicit than the domain model requires.
 - Evidence: `src/transport.c:1882` `response_header_initially_trailing()`, `src/transport.c:1890` `apply_response_header_state()`, `src/transport.c:1963`-`1965` `on_header_callback()`.
 - Expected model: HTTP/2 response HEADERS classification, gRPC status/trailer parsing, HTTP content-type validation, grpc-encoding policy, and metadata persistence are related but distinct protocol concepts. The transport callback may orchestrate them, but helper boundaries and names should preserve those concepts rather than collapse them into a generic state applier with an out-param classification mutation.
 - Why it matters: This area encodes trailers-only responses, initial metadata, trailing metadata, invalid content-type, unsupported compression, duplicate/invalid grpc-status, and body discard behavior. Hiding the classification mutation inside a broad helper makes future changes likely to put a new header into the wrong phase or to accidentally alter whether a header lands in initial or trailing metadata.
 - Recommended fix: Rewrite or revert this split. If keeping helpers, use domain-specific helpers with explicit inputs/outputs, for example one helper that classifies the metadata phase and another that applies library-owned response header semantics. Avoid mutating `trailing` through a generic side-effect helper; return the classification or keep the phase decision visibly in `on_header_callback()`.
-- Fix summary: `pending`
-- Fix commit: `pending`
-- Verification: `Review only. No fix verified yet.`
+- Fix summary: Reverted the candidate4 split. `response_header_initially_trailing()` and `apply_response_header_state()` were removed, and the response metadata phase classification plus special header side effects are visible again inside `on_header_callback()`.
+- Fix commit: `8132175`
+- Verification: Manual diff review confirms the helper split and `bool *trailing` out-param were removed. `./tools/test/check-c-unit.sh`, `./tools/test/check-c-static-analysis.sh`, and `./tools/test/check-phpt.sh` passed after the revert.
 - Notes: `No runtime regression was identified in this review; the finding is about domain modeling and maintainability of the protocol state transition.`
 
 ### REVIEW-20260607-002: unchecked request header append makes the request metadata builder invariant implicit
@@ -49,6 +49,6 @@
 
 - Blocker: `none`
 - High: `none`
-- Medium: `1`
+- Medium: `none`
 - Low: `1`
 - Design Decision: `none`

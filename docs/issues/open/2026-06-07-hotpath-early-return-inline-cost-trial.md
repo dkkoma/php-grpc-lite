@@ -263,7 +263,7 @@ Subagent protocol/lifecycle check:
 - `grpc_protocol_decode_message` は引き続きinlineされない。cost 405 / threshold 225。
 - `grpc_protocol_add_response_metadata_entry` は引き続きinlineされない。cost 395 / threshold 225。
 
-この候補も性能改善ではない。`.text` は不変で、重いdecode / metadata保存helperのinline可否も変わっていない。採用する場合の根拠は、nghttp2 header callback内で「trailing分類」「special header state更新」「metadata保存」の順序が明示されることに限定する。
+この候補も性能改善ではない。`.text` は不変で、重いdecode / metadata保存helperのinline可否も変わっていない。採用する場合の根拠は、nghttp2 header callback内で「trailing分類」「special header state更新」「metadata保存」の順序が明示されることに限定していた。
 
 Subagent protocol/semantics check:
 
@@ -272,6 +272,11 @@ Subagent protocol/semantics check:
 - initial response内の `grpc-status` だけが既存metadataをtrailingへ移す。今回の実装は元の条件を維持している。
 - initial response内の `grpc-message` / `grpc-status-details-bin` も `initial_grpc_status_seen = true` にする。今回の実装は元の副作用を維持している。
 - special headerも従来通りmetadata entryに保存する。今回の実装は保存呼び出しを省いていない。
+
+最終判断:
+
+- 2026-06-07: domain model reviewで、`apply_response_header_state()` がgRPC status/trailer semantics、HTTP response validation、grpc-encoding handling、metadata trailing classification、body discard side effectをgenericなstate helperへ畳んでおり、`bool *trailing` out-paramで重要なmetadata phase分類を隠していると判断した。
+- この分割は、nghttp2 callback内部の局所helperがinlineされても元の直書きに戻るだけで、callback境界自体はLTOで消えない。性能仮説として弱く、可読性 / domain boundary改善としても成立しないためrevertする。
 
 ### 候補5: grpc-timeout header append
 
@@ -474,7 +479,7 @@ LTO比較の判断:
 
 - `metadata-header` のp50は、GCC LTO / Clang ThinLTOともcurrentが全体に改善方向。特にClang ThinLTOではmetadataありケースのp99も改善方向が多い。
 - `cpu-micro` はClang ThinLTOでは概ね同等だが、GCC LTOでは小さいunary / metadata unaryが悪化方向に見える。
-- optimizer remarks由来の仮説検証としては、通常buildだけよりLTO buildの結果を併記する方が妥当。ただし、CPU代表shapeまで含めると「LTOなら明確に速い」とまでは言えない。採用理由は引き続き可読性 / boundary cleanupを主にし、LTO metadata latencyで改善傾向がある、という限定的な観測に留める。
+- optimizer remarks由来の仮説検証としては、通常buildだけよりLTO buildの結果を併記する方が妥当。ただし、CPU代表shapeまで含めると「LTOなら明確に速い」とまでは言えない。採用理由は残す候補の可読性 / boundary cleanupを主にし、LTO metadata latencyで改善傾向がある、という限定的な観測に留める。
 
 ## 検証
 
@@ -517,6 +522,9 @@ LTO比較の判断:
 - Clang ThinLTO build: PASS。main/currentとも `php -d extension=/workspace/modules/grpc.so` load確認済み。
 - `./bench/run.sh metadata-header --calls=200`: PASS。Clang ThinLTO main run id `hotpath-clang-thinlto-main-metadata`、current run id `hotpath-clang-thinlto-current-no-c5-metadata`。
 - `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。Clang ThinLTO main run id `hotpath-clang-thinlto-main-cpu`、current run id `hotpath-clang-thinlto-current-no-c5-cpu`。
+- `./tools/test/check-c-unit.sh`: PASS。候補4 revert後。
+- `./tools/test/check-c-static-analysis.sh`: PASS。候補4 revert後。
+- `./tools/test/check-phpt.sh`: PASS。15/15。候補4 revert後。
 
 ## 判断ログ
 
@@ -528,7 +536,7 @@ LTO比較の判断:
 - 2026-06-07: `on_data_chunk_recv_callback` のearly return化はDSO / remarks上の性能改善はないが、DATA chunk callbackの責務分岐が読みやすくなり、subagent protocol checkとPHPTでsemantics維持を確認したため採用する。
 - 2026-06-07: optimizer remarksを根拠にするなら通常build benchだけでは不足するため、GCC LTO / Clang ThinLTO buildでもmain/currentを比較した。LTO metadata latencyではcurrent改善傾向があるが、CPU代表shapeでは同等〜一部悪化もあるため、性能改善PRとしては扱わない。
 - 2026-06-07: `preflight_persistent_connection` のTLS / plain socket probe分離は、DSO / remarks上の性能改善はない。むしろ `.text` は +72 bytes、`get_persistent_connection` へのinline costは 760 から 820 へ増えた。一方で、persistent reuse入口のlifecycle条件は読みやすくなり、drain処理とerror taxonomyを変えないことをsubagent reviewとPHPTで確認したため、可読性改善として採用する。
-- 2026-06-07: `on_header_callback` のheader state分離は `.text` 不変で、重いdecode / metadata保存helperのinline可否も変わらない。trailing分類とspecial header side effectの順序が明示され、subagent reviewとPHPTでsemantics維持を確認したため、可読性改善として採用する。
+- 2026-06-07: `on_header_callback` のheader state分離はdomain model reviewで棄却した。`bool *trailing` out-paramがgRPC metadata phase分類を隠し、helperをLTOでinlineしても元の直書きに近づくだけでcallback境界は消えないため、可読性 / boundary cleanupとして成立しない。候補4のコード変更はrevertする。
 - 2026-06-07: `append_grpc_timeout_request_header` のunchecked append化は、対象callsiteの局所costを 65 から -5 に下げるが、`.text` は +4 bytesで性能改善根拠にはならない。owned value登録後のcapacity確認とunchecked appendという責務は明確になるが、可読性差分は小さい。
 - 2026-06-07: 候補3-5のbenchを追加で取得した。`cpu-micro` は多くのshapeで同等だが、metadata caseは微悪化方向。`metadata-header` はmetadataありケースで悪化方向が見える。したがって候補3-5は性能改善ではなく、可読性改善としても採用判断をPR上で慎重に扱う。
 - 2026-06-07: 候補3-5をstep benchで分解した。最も疑わしいのは候補5で、局所optimizer costは改善しているがmetadata-header p50は全ケースで悪化方向に振れた。候補5は採用価値が弱いため、コード変更を戻す。
