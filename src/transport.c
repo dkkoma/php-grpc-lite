@@ -2241,7 +2241,13 @@ void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long t
         zend_string_release(value_str);
         return;
     }
-    append_request_header(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    if (headers->len >= headers->capacity) {
+        grow_request_headers(headers);
+        if (headers->len >= headers->capacity) {
+            return;
+        }
+    }
+    append_request_header_unchecked(headers, "grpc-timeout", sizeof("grpc-timeout") - 1, ZSTR_VAL(value_str), ZSTR_LEN(value_str));
 }
 
 void append_user_agent_request_header(h2_request_headers *headers, zend_string *primary_user_agent)
