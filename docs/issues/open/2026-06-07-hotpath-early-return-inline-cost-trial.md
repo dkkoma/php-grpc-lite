@@ -390,6 +390,40 @@ step benchの判断:
 - 現時点で最も疑わしいのは候補5。性能改善目的なら候補5は採用しない方がよい。可読性改善としても、bench riskに見合うほどの価値は弱いため、候補5のコード変更は戻す。
 - optimizer remarksの局所cost改善は、実行時性能を保証しない。今回の候補5は、同じsemanticでもcallsite展開、block layout、alignment、I-cache、Docker実行時ノイズの影響を受け、benchでは逆方向に出た可能性がある。
 
+### main vs current after candidate5 revert
+
+候補5を戻した現在HEAD (`7991017`) と `main` (`116bce6`) で、同じcompose project / test-server / otelopを使ってbenchを取り直した。
+
+`metadata-header --calls=200`:
+
+| measurement | main p50 us | current p50 us | main p99 us | current p99 us | 判断 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| req_0_resp_0_value_0b | 35.3 | 42.1 | 437.7 | 558.7 | 悪化方向 |
+| req_10_resp_0_value_32b | 44.9 | 36.5 | 271.4 | 480.9 | p50改善、p99悪化 |
+| req_10_resp_10_value_32b | 55.6 | 47.8 | 1499.9 | 511.2 | 改善方向。ただしmain p99が荒い |
+| req_50_resp_0_value_32b | 102.2 | 96.9 | 800.9 | 961.3 | p50改善、p99悪化 |
+| req_50_resp_50_value_32b | 157.4 | 148.3 | 1061.6 | 1042.2 | 改善方向 |
+
+`cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3` の代表shape平均:
+
+| measurement | main avg cpu_us/call | current avg cpu_us/call | 判断 |
+| --- | ---: | ---: | --- |
+| tiny_unary_0b | 11.5 | 11.2 | 同等 |
+| small_unary_100b | 10.5 | 11.9 | 悪化方向 |
+| new_client_unary_100b | 12.6 | 12.4 | 同等 |
+| metadata_unary_req10_resp10_32b | 16.0 | 14.9 | 平均は改善方向。ただしmain repeat 2が18.2で荒い。medianは同等 |
+| begin_txn_unary | 10.3 | 10.5 | 同等 |
+| commit_txn_unary | 10.1 | 10.3 | 同等 |
+| small_streaming_1x100b | 11.0 | 11.0 | 同等 |
+| small_streaming_100x100b | 57.5 | 56.4 | 同等〜改善方向 |
+| dml_update_10col_streaming | 11.3 | 12.7 | current repeat 2が15.6で荒い。注意 |
+
+main比較の判断:
+
+- 候補5を外した現在HEADは、`metadata-header` p50ではmetadataありケースの多くがmainより改善方向。ただしp99は混在し、`req_0_resp_0` はp50/p99とも悪化方向。
+- `cpu-micro` は多くのshapeで同等。metadata CPUは平均では改善方向だが、main側の外れ値に引っ張られておりmedianはほぼ同等。
+- この比較でも性能改善として強く主張するのは危険。少なくとも候補5を外したことで、step benchで見えた明確なmetadata-header p50悪化は緩和された。
+
 ## 検証
 
 - `docker compose config --services`: `dev-optimizer` serviceを確認。
@@ -423,6 +457,8 @@ step benchの判断:
 - `./bench/run.sh metadata-header --calls=200`: PASS。candidate3-5 before run id `hotpath-candidate3-5-before-metadata`、after run id `hotpath-candidate3-5-after-metadata`。
 - `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。candidate3 run id `hotpath-step-c3-cpu`、candidate4 run id `hotpath-step-c4-cpu`、candidate5 run id `hotpath-step-c5-cpu`。
 - `./bench/run.sh metadata-header --calls=200`: PASS。candidate3 run id `hotpath-step-c3-metadata`、candidate4 run id `hotpath-step-c4-metadata`、candidate5 run id `hotpath-step-c5-metadata`。
+- `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。main run id `hotpath-main-cpu`、current run id `hotpath-current-no-c5-cpu`。
+- `./bench/run.sh metadata-header --calls=200`: PASS。main run id `hotpath-main-metadata`、current run id `hotpath-current-no-c5-metadata`。
 
 ## 判断ログ
 
@@ -437,6 +473,7 @@ step benchの判断:
 - 2026-06-07: `append_grpc_timeout_request_header` のunchecked append化は、対象callsiteの局所costを 65 から -5 に下げるが、`.text` は +4 bytesで性能改善根拠にはならない。owned value登録後のcapacity確認とunchecked appendという責務は明確になるが、可読性差分は小さい。
 - 2026-06-07: 候補3-5のbenchを追加で取得した。`cpu-micro` は多くのshapeで同等だが、metadata caseは微悪化方向。`metadata-header` はmetadataありケースで悪化方向が見える。したがって候補3-5は性能改善ではなく、可読性改善としても採用判断をPR上で慎重に扱う。
 - 2026-06-07: 候補3-5をstep benchで分解した。最も疑わしいのは候補5で、局所optimizer costは改善しているがmetadata-header p50は全ケースで悪化方向に振れた。候補5は採用価値が弱いため、コード変更を戻す。
+- 2026-06-07: 候補5を外した現在HEADとmainを比較した。metadata-header p50ではmetadataありケースの多くが改善方向だが、p99は混在し、cpu-microは概ね同等。性能改善PRとは扱わず、可読性改善PRとしてbench riskを添えて判断する。
 
 ## 完了条件
 
