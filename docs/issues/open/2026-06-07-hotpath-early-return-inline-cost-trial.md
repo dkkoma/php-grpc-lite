@@ -392,7 +392,7 @@ step benchの判断:
 
 ### main vs current after candidate5 revert
 
-候補5を戻した現在HEAD (`7991017`) と `main` (`116bce6`) で、同じcompose project / test-server / otelopを使ってbenchを取り直した。
+候補5を戻した現在HEAD (`232ff94`、code changeは `7991017` まで) と `main` (`116bce6`) で、同じcompose project / test-server / otelopを使ってbenchを取り直した。
 
 `metadata-header --calls=200`:
 
@@ -423,6 +423,58 @@ main比較の判断:
 - 候補5を外した現在HEADは、`metadata-header` p50ではmetadataありケースの多くがmainより改善方向。ただしp99は混在し、`req_0_resp_0` はp50/p99とも悪化方向。
 - `cpu-micro` は多くのshapeで同等。metadata CPUは平均では改善方向だが、main側の外れ値に引っ張られておりmedianはほぼ同等。
 - この比較でも性能改善として強く主張するのは危険。少なくとも候補5を外したことで、step benchで見えた明確なmetadata-header p50悪化は緩和された。
+
+### main vs current after candidate5 revert: LTO build bench
+
+通常buildだけでは、Clang ThinLTO / GCC LTO のoptimizer remarksを根拠にした変更の検証として不足する。そのため、同じ `main` (`116bce6`) と current (`232ff94`、code changeは `7991017` まで) を、LTO buildでも取り直した。
+
+build条件:
+
+- GCC LTO: `dev` serviceで `CFLAGS="-O2 -flto"` / `LDFLAGS="-flto"` / `make CFLAGS_CLEAN="-O2 -flto -D_GNU_SOURCE"`。
+- Clang ThinLTO: `dev-optimizer` serviceで `CC="clang -fuse-ld=lld"` / `CFLAGS="-g -gdwarf-4 -O2 -flto=thin"` / `LDFLAGS="-flto=thin -fuse-ld=lld"` / `make CFLAGS_CLEAN="-g -gdwarf-4 -O2 -flto=thin -D_GNU_SOURCE"`。
+- main worktreeは `COMPOSE_PROJECT_NAME=php-grpc-lite` で同じcompose project / test-server / otelopを共有した。
+- main branchには `dev-optimizer` serviceがないため、Clang ThinLTOのmain buildだけcurrent側compose定義を使い、main worktreeを `/workspace` にmountしてbuildした。
+
+`metadata-header --calls=200`、GCC LTO:
+
+| measurement | main p50 us | current p50 us | main p99 us | current p99 us | 判断 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| req_0_resp_0_value_0b | 40.9 | 35.9 | 382.3 | 307.7 | 改善方向 |
+| req_10_resp_0_value_32b | 47.0 | 36.8 | 358.8 | 845.9 | p50改善、p99悪化 |
+| req_10_resp_10_value_32b | 59.9 | 51.1 | 566.2 | 195.3 | 改善方向 |
+| req_50_resp_0_value_32b | 142.0 | 88.4 | 778.2 | 690.8 | 改善方向 |
+| req_50_resp_50_value_32b | 160.3 | 158.0 | 991.6 | 1015.7 | ほぼ同等 |
+
+`metadata-header --calls=200`、Clang ThinLTO:
+
+| measurement | main p50 us | current p50 us | main p99 us | current p99 us | 判断 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| req_0_resp_0_value_0b | 43.0 | 37.6 | 359.9 | 489.6 | p50改善、p99悪化 |
+| req_10_resp_0_value_32b | 50.8 | 40.7 | 659.4 | 473.6 | 改善方向 |
+| req_10_resp_10_value_32b | 42.5 | 40.2 | 632.5 | 399.7 | 改善方向 |
+| req_50_resp_0_value_32b | 99.8 | 96.5 | 1217.7 | 752.0 | 改善方向 |
+| req_50_resp_50_value_32b | 164.1 | 155.9 | 2747.5 | 845.3 | 改善方向 |
+
+`cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3` の代表shape平均:
+
+| build | measurement | main avg cpu_us/call | current avg cpu_us/call | 判断 |
+| --- | --- | ---: | ---: | --- |
+| GCC LTO | tiny_unary_0b | 13.6 | 12.9 | どちらもrepeat 1が荒い |
+| GCC LTO | small_unary_100b | 10.7 | 11.6 | 悪化方向 |
+| GCC LTO | new_client_unary_100b | 12.7 | 13.5 | 悪化方向 |
+| GCC LTO | metadata_unary_req10_resp10_32b | 15.0 | 15.7 | 悪化方向 |
+| GCC LTO | small_streaming_100x100b | 57.6 | 57.6 | 同等 |
+| Clang ThinLTO | tiny_unary_0b | 12.5 | 11.5 | main repeat 1が荒い |
+| Clang ThinLTO | small_unary_100b | 11.0 | 12.6 | current repeat 2が荒い |
+| Clang ThinLTO | new_client_unary_100b | 12.7 | 13.0 | ほぼ同等 |
+| Clang ThinLTO | metadata_unary_req10_resp10_32b | 15.0 | 15.0 | 同等 |
+| Clang ThinLTO | small_streaming_100x100b | 57.8 | 57.9 | 同等 |
+
+LTO比較の判断:
+
+- `metadata-header` のp50は、GCC LTO / Clang ThinLTOともcurrentが全体に改善方向。特にClang ThinLTOではmetadataありケースのp99も改善方向が多い。
+- `cpu-micro` はClang ThinLTOでは概ね同等だが、GCC LTOでは小さいunary / metadata unaryが悪化方向に見える。
+- optimizer remarks由来の仮説検証としては、通常buildだけよりLTO buildの結果を併記する方が妥当。ただし、CPU代表shapeまで含めると「LTOなら明確に速い」とまでは言えない。採用理由は引き続き可読性 / boundary cleanupを主にし、LTO metadata latencyで改善傾向がある、という限定的な観測に留める。
 
 ## 検証
 
@@ -459,6 +511,12 @@ main比較の判断:
 - `./bench/run.sh metadata-header --calls=200`: PASS。candidate3 run id `hotpath-step-c3-metadata`、candidate4 run id `hotpath-step-c4-metadata`、candidate5 run id `hotpath-step-c5-metadata`。
 - `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。main run id `hotpath-main-cpu`、current run id `hotpath-current-no-c5-cpu`。
 - `./bench/run.sh metadata-header --calls=200`: PASS。main run id `hotpath-main-metadata`、current run id `hotpath-current-no-c5-metadata`。
+- GCC LTO build: PASS。main/currentとも `php -d extension=/workspace/modules/grpc.so` load確認済み。
+- `./bench/run.sh metadata-header --calls=200`: PASS。GCC LTO main run id `hotpath-gcc-lto-main-metadata`、current run id `hotpath-gcc-lto-current-no-c5-metadata`。
+- `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。GCC LTO main run id `hotpath-gcc-lto-main-cpu`、current run id `hotpath-gcc-lto-current-no-c5-cpu`。
+- Clang ThinLTO build: PASS。main/currentとも `php -d extension=/workspace/modules/grpc.so` load確認済み。
+- `./bench/run.sh metadata-header --calls=200`: PASS。Clang ThinLTO main run id `hotpath-clang-thinlto-main-metadata`、current run id `hotpath-clang-thinlto-current-no-c5-metadata`。
+- `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。Clang ThinLTO main run id `hotpath-clang-thinlto-main-cpu`、current run id `hotpath-clang-thinlto-current-no-c5-cpu`。
 
 ## 判断ログ
 
@@ -468,6 +526,7 @@ main比較の判断:
 - 2026-06-07: 同条件before/afterを取った結果、局所的なinline改善は確認できたが、DSO `.text` とmetadata CPU benchでは性能改善として主張できる差は見えなかった。採用理由は性能値ではなく、prechecked pathの責務分離で見通しがよくなることに置く。
 - 2026-06-07: 調査を広げるなら、metadata pathよりもSpanner形状で支配的なserver streaming / response processing / persistent connection preflight周辺を優先する。
 - 2026-06-07: `on_data_chunk_recv_callback` のearly return化はDSO / remarks上の性能改善はないが、DATA chunk callbackの責務分岐が読みやすくなり、subagent protocol checkとPHPTでsemantics維持を確認したため採用する。
+- 2026-06-07: optimizer remarksを根拠にするなら通常build benchだけでは不足するため、GCC LTO / Clang ThinLTO buildでもmain/currentを比較した。LTO metadata latencyではcurrent改善傾向があるが、CPU代表shapeでは同等〜一部悪化もあるため、性能改善PRとしては扱わない。
 - 2026-06-07: `preflight_persistent_connection` のTLS / plain socket probe分離は、DSO / remarks上の性能改善はない。むしろ `.text` は +72 bytes、`get_persistent_connection` へのinline costは 760 から 820 へ増えた。一方で、persistent reuse入口のlifecycle条件は読みやすくなり、drain処理とerror taxonomyを変えないことをsubagent reviewとPHPTで確認したため、可読性改善として採用する。
 - 2026-06-07: `on_header_callback` のheader state分離は `.text` 不変で、重いdecode / metadata保存helperのinline可否も変わらない。trailing分類とspecial header side effectの順序が明示され、subagent reviewとPHPTでsemantics維持を確認したため、可読性改善として採用する。
 - 2026-06-07: `append_grpc_timeout_request_header` のunchecked append化は、対象callsiteの局所costを 65 から -5 に下げるが、`.text` は +4 bytesで性能改善根拠にはならない。owned value登録後のcapacity確認とunchecked appendという責務は明確になるが、可読性差分は小さい。
