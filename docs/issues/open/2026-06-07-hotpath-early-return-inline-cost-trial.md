@@ -306,7 +306,9 @@ Subagent protocol/semantics check:
 - afterは `append_request_header_unchecked` が直接 `append_grpc_timeout_request_header` へinlineされた。cost -5 / threshold 487。
 - `grow_request_headers` は引き続きinlineされない。cost 335 / threshold 225。
 
-この候補は、custom metadata pathと同じくprechecked appendを明示する整理であり、性能改善とは主張しない。`.text` は +4 bytesで実質不変。`grpc-timeout` value lifetimeを変えず、subagent reviewでも登録済みvalueは `free_request_headers()` 解放に任せる方針が妥当と確認した。
+この候補は、custom metadata pathと同じくprechecked appendを明示する整理だったが、性能改善とは主張できない。`.text` は +4 bytesで実質不変。`grpc-timeout` value lifetimeを変えず、subagent reviewでも登録済みvalueは `free_request_headers()` 解放に任せる方針が妥当と確認した。
+
+ただし、後続のstep benchで候補5後にmetadata-heavy caseの悪化方向が見えた。可読性差分も小さく、bench riskに見合わないため、最終的には採用せずコード変更を戻した。
 
 ### 候補3-5 follow-up: bench before/after
 
@@ -347,7 +349,46 @@ Subagent protocol/semantics check:
 - 候補3-5を性能改善として採用する根拠はない。
 - `cpu-micro` は多くの代表shapeで同等だが、metadata caseは微悪化方向、`tiny_unary_0b` と `dml_update_10col_streaming` には外れ値がある。
 - `metadata-header` はrequest/response metadataを含むケースで悪化方向が見えるため、今回の採用理由はあくまで可読性 / 境界整理に限定する。
-- ただし、候補3-5は `.text` がほぼ不変で、PHPT / C unit / static analysisは通過しているため、現時点では明確なregressionとして棄却するほどの結果ではない。PRレビューでは、このbench結果を前提に採否を判断する。
+- 候補5はstep benchで最も疑わしいため、採用せず戻す。
+- 候補3-4は `.text` がほぼ不変で、PHPT / C unit / static analysisは通過している。現時点では明確なregressionとして棄却するほどの結果ではないが、性能改善ではなく可読性改善としてPR上で慎重に判断する。
+
+### 候補3-5 step bench
+
+まとめてbenchした結果だけでは、どの候補が悪化方向に寄せたのか分からない。そのため、隣接コミットごとに追加でbenchを取った。
+
+対象:
+
+- before candidate3: `a46ba3e`
+- candidate3: `e427022`
+- candidate4: `7d04092`
+- candidate5: `cc9ff9b`
+
+`metadata-header --calls=200` のp50:
+
+| measurement | a46ba3e | e427022 | 7d04092 | cc9ff9b | 判断 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| req_0_resp_0_value_0b | 48.8 | 32.8 | 43.0 | 56.5 | 候補5で悪化方向 |
+| req_10_resp_0_value_32b | 45.8 | 37.8 | 44.2 | 56.8 | 候補5で悪化方向 |
+| req_10_resp_10_value_32b | 53.5 | 52.0 | 39.9 | 54.9 | 候補5で悪化方向 |
+| req_50_resp_0_value_32b | 90.9 | 87.4 | 87.0 | 94.4 | 候補5で悪化方向 |
+| req_50_resp_50_value_32b | 160.8 | 170.8 | 157.3 | 172.8 | 候補3と候補5で悪化方向 |
+
+`cpu-micro` のmetadata case:
+
+| commit | metadata_unary_req10_resp10_32b avg cpu_us/call | 判断 |
+| --- | ---: | --- |
+| a46ba3e | 14.9 | before |
+| e427022 | 15.4 | 候補3で微悪化方向 |
+| 7d04092 | 15.0 | 候補4で戻る方向 |
+| cc9ff9b | 16.2 | 候補5で悪化方向。repeat 1に17.9の外れ値あり |
+
+step benchの判断:
+
+- optimizer remarks上は候補5で `append_grpc_timeout_request_header` の局所costが 65 から -5 に下がるが、実benchでは候補5後にmetadata-header p50が全ケースで悪化方向に振れた。
+- 候補4はresponse header callbackに触っているためmetadata-heavy悪化の本命に見えたが、この測定ではp50はむしろ改善方向のケースが多い。一方でp99/maxは荒い。
+- 候補3はpersistent preflightで、metadata-header p50では混在。`req50_resp50` とCPU metadata caseでは微悪化方向。
+- 現時点で最も疑わしいのは候補5。性能改善目的なら候補5は採用しない方がよい。可読性改善としても、bench riskに見合うほどの価値は弱いため、候補5のコード変更は戻す。
+- optimizer remarksの局所cost改善は、実行時性能を保証しない。今回の候補5は、同じsemanticでもcallsite展開、block layout、alignment、I-cache、Docker実行時ノイズの影響を受け、benchでは逆方向に出た可能性がある。
 
 ## 検証
 
@@ -380,6 +421,8 @@ Subagent protocol/semantics check:
 - `./tools/test/check-c-static-analysis.sh`: PASS。candidate5後。
 - `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。candidate3-5 before run id `hotpath-candidate3-5-before-cpu`、after run id `hotpath-candidate3-5-after-cpu`。
 - `./bench/run.sh metadata-header --calls=200`: PASS。candidate3-5 before run id `hotpath-candidate3-5-before-metadata`、after run id `hotpath-candidate3-5-after-metadata`。
+- `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。candidate3 run id `hotpath-step-c3-cpu`、candidate4 run id `hotpath-step-c4-cpu`、candidate5 run id `hotpath-step-c5-cpu`。
+- `./bench/run.sh metadata-header --calls=200`: PASS。candidate3 run id `hotpath-step-c3-metadata`、candidate4 run id `hotpath-step-c4-metadata`、candidate5 run id `hotpath-step-c5-metadata`。
 
 ## 判断ログ
 
@@ -391,8 +434,9 @@ Subagent protocol/semantics check:
 - 2026-06-07: `on_data_chunk_recv_callback` のearly return化はDSO / remarks上の性能改善はないが、DATA chunk callbackの責務分岐が読みやすくなり、subagent protocol checkとPHPTでsemantics維持を確認したため採用する。
 - 2026-06-07: `preflight_persistent_connection` のTLS / plain socket probe分離は、DSO / remarks上の性能改善はない。むしろ `.text` は +72 bytes、`get_persistent_connection` へのinline costは 760 から 820 へ増えた。一方で、persistent reuse入口のlifecycle条件は読みやすくなり、drain処理とerror taxonomyを変えないことをsubagent reviewとPHPTで確認したため、可読性改善として採用する。
 - 2026-06-07: `on_header_callback` のheader state分離は `.text` 不変で、重いdecode / metadata保存helperのinline可否も変わらない。trailing分類とspecial header side effectの順序が明示され、subagent reviewとPHPTでsemantics維持を確認したため、可読性改善として採用する。
-- 2026-06-07: `append_grpc_timeout_request_header` のunchecked append化は、対象callsiteの局所costを 65 から -5 に下げるが、`.text` は +4 bytesで性能改善根拠にはならない。owned value登録後のcapacity確認とunchecked appendという責務が明確になるため、見通し改善として採用する。
+- 2026-06-07: `append_grpc_timeout_request_header` のunchecked append化は、対象callsiteの局所costを 65 から -5 に下げるが、`.text` は +4 bytesで性能改善根拠にはならない。owned value登録後のcapacity確認とunchecked appendという責務は明確になるが、可読性差分は小さい。
 - 2026-06-07: 候補3-5のbenchを追加で取得した。`cpu-micro` は多くのshapeで同等だが、metadata caseは微悪化方向。`metadata-header` はmetadataありケースで悪化方向が見える。したがって候補3-5は性能改善ではなく、可読性改善としても採用判断をPR上で慎重に扱う。
+- 2026-06-07: 候補3-5をstep benchで分解した。最も疑わしいのは候補5で、局所optimizer costは改善しているがmetadata-header p50は全ケースで悪化方向に振れた。候補5は採用価値が弱いため、コード変更を戻す。
 
 ## 完了条件
 
