@@ -1841,24 +1841,28 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t
     grpc_call *call = grpc_call_from_stream_id(connection, stream_id);
     (void) session;
     (void) flags;
+
     if (call == NULL) {
         return 0;
     }
-    if (stream_id == call->stream_id && len > 0) {
-        if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
-            if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
-                return NGHTTP2_ERR_CALLBACK_FAILURE;
-            }
-        } else {
-            if (grpc_protocol_validate_response_message_lengths(session, call, data, len) != 0) {
-                return NGHTTP2_ERR_CALLBACK_FAILURE;
-            }
-            if (call->discard_response_body) {
-                return 0;
-            }
-            smart_str_appendl(&call->body, (const char *) data, len);
-        }
+    if (stream_id != call->stream_id || len == 0) {
+        return 0;
     }
+
+    if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
+        if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        return 0;
+    }
+
+    if (grpc_protocol_validate_response_message_lengths(session, call, data, len) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    if (call->discard_response_body) {
+        return 0;
+    }
+    smart_str_appendl(&call->body, (const char *) data, len);
     return 0;
 }
 
