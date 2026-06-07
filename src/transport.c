@@ -2176,17 +2176,6 @@ static void grow_request_headers(h2_request_headers *headers)
     headers->capacity = new_capacity;
 }
 
-static inline void append_request_header_unchecked(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
-{
-    headers->nva[headers->len++] = (nghttp2_nv) {
-        (uint8_t *) name,
-        (uint8_t *) value,
-        namelen,
-        valuelen,
-        NGHTTP2_NV_FLAG_NONE
-    };
-}
-
 void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
 {
     if (headers->len >= headers->capacity) {
@@ -2195,7 +2184,13 @@ void append_request_header(h2_request_headers *headers, const char *name, size_t
             return;
         }
     }
-    append_request_header_unchecked(headers, name, namelen, value, valuelen);
+    headers->nva[headers->len++] = (nghttp2_nv) {
+        (uint8_t *) name,
+        (uint8_t *) value,
+        namelen,
+        valuelen,
+        NGHTTP2_NV_FLAG_NONE
+    };
 }
 
 void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us)
@@ -2344,7 +2339,6 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
 {
     zend_string *name_str = NULL;
     zend_string *value_str;
-    bool binary_header;
 
     if (Z_TYPE_P(value) != IS_STRING) {
         zend_throw_exception(NULL, "gRPC request metadata value must be a string", 0);
@@ -2362,13 +2356,12 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
         return -1;
     }
     name_str = zend_string_copy(key);
-    binary_header = is_binary_metadata_header(name_str);
-    if (binary_header) {
+    if (is_binary_metadata_header(name_str)) {
         value_str = php_base64_encode((const unsigned char *) Z_STRVAL_P(value), Z_STRLEN_P(value));
     } else {
         value_str = zend_string_copy(Z_STR_P(value));
     }
-    if (binary_header ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
+    if (is_binary_metadata_header(name_str) ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
         zend_string_release(name_str);
         zend_string_release(value_str);
         zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
@@ -2380,7 +2373,7 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
     if (headers->value_strings != NULL) {
         headers->value_strings[headers->value_count++] = value_str;
     }
-    append_request_header_unchecked(headers, ZSTR_VAL(name_str), ZSTR_LEN(name_str), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    append_request_header(headers, ZSTR_VAL(name_str), ZSTR_LEN(name_str), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
     headers->custom_value_count++;
     return 0;
 }
