@@ -1879,23 +1879,16 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t
     return 0;
 }
 
-int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+static bool response_header_initially_trailing(grpc_call *call, const nghttp2_frame *frame)
 {
-    h2_connection *connection = (h2_connection *) user_data;
-    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
-    bool trailing;
-    (void) session;
-    (void) flags;
-    if (call == NULL) {
-        return 0;
+    if (frame->headers.cat != NGHTTP2_HCAT_RESPONSE) {
+        return true;
     }
-    if (frame->hd.stream_id != call->stream_id) {
-        return 0;
-    }
-    trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
-    if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && call->grpc_status >= 0) {
-        trailing = true;
-    }
+    return call->grpc_status >= 0;
+}
+
+static void apply_response_header_state(grpc_call *call, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, bool *trailing)
+{
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             call->initial_grpc_status_seen = true;
@@ -1911,7 +1904,7 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             grpc_protocol_mark_response_metadata_as_trailing(call);
         }
-        trailing = true;
+        *trailing = true;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             call->initial_grpc_status_seen = true;
@@ -1920,12 +1913,12 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
             zend_string_release(call->grpc_message);
         }
         call->grpc_message = grpc_protocol_decode_message(value, valuelen);
-        trailing = true;
+        *trailing = true;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             call->initial_grpc_status_seen = true;
         }
-        trailing = true;
+        *trailing = true;
     } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
         char status_buf[16];
         size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
@@ -1952,6 +1945,23 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
             call->discard_response_body = true;
         }
     }
+}
+
+int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    bool trailing;
+    (void) session;
+    (void) flags;
+    if (call == NULL) {
+        return 0;
+    }
+    if (frame->hd.stream_id != call->stream_id) {
+        return 0;
+    }
+    trailing = response_header_initially_trailing(call, frame);
+    apply_response_header_state(call, frame, name, namelen, value, valuelen, &trailing);
     if (grpc_protocol_add_response_metadata_entry(call, name, namelen, value, valuelen, trailing) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
