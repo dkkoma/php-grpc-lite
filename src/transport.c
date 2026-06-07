@@ -916,37 +916,36 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
     return connection_usable(connection);
 }
 
-bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
+static bool preflight_tls_connection_for_reuse(h2_connection *connection, uint64_t deadline_abs_us)
+{
+    char byte;
+    int ssl_error;
+    int rv;
+
+    rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
+    ssl_error = SSL_get_error(connection->ssl, rv);
+    if (rv > 0) {
+        return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
+    }
+    if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+        return true;
+    }
+
+    connection->last_ssl_error = ssl_error;
+    if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+        set_connection_error_detail(connection, "persistent TLS connection closed by peer before reuse");
+        mark_connection_dead(connection, 0);
+    } else {
+        snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "persistent TLS connection preflight failed: SSL_get_error=%d", ssl_error);
+        mark_connection_dead(connection, ECONNRESET);
+    }
+    return false;
+}
+
+static bool preflight_socket_connection_for_reuse(h2_connection *connection, uint64_t deadline_abs_us)
 {
     char byte;
     ssize_t rv;
-
-    if (!connection_usable(connection)) {
-        return connection_usable(connection);
-    }
-    if (connection->active_stream_count > 0) {
-        return true;
-    }
-    if (connection->ssl != NULL) {
-        int ssl_error;
-        rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
-        ssl_error = SSL_get_error(connection->ssl, (int) rv);
-        if (rv > 0) {
-            return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
-        }
-        if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
-            return true;
-        }
-        connection->last_ssl_error = ssl_error;
-        if (ssl_error == SSL_ERROR_ZERO_RETURN) {
-            set_connection_error_detail(connection, "persistent TLS connection closed by peer before reuse");
-            mark_connection_dead(connection, 0);
-        } else {
-            snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "persistent TLS connection preflight failed: SSL_get_error=%d", ssl_error);
-            mark_connection_dead(connection, ECONNRESET);
-        }
-        return false;
-    }
 
     rv = recv(connection->fd, &byte, sizeof(byte), MSG_PEEK | MSG_DONTWAIT);
     if (rv == 0) {
@@ -963,6 +962,20 @@ bool preflight_persistent_connection(h2_connection *connection, uint64_t deadlin
     }
 
     return true;
+}
+
+bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
+{
+    if (!connection_usable(connection)) {
+        return false;
+    }
+    if (connection->active_stream_count > 0) {
+        return true;
+    }
+    if (connection->ssl != NULL) {
+        return preflight_tls_connection_for_reuse(connection, deadline_abs_us);
+    }
+    return preflight_socket_connection_for_reuse(connection, deadline_abs_us);
 }
 
 void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
