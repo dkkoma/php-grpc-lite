@@ -399,6 +399,8 @@ step benchの判断:
 
 候補5を戻した現在HEAD (`232ff94`、code changeは `7991017` まで) と `main` (`116bce6`) で、同じcompose project / test-server / otelopを使ってbenchを取り直した。
 
+注意: この測定は候補4 revert前の `232ff94` に対する結果であり、候補4を戻した後の最終HEADそのものの比較ではない。候補4 revert後の性能判断に使う場合は、同条件で再測定する。
+
 `metadata-header --calls=200`:
 
 | measurement | main p50 us | current p50 us | main p99 us | current p99 us | 判断 |
@@ -432,6 +434,8 @@ main比較の判断:
 ### main vs current after candidate5 revert: LTO build bench
 
 通常buildだけでは、Clang ThinLTO / GCC LTO のoptimizer remarksを根拠にした変更の検証として不足する。そのため、同じ `main` (`116bce6`) と current (`232ff94`、code changeは `7991017` まで) を、LTO buildでも取り直した。
+
+注意: この測定も候補4 revert前の `232ff94` に対する結果であり、候補4を戻した後の最終HEADそのものの比較ではない。候補4込みのtrial観測として残すが、最終PRの性能根拠にはしない。
 
 build条件:
 
@@ -537,6 +541,7 @@ LTO比較の判断:
 - 2026-06-07: optimizer remarksを根拠にするなら通常build benchだけでは不足するため、GCC LTO / Clang ThinLTO buildでもmain/currentを比較した。LTO metadata latencyではcurrent改善傾向があるが、CPU代表shapeでは同等〜一部悪化もあるため、性能改善PRとしては扱わない。
 - 2026-06-07: `preflight_persistent_connection` のTLS / plain socket probe分離は、DSO / remarks上の性能改善はない。むしろ `.text` は +72 bytes、`get_persistent_connection` へのinline costは 760 から 820 へ増えた。一方で、persistent reuse入口のlifecycle条件は読みやすくなり、drain処理とerror taxonomyを変えないことをsubagent reviewとPHPTで確認したため、可読性改善として採用する。
 - 2026-06-07: `on_header_callback` のheader state分離はdomain model reviewで棄却した。`bool *trailing` out-paramがgRPC metadata phase分類を隠し、helperをLTOでinlineしても元の直書きに近づくだけでcallback境界は消えないため、可読性 / boundary cleanupとして成立しない。候補4のコード変更はrevertする。
+- 2026-06-07: 候補4をrevertしたため、`232ff94` で取得した通常build / GCC LTO / Clang ThinLTOのmain比較は最終HEADそのものの性能値ではなくなった。trial観測として保持し、最終性能主張には使わない。
 - 2026-06-07: `append_grpc_timeout_request_header` のunchecked append化は、対象callsiteの局所costを 65 から -5 に下げるが、`.text` は +4 bytesで性能改善根拠にはならない。owned value登録後のcapacity確認とunchecked appendという責務は明確になるが、可読性差分は小さい。
 - 2026-06-07: 候補3-5のbenchを追加で取得した。`cpu-micro` は多くのshapeで同等だが、metadata caseは微悪化方向。`metadata-header` はmetadataありケースで悪化方向が見える。したがって候補3-5は性能改善ではなく、可読性改善としても採用判断をPR上で慎重に扱う。
 - 2026-06-07: 候補3-5をstep benchで分解した。最も疑わしいのは候補5で、局所optimizer costは改善しているがmetadata-header p50は全ケースで悪化方向に振れた。候補5は採用価値が弱いため、コード変更を戻す。
