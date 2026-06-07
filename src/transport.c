@@ -916,37 +916,36 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
     return connection_usable(connection);
 }
 
-bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
+static bool preflight_tls_connection_for_reuse(h2_connection *connection, uint64_t deadline_abs_us)
+{
+    char byte;
+    int ssl_error;
+    int rv;
+
+    rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
+    ssl_error = SSL_get_error(connection->ssl, rv);
+    if (rv > 0) {
+        return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
+    }
+    if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+        return true;
+    }
+
+    connection->last_ssl_error = ssl_error;
+    if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+        set_connection_error_detail(connection, "persistent TLS connection closed by peer before reuse");
+        mark_connection_dead(connection, 0);
+    } else {
+        snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "persistent TLS connection preflight failed: SSL_get_error=%d", ssl_error);
+        mark_connection_dead(connection, ECONNRESET);
+    }
+    return false;
+}
+
+static bool preflight_socket_connection_for_reuse(h2_connection *connection, uint64_t deadline_abs_us)
 {
     char byte;
     ssize_t rv;
-
-    if (!connection_usable(connection)) {
-        return connection_usable(connection);
-    }
-    if (connection->active_stream_count > 0) {
-        return true;
-    }
-    if (connection->ssl != NULL) {
-        int ssl_error;
-        rv = SSL_peek(connection->ssl, &byte, sizeof(byte));
-        ssl_error = SSL_get_error(connection->ssl, (int) rv);
-        if (rv > 0) {
-            return drain_pending_connection_data_for_reuse(connection, deadline_abs_us);
-        }
-        if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
-            return true;
-        }
-        connection->last_ssl_error = ssl_error;
-        if (ssl_error == SSL_ERROR_ZERO_RETURN) {
-            set_connection_error_detail(connection, "persistent TLS connection closed by peer before reuse");
-            mark_connection_dead(connection, 0);
-        } else {
-            snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "persistent TLS connection preflight failed: SSL_get_error=%d", ssl_error);
-            mark_connection_dead(connection, ECONNRESET);
-        }
-        return false;
-    }
 
     rv = recv(connection->fd, &byte, sizeof(byte), MSG_PEEK | MSG_DONTWAIT);
     if (rv == 0) {
@@ -963,6 +962,20 @@ bool preflight_persistent_connection(h2_connection *connection, uint64_t deadlin
     }
 
     return true;
+}
+
+bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
+{
+    if (!connection_usable(connection)) {
+        return false;
+    }
+    if (connection->active_stream_count > 0) {
+        return true;
+    }
+    if (connection->ssl != NULL) {
+        return preflight_tls_connection_for_reuse(connection, deadline_abs_us);
+    }
+    return preflight_socket_connection_for_reuse(connection, deadline_abs_us);
 }
 
 void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
@@ -1841,24 +1854,28 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t
     grpc_call *call = grpc_call_from_stream_id(connection, stream_id);
     (void) session;
     (void) flags;
+
     if (call == NULL) {
         return 0;
     }
-    if (stream_id == call->stream_id && len > 0) {
-        if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
-            if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
-                return NGHTTP2_ERR_CALLBACK_FAILURE;
-            }
-        } else {
-            if (grpc_protocol_validate_response_message_lengths(session, call, data, len) != 0) {
-                return NGHTTP2_ERR_CALLBACK_FAILURE;
-            }
-            if (call->discard_response_body) {
-                return 0;
-            }
-            smart_str_appendl(&call->body, (const char *) data, len);
-        }
+    if (stream_id != call->stream_id || len == 0) {
+        return 0;
     }
+
+    if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
+        if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        return 0;
+    }
+
+    if (grpc_protocol_validate_response_message_lengths(session, call, data, len) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    if (call->discard_response_body) {
+        return 0;
+    }
+    smart_str_appendl(&call->body, (const char *) data, len);
     return 0;
 }
 
@@ -2176,6 +2193,17 @@ static void grow_request_headers(h2_request_headers *headers)
     headers->capacity = new_capacity;
 }
 
+static inline void append_request_header_unchecked(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
+{
+    headers->nva[headers->len++] = (nghttp2_nv) {
+        (uint8_t *) name,
+        (uint8_t *) value,
+        namelen,
+        valuelen,
+        NGHTTP2_NV_FLAG_NONE
+    };
+}
+
 void append_request_header(h2_request_headers *headers, const char *name, size_t namelen, const char *value, size_t valuelen)
 {
     if (headers->len >= headers->capacity) {
@@ -2184,13 +2212,7 @@ void append_request_header(h2_request_headers *headers, const char *name, size_t
             return;
         }
     }
-    headers->nva[headers->len++] = (nghttp2_nv) {
-        (uint8_t *) name,
-        (uint8_t *) value,
-        namelen,
-        valuelen,
-        NGHTTP2_NV_FLAG_NONE
-    };
+    append_request_header_unchecked(headers, name, namelen, value, valuelen);
 }
 
 void append_grpc_timeout_request_header(h2_request_headers *headers, zend_long timeout_us)
@@ -2339,6 +2361,7 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
 {
     zend_string *name_str = NULL;
     zend_string *value_str;
+    bool binary_header;
 
     if (Z_TYPE_P(value) != IS_STRING) {
         zend_throw_exception(NULL, "gRPC request metadata value must be a string", 0);
@@ -2356,12 +2379,13 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
         return -1;
     }
     name_str = zend_string_copy(key);
-    if (is_binary_metadata_header(name_str)) {
+    binary_header = is_binary_metadata_header(name_str);
+    if (binary_header) {
         value_str = php_base64_encode((const unsigned char *) Z_STRVAL_P(value), Z_STRLEN_P(value));
     } else {
         value_str = zend_string_copy(Z_STR_P(value));
     }
-    if (is_binary_metadata_header(name_str) ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
+    if (binary_header ? is_invalid_binary_request_header_value(value_str) : is_invalid_ascii_request_header_value(value_str)) {
         zend_string_release(name_str);
         zend_string_release(value_str);
         zend_throw_exception(NULL, "invalid gRPC request metadata value", 0);
@@ -2373,7 +2397,7 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
     if (headers->value_strings != NULL) {
         headers->value_strings[headers->value_count++] = value_str;
     }
-    append_request_header(headers, ZSTR_VAL(name_str), ZSTR_LEN(name_str), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
+    append_request_header_unchecked(headers, ZSTR_VAL(name_str), ZSTR_LEN(name_str), ZSTR_VAL(value_str), ZSTR_LEN(value_str));
     headers->custom_value_count++;
     return 0;
 }
