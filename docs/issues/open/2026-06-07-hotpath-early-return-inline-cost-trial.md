@@ -308,6 +308,47 @@ Subagent protocol/semantics check:
 
 この候補は、custom metadata pathと同じくprechecked appendを明示する整理であり、性能改善とは主張しない。`.text` は +4 bytesで実質不変。`grpc-timeout` value lifetimeを変えず、subagent reviewでも登録済みvalueは `free_request_headers()` 解放に任せる方針が妥当と確認した。
 
+### 候補3-5 follow-up: bench before/after
+
+候補3-5について、当初はoptimizer reportと検証のみで、bench before/afterを取っていなかった。見通し改善として採用する場合でも、性能悪化がないことを確認するため、`a46ba3e` をbefore、`cc9ff9b` をafterとして同条件benchを追加で取った。
+
+`cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`:
+
+| measurement | before avg cpu_us/call | after avg cpu_us/call | 判断 |
+| --- | ---: | ---: | --- |
+| tiny_unary_0b | 11.8 | 16.8 | after repeat 3に27.1の外れ値。判断に使いにくい |
+| small_unary_100b | 11.0 | 10.6 | 同等 |
+| new_client_unary_100b | 12.8 | 12.6 | 同等 |
+| metadata_unary_req10_resp10_32b | 14.9 | 15.4 | 微悪化方向 |
+| begin_txn_unary | 10.7 | 10.9 | 同等 |
+| commit_txn_unary | 10.5 | 10.7 | 同等 |
+| small_streaming_1x100b | 11.7 | 10.9 | 同等〜改善方向 |
+| tiny_streaming_1x0b | 11.4 | 11.1 | 同等 |
+| new_client_streaming_1x100b | 13.4 | 12.9 | 同等 |
+| small_streaming_10x100b | 16.6 | 16.9 | 同等 |
+| small_streaming_100x100b | 59.3 | 57.6 | 同等〜改善方向 |
+| select_1row_10col_streaming | 11.5 | 11.2 | 同等 |
+| dml_insert_10col_streaming | 11.9 | 11.4 | 同等 |
+| dml_update_10col_streaming | 11.5 | 12.9 | after repeat 3に15.9の外れ値。注意 |
+| dml_delete_10col_streaming | 12.2 | 11.8 | 同等 |
+
+`metadata-header --calls=200`:
+
+| measurement | before p50 us | after p50 us | before p99 us | after p99 us | 判断 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| req_0_resp_0_value_0b | 48.8 | 33.0 | 627.6 | 679.1 | p50改善方向、対象外ノイズも含む |
+| req_10_resp_0_value_32b | 45.8 | 37.8 | 298.0 | 664.3 | p50改善方向、p99悪化方向 |
+| req_10_resp_10_value_32b | 53.5 | 75.6 | 358.2 | 451.5 | 悪化方向 |
+| req_50_resp_0_value_32b | 90.9 | 103.5 | 535.7 | 620.2 | 悪化方向 |
+| req_50_resp_50_value_32b | 160.8 | 170.5 | 1005.2 | 1270.1 | 悪化方向 |
+
+追加benchの判断:
+
+- 候補3-5を性能改善として採用する根拠はない。
+- `cpu-micro` は多くの代表shapeで同等だが、metadata caseは微悪化方向、`tiny_unary_0b` と `dml_update_10col_streaming` には外れ値がある。
+- `metadata-header` はrequest/response metadataを含むケースで悪化方向が見えるため、今回の採用理由はあくまで可読性 / 境界整理に限定する。
+- ただし、候補3-5は `.text` がほぼ不変で、PHPT / C unit / static analysisは通過しているため、現時点では明確なregressionとして棄却するほどの結果ではない。PRレビューでは、このbench結果を前提に採否を判断する。
+
 ## 検証
 
 - `docker compose config --services`: `dev-optimizer` serviceを確認。
@@ -337,6 +378,8 @@ Subagent protocol/semantics check:
 - `./tools/test/check-c-unit.sh`: PASS。candidate5後。
 - `./tools/test/check-phpt.sh`: PASS。15/15。candidate5後。
 - `./tools/test/check-c-static-analysis.sh`: PASS。candidate5後。
+- `./bench/run.sh cpu-micro --calls=2000 --warmup-calls=100 --repeat-runs=3`: PASS。candidate3-5 before run id `hotpath-candidate3-5-before-cpu`、after run id `hotpath-candidate3-5-after-cpu`。
+- `./bench/run.sh metadata-header --calls=200`: PASS。candidate3-5 before run id `hotpath-candidate3-5-before-metadata`、after run id `hotpath-candidate3-5-after-metadata`。
 
 ## 判断ログ
 
@@ -349,6 +392,7 @@ Subagent protocol/semantics check:
 - 2026-06-07: `preflight_persistent_connection` のTLS / plain socket probe分離は、DSO / remarks上の性能改善はない。むしろ `.text` は +72 bytes、`get_persistent_connection` へのinline costは 760 から 820 へ増えた。一方で、persistent reuse入口のlifecycle条件は読みやすくなり、drain処理とerror taxonomyを変えないことをsubagent reviewとPHPTで確認したため、可読性改善として採用する。
 - 2026-06-07: `on_header_callback` のheader state分離は `.text` 不変で、重いdecode / metadata保存helperのinline可否も変わらない。trailing分類とspecial header side effectの順序が明示され、subagent reviewとPHPTでsemantics維持を確認したため、可読性改善として採用する。
 - 2026-06-07: `append_grpc_timeout_request_header` のunchecked append化は、対象callsiteの局所costを 65 から -5 に下げるが、`.text` は +4 bytesで性能改善根拠にはならない。owned value登録後のcapacity確認とunchecked appendという責務が明確になるため、見通し改善として採用する。
+- 2026-06-07: 候補3-5のbenchを追加で取得した。`cpu-micro` は多くのshapeで同等だが、metadata caseは微悪化方向。`metadata-header` はmetadataありケースで悪化方向が見える。したがって候補3-5は性能改善ではなく、可読性改善としても採用判断をPR上で慎重に扱う。
 
 ## 完了条件
 
