@@ -97,6 +97,15 @@ grpc_lite_phpt_assert_same($growValues, $serverStreamSeen('x-bench-grow', [
     'x-bench-grow' => $growValues,
 ]), 'server streaming metadata values across inline growth boundary');
 
+// Exactly GRPC_LITE_MAX_REQUEST_METADATA_VALUES (256) custom values must be
+// accepted alongside every fixed request header (capacity is 256 + fixed
+// header count; this guards the off-by-one if a fixed header is added).
+$maxCall = $client->BenchUnary(new BenchRequest(), [
+    'x-bench-max' => array_fill(0, 256, 'v'),
+]);
+[, $maxStatus] = $maxCall->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $maxStatus->code, '256 metadata values at the limit are accepted');
+
 // Scenario group 2: startBatch must copy metadata before userland can mutate it.
 $rawMetadata = [
     'x-bench-observe-metadata-key' => ['x-bench-mutation'],
