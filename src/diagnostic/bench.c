@@ -1302,7 +1302,6 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         call.http_status = -1;
         call.stream_error_code = 0;
         call.compressed_response_seen = false;
-        call.response_current_compressed = false;
         call.timed_out = false;
         call.request_offset = 0;
         call.pending_data_len = 0;

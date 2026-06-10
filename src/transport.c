@@ -2606,21 +2606,17 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                call->response_current_compressed = false;
                 if (session != NULL && call->stream_id > 0) {
                     nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
-                call->response_payload_offset = 0;
                 continue;
             }
-            call->response_current_compressed = call->response_header_buf[0] != 0;
             if (call->response_header_buf[0] > 1) {
                 call->malformed_response_frame = true;
                 call->discard_response_body = true;
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                call->response_current_compressed = false;
                 if (session != NULL && call->stream_id > 0) {
                     nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
@@ -2632,7 +2628,6 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                call->response_current_compressed = false;
                 if (session != NULL && call->stream_id > 0) {
                     nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
@@ -2643,33 +2638,13 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 return 0;
             }
             call->response_payload_offset = 0;
-            if (call->response_current_compressed) {
-                if (call->response_payload_len == 0) {
-                    call->response_header_len = 0;
-                    call->response_payload_len = 0;
-                    call->response_payload_offset = 0;
-                    call->response_current_compressed = false;
-                }
-            } else {
-                call->response_payload = zend_string_alloc(call->response_payload_len, 0);
-                if (call->response_payload_len == 0) {
-                    ZSTR_VAL(call->response_payload)[0] = '\0';
-                }
+            call->response_payload = zend_string_alloc(call->response_payload_len, 0);
+            if (call->response_payload_len == 0) {
+                ZSTR_VAL(call->response_payload)[0] = '\0';
             }
         }
 
-        if (call->response_current_compressed) {
-            size_t need = call->response_payload_len - call->response_payload_offset;
-            size_t take = need < len - offset ? need : len - offset;
-            call->response_payload_offset += take;
-            offset += take;
-            if (call->response_payload_offset == call->response_payload_len) {
-                call->response_header_len = 0;
-                call->response_payload_len = 0;
-                call->response_payload_offset = 0;
-                call->response_current_compressed = false;
-            }
-        } else if (call->response_payload != NULL) {
+        if (call->response_payload != NULL) {
             size_t need = call->response_payload_len - call->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
             if (take > 0) {
@@ -2724,7 +2699,6 @@ static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *ses
     call->response_header_len = 0;
     call->response_payload_len = 0;
     call->response_payload_offset = 0;
-    call->response_current_compressed = false;
     if (session != NULL && call->stream_id > 0) {
         nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
     }

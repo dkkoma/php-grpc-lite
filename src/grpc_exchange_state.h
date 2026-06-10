@@ -97,7 +97,6 @@ struct _grpc_call {
     size_t response_header_len;
     uint32_t response_payload_len;
     size_t response_payload_offset;
-    bool response_current_compressed;
     zend_string *response_payload;
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     grpc_bench_call bench;
