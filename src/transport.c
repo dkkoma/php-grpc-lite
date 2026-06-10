@@ -1757,10 +1757,11 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
             rv = NGHTTP2_ERR_CALLBACK_FAILURE;
         }
     }
-    if (rv != 0 && connection->write_buffer_len > 0) {
-        /* Coalesced bytes that nghttp2 already accounted as sent are being
-         * discarded below; the session state no longer matches the wire, so the
-         * connection must never be reused. */
+    if (rv != 0) {
+        /* A failed send can leave a partial frame on the wire (direct writes)
+         * or discard coalesced bytes nghttp2 already accounted as sent; either
+         * way the session state no longer matches the wire, so the connection
+         * must never be reused. */
         mark_connection_dead(connection, rv);
     }
     if (rv != 0 && call != NULL) {
