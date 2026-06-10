@@ -597,13 +597,10 @@ static void grpc_lite_trace_outbound_frame_record(h2_connection *connection, con
         fprintf(fp, ",\"window_size_increment\":%u", grpc_lite_read_be32(data + 9) & 0x7fffffffU);
     }
     if (type == NGHTTP2_HEADERS) {
+        /* Never dump the HPACK block even with GRPC_LITE_TRACE_WIRE_BYTES: it is
+         * trivially decodable and would expose the sensitive header values that
+         * grpc_lite_trace_request_headers deliberately records only as hashes. */
         fprintf(fp, ",\"header_block_len\":%u", frame_len);
-        if (grpc_lite_trace_wire_bytes_enabled()) {
-            size_t available = length - 9;
-            size_t header_bytes = frame_len < available ? frame_len : available;
-            fprintf(fp, ",\"header_block_hex\":");
-            grpc_lite_trace_hex(fp, data + 9, header_bytes);
-        }
     } else if (grpc_lite_trace_wire_bytes_enabled()
         && (type == NGHTTP2_SETTINGS || type == NGHTTP2_WINDOW_UPDATE || type == NGHTTP2_PING || type == NGHTTP2_GOAWAY)
         && length >= 9 + frame_len) {
