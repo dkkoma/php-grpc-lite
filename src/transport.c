@@ -2165,8 +2165,12 @@ static void grow_request_headers(h2_request_headers *headers)
     zend_string **new_name_strings;
     zend_string **new_value_strings;
 
-    if (new_capacity < headers->capacity || new_capacity > GRPC_LITE_MAX_REQUEST_METADATA_VALUES + 7) {
-        new_capacity = GRPC_LITE_MAX_REQUEST_METADATA_VALUES + 7;
+    /* The hard cap must hold every fixed header plus the maximum number of
+     * custom metadata values; otherwise append_request_header silently drops
+     * headers and append_custom_request_header_value rejects values that are
+     * still within GRPC_LITE_MAX_REQUEST_METADATA_VALUES. */
+    if (new_capacity < headers->capacity || new_capacity > GRPC_LITE_MAX_REQUEST_METADATA_VALUES + GRPC_LITE_REQUEST_FIXED_HEADER_COUNT) {
+        new_capacity = GRPC_LITE_MAX_REQUEST_METADATA_VALUES + GRPC_LITE_REQUEST_FIXED_HEADER_COUNT;
     }
     if (new_capacity <= headers->capacity) {
         return;
