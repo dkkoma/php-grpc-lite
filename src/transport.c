@@ -975,6 +975,22 @@ bool preflight_persistent_connection(h2_connection *connection, uint64_t deadlin
     return preflight_socket_connection_for_reuse(connection, deadline_abs_us);
 }
 
+static persistent_connection_entry *release_persistent_connection_entry_if_mismatched(persistent_connection_entry *entry, h2_connection *connection)
+{
+    if (entry == NULL || entry->connection == connection) {
+        return entry;
+    }
+    /* The cache slot held a different connection than the one being removed.
+     * The entry already left the cache, so release its connection like any
+     * detached connection instead of leaking both. */
+    if (entry->connection != NULL) {
+        entry->connection->detached_from_cache = true;
+        destroy_detached_connection_if_unowned(entry->connection);
+    }
+    destroy_persistent_connection_entry(entry, false);
+    return NULL;
+}
+
 void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
 {
     persistent_connection_entry *entry = NULL;
@@ -986,12 +1002,13 @@ void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_c
         entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
         zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     }
+    entry = release_persistent_connection_entry_if_mismatched(entry, connection);
     if (connection->stream_owner_count > 0) {
         connection->detached_from_cache = true;
         destroy_persistent_connection_entry(entry, false);
         return;
     }
-    if (entry != NULL && entry->connection == connection) {
+    if (entry != NULL) {
         destroy_persistent_connection_entry(entry, true);
         return;
     }
@@ -1612,6 +1629,7 @@ void discard_persistent_connection(const char *key, size_t key_len, h2_connectio
         entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
         zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     }
+    entry = release_persistent_connection_entry_if_mismatched(entry, connection);
     if (connection == NULL) {
         destroy_persistent_connection_entry(entry, false);
         return;
@@ -1621,7 +1639,7 @@ void discard_persistent_connection(const char *key, size_t key_len, h2_connectio
         destroy_persistent_connection_entry(entry, false);
         return;
     }
-    if (entry != NULL && entry->connection == connection) {
+    if (entry != NULL) {
         destroy_persistent_connection_entry(entry, true);
         return;
     }
