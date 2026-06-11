@@ -39,7 +39,9 @@ foreach (['Phase0', 'Reuse'] as $name) {
     $headers = $call->getMetadata();
     $trailers = $call->getTrailingMetadata();
     grpc_lite_phpt_assert_same('application/grpc', $headers['content-type'][0] ?? null, 'content-type metadata');
-    grpc_lite_phpt_assert_same('0', $trailers['grpc-status'][0] ?? null, 'grpc-status trailer');
+    // ext-grpc 互換: grpc-status / grpc-message は Status として消費され metadata には現れない
+    grpc_lite_phpt_assert_true(!array_key_exists('grpc-status', $trailers), 'grpc-status not in trailers');
+    grpc_lite_phpt_assert_true(!array_key_exists('grpc-message', $trailers), 'grpc-message not in trailers');
 }
 
 echo "OK\n";

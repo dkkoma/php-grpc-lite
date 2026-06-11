@@ -167,6 +167,15 @@ func benchErrorFromContext(ctx context.Context) error {
 	if values := incoming.Get("x-bench-error-message"); len(values) > 0 && values[0] != "" {
 		message = values[0]
 	}
+	// x-bench-error-details が指定されたら rich error model 相当の detail を付け、
+	// grpc-status-details-bin trailer をクライアントに観測させる。
+	if values := incoming.Get("x-bench-error-details"); len(values) > 0 && values[0] != "" {
+		st := status.New(codes.Code(code), message)
+		if detailed, err := st.WithDetails(&pb.BenchReply{Payload: []byte(values[0])}); err == nil {
+			return detailed.Err()
+		}
+		return st.Err()
+	}
 	return status.Error(codes.Code(code), message)
 }
 

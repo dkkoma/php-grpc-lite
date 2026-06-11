@@ -45,6 +45,14 @@ Related: docs/issues/closed/2026-05-14-metadata-conversion-hotpath.md
 
 ## Progress
 
+- 2026-06-12: 実装完了。`on_header_callback` に `store_as_metadata` フラグを導入し、`grpc-status` / `grpc-message` 分岐で false にして `grpc_protocol_add_response_metadata_entry` への追加をスキップ。`grpc-status-details-bin` は現行どおり metadata に残す。duplicate grpc-status 検出等の検証ロジックは不変。
+- テスト固定化: `tests/phpt/010-unary.phpt` を「trailers に grpc-status / grpc-message が現れない」アサーションへ更新。`ErrorSemanticsTest` も NotHasKey へ更新し、新規 `testRichErrorDetailsBinStaysInTrailingMetadata` を追加(test-server に `x-bench-error-details` knob を追加して `status.WithDetails` で grpc-status-details-bin を発生させ、保持を検証)。
+
 ## Verification
 
+- PHPT 15/15 PASS、PHPUnit 31 tests / 116 assertions PASS(新規 rich error details テスト含む)、C unit PASS、静的解析 PASS。
+- 回帰ベンチ(after run id `status-headers-after-20260612`): metadata-header p50 50.8〜203.8µs(req50+resp50 で 203.8µs)、spanner-shape p50 24.0〜33.5µs — `main-baseline-20260612`(23.9〜29.0µs)比で揺れ幅内、悪化なし。
+
 ## Decision Log
+
+- 2026-06-12: **採用**。ext-grpc(gRPC C core)と同じく Status / Status-Message をユーザー metadata から除外し、`grpc-status-details-bin` のみ露出する挙動に変更。`max_response_metadata_bytes` の消費からも外れるため、ユーザー metadata の上限挙動も C core に近づく。毎 RPC の metadata entry alloc(emalloc 1 + zend_string_init 2)× 2〜3 ヘッダ分の削減は副次効果として扱い、専用計測はしない(issue 記載どおり)。
