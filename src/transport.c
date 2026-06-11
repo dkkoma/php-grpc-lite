@@ -597,13 +597,10 @@ static void grpc_lite_trace_outbound_frame_record(h2_connection *connection, con
         fprintf(fp, ",\"window_size_increment\":%u", grpc_lite_read_be32(data + 9) & 0x7fffffffU);
     }
     if (type == NGHTTP2_HEADERS) {
+        /* Never dump the HPACK block even with GRPC_LITE_TRACE_WIRE_BYTES: it is
+         * trivially decodable and would expose the sensitive header values that
+         * grpc_lite_trace_request_headers deliberately records only as hashes. */
         fprintf(fp, ",\"header_block_len\":%u", frame_len);
-        if (grpc_lite_trace_wire_bytes_enabled()) {
-            size_t available = length - 9;
-            size_t header_bytes = frame_len < available ? frame_len : available;
-            fprintf(fp, ",\"header_block_hex\":");
-            grpc_lite_trace_hex(fp, data + 9, header_bytes);
-        }
     } else if (grpc_lite_trace_wire_bytes_enabled()
         && (type == NGHTTP2_SETTINGS || type == NGHTTP2_WINDOW_UPDATE || type == NGHTTP2_PING || type == NGHTTP2_GOAWAY)
         && length >= 9 + frame_len) {
@@ -987,18 +984,23 @@ void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_c
     }
     if (PHP_GRPC_LITE_G(persistent_connections_initialized)) {
         entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
-        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     }
+    if (entry == NULL || entry->connection != connection) {
+        /* The slot is empty or already holds a replacement connection (e.g.
+         * cached by a reentrant call); evicting it would discard a healthy
+         * connection. The connection being removed lives outside the cache,
+         * so release it like any detached connection. */
+        connection->detached_from_cache = true;
+        destroy_detached_connection_if_unowned(connection);
+        return;
+    }
+    zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     if (connection->stream_owner_count > 0) {
         connection->detached_from_cache = true;
         destroy_persistent_connection_entry(entry, false);
         return;
     }
-    if (entry != NULL && entry->connection == connection) {
-        destroy_persistent_connection_entry(entry, true);
-        return;
-    }
-    destroy_h2_connection(connection);
+    destroy_persistent_connection_entry(entry, true);
 }
 
 int set_fd_nonblocking_mode(int fd, bool nonblocking)
@@ -1611,24 +1613,28 @@ void discard_persistent_connection(const char *key, size_t key_len, h2_connectio
 {
     persistent_connection_entry *entry = NULL;
 
-    if (PHP_GRPC_LITE_G(persistent_connections_initialized)) {
-        entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
-        zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
-    }
     if (connection == NULL) {
-        destroy_persistent_connection_entry(entry, false);
         return;
     }
+    if (PHP_GRPC_LITE_G(persistent_connections_initialized)) {
+        entry = zend_hash_str_find_ptr(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
+    }
+    if (entry == NULL || entry->connection != connection) {
+        /* The slot is empty or already holds a replacement connection (e.g.
+         * cached by a reentrant call); evicting it would discard a healthy
+         * connection. The connection being discarded lives outside the cache,
+         * so release it like any detached connection. */
+        connection->detached_from_cache = true;
+        destroy_detached_connection_if_unowned(connection);
+        return;
+    }
+    zend_hash_str_del(&PHP_GRPC_LITE_G(persistent_connections), key, key_len);
     if (connection->stream_owner_count > 0) {
         connection->detached_from_cache = true;
         destroy_persistent_connection_entry(entry, false);
         return;
     }
-    if (entry != NULL && entry->connection == connection) {
-        destroy_persistent_connection_entry(entry, true);
-        return;
-    }
-    destroy_h2_connection(connection);
+    destroy_persistent_connection_entry(entry, true);
 }
 
 int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us)
@@ -1750,6 +1756,13 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
         if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
             rv = NGHTTP2_ERR_CALLBACK_FAILURE;
         }
+    }
+    if (rv != 0) {
+        /* A failed send can leave a partial frame on the wire (direct writes)
+         * or discard coalesced bytes nghttp2 already accounted as sent; either
+         * way the session state no longer matches the wire, so the connection
+         * must never be reused. */
+        mark_connection_dead(connection, rv);
     }
     if (rv != 0 && call != NULL) {
         if (connection->current_write_timed_out) {
@@ -2162,8 +2175,12 @@ static void grow_request_headers(h2_request_headers *headers)
     zend_string **new_name_strings;
     zend_string **new_value_strings;
 
-    if (new_capacity < headers->capacity || new_capacity > GRPC_LITE_MAX_REQUEST_METADATA_VALUES + 7) {
-        new_capacity = GRPC_LITE_MAX_REQUEST_METADATA_VALUES + 7;
+    /* The hard cap must hold every fixed header plus the maximum number of
+     * custom metadata values; otherwise append_request_header silently drops
+     * headers and append_custom_request_header_value rejects values that are
+     * still within GRPC_LITE_MAX_REQUEST_METADATA_VALUES. */
+    if (new_capacity < headers->capacity || new_capacity > GRPC_LITE_MAX_REQUEST_METADATA_VALUES + GRPC_LITE_REQUEST_FIXED_HEADER_COUNT) {
+        new_capacity = GRPC_LITE_MAX_REQUEST_METADATA_VALUES + GRPC_LITE_REQUEST_FIXED_HEADER_COUNT;
     }
     if (new_capacity <= headers->capacity) {
         return;
@@ -2603,21 +2620,17 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                call->response_current_compressed = false;
                 if (session != NULL && call->stream_id > 0) {
                     nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
-                call->response_payload_offset = 0;
                 continue;
             }
-            call->response_current_compressed = call->response_header_buf[0] != 0;
             if (call->response_header_buf[0] > 1) {
                 call->malformed_response_frame = true;
                 call->discard_response_body = true;
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                call->response_current_compressed = false;
                 if (session != NULL && call->stream_id > 0) {
                     nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
@@ -2629,7 +2642,6 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                call->response_current_compressed = false;
                 if (session != NULL && call->stream_id > 0) {
                     nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
@@ -2640,33 +2652,13 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 return 0;
             }
             call->response_payload_offset = 0;
-            if (call->response_current_compressed) {
-                if (call->response_payload_len == 0) {
-                    call->response_header_len = 0;
-                    call->response_payload_len = 0;
-                    call->response_payload_offset = 0;
-                    call->response_current_compressed = false;
-                }
-            } else {
-                call->response_payload = zend_string_alloc(call->response_payload_len, 0);
-                if (call->response_payload_len == 0) {
-                    ZSTR_VAL(call->response_payload)[0] = '\0';
-                }
+            call->response_payload = zend_string_alloc(call->response_payload_len, 0);
+            if (call->response_payload_len == 0) {
+                ZSTR_VAL(call->response_payload)[0] = '\0';
             }
         }
 
-        if (call->response_current_compressed) {
-            size_t need = call->response_payload_len - call->response_payload_offset;
-            size_t take = need < len - offset ? need : len - offset;
-            call->response_payload_offset += take;
-            offset += take;
-            if (call->response_payload_offset == call->response_payload_len) {
-                call->response_header_len = 0;
-                call->response_payload_len = 0;
-                call->response_payload_offset = 0;
-                call->response_current_compressed = false;
-            }
-        } else if (call->response_payload != NULL) {
+        if (call->response_payload != NULL) {
             size_t need = call->response_payload_len - call->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
             if (take > 0) {
@@ -2721,7 +2713,6 @@ static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *ses
     call->response_header_len = 0;
     call->response_payload_len = 0;
     call->response_payload_offset = 0;
-    call->response_current_compressed = false;
     if (session != NULL && call->stream_id > 0) {
         nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
     }
