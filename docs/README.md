@@ -24,6 +24,7 @@
 | [code-reading-guide.md](./guides/code-reading-guide.md) | 初学者 / 中級者 / 上級者向けの実装読み順 |
 | [install-native-extension.md](./guides/install-native-extension.md) | source build / PIE install / rollback / large streaming guidance |
 | [opentelemetry-instrumentation.md](./guides/opentelemetry-instrumentation.md) | benchmark用OTEL spanとtrace context metadata注入の方針 |
+| [perf-hotpath-roadmap-2026-06.md](./guides/perf-hotpath-roadmap-2026-06.md) | 2026-06 C Core / Zend境界 最適化issue群の進め方(順序・依存・検証ゲート) |
 
 ## Verification
 
