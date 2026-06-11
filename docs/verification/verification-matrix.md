@@ -53,12 +53,12 @@ Legend:
 
 | Area | Current status | Follow-up owner |
 |---|---|---|
-| Server-streaming GOAWAY / EOF matrix | `024-control-semantics` で間接的にcovered。ただしunaryほど明示的ではない | `docs/issues/open/2026-05-31-exemplar-test-discoverability-and-gates.md` |
+| Server-streaming GOAWAY / EOF matrix | `024-control-semantics` で間接的にcovered。ただしunaryほど明示的ではない | `docs/issues/closed/2026-05-31-exemplar-test-discoverability-and-gates.md` |
 | DNS resolution中のdeadline | 現在のconnect/read/write/TLS deadline挙動はcovered。blocking resolverの挙動は既知の設計上の注意点として、別途document化または再設計する | future transport behavior issue |
 | TLS hostname mismatch / authority override end-to-end | input validationはあるが、end-to-endのpositive/negative matrixは薄い | future TLS compatibility issue |
-| Slow-consumer memory gate | diagnostic scriptはあるが、gateかmeasurement-onlyかの扱いを明確にする必要がある | `docs/issues/open/2026-05-31-exemplar-test-discoverability-and-gates.md` |
-| Lifecycle FD/RSS thresholds | release scriptはlifecycle checkを実行するが、threshold enforcementの扱いを明確にする必要がある | `docs/issues/open/2026-05-31-exemplar-test-discoverability-and-gates.md` |
-| `grpc_call` field ownership | behavior testではcoveredだが、field mapとしては未文書化 | `docs/issues/open/2026-05-31-exemplar-grpc-call-exchange-state-map.md` |
+| Slow-consumer memory gate | measurement-onlyとして扱う。gate化する場合は閾値を先にissueへ記録する(`docs/verification/release-qa-checklist.md`) | `docs/issues/closed/2026-05-31-exemplar-test-discoverability-and-gates.md` |
+| Lifecycle FD/RSS thresholds | FD/RSSは観測値として記録する。threshold enforcement追加は環境依存を評価してから別issueで行う(`docs/verification/release-qa-checklist.md`) | `docs/issues/closed/2026-05-31-exemplar-test-discoverability-and-gates.md` |
+| `grpc_call` field ownership | field mapは `docs/design/grpc-call-exchange-state.md` に文書化済み | `docs/issues/closed/2026-05-31-exemplar-grpc-call-exchange-state-map.md` |
 | Protocol classification vs transport action | behaviorとしてはcovered。責務境界は `docs/design/protocol-classification-boundary.md` に文書化済み | future runtime refactor issue if needed |
 
 ## Gate mapping

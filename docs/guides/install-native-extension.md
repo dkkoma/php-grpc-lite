@@ -6,10 +6,10 @@
 
 ## Install model
 
-- PHP classes: 高レベル wrapper は公式 `grpc/grpc` Composer package が提供する。このpackage自体はComposer autoload用runtime codeを提供しない。
+- PHP classes: 高レベル wrapper は公式 `grpc/grpc` Composer package が提供する。このrepository packageは `Grpc\*` runtime codeを提供せず、autoload対象は任意利用の `GrpcLite\OpenTelemetry\*` helper(`support/php/GrpcLite/`)のみ。
 - Native extension: このrepository package自体を `type: php-ext` としてPIEでbuild/installする。sourceはrepository rootに置く。
 - Runtime transport: HTTP/2 transportのみ。release readiness is still gated by C extension memory/lifecycle QA.
-- Composer metadata: root package は `type: php-ext`、`php-ext.extension-name: grpc`、`php-ext.build-path: .` を持つ。Composer libraryとしてautoloadされるruntime codeは提供しない。
+- Composer metadata: root package は `type: php-ext`、`php-ext.extension-name: grpc`、`php-ext.build-path: .` を持つ。`Grpc\*` 名前空間のruntime codeはComposer libraryとして提供しない。
 - PIE packaging: `pie install dkkoma/php-grpc-lite` を主install経路にする。PIEは `phpize` / `./configure` / `make` / `make install` を実行する。
 - Rollback:
   - 公式 `ext-grpc` へ戻す場合は、このextensionの `extension=grpc` を無効化し、公式側の `grpc.so` を有効化する。

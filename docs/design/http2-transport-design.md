@@ -116,7 +116,7 @@ Requirements:
 ## Channel Lifetime
 
 - Channel identityからC側persistent connection cache keyを作る。
-- HTTP/2 session/socketはC extensionのprocess-local / thread-local cacheに保持する。
+- HTTP/2 session/socketはC extensionのprocess-local / thread-local cacheに保持する。cache entry数の上限は128で、満杯時に新規接続が必要なRPCはエラーにする。
 - PHP userlandではchannel resource/socket/sessionを保持しない。
 - socket/TLS/nghttp2 session errorやEOFなどのconnection failureはC側persistent connectionをdead扱いにし、次RPCで新規接続する。
 - message size超過、metadata size超過、unsupported compression、malformed gRPC frame、invalid content-type、明示cancelなどのstream-local failureは該当streamを閉じ、connectionがusableなら次RPCで再利用する。
@@ -169,7 +169,7 @@ HTTP/2 resourceの所有権はC extension側に閉じる。`grpc_call` per-call 
 
 response message sizeは `grpc.max_receive_message_length` で制御する。channel optionを基本とし、call optionで上書きできる。未指定時は64MiBを上限にし、`-1` は上限なしとして扱う。上限超過は `STATUS_RESOURCE_EXHAUSTED` として返し、unary pathではbody集約前にgRPC frame headerを検査して過大messageを捨てる。
 
-response metadata sizeは `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` channel optionで制御する。未指定時のhard limitは64KiB。超過時は `STATUS_RESOURCE_EXHAUSTED` とし、該当streamをcancelする。
+response metadata sizeは `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` channel optionで制御する。未指定時のhard limitは64KiB。byte上限とは別にresponse metadata entry数の固定上限128を持つ。超過時は `STATUS_RESOURCE_EXHAUSTED` とし、該当streamをcancelする。
 
 response metadataは、公式ext-grpc PHP surfaceとの互換性を優先し、`content-type`、`grpc-status`、`grpc-message` などのprotocol-owned response headers/trailersもPHP metadata mapへ残す。request側は別方針で、library-owned headersをuser metadataから送信させない。
 

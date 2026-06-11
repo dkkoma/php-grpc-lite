@@ -197,6 +197,10 @@ PHP object自体はsocketを持ちません。HTTP/2 session/socketのpersistent
 
 window size は `65535` 未満ならHTTP/2 defaultへ丸め、HTTP/2上限を超える値は上限へ丸めます。read-ahead上限は0以下ならdefaultへ戻します。
 
+INI / channel optionとは別の固定上限が `src/transport_core.h` にあります。user request metadataは256 values(`GRPC_LITE_MAX_REQUEST_METADATA_VALUES`、超過は例外)、response metadataは128 entries(`GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES`、超過は `RESOURCE_EXHAUSTED`)、persistent connection cacheは128 connections(`GRPC_LITE_MAX_PERSISTENT_CONNECTIONS`)です。
+
+診断用に、環境変数 `GRPC_LITE_TRACE_FILE` を指定するとRPC完了recordを指定fileへ追記します(`tests/phpt/029-trace-file.phpt`)。
+
 ## 5. `Grpc\Call::startBatch()`
 
 official wrapperは ext-grpc と同じbatch operationで拡張を呼びます。
@@ -241,7 +245,7 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 
 `Grpc\Channel` はtarget、credentials、channel optionsから再利用keyを作るidentity元です。cache entryはこのidentityと `h2_connection` を束ね、`h2_connection` はsocket/TLS/nghttp2 sessionなどwire transport状態だけを持ちます。
 
-再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。connectionがdead/draining、またはcache entryのidentity mismatchの場合はcacheから外し、次RPCで新規接続します。active streamが残っていても、HTTP/2 stream idごとにdispatchできるため同じconnection上へ新しいstreamを作れます。
+再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。connectionがdead/draining、またはcache entryのidentity mismatchの場合はcacheから外し、次RPCで新規接続します。cache entry数は128(`GRPC_LITE_MAX_PERSISTENT_CONNECTIONS`)が上限で、満杯時に新規接続が必要なRPCはエラーになります。active streamが残っていても、HTTP/2 stream idごとにdispatchできるため同じconnection上へ新しいstreamを作れます。
 
 ## 8. 主要テスト
 

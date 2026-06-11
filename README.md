@@ -91,12 +91,6 @@ docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/b
 
 GitHub Actions `Native QA` runs purpose-specific jobs on push and pull request: `Static analysis`, `NTS PHPT + C coverage`, `ZTS PHPT`, and `Crash/UB check`. Coverage is uploaded as a workflow artifact and to Codecov from `var/coverage/c-lcov/codecov.info`; configure `CODECOV_TOKEN` unless the Codecov repository setting allows tokenless public uploads.
 
-Run static analysis for the C extension:
-
-```bash
-./tools/test/check-c-static-analysis.sh
-```
-
 Build/load the source-built grpc extension in Docker:
 
 ```bash

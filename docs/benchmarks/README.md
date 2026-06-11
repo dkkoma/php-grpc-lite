@@ -68,7 +68,13 @@ docker compose run --rm -e BENCH_OTEL_RUN_ID=local-otel dev php \
 - Spanner emulator は実機互換検証には使うが、transport寄りの性能比較では Go test-server の `spanner-shape` を優先する。
 - cold と warm を混ぜない。request 内で Channel を再利用できる workload は warm、request ごとに 1 RPC の workload は cold を参照する。
 
-## 記録済みの比較
+## 記録済みの計測
 
-- [Benchmark preliminary comparison 2026-04-28](./benchmark-preliminary-comparison-2026-04-28.md)
-- [Benchmark decision comparison 2026-04-29](./benchmark-decision-comparison-2026-04-29.md)
+最新の代表結果(root `README.md` の performance snapshot の根拠):
+
+- [spanner-shape-2026-05-14.md](./spanner-shape-2026-05-14.md)
+- [spanner-real-client-2026-05-14.md](./spanner-real-client-2026-05-14.md)
+- [native-major-2026-05-05.md](./native-major-2026-05-05.md)
+- [native-hardening-2026-05-06.md](./native-hardening-2026-05-06.md)
+
+それ以前の計測・比較は本ディレクトリに日付付きで残している。旧runner時代の記録(baseline / JSON/TSV運用)は履歴資料として扱う。
