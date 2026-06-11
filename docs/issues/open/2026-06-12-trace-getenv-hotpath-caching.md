@@ -66,6 +66,17 @@ static const char *grpc_lite_trace_file_path(void)
 
 ## Progress
 
+- 2026-06-12: 実装完了。`transport.c` の `grpc_lite_trace_file_path()` / `grpc_lite_trace_wire_bytes_enabled()` を初回呼び出し時キャッシュ化(static 変数、ZTS の初回競合は同一値書き込みのみで無害)。`grpc_lite_trace_file_path()` を非 static 化して `transport.h` で公開し、`wrapper_adapter.c` の `grpc_lite_trace_enabled()` / `grpc_lite_trace_record_call()` の getenv 直呼び重複実装を共有に置き換え。これで trace 無効時の hot path から getenv() が消えた(初回 1 回のみ)。
+
 ## Verification
 
+- PHPT 15/15 PASS(trace 有効経路の 029-trace-file 含む)。
+- C unit 3 suite PASS、静的解析 PASS、PHPUnit 統合 30 tests / 109 assertions PASS。
+- ベンチ before(`main-baseline-20260612`)/ after(`trace-getenv-after-20260612`)、cpu_us/call と wall_us/call:
+  - cpu-micro tiny_unary_0b: 10.4/31.4 → 10.0/30.8、small_unary_100b: 9.5/27.7 → 10.1/30.8
+  - tls-cpu-micro tiny_unary_0b: 12.3/34.8 → 12.1/36.0、small_unary_100b: 11.8/32.7 → 11.4/33.3
+  - spanner-shape p50: begin_txn 29.0→29.6 / commit_txn 24.8→26.1 / select_1row 24.1→26.5(揺れ幅内)
+
 ## Decision Log
+
+- 2026-06-12: **採用**。計測上の改善はノイズ床以下(getenv は 1 call あたり数回 × ~100ns 程度で、run 間揺れ ±1〜3µs に埋もれる)。ただし本 issue の主目的である「trace 無効 production 経路からの environ 線形探索排除」「ZTS での getenv 呼び出し削減」「後続ベンチのノイズ要因除去」はコード上達成されており、分岐追加もなく複雑性増がほぼゼロのため、性能 issue ではなく hot path 衛生として採用する。悪化がないことは cpu-micro / spanner-shape で確認済み。

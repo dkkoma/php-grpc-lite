@@ -49,7 +49,6 @@ h2_connection *create_h2_connection(const char *host, zend_long port, const char
 h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
 void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
-static const char *grpc_lite_trace_file_path(void);
 static bool grpc_lite_trace_wire_bytes_enabled(void);
 static void grpc_lite_trace_json_string(FILE *fp, const char *bytes, size_t len);
 static void grpc_lite_trace_hex(FILE *fp, const uint8_t *bytes, size_t len);
@@ -348,18 +347,32 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
     return 0;
 }
 
-static const char *grpc_lite_trace_file_path(void)
+const char *grpc_lite_trace_file_path(void)
 {
-    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
-    const char *path = getenv("GRPC_LITE_TRACE_FILE");
-    return path != NULL && path[0] != '\0' ? path : NULL;
+    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config.
+     * Cached on first use so the disabled hot path never re-walks environ; a
+     * first-read race in ZTS just stores the same value twice. */
+    static const char *cached_path;
+    static bool cached;
+    if (!cached) {
+        const char *path = getenv("GRPC_LITE_TRACE_FILE");
+        cached_path = (path != NULL && path[0] != '\0') ? path : NULL;
+        cached = true;
+    }
+    return cached_path;
 }
 
 static bool grpc_lite_trace_wire_bytes_enabled(void)
 {
     /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
-    const char *value = getenv("GRPC_LITE_TRACE_WIRE_BYTES");
-    return value != NULL && value[0] != '\0' && value[0] != '0';
+    static bool cached_enabled;
+    static bool cached;
+    if (!cached) {
+        const char *value = getenv("GRPC_LITE_TRACE_WIRE_BYTES");
+        cached_enabled = value != NULL && value[0] != '\0' && value[0] != '0';
+        cached = true;
+    }
+    return cached_enabled;
 }
 
 static void grpc_lite_trace_json_string(FILE *fp, const char *bytes, size_t len)

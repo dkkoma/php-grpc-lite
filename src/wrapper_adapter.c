@@ -147,15 +147,12 @@ PHP_METHOD(Call, startBatch)
 
 static bool grpc_lite_trace_enabled(void)
 {
-    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
-    const char *path = getenv("GRPC_LITE_TRACE_FILE");
-    return path != NULL && path[0] != '\0';
+    return grpc_lite_trace_file_path() != NULL;
 }
 
 static void grpc_lite_trace_record_call(grpc_lite_call_obj *call, const char *event, const char *kind, int status_code, size_t request_bytes, size_t response_bytes, int persistent_reused)
 {
-    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
-    const char *path = getenv("GRPC_LITE_TRACE_FILE");
+    const char *path = grpc_lite_trace_file_path();
     FILE *fp;
     uint64_t now_us;
     uint64_t elapsed_us = 0;
