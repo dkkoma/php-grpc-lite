@@ -45,6 +45,15 @@
   - `./bench/run.sh upload-unary` / `tls-upload-unary`(送信 payload sweep、1KB〜4MB)
 - `GRPC_LITE_TRACE_FILE` で `wire.tls_read` / `wire.tls_write` / `wire.socket_write` 件数を 1 RPC あたりで記録しておく(syscall 削減系 #3/#4/#5 の before/after に使う)。
 
+#### Phase 0 実施記録 (2026-06-12)
+
+- run id: `BENCH_TAG=main-baseline-20260612`(7 suite すべて同一 run id で otelop に保存済み)。
+- 注意: upload-unary / tls-upload-unary の 4MB は test-server の gRPC default 受信上限 (4MB) に当たって失敗したため、test-server に `grpc.MaxRecvMsgSize(64MB)` を入れて再計測した(コミット済み)。**以後の before/after もこの test-server 構成で揃えること。**
+- 代表値 (span_p50_us): cpu-micro tiny_unary_0b=31.4 / small_unary_100b=27.7、tls-cpu-micro tiny_unary_0b=34.8 / small_unary_100b=32.7、payload-unary 1MB=554.4 / 4MB=2233.2、tls-payload-unary 1MB=800.1 / 4MB=3248.2、upload-unary 1MB=444.3 / 4MB=2010.2、tls-upload-unary 1MB=869.2 / 4MB=3460.6。
+- trace I/O 件数 (`./tools/benchmark/trace-io-probe.sh 10 1048576`、10 RPC 合計、1MB):
+  - 受信: `wire.socket_read`=662(平文) / `wire.tls_read`=666(TLS) → 約 66 read/RPC
+  - 送信: `wire.socket_write`=692(平文) / `wire.tls_write`=685(TLS) → 約 69 write/RPC
+
 ### Phase 1: 低リスク・独立(まとめて進めて良い)
 
 1. **#1 trace-getenv** — 純粋な固定費削減。後続フェーズの計測ノイズも減るため最初。
