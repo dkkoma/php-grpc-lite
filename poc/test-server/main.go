@@ -372,7 +372,12 @@ func newServer(extraOptions ...grpc.ServerOption) *grpc.Server {
 }
 
 func benchGrpcServerOptionsFromEnv() []grpc.ServerOption {
-	var options []grpc.ServerOption
+	// upload sweep (BenchRequest.request_payload) は 4MB payload + proto framing で
+	// gRPC default の 4MB 受信上限を超えるため、上限を広げておく。
+	options := []grpc.ServerOption{grpc.MaxRecvMsgSize(64 << 20)}
+	if value, ok := envInt("TEST_SERVER_GRPC_MAX_RECV_MSG_SIZE"); ok {
+		options = append(options, grpc.MaxRecvMsgSize(value))
+	}
 	if value, ok := envInt("TEST_SERVER_GRPC_INITIAL_WINDOW_SIZE"); ok {
 		options = append(options, grpc.InitialWindowSize(int32(value)))
 	}
