@@ -61,7 +61,6 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     h2_request_headers request_headers = {0};
     int rv;
     zend_long remaining_timeout_us;
-    char recv_buf[16384];
     grpc_lite_status_result status_result;
     if (!connection_usable(connection)) {
         zend_throw_exception(NULL, "invalid grpc_lite connection", 0);
@@ -146,8 +145,9 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
 
     while (!call.stream_closed) {
         ssize_t nread;
+        uint8_t *recv_buf = h2_connection_recv_scratch(connection);
         connection->current_io_call = &call;
-        nread = connection_recv(connection, (uint8_t *) recv_buf, sizeof(recv_buf), call.deadline_abs_us);
+        nread = connection_recv(connection, recv_buf, connection->recv_scratch_len, call.deadline_abs_us);
         connection->current_io_call = NULL;
         if (nread <= 0) {
             bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && call.deadline_abs_us > 0;
@@ -165,7 +165,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             break;
         }
         connection->current_read_call = &call;
-        rv = nghttp2_session_mem_recv(connection->session, (const uint8_t *) recv_buf, (size_t) nread);
+        rv = nghttp2_session_mem_recv(connection->session, recv_buf, (size_t) nread);
         connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(connection, rv);

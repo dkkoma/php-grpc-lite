@@ -11,7 +11,7 @@
  * module registration stay in main.c.
  */
 
-#define GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE 4096
+#define GRPC_LITE_RECV_SCRATCH_SIZE 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
 
@@ -162,6 +162,19 @@ static void unregister_grpc_call_stream(grpc_call *call)
     }
 }
 
+uint8_t *h2_connection_recv_scratch(h2_connection *connection)
+{
+    /* Shared receive scratch for unary / server streaming / preflight drain.
+     * A connection runs at most one receive loop at a time (single
+     * current_read_call), so sharing is race-free. Lazily allocated once per
+     * connection; persistent connections keep it for their lifetime. */
+    if (connection->recv_scratch == NULL) {
+        connection->recv_scratch = pemalloc(GRPC_LITE_RECV_SCRATCH_SIZE, connection->persistent);
+        connection->recv_scratch_len = GRPC_LITE_RECV_SCRATCH_SIZE;
+    }
+    return connection->recv_scratch;
+}
+
 void destroy_h2_connection(h2_connection *connection)
 {
     if (connection == NULL) {
@@ -179,6 +192,9 @@ void destroy_h2_connection(h2_connection *connection)
     }
     if (connection->write_buffer != NULL) {
         pefree(connection->write_buffer, connection->persistent);
+    }
+    if (connection->recv_scratch != NULL) {
+        pefree(connection->recv_scratch, connection->persistent);
     }
     if (connection->session != NULL) {
         nghttp2_session_del(connection->session);
@@ -321,9 +337,6 @@ void destroy_server_streaming_call_state(server_streaming_call_state *state)
         zend_string_release(state->path);
     }
 #endif
-    if (state->recv_buf != NULL) {
-        efree(state->recv_buf);
-    }
     cleanup_grpc_call(&state->call);
     efree(state);
 }
@@ -848,7 +861,8 @@ bool connection_entry_matches_key(persistent_connection_entry *entry, const char
 
 static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us)
 {
-    uint8_t buffer[GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE];
+    uint8_t *buffer;
+    size_t buffer_len;
     size_t total_read = 0;
     size_t iterations = 0;
     bool reached_read_boundary = false;
@@ -856,19 +870,21 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
     if (!connection_usable(connection)) {
         return false;
     }
+    buffer = h2_connection_recv_scratch(connection);
+    buffer_len = connection->recv_scratch_len;
 
     while (iterations < GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS && total_read < GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES) {
         ssize_t nread;
         iterations++;
 
         if (connection->ssl != NULL) {
-            int ssl_read = SSL_read(connection->ssl, buffer, sizeof(buffer));
+            int ssl_read = SSL_read(connection->ssl, buffer, (int) buffer_len);
             if (ssl_read > 0) {
                 nread = ssl_read;
-                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read", sizeof(buffer), nread, 0, 0);
+                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read", buffer_len, nread, 0, 0);
             } else {
                 int ssl_error = SSL_get_error(connection->ssl, ssl_read);
-                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read_retry", sizeof(buffer), ssl_read, ssl_error, 0);
+                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read_retry", buffer_len, ssl_read, ssl_error, 0);
                 connection->last_ssl_error = ssl_error;
                 if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
                     reached_read_boundary = true;
@@ -884,7 +900,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
                 return false;
             }
         } else {
-            nread = recv(connection->fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+            nread = recv(connection->fd, buffer, buffer_len, MSG_DONTWAIT);
             if (nread == 0) {
                 set_connection_error_detail(connection, "persistent connection closed by peer before reuse");
                 mark_connection_dead(connection, 0);
@@ -898,7 +914,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
                 mark_connection_dead(connection, errno);
                 return false;
             }
-            grpc_lite_trace_transport_io(connection, "wire.socket_preflight_read", sizeof(buffer), nread, 0, 0);
+            grpc_lite_trace_transport_io(connection, "wire.socket_preflight_read", buffer_len, nread, 0, 0);
         }
 
         total_read += (size_t) nread;
