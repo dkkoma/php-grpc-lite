@@ -133,4 +133,4 @@ runtime codeを変更する場合の最低gate:
 
 docs-onlyの棚卸しではruntime benchmarkは不要である。
 
-Runtime refactorは `docs/issues/open/2026-05-31-protocol-classification-runtime-boundary-refactor.md` で扱う。
+Runtime refactor(`RST_STREAM` submit helper集約)は `docs/issues/closed/2026-05-31-protocol-classification-runtime-boundary-refactor.md` で検討し、不採用にした。runtime codeは現状の直接呼び出しを維持する。

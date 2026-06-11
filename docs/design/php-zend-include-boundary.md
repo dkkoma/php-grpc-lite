@@ -81,11 +81,11 @@
 
 PHP/Zend型をcore helperのsignatureから外す。挙動は変えないが、呼び出し側のcastやunit testを更新する。
 
-候補:
+状況:
 
-- `transport_core.h` の `zend_long` を `int64_t` などの内部scalarへ置き換える。
-- production用途がなくなった `hash_bytes()` を削除できるか判断する。
-- PHP INI / user optionsはsurfaceやmodule boundaryで受け取り、transport policy helperへ渡す前にC scalarへ変換する。
+- `transport_core.h` の `zend_long` は `int64_t` への置き換え済み。
+- production用途がなくなった `hash_bytes()` は削除済み。
+- PHP INI / user optionsはsurfaceやmodule boundaryで受け取り、transport policy helperへ渡す前にC scalarへ変換する方針を維持する。
 
 これはC/PHP boundaryとして重要だが、signature変更を伴う。C unitを主gateにし、PHPTでsurface互換性を確認する。hot pathの関数境界を増やさない限りbenchmarkは不要。
 
@@ -160,7 +160,7 @@ PHP/Zend boundaryから外したいfile/groupは次の通り。
 
 `common.h` に新しいdomain-specific struct、transport policy constant、diagnostic-only symbol、nghttp2 callbackやTLS helper専用のincludeを追加しない。PHP/Zend型だけが必要なheaderも、`common.h` ではなく `php.h` や必要なZend headerを直接読む。
 
-gRPC status codeとbatch op constantsは `src/grpc_constants.h` に分ける。これは `common.h` のPHP/Zend依存を外す前段の足場であり、これだけで `status_core.c` やexchange stateがpure Cになるわけではない。
+gRPC status codeとbatch op constantsは `src/grpc_constants.h` に分離済み。これは `common.h` のPHP/Zend依存を外す前段の足場であり、これだけで `status_core.c` やexchange stateがpure Cになるわけではない。
 
 ## Approach Order
 

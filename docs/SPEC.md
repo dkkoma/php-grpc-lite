@@ -115,6 +115,8 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 
 #### 互換シンボル分類(調査結果反映後)
 
+以下はdrop-in互換として満たすべきsurfaceの一覧。各シンボルをextension / Composer libraryのどちらが提供するかは §5.4 を参照。
+
 | 種別 | シンボル | 互換必須度 | 備考 |
 |---|---|---|---|
 | Stub 基底 | `Grpc\BaseStub` | 必須 | 4 protected メソッド: `_simpleRequest`, `_serverStreamRequest`, `_clientStreamRequest`, `_bidiRequest`(後 2 つは Phase 0 では未対応エラーで可) |
@@ -168,7 +170,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 - 配布: PIE経由
   - root package自体を `type: php-ext` とし、`pie install dkkoma/php-grpc-lite` で `grpc.so` をbuild/installする。
   - `php-ext.extension-name` は `grpc`、`php-ext.build-path` は `.`。
-  - 高レベル `Grpc\*` wrapper は公式 `grpc/grpc` Composer packageをアプリ側で導入する。このrepository packageはComposer libraryとしてautoloadされるruntime codeを提供しない。
+  - 高レベル `Grpc\*` wrapper は公式 `grpc/grpc` Composer packageをアプリ側で導入する。このrepository packageは `Grpc\*` 名前空間のruntime codeをComposer libraryとして提供しない。autoload対象は任意利用のOpenTelemetry trace context helper(`GrpcLite\OpenTelemetry\*`、`support/php/GrpcLite/`)のみ。
   - first releaseはsource buildを基本にし、pre-packaged binary配布はCI matrixとrelease artifact整備後に判断する。
 - 公式 `ext-grpc` 比較用artifact:
   - 通常のbench / diagnostic imageでは `pecl install grpc` を実行せず、`ghcr.io/dkkoma/ext-grpc-artifacts:<grpc-version>-php<php-version>-<distro>-<arch>-<profile>` から `/artifacts/grpc.so` をCOPYして使う。
@@ -216,13 +218,13 @@ C layout refactorはbehavioral compatibilityを変えない。status taxonomy、
 
 - [x] ~~`google/gax` から呼ばれる `Grpc\` API の正確な一覧化~~ → `docs/design/api-surface.md` で完了(2026-04-25)
 - [x] ~~`Grpc\CallCredentials::createFromPlugin()` の正確な仕様確認(api-surface.md §5)~~ → official wrapperの `call_credentials_callback` から `Grpc\Call::setCredentials()` 経由でmetadataを生成する。
-- [ ] generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)
+- [x] ~~generated stub(`*GrpcClient.php`)の典型実装の確認(`protoc-gen-php-grpc` 出力例)~~ → `tests/Integration/Fixtures/GreeterClient.php` を `protoc-gen-php-grpc` 出力相当のfixtureとして整備し、`BaseStub` protected helperへの委譲形を確認済み
 - [x] ~~`ServerStreamingCall::responses()` Generator の実装戦略~~ → HTTP/2 stream resourceをGeneratorがpullし、message単位でyieldする。slow consumer時はread/WINDOW_UPDATE進行を抑え、stream resource destructor / `cancel()` で `RST_STREAM(CANCEL)` を送る。
-- [ ] テスト用 gRPC サーバーの選定(Go の helloworld を `compose.yaml` に並べる案が有力)
-- [ ] ベンチマーク手法とターゲット環境(計測対象、繰り返し回数、コンパレータ)
+- [x] ~~テスト用 gRPC サーバーの選定~~ → Go test-server(`poc/test-server/main.go`)を `compose.yaml` に常設し、raw lifecycle fixtureも同居させた。詳細は `docs/verification/test-fixtures.md`
+- [x] ~~ベンチマーク手法とターゲット環境(計測対象、繰り返し回数、コンパレータ)~~ → `bench/` runner + OTEL span一次ソースの運用に確定。詳細は `docs/benchmarks/README.md`
 - [ ] Persistent channel pool の互換要件(ext-grpc は `grpc.use_local_subchannel_pool` 等の INI で制御)
-- [ ] マルチアーキテクチャ対応(arm64 / amd64)
-- [ ] エラーログ/デバッグ出力の方式
+- [x] ~~マルチアーキテクチャ対応(arm64 / amd64)~~ → release prebuilt artifactをamd64 / arm64両方で生成する(`docs/guides/install-native-extension.md`)
+- [x] ~~エラーログ/デバッグ出力の方式~~ → 環境変数 `GRPC_LITE_TRACE_FILE` 指定時にRPC完了recordをtrace fileへ出力する(`tests/phpt/029-trace-file.phpt`)。それ以外の常時ログは持たない
 - [x] ~~trailers-only error response の扱い(`grpc-status` が body 前 header block に来るケース)~~ → body 前でも `grpc-status` / `grpc-message` / `grpc-status-details-bin` は trailing status metadata として扱う(2026-04-27)
 - [x] ~~`grpc-message` の percent decode~~ → status details へ入れる前に `rawurldecode()` する(2026-04-27)
 - [x] ~~HTTP status / `content-type: application/grpc` validation~~ → `grpc-status` が無い非 gRPC 応答は HTTP status から gRPC status を合成し、HTTP 200 でも `content-type` が `application/grpc` でなければ `STATUS_UNKNOWN` とする(2026-04-28)
@@ -237,11 +239,11 @@ gRPC metadata は同一 key に複数 values を持てる。php-grpc-lite の PH
 
 2026-05-04 の観測では、公式 ext-grpc PHP API は同一 key 複数 values の最後 value のみを返した。これは gRPC Core / HTTP/2 metadata semantics ではなく PHP extension surface の情報落ちとして扱う。drop-in 互換のために php-grpc-lite 側で metadata values を最後値へ畳む処理は入れない。
 
-response metadata size は `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` channel optionで制御する。未指定時のphp-grpc-lite既定hard limitは64KiB。`grpc.absolute_max_metadata_size` があればそれをhard limitとし、soft limitのみ指定された場合は公式gRPC Coreと同じく `max(16KiB, soft * 1.25)` をhard limitとして扱う。超過時は `RESOURCE_EXHAUSTED` を返し、該当streamはcancelする。
+response metadata size は `grpc.max_metadata_size` / `grpc.absolute_max_metadata_size` channel optionで制御する。未指定時のphp-grpc-lite既定hard limitは64KiB。`grpc.absolute_max_metadata_size` があればそれをhard limitとし、soft limitのみ指定された場合は公式gRPC Coreと同じく `max(16KiB, soft * 1.25)` をhard limitとして扱う。byte上限とは別に、response metadata entry数は固定上限128 entries(`GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES`)を持つ。いずれも超過時は `RESOURCE_EXHAUSTED` を返し、該当streamはcancelする。
 
 ### 6.2 Request metadata control policy
 
-request metadata は transport へ渡す前に共通正規化する。key は lowercase に寄せ、HTTP/2 pseudo header(`:*`)・space入り key・non-ASCII key・HTTP/2/gRPC metadata key範囲外の key は `InvalidArgumentException` で拒否する。ASCII metadata value は CR/LF と non-ASCII を拒否する。`*-bin` metadata value は PHP API 上 raw binary として受け付け、wire では base64 化する。
+request metadata は transport へ渡す前に共通正規化する。key は lowercase に寄せ、HTTP/2 pseudo header(`:*`)・space入り key・non-ASCII key・HTTP/2/gRPC metadata key範囲外の key は例外(`Exception`)で拒否する。ASCII metadata value は CR/LF と non-ASCII を拒否する。`*-bin` metadata value は PHP API 上 raw binary として受け付け、wire では base64 化する。user request metadata の value 総数は固定上限256 values(`GRPC_LITE_MAX_REQUEST_METADATA_VALUES`)とし、超過は例外で拒否する。
 
 `content-type`、`te`、`user-agent`、`grpc-status`、`grpc-message`、`grpc-status-details-bin`、`grpc-timeout`、`grpc-encoding`、`grpc-accept-encoding` は library-owned metadata とし、user metadata からは送信しない。`grpc-timeout` は call option `timeout` からのみ生成し、`user-agent` は channel option `grpc.primary_user_agent` からのみ生成する。
 
@@ -251,6 +253,7 @@ request metadata は transport へ渡す前に共通正規化する。key は lo
 
 ## 変更履歴
 
+- **2026-06-11**: ドキュメント棚卸し。Composer autoload対象(任意利用の `GrpcLite\OpenTelemetry` helper)の記述を実態へ修正。解決済みの未決事項(test server選定、ベンチ手法、マルチアーキテクチャ、デバッグ出力、generated stub確認)を整理。request metadata 256 values / response metadata 128 entries / persistent connection cache 128 の固定上限を明文化。
 - **2026-05-31**: C extension architecture policyを追加。root extension layout、translation unit/source list、internal header/public include境界、diagnostic build境界、transport/TLS setup分離、hot path変更時のbenchmark要件を明記。
 - **2026-04-25**: 初版作成。目的・スコープ・段階戦略・TLS/HTTP/2 方針・API 互換目標・開発環境を確定。
 - **2026-04-25**: Dockerfile および compose.yaml を追加。開発環境セクションに起動方法と同梱ツールを追記。

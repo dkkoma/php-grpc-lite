@@ -31,7 +31,7 @@ HTTP/2 transportをdrop-in release defaultにする前に満たす条件:
 - HTTP/2 resource lifecycleが整理され、stream resource destructor、unary failure path、persistent connection busy状態の代表条件と100 iteration stressを検証済み。production packaging後のC extension memory checkerはrelease hardeningで扱う。
 - small SELECT代表形状、特に1 messageの `1x1KiB` / `1x4KiB` / `1x10KiB` server streamingで、ext-grpc同等または優位のp50/p99とthroughputを示せる。
 
-PHP userland codeはComposerで導入し、source-built grpc extensionはこのrepositoryの `ext/grpc/` をclone後にsource buildする。Composer install時にsource-built grpc extensionを自動buildしない。extension未導入環境で黙って別transportへfallbackして動かすのではなく、install/load段階で `extension_loaded('grpc')` を確認する。
+PHP userland codeはComposerで導入し、source-built grpc extensionはこのrepositoryをclone後にrepository rootでsource buildする。Composer install時にsource-built grpc extensionを自動buildしない。extension未導入環境で黙って別transportへfallbackして動かすのではなく、install/load段階で `extension_loaded('grpc')` を確認する。
 
 release QA の判定表は `docs/verification/release-qa-checklist.md` に集約する。
 
