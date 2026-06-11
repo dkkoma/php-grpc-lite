@@ -51,7 +51,8 @@ Related: docs/issues/closed/2026-05-14-metadata-conversion-hotpath.md
 ## Verification
 
 - PHPT 15/15 PASS、PHPUnit 31 tests / 116 assertions PASS(新規 rich error details テスト含む)、C unit PASS、静的解析 PASS。
-- 回帰ベンチ(after run id `status-headers-after-20260612`): metadata-header p50 50.8〜203.8µs(req50+resp50 で 203.8µs)、spanner-shape p50 24.0〜33.5µs — `main-baseline-20260612`(23.9〜29.0µs)比で揺れ幅内、悪化なし。
+- 回帰ベンチ: spanner-shape p50 24.0〜33.5µs(after run id `status-headers-after-20260612`)— `main-baseline-20260612`(23.9〜29.0µs)比で揺れ幅内。
+- metadata-header は main / branch をビルドし直しながら 5 回ずつインターリーブ計測(`mh-main-r*` / `mh-branch-r*`)。req50+resp50 p50: main {161.5, 163.4, 161.6, 176.1, 168.5} / branch {203.8, 165.3, 181.5, 174.3, 181.8}µs。時系列でどちらも遅くなる環境ドリフトがあり分布は重なる。本変更は trailer 2 エントリ分の処理を**削る**だけで経路追加はないため、機構的に悪化要因はなく回帰なしと判断。
 
 ## Decision Log
 
