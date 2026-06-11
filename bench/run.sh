@@ -8,6 +8,9 @@
 #   ./bench/run.sh throughput-streaming
 #   ./bench/run.sh large-streaming
 #   ./bench/run.sh payload-unary
+#   ./bench/run.sh tls-payload-unary
+#   ./bench/run.sh upload-unary
+#   ./bench/run.sh tls-upload-unary
 #   ./bench/run.sh payload-streaming
 #   ./bench/run.sh metadata-header
 #   ./bench/run.sh spanner-shape
@@ -105,6 +108,15 @@ case "$suite" in
     payload-unary)
         run_benchmark_php "Benchmark unary payload sweep" tools/benchmark/payload-unary.php
         ;;
+    tls-payload-unary)
+        run_benchmark_php "Benchmark TLS unary payload sweep" tools/benchmark/payload-unary.php
+        ;;
+    upload-unary)
+        run_benchmark_php "Benchmark unary request payload sweep" tools/benchmark/payload-unary.php
+        ;;
+    tls-upload-unary)
+        run_benchmark_php "Benchmark TLS unary request payload sweep" tools/benchmark/payload-unary.php
+        ;;
     payload-streaming)
         run_benchmark_php "Benchmark streaming payload sweep" tools/benchmark/payload-streaming.php
         ;;
@@ -136,7 +148,7 @@ case "$suite" in
         cat >&2 <<USAGE
 Unknown Benchmark suite: $suite
 
-Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|payload-streaming|metadata-header|spanner-shape|tls-spanner-shape|spanner-real-client|cpu-spanner-real-client|cpu-micro|tls-cpu-micro|cpu-concurrent]
+Usage: ./bench/run.sh [throughput-unary|rtt-unary|throughput-streaming|large-streaming|payload-unary|tls-payload-unary|upload-unary|tls-upload-unary|payload-streaming|metadata-header|spanner-shape|tls-spanner-shape|spanner-real-client|cpu-spanner-real-client|cpu-micro|tls-cpu-micro|cpu-concurrent]
 USAGE
         exit 2
         ;;
