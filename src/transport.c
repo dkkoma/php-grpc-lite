@@ -1831,6 +1831,14 @@ ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, u
     return (ssize_t) to_send;
 }
 
+/* Lifetime invariant: source->ptr is the grpc_call that owns the request
+ * bytes (unary: stack frame of the perform function; streaming:
+ * state->request zend_string). Every path that lets the call struct go away
+ * first ensures either the stream is closed (nghttp2 has detached the
+ * outbound DATA item) or the connection is dead/draining (nghttp2_session_send
+ * is never called again and nghttp2_session_del invokes no send callbacks),
+ * so this callback can never fire with a dangling source. Keep that guarantee
+ * when adding early-return paths around the send/recv loops. */
 int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
