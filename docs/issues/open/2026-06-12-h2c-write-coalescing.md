@@ -53,6 +53,20 @@ closed issue `2026-05-15-native-h2-write-coalescing.md` で見送られたのは
 
 ## Progress
 
+- 2026-06-12: 実装完了(#4 perf/write-coalesce-capacity の上に積む stacked 構成)。`send_pending_h2_frames_with_deadline` の `connection->write_coalescing = connection->tls;` を `= true;` に変更。平文では `write_buffer`(#4 適用後はデフォルト 65,572B)が初回 coalesced write 時に lazy 確保される。flush 失敗時の dead 化は TLS と同一ロジックがそのまま機能する。
+
 ## Verification
 
+- PHPT 15/15、C unit、静的解析、PHPUnit 30/30 すべて PASS。
+- trace I/O(`trace-io-probe.sh 10 1048576`、10 RPC 合計):
+  - 平文送信 `wire.socket_write`: **692 → 190**(約 69 → 19 回/RPC、約 1/3.6)
+  - 平文受信側の送信(WINDOW_UPDATE 等)`wire.socket_write`: 36 → 23
+- ベンチ(before: `main-baseline-20260612` / after: `h2c-coalesce-after-20260612`、p50):
+  - cpu-micro tiny_unary_0b: 10.4µs cpu / 31.4→33.2µs wall、small_unary_100b: 9.5µs cpu / 27.7→31.3µs wall(cpu 同一、wall は揺れ幅内)
+  - upload-unary 1MB: 444.3 → 446.0µs、4MB: 2010.2 → 1912.3µs(揺れ幅内)
+  - 回帰: tls-cpu-micro tiny 12.3→12.7µs cpu(揺れ幅内)、spanner-shape p50 23.9〜28.3µs(main 分布内)
+- メモリ増: 平文 persistent 接続あたり 約64KB(lazy 確保)。
+
 ## Decision Log
+
+- 2026-06-12: **採用**。loopback では wall への寄与は観測限界以下だが、平文 unary の send() syscall が 2〜3 回 → 1 回に集約されることを trace で確認。主目的(emulator / CI の平文経路の syscall・パケット数削減)に合致し、TLS で実戦済みの write_buffer 方式のフラグ拡張のみで追加コピー戦略の新規リスクはない。closed issue native-h2-write-coalescing で見送られた `nghttp2_session_mem_send2()` 方式とは別物である点も issue 背景に記載どおり。

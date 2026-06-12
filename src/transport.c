@@ -1742,7 +1742,12 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
     connection->current_io_call = call;
     connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : fallback_deadline_abs_us;
     connection->current_write_timed_out = false;
-    connection->write_coalescing = connection->tls;
+    /* Coalesce for plaintext too: nghttp2 emits frames (or frame header and
+     * payload) as separate chunks, and with TCP_NODELAY each direct send()
+     * becomes its own syscall and packet. The buffered bytes are flushed
+     * before this function returns, and a failed flush marks the connection
+     * dead (see below), same as the TLS path. */
+    connection->write_coalescing = true;
     connection->write_buffer_len = 0;
     rv = nghttp2_session_send(connection->session);
     if (rv == 0) {
