@@ -166,8 +166,10 @@ uint8_t *h2_connection_recv_scratch(h2_connection *connection)
 {
     /* Shared receive scratch for unary / server streaming / preflight drain.
      * A connection runs at most one receive loop at a time (single
-     * current_read_call), so sharing is race-free. Lazily allocated once per
-     * connection; persistent connections keep it for their lifetime. */
+     * current_read_call; the drain path runs only while no call loop is
+     * active), so sharing is race-free. Lazily allocated once per connection;
+     * persistent connections keep it for their lifetime. */
+    ZEND_ASSERT(connection->current_read_call == NULL);
     if (connection->recv_scratch == NULL) {
         connection->recv_scratch = pemalloc(GRPC_LITE_RECV_SCRATCH_SIZE, connection->persistent);
         connection->recv_scratch_len = GRPC_LITE_RECV_SCRATCH_SIZE;
