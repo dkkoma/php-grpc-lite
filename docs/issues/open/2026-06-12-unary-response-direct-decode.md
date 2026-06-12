@@ -59,6 +59,24 @@ unary call のレスポンス受信で発生している「gRPC message framing 
 
 ## Progress
 
+- 2026-06-12: 実装完了(branch は #3 perf/unary-recv-buffer-size の上に積む stacked 構成。同じ受信ループを触るため)。
+  - `unary_call.c`: `decode_response_incrementally / direct_response_payload / queue_response_payloads = true`(`max_response_messages = 1` 維持)。受信ループ後に `grpc_lite_unary_take_response_payload()` で queue から payload を 1 個 pop し `typed_result->body` へ所有権移動。`smart_str body` は unary では未使用化。
+  - truncated 検出: stream close 後に `response_header_len != 0 || response_payload != NULL || response_payload_offset != 0` なら `malformed_response_frame = true`(streaming の残骸チェックと同型)。
+  - `wrapper_adapter.c`: `grpc_lite_extract_unary_payload` を削除し、`result.body`(= decoded payload)を `call->unary_response_payload` へ move(コピーゼロ)。OK + message なしは従来どおり OK + null message(旧実装でも empty body → payload NULL で OK のままだった。issue 記載の「OK なのに body なし → INTERNAL」は旧コードでは到達しない分岐だった点を注記)。
+  - BENCH diagnostic の `body` は queue 先頭 payload ベースに追従。
+  - エッジ固定化: test-server raw fixture (50054) に `x-bench-grpc-response: two-messages` knob を追加し、022 PHPT に「2 message 目 → INTERNAL malformed」「空 message + grpc-status 0 → OK + 空 payload message」を追加。truncated (`partial-frame`)・compressed・invalid content-type・unsupported encoding は既存 022 でカバー。
+  - read-ahead 制限は `current_read_call == call` の自ストリームでは発動しない(`server_streaming_read_ahead_limit_would_exceed` が `current_read_call != call` を要求)ため unary に影響しない。
+- 関連 issue [response-delivery-hotpath](2026-05-14-response-delivery-hotpath.md) の unary 側スコープは本 issue で実装済み。
+
 ## Verification
 
+- PHPT 15/15(022 に追加した unary エッジ含む)、C unit、静的解析、PHPUnit 30/30 すべて PASS。
+- ベンチ(before: #3 適用後 `recv-buffer-after-20260612` / after: `direct-decode-after-20260612`、p50):
+  - payload-unary 1MB: 497.9 → 477.1µs、**4MB: 2205.9 → 1482.6µs(-33%)**
+  - tls-payload-unary 1MB: 847.2 → 769.6µs(-9%)、**4MB: 3324.7 → 2413.1µs(-27%)**
+  - 小 payload(0b/100b/10KB): 揺れ幅内で悪化なし(10KB plain 28.2→27.7µs)
+  - 回帰: spanner-shape p50 28.3〜31.5µs、metadata-header req50+resp50 p50 160.3µs — いずれも main 計測分布内。
+
 ## Decision Log
+
+- 2026-06-12: **採用**。大 payload で memcpy 半減 + smart_str realloc 排除 + framing 1回化の効果が 4MB で -27〜-33% と明確。検証セマンティクスは direct 経路の同一チェック(compressed flag / max_receive_message_bytes / max_response_messages)+ stream close 後の残骸チェックで等価以上をテストで固定化。

@@ -415,32 +415,6 @@ static int grpc_lite_merge_call_credentials_metadata(grpc_lite_call_obj *call, g
     return SUCCESS;
 }
 
-static int grpc_lite_extract_unary_payload(zend_string *body_string, zend_string **payload)
-{
-    const unsigned char *body;
-    size_t body_len;
-    uint32_t payload_len;
-    if (body_string == NULL) {
-        *payload = NULL;
-        return SUCCESS;
-    }
-    body = (const unsigned char *) ZSTR_VAL(body_string);
-    body_len = ZSTR_LEN(body_string);
-    if (body_len == 0) {
-        *payload = NULL;
-        return SUCCESS;
-    }
-    if (body_len < 5 || body[0] != 0) {
-        return FAILURE;
-    }
-    payload_len = ((uint32_t) body[1] << 24) | ((uint32_t) body[2] << 16) | ((uint32_t) body[3] << 8) | (uint32_t) body[4];
-    if ((size_t) payload_len + 5 != body_len) {
-        return FAILURE;
-    }
-    *payload = zend_string_init((const char *) body + 5, payload_len, 0);
-    return SUCCESS;
-}
-
 static void grpc_lite_make_status_object(zval *status, int code, zend_string *details, zval *metadata)
 {
     object_init(status);
@@ -554,19 +528,12 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
     call->initial_metadata_ready = true;
     call->status_ready = true;
     if (status_code == GRPC_STATUS_OK && result.body != NULL) {
-        if (grpc_lite_extract_unary_payload(result.body, &payload) != SUCCESS) {
-            status_code = GRPC_STATUS_INTERNAL;
-            zend_string_release(details);
-            details = zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
-            zval_ptr_dtor(&call->status);
-            grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
-        }
-    } else if (status_code == GRPC_STATUS_OK) {
-        status_code = GRPC_STATUS_INTERNAL;
-        zend_string_release(details);
-        details = zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
-        zval_ptr_dtor(&call->status);
-        grpc_lite_make_status_object(&call->status, status_code, details, &call->trailing_metadata);
+        /* result.body is already the decoded message payload (direct decode);
+         * move ownership instead of copying. Framing errors surface as
+         * malformed_response_frame -> INTERNAL via resolve_grpc_call_status,
+         * and an OK response without a message keeps body == NULL. */
+        payload = result.body;
+        result.body = NULL;
     }
     if (payload != NULL) {
         if (call->unary_response_payload != NULL) {

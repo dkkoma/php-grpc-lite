@@ -437,6 +437,15 @@ func serveNonGrpcH2C() {
 			_, _ = w.Write(grpcFrame(1, nil))
 			return
 		}
+		if r.Header.Get("x-bench-grpc-response") == "two-messages" {
+			w.Header().Set("content-type", "application/grpc")
+			w.Header().Set("trailer", "grpc-status")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			_, _ = w.Write(grpcFrame(0, nil))
+			w.Header().Set("grpc-status", "0")
+			return
+		}
 		if r.Header.Get("x-bench-grpc-response") == "partial-frame" {
 			w.Header().Set("content-type", "application/grpc")
 			w.Header().Set("trailer", "grpc-status")
