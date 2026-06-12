@@ -11,7 +11,8 @@
  * module registration stay in main.c.
  */
 
-#define GRPC_LITE_H2_WRITE_COALESCE_CAPACITY 16384
+#define GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY 65536
+#define GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY (1024 * 1024)
 #define GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE 4096
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
@@ -1351,6 +1352,25 @@ static int h2_connection_flush_write_buffer(h2_connection *connection, uint64_t 
     return SUCCESS;
 }
 
+/* Size the coalesce buffer from the effective SETTINGS_MAX_FRAME_SIZE: a
+ * full-size DATA chunk arrives from nghttp2 as 9 + max_frame_size bytes, so
+ * the buffer must hold several of them or every full DATA frame bypasses
+ * coalescing and becomes its own SSL_write/send. Clamped so an oversized
+ * grpc_lite.http2_max_frame_size (up to 16MB) cannot pin 4x that per
+ * persistent connection; frames larger than the cap fall back to a direct
+ * write, which is already an amortized-cost path. */
+static size_t h2_write_coalesce_capacity_for_max_frame_size(uint32_t max_frame_size)
+{
+    size_t capacity = 4 * ((size_t) max_frame_size + 9);
+    if (capacity < GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY) {
+        return GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY;
+    }
+    if (capacity > GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY) {
+        return GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY;
+    }
+    return capacity;
+}
+
 static int h2_connection_buffer_or_write(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out)
 {
     if (connection == NULL) {
@@ -1360,21 +1380,20 @@ static int h2_connection_buffer_or_write(h2_connection *connection, const uint8_
     if (!connection->write_coalescing) {
         return h2_connection_write_all(connection, data, length, deadline_abs_us, timed_out);
     }
-    if (length > GRPC_LITE_H2_WRITE_COALESCE_CAPACITY) {
+    if (length > connection->write_buffer_cap) {
         if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
             return FAILURE;
         }
         return h2_connection_write_all(connection, data, length, deadline_abs_us, timed_out);
     }
     if (connection->write_buffer == NULL) {
-        connection->write_buffer = pemalloc(GRPC_LITE_H2_WRITE_COALESCE_CAPACITY, connection->persistent);
+        connection->write_buffer = pemalloc(connection->write_buffer_cap, connection->persistent);
         if (connection->write_buffer == NULL) {
             errno = ENOMEM;
             connection->last_io_errno = errno;
             set_connection_error_detail(connection, "failed to allocate HTTP/2 write buffer");
             return FAILURE;
         }
-        connection->write_buffer_cap = GRPC_LITE_H2_WRITE_COALESCE_CAPACITY;
     }
     if (connection->write_buffer_len + length > connection->write_buffer_cap) {
         if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
@@ -1476,6 +1495,7 @@ h2_connection *create_h2_connection(const char *host, zend_long port, const char
 
     connection = pecalloc(1, sizeof(h2_connection), persistent);
     connection->persistent = persistent;
+    connection->write_buffer_cap = h2_write_coalesce_capacity_for_max_frame_size(max_frame_size);
     connection->fd = -1;
     connection->tls_verify_result = X509_V_OK;
     connection->fd = connect_tcp(host, port, deadline_abs_us);

@@ -53,6 +53,18 @@ nghttp2 はフルサイズ DATA フレームを 16393 byte(ヘッダ 9 + payload
 
 ## Progress
 
+- 2026-06-12: 実装完了。`GRPC_LITE_H2_WRITE_COALESCE_CAPACITY`(16384 固定)を廃止し、接続作成時に `h2_write_coalesce_capacity_for_max_frame_size()` で `write_buffer_cap = clamp(4 * (max_frame_size + 9), 64KB, 1MB)` を設定。`h2_connection_buffer_or_write` のバイパス判定・確保サイズを `connection->write_buffer_cap` 参照に変更。上限 1MB は `grpc_lite.http2_max_frame_size` を 16MB に設定しても persistent 接続あたりのメモリが暴れないためのガード(cap を超えるフレームは従来どおり直接 write)。
+
 ## Verification
 
+- PHPT 15/15、C unit、静的解析、PHPUnit 30/30 すべて PASS。
+- trace I/O(`trace-io-probe.sh 10 1048576`、10 RPC 合計): TLS 送信 `wire.tls_write` **685 → 196**(約 68.5 → 19.6 回/RPC、約 1/3.5)。
+- ベンチ(before: `main-baseline-20260612` / after: `coalesce-cap-after-20260612` + 再計測 2 回):
+  - tls-upload-unary p50 1MB: 869.2 → {845.9, 878.0, 905.1}µs、4MB: 3460.6 → {3549.1, 3397.4, 3712.3}µs — **wall は揺れ幅内で改善・悪化なし**。SSL_write の per-call 固定費は loopback では暗号化(バイト比例)に対して小さく、record オーバーヘッド削減(~0.2%)は観測限界以下。
+  - 256KB: 236.9 → 222.0µs、64KB: 80.7 → 76.5µs(微改善、揺れ幅内)。
+  - `BENCH_PHP_EXTRA_INI_ARGS="-d grpc_lite.http2_max_frame_size=65536"` 構成: 4MB p50 3046.3µs — mfs 拡大時も coalescing が機能(従来は完全無効化されていた)。
+  - 回帰: tls-cpu-micro tiny_unary_0b 12.4µs cpu / 34.6µs wall(悪化なし)。
+
 ## Decision Log
+
+- 2026-06-12: **採用**。loopback ベンチでは wall の改善は観測できないが、(1) `SSL_write` 回数 1/3.5 の削減は実ネットワーク(レイテンシ・per-record コストが効く環境)で効く方向、(2) ini で max_frame_size を 16KB 超に設定すると coalescing が事実上無効化される潜在バグの解消、(3) #6 no-copy-send が前提とする coalesce 構造の確定、を理由とする。メモリ増は persistent 接続あたり +48KB(デフォルト構成、64KB cap)× 上限 128 接続 = 最大 8MB で許容範囲。
