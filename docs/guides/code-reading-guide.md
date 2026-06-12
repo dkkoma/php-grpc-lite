@@ -199,7 +199,7 @@ window size は `65535` 未満ならHTTP/2 defaultへ丸め、HTTP/2上限を超
 
 INI / channel optionとは別の固定上限が `src/transport_core.h` にあります。user request metadataは256 values(`GRPC_LITE_MAX_REQUEST_METADATA_VALUES`、超過は例外)、response metadataは128 entries(`GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES`、超過は `RESOURCE_EXHAUSTED`)、persistent connection cacheは128 connections(`GRPC_LITE_MAX_PERSISTENT_CONNECTIONS`)です。
 
-診断用に、環境変数 `GRPC_LITE_TRACE_FILE` を指定するとRPC完了recordを指定fileへ追記します(`tests/phpt/029-trace-file.phpt`)。
+診断用に、環境変数 `GRPC_LITE_TRACE_FILE` を指定するとRPC完了recordを指定fileへ追記します(`tests/phpt/029-trace-file.phpt`)。なお `wire.frame_out` はnghttp2がchunkを渡した時点(write coalesceバッファ投入時)で記録されるため、対応する `wire.tls_write` / `wire.socket_write` より先に並びます(TLS・平文共通)。
 
 ## 5. `Grpc\Call::startBatch()`
 
