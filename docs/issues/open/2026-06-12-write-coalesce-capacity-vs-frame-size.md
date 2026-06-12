@@ -67,4 +67,5 @@ nghttp2 はフルサイズ DATA フレームを 16393 byte(ヘッダ 9 + payload
 
 ## Decision Log
 
-- 2026-06-12: **採用**。loopback ベンチでは wall の改善は観測できないが、(1) `SSL_write` 回数 1/3.5 の削減は実ネットワーク(レイテンシ・per-record コストが効く環境)で効く方向、(2) ini で max_frame_size を 16KB 超に設定すると coalescing が事実上無効化される潜在バグの解消、(3) #6 no-copy-send が前提とする coalesce 構造の確定、を理由とする。メモリ増は persistent 接続あたり +48KB(デフォルト構成、64KB cap)× 上限 128 接続 = 最大 8MB で許容範囲。
+- 2026-06-12: **採用**。loopback ベンチでは wall の改善は観測できないが、(1) `SSL_write` 回数 1/3.5 の削減は実ネットワーク(レイテンシ・per-record コストが効く環境)で効く方向、(2) ini で max_frame_size を 16KB 超に設定すると coalescing が事実上無効化される潜在バグの解消、(3) #6 no-copy-send が前提とする coalesce 構造の確定、を理由とする。メモリ増は persistent 接続あたり +48KB(デフォルト構成、64KB cap)× 上限 128 接続 = 最大 8MB で許容範囲。`http2_max_frame_size` を ~256KB 超に設定した場合は cap が 1MB 上限に張り付き(worst case 1MB × 128 = 128MB、ただし lazily allocated かつ TLS のみ)、フルサイズ DATA はバイパスに退化する(変更前と同じ挙動)。
+- 2026-06-12: ドメインモデルレビュー([2026-06-12-write-coalesce-capacity-review.md](../../reviews/issues/2026-06-12-write-coalesce-capacity-review.md))Blocker/High/Medium none、Low 2 件: `h2_write_coalesce_capacity_for_max_frame_size` を `transport_core.c` へ移して境界値の C unit テストを追加、大 mfs 時のメモリ常駐を本 Decision Log に明記(上記)。

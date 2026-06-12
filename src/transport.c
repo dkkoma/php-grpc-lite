@@ -11,8 +11,6 @@
  * module registration stay in main.c.
  */
 
-#define GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY 65536
-#define GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY (1024 * 1024)
 #define GRPC_LITE_PREFLIGHT_DRAIN_CHUNK_SIZE 4096
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
@@ -1350,25 +1348,6 @@ static int h2_connection_flush_write_buffer(h2_connection *connection, uint64_t 
     }
     connection->write_buffer_len = 0;
     return SUCCESS;
-}
-
-/* Size the coalesce buffer from the effective SETTINGS_MAX_FRAME_SIZE: a
- * full-size DATA chunk arrives from nghttp2 as 9 + max_frame_size bytes, so
- * the buffer must hold several of them or every full DATA frame bypasses
- * coalescing and becomes its own SSL_write/send. Clamped so an oversized
- * grpc_lite.http2_max_frame_size (up to 16MB) cannot pin 4x that per
- * persistent connection; frames larger than the cap fall back to a direct
- * write, which is already an amortized-cost path. */
-static size_t h2_write_coalesce_capacity_for_max_frame_size(uint32_t max_frame_size)
-{
-    size_t capacity = 4 * ((size_t) max_frame_size + 9);
-    if (capacity < GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY) {
-        return GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY;
-    }
-    if (capacity > GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY) {
-        return GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY;
-    }
-    return capacity;
 }
 
 static int h2_connection_buffer_or_write(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out)

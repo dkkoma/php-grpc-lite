@@ -21,11 +21,14 @@
 #define GRPC_LITE_DEFAULT_METADATA_HARD_BYTES (16 * 1024)
 #define GRPC_LITE_MAX_PERSISTENT_CONNECTIONS 128
 #define GRPC_LITE_AUTHORITY_BUFFER_SIZE 512
+#define GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY 65536
+#define GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY (1024 * 1024)
 
 void build_authority(char *buffer, size_t buffer_len, const char *host, int64_t port, const char *authority, size_t authority_len);
 size_t effective_max_receive_message_bytes(int64_t max_receive_message_length);
 uint32_t effective_http2_window_size(int64_t configured);
 uint32_t effective_http2_max_frame_size(int64_t configured);
+size_t h2_write_coalesce_capacity_for_max_frame_size(uint32_t max_frame_size);
 uint32_t effective_http2_max_header_list_size(int64_t configured);
 size_t effective_max_response_metadata_bytes(int64_t soft_limit, int64_t hard_limit);
 bool contains_nul_or_control(const char *value, size_t value_len);
