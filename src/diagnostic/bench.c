@@ -715,6 +715,36 @@ static int send_data_callback(nghttp2_session *session, nghttp2_frame *frame, co
     return 0;
 }
 
+/* Copy-mode data provider for the bench raw client. The production path is
+ * NO_COPY-only (transport.c h2_send_data_callback); this stays here so the
+ * bench no_copy=0 variant remains measurable. */
+static size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
+{
+    size_t copied = 0;
+    size_t total_len = call->grpc_header_len + call->request_len;
+
+    while (copied < length && call->request_offset < total_len) {
+        if (call->request_offset < call->grpc_header_len) {
+            size_t header_offset = call->request_offset;
+            size_t remaining = call->grpc_header_len - header_offset;
+            size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
+            memcpy(buf + copied, call->grpc_header + header_offset, to_copy);
+            copied += to_copy;
+            call->request_offset += to_copy;
+            continue;
+        }
+
+        size_t payload_offset = call->request_offset - call->grpc_header_len;
+        size_t remaining = call->request_len - payload_offset;
+        size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
+        memcpy(buf + copied, call->request + payload_offset, to_copy);
+        copied += to_copy;
+        call->request_offset += to_copy;
+    }
+
+    return copied;
+}
+
 static ssize_t bench_data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;

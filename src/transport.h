@@ -104,8 +104,8 @@ void discard_persistent_connection(const char *key, size_t key_len, h2_connectio
 int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
 ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 size_t remaining_request_bytes(grpc_call *call);
-size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
 ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
+int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data);
 void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
