@@ -109,17 +109,19 @@
 
 ## 進捗トラッキング
 
-| Issue | Status | Branch | 計測 | 判断 |
+| Issue | Status | Branch / PR | 計測 | 判断 |
 |---|---|---|---|---|
-| #1 trace-getenv | Open | – | – | – |
-| #7 status-headers | Open | – | – | – |
-| #3 recv-buffer | Open | – | – | – |
-| #2 unary-direct-decode | Open | – | – | – |
-| #4 coalesce-capacity | Open | – | – | – |
-| #5 h2c-coalescing | Open | – | – | – |
-| #6 no-copy-send | Open | – | – | – |
+| #1 trace-getenv | PR review待ち | perf/trace-getenv-hotpath-caching / [#15](https://github.com/dkkoma/php-grpc-lite/pull/15) | 改善はノイズ床以下 | 採用(hot path 衛生) |
+| #7 status-headers | PR review待ち | fix/status-headers-in-metadata-map / [#16](https://github.com/dkkoma/php-grpc-lite/pull/16) | metadata-header/spanner-shape 悪化なし | 採用(ext-grpc 互換) |
+| #3 recv-buffer | PR review待ち | perf/unary-recv-buffer-size / [#17](https://github.com/dkkoma/php-grpc-lite/pull/17) | 平文 read 66→17.7/RPC、平文1MB -7〜10%、TLS は SSL_read 仕様上不変 | 採用 |
+| #2 unary-direct-decode | PR review待ち (#17 に stacked) | perf/unary-response-direct-decode / [#18](https://github.com/dkkoma/php-grpc-lite/pull/18) | **4MB 受信 p50 平文 -33% / TLS -27%** | 採用(本命) |
+| #4 coalesce-capacity | PR review待ち | perf/write-coalesce-capacity / [#19](https://github.com/dkkoma/php-grpc-lite/pull/19) | SSL_write 68.5→19.6/RPC、wall は揺れ幅内 | 採用(潜在バグ解消 + #6 前提) |
+| #5 h2c-coalescing | PR review待ち (#19 に stacked) | perf/h2c-write-coalescing / [#20](https://github.com/dkkoma/php-grpc-lite/pull/20) | 平文 send() 69→19/RPC | 採用 |
+| #6 no-copy-send | PR review待ち (#20 に stacked) | perf/request-data-no-copy-send / [#21](https://github.com/dkkoma/php-grpc-lite/pull/21) | 平文 1MB 送信 -7%、TLS 4MB 改善側 | 採用 |
 
-(着手時にこの表を更新する)
+- マージ順: #15 / #16 / #19 は独立。#17 → #18、#19 → #20 → #21 は stacked(マージごとに次の PR の base を付け替え)。
+- 各 issue の詳細計測・Decision Log は issue ファイル、ドメインモデルレビューは `docs/reviews/issues/2026-06-12-*.md` を参照。マージ時に issue を Status: Closed にして `docs/issues/closed/` へ移動する。
+- 副産物: #2 で [response-delivery-hotpath](../issues/open/2026-05-14-response-delivery-hotpath.md) の unary 側スコープを実装済み。#3 で「TLS の read 回数はアプリバッファ拡大では減らない(SSL_read は 1 record/call)」という知見を記録。
 
 ## レビューで「問題なし」と確認済みの領域(再調査不要)
 
