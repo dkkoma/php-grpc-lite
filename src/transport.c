@@ -2628,6 +2628,11 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
         }
         return 0;
     }
+    if (call->discard_response_body) {
+        /* Validation already failed (invalid content-type, unsupported
+         * encoding, ...): do not decode or enqueue further payloads. */
+        return 0;
+    }
 
     while (offset < len && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame) {
         if (call->response_header_len < 5) {

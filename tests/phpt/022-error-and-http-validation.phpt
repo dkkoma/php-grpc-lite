@@ -60,6 +60,12 @@ $assertUnaryStatus(
     Grpc\STATUS_INTERNAL,
     'malformed gRPC response frame',
 );
+// message 途中の RST_STREAM は malformed ではなく stream reset の taxonomy に従う
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['partial-frame-abort']],
+    Grpc\STATUS_INTERNAL,
+    'HTTP/2 stream reset: 2',
+);
 // unary は Length-Prefixed-Message ちょうど 1 個: 2 個目は malformed として弾く
 $assertUnaryStatus(
     ['x-bench-grpc-response' => ['two-messages']],

@@ -218,10 +218,12 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     }
 	build_unary_result:
 	    if (call.stream_closed && !call.response_message_too_large && !call.compressed_response_seen
+	            && !call.stream_reset_seen
 	            && (call.response_header_len != 0 || call.response_payload != NULL || call.response_payload_offset != 0)) {
 	        /* Stream ended inside a Length-Prefixed-Message: truncated body.
 	         * Replaces the body-length integrity check the smart_str re-parse
-	         * used to perform. */
+	         * used to perform. RST_STREAM mid-message keeps its own status
+	         * taxonomy (e.g. CANCEL -> CANCELLED), so it is not malformed. */
 	        call.malformed_response_frame = true;
 	    }
 	    resolve_grpc_call_status(&call, false, &status_result);
