@@ -49,7 +49,6 @@ h2_connection *create_h2_connection(const char *host, zend_long port, const char
 h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
 void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
 int connect_tcp(const char *host, zend_long port, uint64_t deadline_abs_us);
-static const char *grpc_lite_trace_file_path(void);
 static bool grpc_lite_trace_wire_bytes_enabled(void);
 static void grpc_lite_trace_json_string(FILE *fp, const char *bytes, size_t len);
 static void grpc_lite_trace_hex(FILE *fp, const uint8_t *bytes, size_t len);
@@ -348,18 +347,39 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
     return 0;
 }
 
-static const char *grpc_lite_trace_file_path(void)
+/* Trace env vars are opt-in process diagnostics, not per-request config:
+ * they are read once at MINIT (single-threaded, so no ZTS publication race)
+ * and the value is copied because the pointer returned by getenv() can be
+ * invalidated later (PHP putenv() restores and frees request-scoped values
+ * at request shutdown in long-lived FPM/worker processes). */
+static char *grpc_lite_trace_file_path_cache;
+static bool grpc_lite_trace_wire_bytes_cache;
+
+void grpc_lite_trace_cache_init(void)
 {
-    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
     const char *path = getenv("GRPC_LITE_TRACE_FILE");
-    return path != NULL && path[0] != '\0' ? path : NULL;
+    const char *wire_bytes = getenv("GRPC_LITE_TRACE_WIRE_BYTES");
+    if (grpc_lite_trace_file_path_cache == NULL && path != NULL && path[0] != '\0') {
+        grpc_lite_trace_file_path_cache = strdup(path);
+    }
+    grpc_lite_trace_wire_bytes_cache = wire_bytes != NULL && wire_bytes[0] != '\0' && wire_bytes[0] != '0';
+}
+
+void grpc_lite_trace_cache_shutdown(void)
+{
+    free(grpc_lite_trace_file_path_cache);
+    grpc_lite_trace_file_path_cache = NULL;
+    grpc_lite_trace_wire_bytes_cache = false;
+}
+
+const char *grpc_lite_trace_file_path(void)
+{
+    return grpc_lite_trace_file_path_cache;
 }
 
 static bool grpc_lite_trace_wire_bytes_enabled(void)
 {
-    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
-    const char *value = getenv("GRPC_LITE_TRACE_WIRE_BYTES");
-    return value != NULL && value[0] != '\0' && value[0] != '0';
+    return grpc_lite_trace_wire_bytes_cache;
 }
 
 static void grpc_lite_trace_json_string(FILE *fp, const char *bytes, size_t len)

@@ -8,6 +8,8 @@ if (!extension_loaded('grpc')) {
 require __DIR__ . '/helpers.inc';
 grpc_lite_phpt_skip_if_integration_unavailable([50051]);
 ?>
+--ENV--
+GRPC_LITE_TRACE_FILE=/tmp/grpc-lite-trace-029.jsonl
 --FILE--
 <?php
 declare(strict_types=1);
@@ -20,12 +22,10 @@ use Grpc\ChannelCredentials;
 use Helloworld\HelloRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
 
-$traceFile = tempnam(sys_get_temp_dir(), 'grpc-lite-trace-');
-if ($traceFile === false) {
-    throw new RuntimeException('failed to create trace file');
-}
+// trace env はプロセス診断として MINIT で 1 回だけ読まれるため、
+// 実行時 putenv() ではなく --ENV-- セクションで PHP 起動前に設定する。
+$traceFile = (string) getenv('GRPC_LITE_TRACE_FILE');
 file_put_contents($traceFile, '');
-putenv('GRPC_LITE_TRACE_FILE=' . $traceFile);
 
 $opts = ['credentials' => ChannelCredentials::createInsecure()];
 $channel = new Channel('test-server:50051', $opts);
@@ -43,8 +43,6 @@ foreach ($stream->responses() as $_reply) {
 }
 $streamStatus = $stream->getStatus();
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $streamStatus->code, 'streaming status');
-
-putenv('GRPC_LITE_TRACE_FILE');
 
 $lines = array_values(array_filter(explode("\n", trim((string) file_get_contents($traceFile)))));
 unlink($traceFile);

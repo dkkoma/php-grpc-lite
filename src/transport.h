@@ -108,6 +108,9 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
 int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
 int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 uint64_t monotonic_us(void);
+void grpc_lite_trace_cache_init(void);
+void grpc_lite_trace_cache_shutdown(void);
+const char *grpc_lite_trace_file_path(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
