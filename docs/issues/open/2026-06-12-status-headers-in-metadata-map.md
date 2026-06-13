@@ -45,7 +45,7 @@ Related: docs/issues/closed/2026-05-14-metadata-conversion-hotpath.md
 
 ## Progress
 
-- 2026-06-12: 実装完了。`on_header_callback` に `store_as_metadata` フラグを導入し、`grpc-status` / `grpc-message` 分岐で false にして `grpc_protocol_add_response_metadata_entry` への追加をスキップ。`grpc-status-details-bin` は現行どおり metadata に残す。duplicate grpc-status 検出等の検証ロジックは不変。
+- 2026-06-12: 実装完了。`on_header_callback` の `grpc-status` / `grpc-message` 分岐で status state へ取り込んだ後に `return 0;` し、`grpc_protocol_add_response_metadata_entry` への追加をスキップ。`grpc-status-details-bin` は現行どおり metadata に残す。duplicate grpc-status 検出等の検証ロジックは不変。
 - テスト固定化: `tests/phpt/010-unary.phpt` を「trailers に grpc-status / grpc-message が現れない」アサーションへ更新。`ErrorSemanticsTest` も NotHasKey へ更新し、新規 `testRichErrorDetailsBinStaysInTrailingMetadata` を追加(test-server に `x-bench-error-details` knob を追加して `status.WithDetails` で grpc-status-details-bin を発生させ、保持を検証)。
 
 ## Verification

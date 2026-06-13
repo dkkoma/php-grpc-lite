@@ -1897,11 +1897,6 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
     bool trailing;
-    /* grpc-status / grpc-message are Status / Status-Message in the gRPC spec,
-     * not Custom-Metadata. gRPC C core consumes them into the call status and
-     * does not re-expose them as user metadata, so we skip storing them too
-     * (grpc-status-details-bin stays: GAX reads it from $status->metadata). */
-    bool store_as_metadata = true;
     (void) session;
     (void) flags;
     if (call == NULL) {
@@ -1929,8 +1924,9 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             grpc_protocol_mark_response_metadata_as_trailing(call);
         }
-        trailing = true;
-        store_as_metadata = false;
+        /* Status is not Custom-Metadata. It is consumed into call state and
+         * intentionally not re-exposed through PHP metadata maps. */
+        return 0;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             call->initial_grpc_status_seen = true;
@@ -1939,8 +1935,9 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
             zend_string_release(call->grpc_message);
         }
         call->grpc_message = grpc_protocol_decode_message(value, valuelen);
-        trailing = true;
-        store_as_metadata = false;
+        /* Status-Message is not Custom-Metadata. The decoded message above is
+         * surfaced as status details, not as PHP metadata. */
+        return 0;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             call->initial_grpc_status_seen = true;
@@ -1972,7 +1969,7 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
             call->discard_response_body = true;
         }
     }
-    if (store_as_metadata && grpc_protocol_add_response_metadata_entry(call, name, namelen, value, valuelen, trailing) != 0) {
+    if (grpc_protocol_add_response_metadata_entry(call, name, namelen, value, valuelen, trailing) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     return 0;
