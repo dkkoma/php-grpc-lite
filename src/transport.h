@@ -30,6 +30,8 @@ struct _h2_connection {
     size_t write_buffer_len;
     size_t write_buffer_cap;
     bool write_coalescing;
+    uint8_t *recv_scratch;
+    size_t recv_scratch_len;
     uint64_t setup_deadline_abs_us;
     bool setup_timed_out;
     int last_error;
@@ -53,8 +55,6 @@ struct server_streaming_call_state {
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zend_string *path;
 #endif
-    char *recv_buf;
-    size_t recv_buf_len;
     uint64_t delivered_messages;
     bool completed;
     bool cancelled;
@@ -111,6 +111,7 @@ uint64_t monotonic_us(void);
 void grpc_lite_trace_cache_init(void);
 void grpc_lite_trace_cache_shutdown(void);
 const char *grpc_lite_trace_file_path(void);
+uint8_t *h2_connection_recv_scratch(h2_connection *connection);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif

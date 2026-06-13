@@ -82,9 +82,6 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     state->path = zend_string_init(path, path_len, 0);
 #endif
-    state->recv_buf_len = 65536;
-    state->recv_buf = emalloc(state->recv_buf_len);
-
     memset(&state->call, 0, sizeof(state->call));
     state->call.connection = connection;
     state->call.grpc_status = -1;
@@ -284,8 +281,9 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             state->completed = true;
             break;
         }
+        uint8_t *recv_buf = h2_connection_recv_scratch(state->call.connection);
         state->call.connection->current_io_call = call;
-        nread = connection_recv(state->call.connection, (uint8_t *) state->recv_buf, state->recv_buf_len, call->deadline_abs_us);
+        nread = connection_recv(state->call.connection, recv_buf, state->call.connection->recv_scratch_len, call->deadline_abs_us);
         state->call.connection->current_io_call = NULL;
         if (nread <= 0) {
             bool socket_timeout = nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) && call->deadline_abs_us > 0;
@@ -304,7 +302,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             break;
         }
         state->call.connection->current_read_call = call;
-        rv = nghttp2_session_mem_recv(state->call.connection->session, (const uint8_t *) state->recv_buf, (size_t) nread);
+        rv = nghttp2_session_mem_recv(state->call.connection->session, recv_buf, (size_t) nread);
         state->call.connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(state->call.connection, rv);
