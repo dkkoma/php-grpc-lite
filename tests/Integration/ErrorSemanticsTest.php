@@ -29,7 +29,8 @@ final class ErrorSemanticsTest extends TestCase
         self::assertNull($response);
         self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $status->code);
         self::assertSame('bench error with spaces', $status->details);
-        self::assertArrayHasKey('grpc-status', $status->metadata);
+        self::assertArrayNotHasKey('grpc-status', $status->metadata);
+        self::assertArrayNotHasKey('grpc-message', $status->metadata);
     }
 
     public function testServerStreamingTrailersOnlyErrorReturnsGrpcStatus(): void
@@ -48,7 +49,23 @@ final class ErrorSemanticsTest extends TestCase
         $status = $call->getStatus();
         self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $status->code);
         self::assertSame('bench error with spaces', $status->details);
-        self::assertArrayHasKey('grpc-status', $status->metadata);
+        self::assertArrayNotHasKey('grpc-status', $status->metadata);
+        self::assertArrayNotHasKey('grpc-message', $status->metadata);
+    }
+
+    public function testRichErrorDetailsBinStaysInTrailingMetadata(): void
+    {
+        $request = new BenchRequest();
+        $metadata = $this->errorMetadata();
+        $metadata['x-bench-error-details'] = ['detail-payload'];
+        [$response, $status] = $this->client->BenchUnary($request, $metadata)->wait();
+
+        self::assertNull($response);
+        self::assertSame(\Grpc\STATUS_INVALID_ARGUMENT, $status->code);
+        // google rich error model: GAX は grpc-status-details-bin を metadata 経由で読む
+        self::assertArrayHasKey('grpc-status-details-bin', $status->metadata);
+        self::assertArrayNotHasKey('grpc-status', $status->metadata);
+        self::assertArrayNotHasKey('grpc-message', $status->metadata);
     }
 
     /** @return array<string, list<string>> */

@@ -1944,7 +1944,9 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             grpc_protocol_mark_response_metadata_as_trailing(call);
         }
-        trailing = true;
+        /* Status is not Custom-Metadata. It is consumed into call state and
+         * intentionally not re-exposed through PHP metadata maps. */
+        return 0;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             call->initial_grpc_status_seen = true;
@@ -1953,7 +1955,9 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
             zend_string_release(call->grpc_message);
         }
         call->grpc_message = grpc_protocol_decode_message(value, valuelen);
-        trailing = true;
+        /* Status-Message is not Custom-Metadata. The decoded message above is
+         * surfaced as status details, not as PHP metadata. */
+        return 0;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             call->initial_grpc_status_seen = true;
