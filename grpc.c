@@ -74,6 +74,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
     signal(SIGPIPE, SIG_IGN);
 #endif
     REGISTER_INI_ENTRIES();
+    grpc_lite_trace_cache_init();
     le_server_streaming_call_state = zend_register_list_destructors_ex(server_streaming_call_state_dtor, NULL, "grpc_lite_server_streaming_call_state", module_number);
 
     if (grpc_lite_register_surface_classes() != SUCCESS) {
@@ -127,6 +128,7 @@ PHP_MINIT_FUNCTION(grpc_lite)
 
 PHP_MSHUTDOWN_FUNCTION(grpc_lite)
 {
+    grpc_lite_trace_cache_shutdown();
     UNREGISTER_INI_ENTRIES();
     return SUCCESS;
 }

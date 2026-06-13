@@ -347,32 +347,39 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
     return 0;
 }
 
+/* Trace env vars are opt-in process diagnostics, not per-request config:
+ * they are read once at MINIT (single-threaded, so no ZTS publication race)
+ * and the value is copied because the pointer returned by getenv() can be
+ * invalidated later (PHP putenv() restores and frees request-scoped values
+ * at request shutdown in long-lived FPM/worker processes). */
+static char *grpc_lite_trace_file_path_cache;
+static bool grpc_lite_trace_wire_bytes_cache;
+
+void grpc_lite_trace_cache_init(void)
+{
+    const char *path = getenv("GRPC_LITE_TRACE_FILE");
+    const char *wire_bytes = getenv("GRPC_LITE_TRACE_WIRE_BYTES");
+    if (grpc_lite_trace_file_path_cache == NULL && path != NULL && path[0] != '\0') {
+        grpc_lite_trace_file_path_cache = strdup(path);
+    }
+    grpc_lite_trace_wire_bytes_cache = wire_bytes != NULL && wire_bytes[0] != '\0' && wire_bytes[0] != '0';
+}
+
+void grpc_lite_trace_cache_shutdown(void)
+{
+    free(grpc_lite_trace_file_path_cache);
+    grpc_lite_trace_file_path_cache = NULL;
+    grpc_lite_trace_wire_bytes_cache = false;
+}
+
 const char *grpc_lite_trace_file_path(void)
 {
-    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config.
-     * Cached on first use so the disabled hot path never re-walks environ; a
-     * first-read race in ZTS just stores the same value twice. */
-    static const char *cached_path;
-    static bool cached;
-    if (!cached) {
-        const char *path = getenv("GRPC_LITE_TRACE_FILE");
-        cached_path = (path != NULL && path[0] != '\0') ? path : NULL;
-        cached = true;
-    }
-    return cached_path;
+    return grpc_lite_trace_file_path_cache;
 }
 
 static bool grpc_lite_trace_wire_bytes_enabled(void)
 {
-    /* ZTS: trace env vars are opt-in process diagnostics, not per-request config. */
-    static bool cached_enabled;
-    static bool cached;
-    if (!cached) {
-        const char *value = getenv("GRPC_LITE_TRACE_WIRE_BYTES");
-        cached_enabled = value != NULL && value[0] != '\0' && value[0] != '0';
-        cached = true;
-    }
-    return cached_enabled;
+    return grpc_lite_trace_wire_bytes_cache;
 }
 
 static void grpc_lite_trace_json_string(FILE *fp, const char *bytes, size_t len)

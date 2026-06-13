@@ -80,3 +80,4 @@ static const char *grpc_lite_trace_file_path(void)
 ## Decision Log
 
 - 2026-06-12: **採用**。計測上の改善はノイズ床以下(getenv は 1 call あたり数回 × ~100ns 程度で、run 間揺れ ±1〜3µs に埋もれる)。ただし本 issue の主目的である「trace 無効 production 経路からの environ 線形探索排除」「ZTS での getenv 呼び出し削減」「後続ベンチのノイズ要因除去」はコード上達成されており、分岐追加もなく複雑性増がほぼゼロのため、性能 issue ではなく hot path 衛生として採用する。悪化がないことは cpu-micro / spanner-shape で確認済み。
+- 2026-06-13: マージ前コードレビューで 2 点を指摘され修正。(1) getenv() の返すポインタを static にキャッシュするのは危険(PHP の putenv() は request 終了時に値を復元・解放するため、FPM/worker 常駐プロセスで dangling になり得る)→ MINIT で 1 回読み、`strdup` でプロセス所有コピーを保持(MSHUTDOWN で解放)。(2) 関数内 static の lazy 初期化は ZTS の弱メモリモデルで `cached` フラグと値の可視順序が保証されない → MINIT 初期化(シングルスレッド)で公開競合自体を排除。あわせて 029-trace-file.phpt を実行時 putenv() から `--ENV--` セクション(プロセス起動前設定)に変更し、「trace env はプロセス診断で実行時変更不可」というセマンティクスをテストでも固定した。

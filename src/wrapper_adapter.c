@@ -158,7 +158,7 @@ static void grpc_lite_trace_record_call(grpc_lite_call_obj *call, const char *ev
     uint64_t elapsed_us = 0;
     const char *persistent_reused_json = "null";
 
-    if (path == NULL || path[0] == '\0' || call == NULL || call->method == NULL) {
+    if (path == NULL || call == NULL || call->method == NULL) {
         return;
     }
     now_us = monotonic_us();
