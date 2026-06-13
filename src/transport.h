@@ -29,6 +29,10 @@ struct _h2_connection {
     uint8_t *write_buffer;
     size_t write_buffer_len;
     size_t write_buffer_cap;
+    /* True only inside send_pending_h2_frames_with_deadline, which always
+     * flushes write_buffer before returning (and marks the connection dead
+     * on a failed flush). Any other path driving send_callback must leave
+     * this false, or buffered bytes would linger across calls. */
     bool write_coalescing;
     uint64_t setup_deadline_abs_us;
     bool setup_timed_out;
