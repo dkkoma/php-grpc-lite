@@ -7,7 +7,7 @@ static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, const
 {
     grpc_lite_diagnostic_add_unary_result(diagnostic_result, path, path_len, metadata, call, connection, status_result, start_unix_nanos, total_started > 0 ? monotonic_us() - total_started : 0, setup_us, submit_us, initial_send_us, recv_loop_us, connection_reused, persistent_reused);
     add_status_result_to_return(diagnostic_result, status_result);
-    add_assoc_str(diagnostic_result, "body", call->body.s ? zend_string_copy(call->body.s) : zend_empty_string);
+    add_assoc_str(diagnostic_result, "body", call->response_queue_head != NULL ? zend_string_copy(call->response_queue_head->payload) : zend_empty_string);
     add_assoc_str(diagnostic_result, "grpc_message", call->grpc_message != NULL ? zend_string_copy(call->grpc_message) : zend_empty_string);
     add_assoc_bool(diagnostic_result, "stream_refused_seen", call->stream_refused_seen);
     add_assoc_bool(diagnostic_result, "invalid_grpc_status", call->invalid_grpc_status);
@@ -50,6 +50,30 @@ static void grpc_lite_unary_add_diagnostic_result(zval *diagnostic_result, const
 }
 #endif
 
+/* Pop the single decoded response payload (max_response_messages == 1) and
+ * transfer ownership to the caller. NULL when no message arrived. */
+static zend_string *grpc_lite_unary_take_response_payload(grpc_call *call)
+{
+    queued_payload *entry = call->response_queue_head;
+    zend_string *payload;
+    if (entry == NULL) {
+        return NULL;
+    }
+    payload = entry->payload;
+    call->response_queue_head = entry->next;
+    if (call->response_queue_head == NULL) {
+        call->response_queue_tail = NULL;
+    }
+    if (call->response_queue_count > 0) {
+        call->response_queue_count--;
+    }
+    if (call->response_queue_bytes >= ZSTR_LEN(payload)) {
+        call->response_queue_bytes -= ZSTR_LEN(payload);
+    }
+    efree(entry);
+    return payload;
+}
+
 static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused,
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zval *diagnostic_result,
@@ -76,6 +100,14 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     call.grpc_status = -1;
     call.http_status = -1;
     call.max_response_messages = 1;
+    /* Direct decode: gRPC message framing is parsed once in
+     * on_data_chunk_recv_callback and the payload is copied from the DATA
+     * chunk straight into its final zend_string (same path as server
+     * streaming), instead of buffering wire bytes into smart_str body and
+     * re-parsing afterwards. */
+    call.decode_response_incrementally = true;
+    call.direct_response_payload = true;
+    call.queue_response_payloads = true;
     call.request = (const uint8_t *) request;
     call.request_len = request_len;
     call.max_receive_message_bytes = effective_max_receive_message_bytes((int64_t) max_receive_message_length);
@@ -185,11 +217,19 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         }
     }
 	build_unary_result:
+	    if (call.stream_closed && !call.response_message_too_large && !call.compressed_response_seen
+	            && !call.stream_reset_seen
+	            && (call.response_header_len != 0 || call.response_payload != NULL || call.response_payload_offset != 0)) {
+	        /* Stream ended inside a Length-Prefixed-Message: truncated body.
+	         * Replaces the body-length integrity check the smart_str re-parse
+	         * used to perform. RST_STREAM mid-message keeps its own status
+	         * taxonomy (e.g. CANCEL -> CANCELLED), so it is not malformed. */
+	        call.malformed_response_frame = true;
+	    }
 	    resolve_grpc_call_status(&call, false, &status_result);
 
-    smart_str_0(&call.body);
     if (typed_result != NULL) {
-        typed_result->body = call.body.s ? zend_string_copy(call.body.s) : zend_string_copy(zend_empty_string);
+        typed_result->body = grpc_lite_unary_take_response_payload(&call);
         typed_result->status.code = status_result.code;
         typed_result->status.details = zend_string_copy(status_result.details);
         grpc_protocol_copy_metadata_map(&typed_result->initial_metadata, &call, false);

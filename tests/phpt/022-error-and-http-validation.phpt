@@ -60,6 +60,23 @@ $assertUnaryStatus(
     Grpc\STATUS_INTERNAL,
     'malformed gRPC response frame',
 );
+// message 途中の RST_STREAM は malformed ではなく stream reset の taxonomy に従う
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['partial-frame-abort']],
+    Grpc\STATUS_INTERNAL,
+    'HTTP/2 stream reset: 2',
+);
+// unary は Length-Prefixed-Message ちょうど 1 個: 2 個目は malformed として弾く
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['two-messages']],
+    Grpc\STATUS_INTERNAL,
+    'malformed gRPC response frame',
+);
+
+// 空 message + grpc-status 0 は「空 payload の message + OK」として届く
+[$emptyResponse, $emptyStatus] = $client->BenchUnary(new BenchRequest(), ['x-bench-grpc-status' => ['0']])->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $emptyStatus->code, 'empty message unary status');
+grpc_lite_phpt_assert_true($emptyResponse instanceof \Helloworld\BenchReply, 'empty message unary response type');
 
 $assertStreamStatus = static function (array $metadata, int $code, string $details, int $expectedCount = 0) use ($client): void {
     $request = new BenchRequest();

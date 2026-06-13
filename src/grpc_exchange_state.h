@@ -101,6 +101,10 @@ struct _grpc_call {
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     grpc_bench_call bench;
 #endif
+    /* Raw wire-byte accumulator for the legacy (non-direct-decode) data path.
+     * Production unary and server streaming both use the direct decode path
+     * (response_queue), so this stays empty there; only the BENCH diagnostic
+     * raw client still appends to it. */
     smart_str body;
     uint8_t grpc_header[5];
     size_t grpc_header_len;

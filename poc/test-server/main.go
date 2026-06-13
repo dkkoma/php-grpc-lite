@@ -437,6 +437,26 @@ func serveNonGrpcH2C() {
 			_, _ = w.Write(grpcFrame(1, nil))
 			return
 		}
+		if r.Header.Get("x-bench-grpc-response") == "two-messages" {
+			w.Header().Set("content-type", "application/grpc")
+			w.Header().Set("trailer", "grpc-status")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			_, _ = w.Write(grpcFrame(0, nil))
+			w.Header().Set("grpc-status", "0")
+			return
+		}
+		if r.Header.Get("x-bench-grpc-response") == "partial-frame-abort" {
+			// message 送信途中の RST_STREAM: truncation は framing violation では
+			// なく stream abort として扱われることを固定する fixture。
+			w.Header().Set("content-type", "application/grpc")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte{0, 0, 0, 0, 10, 1, 2, 3})
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			panic(http.ErrAbortHandler)
+		}
 		if r.Header.Get("x-bench-grpc-response") == "partial-frame" {
 			w.Header().Set("content-type", "application/grpc")
 			w.Header().Set("trailer", "grpc-status")
