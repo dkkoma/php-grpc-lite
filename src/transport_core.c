@@ -58,6 +58,25 @@ uint32_t effective_http2_max_frame_size(int64_t configured)
     return (uint32_t) configured;
 }
 
+/* Size the write coalesce buffer from the effective SETTINGS_MAX_FRAME_SIZE:
+ * a full-size DATA chunk arrives from nghttp2 as 9 + max_frame_size bytes, so
+ * the buffer must hold several of them or every full DATA frame bypasses
+ * coalescing and becomes its own SSL_write/send. Clamped so an oversized
+ * grpc_lite.http2_max_frame_size (up to 16MB) cannot pin 4x that per
+ * persistent connection; frames larger than the cap fall back to a direct
+ * write, which is already an amortized-cost path. */
+size_t h2_write_coalesce_capacity_for_max_frame_size(uint32_t max_frame_size)
+{
+    size_t capacity = 4 * ((size_t) max_frame_size + 9);
+    if (capacity < GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY) {
+        return GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY;
+    }
+    if (capacity > GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY) {
+        return GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY;
+    }
+    return capacity;
+}
+
 uint32_t effective_http2_max_header_list_size(int64_t configured)
 {
     if (configured < 0) {

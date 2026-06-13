@@ -82,6 +82,18 @@ static void test_effective_limits(void)
     ASSERT_SIZE(20480, effective_max_response_metadata_bytes(16384, -1));
     ASSERT_SIZE((uint64_t) INT64_MAX > (uint64_t) SIZE_MAX ? SIZE_MAX : (size_t) INT64_MAX, effective_max_response_metadata_bytes(1024, INT64_MAX));
     ASSERT_SIZE(GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES, effective_max_response_metadata_bytes(-1, -1));
+
+    /* default mfs (16384): 4 * (16384 + 9) = 65572 — a full DATA chunk
+     * (9 + mfs) must fit so it does not bypass coalescing */
+    ASSERT_SIZE(65572, h2_write_coalesce_capacity_for_max_frame_size(16384));
+    ASSERT_BOOL(true, h2_write_coalesce_capacity_for_max_frame_size(16384) >= 16384 + 9);
+    /* tiny mfs clamps up to the minimum capacity */
+    ASSERT_SIZE(GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY, h2_write_coalesce_capacity_for_max_frame_size(0));
+    /* mfs = 64KB still coalesces: 4 * (65536 + 9) = 262180 */
+    ASSERT_SIZE(262180, h2_write_coalesce_capacity_for_max_frame_size(65536));
+    /* above ~256KB the capacity clamps to the 1MB ceiling (frames bypass) */
+    ASSERT_SIZE(GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY, h2_write_coalesce_capacity_for_max_frame_size(262136));
+    ASSERT_SIZE(GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY, h2_write_coalesce_capacity_for_max_frame_size(GRPC_LITE_HTTP2_MAX_FRAME_SIZE));
 }
 
 static void test_authority_identity(void)
