@@ -60,8 +60,8 @@ static void grpc_lite_trace_unlock_and_close(FILE *fp);
 static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length);
 static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghttp2_frame *frame);
 ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
+int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data);
 size_t remaining_request_bytes(grpc_call *call);
-size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length);
 ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
 void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
@@ -354,6 +354,7 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
         return -1;
     }
     nghttp2_session_callbacks_set_send_callback(*callbacks, send_callback);
+    nghttp2_session_callbacks_set_send_data_callback(*callbacks, h2_send_data_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(*callbacks, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_header_callback(*callbacks, on_header_callback);
     nghttp2_session_callbacks_set_on_stream_close_callback(*callbacks, on_stream_close_callback);
@@ -1780,7 +1781,12 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
     connection->current_io_call = call;
     connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : fallback_deadline_abs_us;
     connection->current_write_timed_out = false;
-    connection->write_coalescing = connection->tls;
+    /* Coalesce for plaintext too: nghttp2 emits frames (or frame header and
+     * payload) as separate chunks, and with TCP_NODELAY each direct send()
+     * becomes its own syscall and packet. The buffered bytes are flushed
+     * before this function returns, and a failed flush marks the connection
+     * dead (see below), same as the TLS path. */
+    connection->write_coalescing = true;
     connection->write_buffer_len = 0;
     rv = nghttp2_session_send(connection->session);
     if (rv == 0) {
@@ -1835,41 +1841,14 @@ size_t remaining_request_bytes(grpc_call *call)
     return total_len - call->request_offset;
 }
 
-size_t copy_request_bytes(grpc_call *call, uint8_t *buf, size_t length)
-{
-    size_t copied = 0;
-    size_t total_len = call->grpc_header_len + call->request_len;
-
-    while (copied < length && call->request_offset < total_len) {
-        if (call->request_offset < call->grpc_header_len) {
-            size_t header_offset = call->request_offset;
-            size_t remaining = call->grpc_header_len - header_offset;
-            size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
-            memcpy(buf + copied, call->grpc_header + header_offset, to_copy);
-            copied += to_copy;
-            call->request_offset += to_copy;
-            continue;
-        }
-
-        size_t payload_offset = call->request_offset - call->grpc_header_len;
-        size_t remaining = call->request_len - payload_offset;
-        size_t to_copy = remaining < (length - copied) ? remaining : (length - copied);
-        memcpy(buf + copied, call->request + payload_offset, to_copy);
-        copied += to_copy;
-        call->request_offset += to_copy;
-    }
-
-    return copied;
-}
-
 ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
     grpc_call *call = source != NULL ? (grpc_call *) source->ptr : NULL;
-    size_t total_len;
     size_t remaining;
     size_t to_send;
     (void) session;
     (void) stream_id;
+    (void) buf;
     (void) user_data;
 
     *data_flags = 0;
@@ -1877,15 +1856,81 @@ ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, u
         *data_flags = NGHTTP2_DATA_FLAG_EOF;
         return 0;
     }
-    total_len = call->grpc_header_len + call->request_len;
     remaining = remaining_request_bytes(call);
     to_send = remaining < length ? remaining : length;
 
-    size_t copied = copy_request_bytes(call, buf, to_send);
-    if (call->request_offset >= total_len) {
-        *data_flags = NGHTTP2_DATA_FLAG_EOF;
+    /* NO_COPY: only the frame length is decided here; h2_send_data_callback
+     * writes the bytes straight from grpc_header / the request zend_string
+     * and advances request_offset. */
+    *data_flags |= NGHTTP2_DATA_FLAG_NO_COPY;
+    if (to_send == remaining) {
+        *data_flags |= NGHTTP2_DATA_FLAG_EOF;
     }
-    return (ssize_t) copied;
+    return (ssize_t) to_send;
+}
+
+/* Lifetime invariant: source->ptr is the grpc_call that owns the request
+ * bytes (unary: stack frame of the perform function; streaming:
+ * state->request zend_string). Every path that lets the call struct go away
+ * first ensures either the stream is closed (nghttp2 has detached the
+ * outbound DATA item) or the connection is dead/draining (nghttp2_session_send
+ * is never called again and nghttp2_session_del invokes no send callbacks),
+ * so this callback can never fire with a dangling source. Keep that guarantee
+ * when adding early-return paths around the send/recv loops. */
+int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = source != NULL ? (grpc_call *) source->ptr : NULL;
+    uint64_t deadline_abs_us;
+    bool *timed_out;
+    (void) session;
+
+    if (connection == NULL || call == NULL) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    if (frame->data.padlen > 0) {
+        /* We never enable padding; reset the stream rather than emit a frame
+         * layout this writer does not implement. */
+        return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+    }
+    timed_out = connection->current_write_deadline_abs_us > 0
+        ? &connection->current_write_timed_out
+        : &connection->setup_timed_out;
+    deadline_abs_us = connection->current_write_deadline_abs_us > 0
+        ? connection->current_write_deadline_abs_us
+        : connection->setup_deadline_abs_us;
+
+    if (h2_connection_buffer_or_write(connection, framehd, 9, deadline_abs_us, timed_out) != SUCCESS) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    while (length > 0) {
+        const uint8_t *chunk;
+        size_t chunk_len;
+        if (call->request_offset < call->grpc_header_len) {
+            chunk = call->grpc_header + call->request_offset;
+            chunk_len = call->grpc_header_len - call->request_offset;
+        } else {
+            size_t payload_offset = call->request_offset - call->grpc_header_len;
+            if (payload_offset >= call->request_len) {
+                /* nghttp2 asked for more bytes than the source holds. */
+                return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+            chunk = call->request + payload_offset;
+            chunk_len = call->request_len - payload_offset;
+        }
+        if (chunk_len > length) {
+            chunk_len = length;
+        }
+        if (h2_connection_buffer_or_write(connection, chunk, chunk_len, deadline_abs_us, timed_out) != SUCCESS) {
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        call->request_offset += chunk_len;
+        length -= chunk_len;
+    }
+    /* DATA frames no longer pass through send_callback, so record the frame
+     * here (header only; DATA payload is never hex-dumped by the tracer). */
+    grpc_lite_trace_outbound_frame_record(connection, framehd, 9);
+    return 0;
 }
 
 void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len)

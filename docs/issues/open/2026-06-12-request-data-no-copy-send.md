@@ -57,6 +57,22 @@ nghttp2 には `NGHTTP2_DATA_FLAG_NO_COPY` + `nghttp2_session_callbacks_set_send
 
 ## Progress
 
+- 2026-06-12: 実装完了(#4 → #5 の上に積む stacked 構成。send_data_callback が coalesce 構造に依存するため)。
+  - テストファースト: `tests/phpt/031-upload-payload-boundaries.phpt` を先に追加(空 request / 16KB 境界前後 16379・16380・16384 / 65536 / 1MB を `x-bench-server-timing` trailer のサーバ受信長で固定)し、旧実装で PASS を確認してから切り替え。
+  - `data_source_read_callback` を NO_COPY 化: 長さ確定と `NGHTTP2_DATA_FLAG_NO_COPY | EOF` 判定のみ行い、buf への memcpy と offset 前進をやめた。
+  - `h2_send_data_callback` を新設し `configure_callbacks` に登録: framehd 9B → grpc_header 未送信分 → `call->request` のスライスの順に `h2_connection_buffer_or_write` へ書き、`request_offset` を前進。5 byte prefix がフレーム境界をまたぐケースは while ループで一般に処理。`frame->data.padlen > 0` は `NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE`(padding 未使用のため実質到達しない)、write 失敗は `NGHTTP2_ERR_CALLBACK_FAILURE`(既存の接続 dead 化に乗る)。
+  - trace 追従: DATA フレームは send_callback を通らなくなるため、`h2_send_data_callback` 末尾で `grpc_lite_trace_outbound_frame_record(framehd, 9)` を記録(DATA payload は従来から hex dump 対象外)。
+  - `copy_request_bytes` は production から削除し、bench raw client(`--enable-grpc-bench`、`no_copy=0` 比較用)専用として `diagnostic/bench.c` の static へ移動。bench ビルドのコンパイルも確認済み。
+
 ## Verification
 
+- PHPT 16/16(新規 031 含む)、C unit、静的解析、PHPUnit 30/30、bench ビルド(--enable-grpc-bench)コンパイル すべて PASS。
+- ベンチ(before: #5 適用後 `h2c-coalesce-after-20260612` ほか / after: `no-copy-send-after-20260612`、p50):
+  - upload-unary 1MB: 446.0 → **416.1µs (-7%)**、16KB: 32.0 → 29.0µs、4MB: 1912.3 → 1922.5µs(揺れ幅内)
+  - tls-upload-unary 1MB: {845.9〜905.1} → 848.5µs、4MB: {3397〜3712} → **3080.8µs**(#4 ブランチの分布下限より良い)
+  - 回帰: cpu-micro tiny_unary_0b 9.5µs cpu / 29.1µs wall、tls-cpu-micro tiny 12.9µs cpu(揺れ幅内)、spanner-shape p50 23.2〜26.7µs(main 分布内)
+  - trace: `wire.socket_write` / `wire.tls_write` は 191/10RPC で #5 適用後と同一(syscall 数は coalescing が支配。本 issue の効果は memcpy 削減)。
+
 ## Decision Log
+
+- 2026-06-12: **採用**。nghttp2 内部フレームバッファへの memcpy(コピー1)が消え、payload は zend_string から coalesce バッファ(または直接 write)へ 1 段で到達。平文 1MB 送信 -7% を含め悪化はどのスイートにもなし。フォールバック経路(copy 版 read_callback)は production から除去し NO_COPY 一本化(両立は分岐とテスト面積を増やすだけで、send_data_callback 失敗時は接続 dead 化で十分なため)。
