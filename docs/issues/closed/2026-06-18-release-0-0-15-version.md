@@ -1,6 +1,6 @@
 # 0.0.15 release version alignment
 
-Status: Open
+Status: Closed
 Target-Release: 0.0.15
 Branch: main
 
@@ -36,10 +36,17 @@ Branch: main
 ## 進捗
 
 - 2026-06-18: issue作成。
+- 2026-06-18: `PHP_GRPC_VERSION` と README / install guide の現在release向け検証例を `0.0.15` に更新。
+- 2026-06-18: Docker compose内で build/load smokeを確認。
+- 2026-06-18: 0.0.14からの差分をrelease noteへ整理。
 
 ## 検証
 
-- 未実施。
+- build/load smoke: PASS
+  - command: `docker compose run --rm dev sh -lc 'cd /workspace && make clean >/tmp/grpc-0.0.15-clean.log 2>&1 || true; rm -rf .libs modules *.lo *.o *.dep src/.libs src/*.lo src/*.o src/*.dep src/diagnostic/.libs src/diagnostic/*.lo src/diagnostic/*.o src/diagnostic/*.dep; phpize >/tmp/grpc-0.0.15-phpize.log; ./configure --enable-grpc >/tmp/grpc-0.0.15-configure.log; make -j$(nproc) >/tmp/grpc-0.0.15-make.log; php -d extension=/workspace/modules/grpc.so -r '\''var_dump(extension_loaded("grpc"), Grpc\VERSION, phpversion("grpc")); exit(extension_loaded("grpc") && Grpc\VERSION === "0.0.15" && phpversion("grpc") === "0.0.15" ? 0 : 1);'\'''`
+  - `extension_loaded("grpc")`: `true`
+  - `Grpc\VERSION`: `0.0.15`
+  - `phpversion("grpc")`: `0.0.15`
 
 ## 判断ログ
 
@@ -47,7 +54,7 @@ Branch: main
 
 ## 修正コミット
 
-- 未作成。
+- `a4cab83` `0.0.15 release: runtime versionをtagと揃える`
 
 ## 完了条件
 
