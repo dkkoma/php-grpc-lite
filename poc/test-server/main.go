@@ -465,6 +465,14 @@ func serveNonGrpcH2C() {
 			w.Header().Set("grpc-status", "0")
 			return
 		}
+		if r.Header.Get("x-bench-grpc-response") == "declared-large-truncated" {
+			w.Header().Set("content-type", "application/grpc")
+			w.Header().Set("trailer", "grpc-status")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte{0, 3, 0, 0, 0})
+			w.Header().Set("grpc-status", "0")
+			return
+		}
 		if encoding := r.Header.Get("x-bench-grpc-encoding"); encoding != "" {
 			w.Header().Set("content-type", "application/grpc")
 			w.Header().Set("grpc-encoding", encoding)
