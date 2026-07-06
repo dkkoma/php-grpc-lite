@@ -2716,6 +2716,17 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 }
                 continue;
             }
+            if ((size_t) call->response_payload_len > ZSTR_MAX_LEN) {
+                call->response_message_too_large = true;
+                call->discard_response_body = true;
+                call->response_header_len = 0;
+                call->response_payload_len = 0;
+                call->response_payload_offset = 0;
+                if (session != NULL && call->stream_id > 0) {
+                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+                }
+                continue;
+            }
             if (call->response_header_buf[0] > 1) {
                 call->malformed_response_frame = true;
                 call->discard_response_body = true;
@@ -2743,7 +2754,13 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 return 0;
             }
             call->response_payload_offset = 0;
-            call->response_payload = zend_string_alloc(call->response_payload_len, 0);
+            {
+                size_t initial_payload_bytes = len - offset;
+                if (initial_payload_bytes > call->response_payload_len) {
+                    initial_payload_bytes = call->response_payload_len;
+                }
+                call->response_payload = zend_string_alloc(initial_payload_bytes, 0);
+            }
             if (call->response_payload_len == 0) {
                 ZSTR_VAL(call->response_payload)[0] = '\0';
             }
@@ -2753,6 +2770,10 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
             size_t need = call->response_payload_len - call->response_payload_offset;
             size_t take = need < len - offset ? need : len - offset;
             if (take > 0) {
+                size_t required_payload_bytes = call->response_payload_offset + take;
+                if (required_payload_bytes > ZSTR_LEN(call->response_payload)) {
+                    call->response_payload = zend_string_realloc(call->response_payload, required_payload_bytes, 0);
+                }
                 memcpy(ZSTR_VAL(call->response_payload) + call->response_payload_offset, data + offset, take);
                 call->response_payload_offset += take;
                 offset += take;

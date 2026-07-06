@@ -60,6 +60,15 @@ $assertUnaryStatus(
     Grpc\STATUS_INTERNAL,
     'malformed gRPC response frame',
 );
+memory_reset_peak_usage();
+$beforeLargeTruncated = memory_get_usage(true);
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['declared-large-truncated']],
+    Grpc\STATUS_INTERNAL,
+    'malformed gRPC response frame',
+);
+$largeTruncatedPeakDelta = memory_get_peak_usage(true) - $beforeLargeTruncated;
+grpc_lite_phpt_assert_true($largeTruncatedPeakDelta < 16 * 1024 * 1024, 'large declared truncated unary response must not allocate declared payload');
 // message 途中の RST_STREAM は malformed ではなく stream reset の taxonomy に従う
 $assertUnaryStatus(
     ['x-bench-grpc-response' => ['partial-frame-abort']],
@@ -138,6 +147,23 @@ foreach ($call->responses() as $_reply) {
 grpc_lite_phpt_assert_same(0, $count, 'partial frame yield count');
 grpc_lite_phpt_assert_same(Grpc\STATUS_INTERNAL, $call->getStatus()->code, 'partial frame status');
 grpc_lite_phpt_assert_contains('malformed gRPC response frame', $call->getStatus()->details, 'partial frame details');
+
+memory_reset_peak_usage();
+$beforeLargeTruncatedStream = memory_get_usage(true);
+$request = new BenchRequest();
+$request->setMessageCount(10);
+$call = $client->BenchServerStream($request, [
+    'x-bench-grpc-response' => ['declared-large-truncated'],
+]);
+$count = 0;
+foreach ($call->responses() as $_reply) {
+    $count++;
+}
+grpc_lite_phpt_assert_same(0, $count, 'large declared truncated stream yield count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_INTERNAL, $call->getStatus()->code, 'large declared truncated stream status');
+grpc_lite_phpt_assert_contains('malformed gRPC response frame', $call->getStatus()->details, 'large declared truncated stream details');
+$largeTruncatedStreamPeakDelta = memory_get_peak_usage(true) - $beforeLargeTruncatedStream;
+grpc_lite_phpt_assert_true($largeTruncatedStreamPeakDelta < 16 * 1024 * 1024, 'large declared truncated stream response must not allocate declared payload');
 
 echo "OK\n";
 ?>
