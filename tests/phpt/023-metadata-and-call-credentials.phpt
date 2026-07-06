@@ -99,8 +99,8 @@ $emptyApiClientMetricsCall = $tlsClient->BenchUnary(new BenchRequest(), [
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $emptyApiClientMetricsStatus->code, 'empty x-goog-api-client call credentials status');
 $emptyApiClientMetricsMetadata = $emptyApiClientMetricsCall->getMetadata();
 grpc_lite_phpt_assert_same('x-goog-api-client', $emptyApiClientMetricsMetadata['x-bench-seen-000-key-bin'][0] ?? null, 'empty x-goog-api-client observed key');
-grpc_lite_phpt_assert_same('1', $emptyApiClientMetricsMetadata['x-bench-seen-000-count'][0] ?? null, 'empty x-goog-api-client must be folded to one metadata value');
-grpc_lite_phpt_assert_same('', $emptyApiClientMetricsMetadata['x-bench-seen-000-value-000-bin'][0] ?? null, 'empty x-goog-api-client folded value');
+grpc_lite_phpt_assert_same('0', $emptyApiClientMetricsMetadata['x-bench-seen-000-count'][0] ?? null, 'empty x-goog-api-client must not emit an empty metadata value');
+grpc_lite_phpt_assert_same(null, $emptyApiClientMetricsMetadata['x-bench-seen-000-value-000-bin'][0] ?? null, 'empty x-goog-api-client emitted value');
 
 $duplicateCredentialsCallbackCalled = false;
 $duplicateCredentialsCall = $tlsClient->BenchUnary(new BenchRequest(), [
