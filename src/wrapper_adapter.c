@@ -343,6 +343,10 @@ static bool grpc_lite_fold_x_goog_api_client(zval *metadata, zend_string *key, z
         smart_str_free(&buffer);
         return false;
     }
+    if (buffer.s == NULL) {
+        smart_str_free(&buffer);
+        return false;
+    }
     smart_str_0(&buffer);
 
     array_init(&folded);
