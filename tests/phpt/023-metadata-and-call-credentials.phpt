@@ -90,6 +90,18 @@ grpc_lite_phpt_assert_same('x-goog-api-client', $apiClientMetricsMetadata['x-ben
 grpc_lite_phpt_assert_same('1', $apiClientMetricsMetadata['x-bench-seen-000-count'][0] ?? null, 'x-goog-api-client must be folded to one metadata value');
 grpc_lite_phpt_assert_same('gl-php/test gax/test grpc/test cred-type/u', $apiClientMetricsMetadata['x-bench-seen-000-value-000-bin'][0] ?? null, 'x-goog-api-client folded value');
 
+$emptyApiClientMetricsCall = $tlsClient->BenchUnary(new BenchRequest(), [
+    'x-bench-observe-metadata-key' => ['x-goog-api-client'],
+], [
+    'call_credentials_callback' => static fn (): array => ['x-goog-api-client' => []],
+]);
+[, $emptyApiClientMetricsStatus] = $emptyApiClientMetricsCall->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $emptyApiClientMetricsStatus->code, 'empty x-goog-api-client call credentials status');
+$emptyApiClientMetricsMetadata = $emptyApiClientMetricsCall->getMetadata();
+grpc_lite_phpt_assert_same('x-goog-api-client', $emptyApiClientMetricsMetadata['x-bench-seen-000-key-bin'][0] ?? null, 'empty x-goog-api-client observed key');
+grpc_lite_phpt_assert_same('1', $emptyApiClientMetricsMetadata['x-bench-seen-000-count'][0] ?? null, 'empty x-goog-api-client must be folded to one metadata value');
+grpc_lite_phpt_assert_same('', $emptyApiClientMetricsMetadata['x-bench-seen-000-value-000-bin'][0] ?? null, 'empty x-goog-api-client folded value');
+
 $duplicateCredentialsCallbackCalled = false;
 $duplicateCredentialsCall = $tlsClient->BenchUnary(new BenchRequest(), [
     'x-bench-echo-ascii' => ['from-request'],
