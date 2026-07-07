@@ -24,13 +24,14 @@ Google のフロントエンドは max connection age により定期的に GOAW
 - **Go 公式 (grpc-go)**: `handleGoAway` が `LastStreamID` より大きいストリームに `unprocessed` フラグを立て、`csAttempt.shouldRetry` が「初回試行かつ unprocessed」なら透過リトライする。`disableRetry` 設定でも透過リトライ用に送信メッセージをバッファし続ける。
   - [internal/transport/http2_client.go `handleGoAway`](https://github.com/grpc/grpc-go/blob/master/internal/transport/http2_client.go)（`streamID > id && streamID <= upperLimit` → `stream.unprocessed.Store(true)`）
   - [stream.go `csAttempt.shouldRetry`](https://github.com/grpc/grpc-go/blob/master/stream.go)（`if cs.firstAttempt && unprocessed { return true, nil }`）
+- **二段階 GOAWAY への注意**: grpc-go はサーバーが「1 回目 GOAWAY (last_stream_id = MaxInt32) → RTT 後に 2 回目 GOAWAY (実際の last_stream_id)」を送るパターンを区別して処理する（[grpc-go#1387](https://github.com/grpc/grpc-go/issues/1387)）。1 回目はリトライトリガーではなく draining トリガーであり、既存ストリームは閉じず新規ストリームだけ止める。2 回目の小さい last_stream_id で初めて `stream_id > last_stream_id` の active stream が retryable refused になる。現行実装の GOAWAY 分岐は 1 回目でも該当ストリームを一律 refused 扱いにするため、この区別を実装する必要がある。
 
 つまり公式実装ではこのケースはアプリに UNAVAILABLE として見えず、php-grpc-lite だけがエラーを露出する。
 
 ## Goals
 
-- unary / server streaming の開始時、`stream_refused_seen`（GOAWAY refused、および RST_STREAM `REFUSED_STREAM`）で終わったコールを、新しい接続（または draining でない別の persistent connection）で 1 回だけ自動再送する。
-- 再送は deadline の残時間内でのみ行う（`grpc-timeout` は残時間で再計算）。
+- GOAWAY refused / RST_STREAM(REFUSED_STREAM) で終わり、かつ「サーバー未処理」が保証されるコールを 1 回だけ自動再送する。
+- 再送は deadline の残時間内でのみ行う（`grpc-timeout` は残時間で再計算。absolute deadline は初回のものを維持）。
 
 ## Non-Goals
 
@@ -39,9 +40,36 @@ Google のフロントエンドは max connection age により定期的に GOAW
 
 ## Plan
 
-- `grpc_lite_unary_call_perform_on_connection` / `server_streaming_call_open_resource` の呼び出し側に、`stream_refused_seen && !initial_grpc_status_seen` を条件とする 1 回限りの再試行ループを追加。
-- 再試行時は draining 接続をキャッシュから外し、新規接続を確立する（既存の `remove_unusable_persistent_connection` / `get_persistent_connection` を利用）。
-- Go テストサーバーに GOAWAY 送出シナリオを追加し PHPT で検証。
+### retryable 述語（"unprocessed" の厳密化）
+
+`stream_refused_seen && !initial_grpc_status_seen` では不十分（`initial_grpc_status_seen` は initial HEADERS 内の grpc-status しか見ず、metadata / DATA / パーサ途中状態を反映しない）。透過リトライは以下すべてを満たすときのみ:
+
+- `retry_attempt == 0`（初回試行）
+- refused である: `stream_refused_seen`（GOAWAY 経路）**または** `stream_reset_seen && stream_error_code == NGHTTP2_REFUSED_STREAM`（RST 経路。現行の `stream_refused_seen` は GOAWAY でしか立たない点に注意: `src/transport.c` の `on_frame_recv_callback` GOAWAY 分岐 / RST_STREAM 分岐、`src/status_core.c` の UNAVAILABLE mapping）
+- レスポンス未開始: `http_status` 未受信、response metadata 未受信、`grpc_status` 未受信、`response_message_count == 0`、`response_queue_head == NULL`、レスポンスパーサ途中状態なし（`response_header_len == 0 && response_payload == NULL`）
+- server streaming はさらに「userland に 1 件もメッセージ/ステータスを返していない」こと
+
+### attempt outcome の伝搬
+
+`grpc_lite_unary_result` / streaming の next 結果（`src/grpc_result.h`）には status/body/metadata しかなく、リトライ判定に必要な情報が呼び出し側に返らない。`transparent_retryable_unprocessed`、`refused_kind (GOAWAY/RST)`、`response_started` のような outcome フィールドを result に追加する。status code/details 文字列からのリトライ判定はしない。
+
+### リトライのオーナー
+
+- **unary**: `grpc_lite_unary_call_perform_on_connection` の呼び出し側に 1 回限りの再試行ループ。
+- **server streaming**: GOAWAY/RST を観測するのは open 時ではなく最初の `next()`（receive path）であることが多い（`server_streaming_call_open_resource` は送信して resource を返すだけ。`src/server_streaming_call.c` / `src/wrapper_adapter.c` の responses 経路）。よってリトライのオーナーは「最初のメッセージ/ステータスを userland に返す前の receive path」とし、`next` 側が retryable_unprocessed を返せるようにして wrapper 層で旧 resource を破棄して再 open する。
+
+### 接続キャッシュの扱い（GOAWAY と RST で分ける）
+
+- GOAWAY refused: 接続は draining。`remove_unusable_persistent_connection` で cache から外し、`get_persistent_connection` で新規接続を取得。
+- RST_STREAM(REFUSED_STREAM): 接続自体は healthy のままなので cache から外さない（`remove_unusable_persistent_connection` は usable な接続には何もしない）。同一接続への再 stream で開始する。
+
+### 二段階 GOAWAY
+
+`last_stream_id == INT32_MAX (2147483647)` の 1 回目 GOAWAY では既存ストリームを refused にせず、draining（新規ストリーム停止）のみ。後続 GOAWAY の小さい last_stream_id を受けて初めて `stream_id > last_stream_id` の active stream を retryable refused にする。
+
+### テスト fixture
+
+既存のテストサーバー（50060 ポート系）は接続ごとに常に GOAWAY refused を返すため「リトライ後に成功」を検証できない（`poc/test-server/main.go`、`tests/phpt/024-control-semantics.phpt` は UNAVAILABLE 固定の期待値）。「初回接続は GOAWAY refused、次の接続は成功」という fixture を追加する。
 
 ## Progress
 
@@ -49,7 +77,14 @@ Google のフロントエンドは max connection age により定期的に GOAW
 
 ## Decision Log
 
+- 2026-07-08: Codex (gpt-5.5) レビューを反映。retryable 述語の厳密化、RST_STREAM(REFUSED_STREAM) の別経路判定、streaming のリトライオーナーを receive path へ、GOAWAY/RST でのキャッシュ処理分離、二段階 GOAWAY、fixture 追加を Plan に追記。
+- RST_STREAM(REFUSED_STREAM) 再試行を同一接続で行うか新規接続を強制するかは実装時に決定して記録する（初期方針: 同一 healthy 接続に再 stream）。
+
 ## Close Criteria
 
-- GOAWAY refused のコールがアプリに UNAVAILABLE を返さず、新接続で成功する PHPT がある。
-- 再試行は 1 回限りで、deadline 超過時は DEADLINE_EXCEEDED になることをテストで確認。
+- GOAWAY refused のコールがアプリに UNAVAILABLE を返さず、新接続で成功する PHPT がある（unary / server streaming 両方）。
+- 2 回連続 refused は 1 回のリトライ後に UNAVAILABLE になる。
+- server streaming で 1 件でもメッセージを userland に返した後の GOAWAY/close はリトライしない。
+- リトライ時も absolute deadline は初回のものを維持し、超過時は DEADLINE_EXCEEDED になる。
+- 二段階 GOAWAY（1 回目 MaxInt32）で既存ストリームが誤って refused/リトライされない。
+- 既存の UNAVAILABLE 期待の PHPT（024 等）を新しい挙動に合わせて更新し、全スイートが通る。
