@@ -20,6 +20,29 @@ static int failures = 0;
     } \
 } while (0)
 
+#define ASSERT_OUTCOME(expected_retryable, expected_kind, expected_started, call_expr, userland_seen) do { \
+    grpc_call call; \
+    grpc_lite_attempt_outcome outcome; \
+    memset(&call, 0, sizeof(call)); \
+    memset(&outcome, 0, sizeof(outcome)); \
+    call.grpc_status = -1; \
+    call.http_status = -1; \
+    call_expr; \
+    grpc_lite_attempt_outcome_from_call(&call, (userland_seen), &outcome); \
+    if ((expected_retryable) != outcome.transparent_retryable_unprocessed) { \
+        fprintf(stderr, "%s:%d: expected retryable %d, got %d\n", __FILE__, __LINE__, (expected_retryable), outcome.transparent_retryable_unprocessed); \
+        failures++; \
+    } \
+    if ((expected_kind) != outcome.refused_kind) { \
+        fprintf(stderr, "%s:%d: expected refused kind %d, got %d\n", __FILE__, __LINE__, (expected_kind), outcome.refused_kind); \
+        failures++; \
+    } \
+    if ((expected_started) != outcome.response_started) { \
+        fprintf(stderr, "%s:%d: expected response_started %d, got %d\n", __FILE__, __LINE__, (expected_started), outcome.response_started); \
+        failures++; \
+    } \
+} while (0)
+
 static void test_priority_order(void)
 {
     ASSERT_STATUS(GRPC_STATUS_DEADLINE_EXCEEDED, call.timed_out = true; call.grpc_status = GRPC_STATUS_OK, false);
@@ -68,11 +91,31 @@ static void test_http2_stream_error_mapping(void)
     ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_reset_seen = true; call.stream_error_code = 0xffffu, false);
 }
 
+static void test_transparent_retryable_unprocessed_predicate(void)
+{
+    ASSERT_OUTCOME(true, GRPC_LITE_REFUSED_GOAWAY, false, call.stream_refused_seen = true, false);
+    ASSERT_OUTCOME(true, GRPC_LITE_REFUSED_RST_STREAM, false, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_REFUSED_STREAM, false);
+
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, false, call.retry_attempt = 1; call.stream_refused_seen = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_RST_STREAM, false, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_REFUSED_STREAM, true);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_NONE, false, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_CANCEL, false);
+
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.http_status = 200, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.grpc_status_seen = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.grpc_status = GRPC_STATUS_OK, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.metadata_entry_count = 1, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.response_message_count = 1, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, queued_payload payload; memset(&payload, 0, sizeof(payload)); call.stream_refused_seen = true; call.response_queue_head = &payload, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.response_header_len = 1, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.response_payload_len = 1, false);
+}
+
 int main(void)
 {
     test_priority_order();
     test_http_fallback_mapping();
     test_http2_stream_error_mapping();
+    test_transparent_retryable_unprocessed_predicate();
 
     if (failures != 0) {
         fprintf(stderr, "%d status_core unit assertions failed\n", failures);

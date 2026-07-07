@@ -55,6 +55,11 @@ type benchStatsHandler struct{}
 
 var benchPayloadCache = map[int][]byte{}
 var eofLifecycleConnections int64
+var goAwayRefusedThenOKUnaryConnections int64
+var goAwayRefusedThenOKStreamingConnections int64
+var goAwayRefusedThenDelayedOKConnections int64
+
+const maxHTTP2ClientStreamID = uint32((1 << 31) - 1)
 
 func init() {
 	for _, size := range []int{0, 100, 1024, 10 * 1024, 100 * 1024, 1024 * 1024} {
@@ -523,6 +528,11 @@ func serveLifecycleH2C() {
 	go serveServerRstThenOKH2C(":50058")
 	go serveServerRstThenOKH2C(":50059")
 	go serveGoAwayRefusedH2C(":50060")
+	go serveGoAwayRefusedThenOKH2C(":50061", &goAwayRefusedThenOKUnaryConnections)
+	go serveGoAwayMaxThenOKH2C(":50062")
+	go serveGoAwayRefusedThenOKH2C(":50063", &goAwayRefusedThenOKStreamingConnections)
+	go serveGoAwayAfterMessageH2C(":50064")
+	go serveGoAwayRefusedThenDelayedOKH2C(":50065")
 }
 
 func serveRawH2C(addr string, sendGoAway bool, firstConnectionEOF bool) {
@@ -791,6 +801,231 @@ func handleGoAwayRefusedH2C(conn net.Conn) {
 		case *http2.DataFrame:
 			if f.Header().StreamID > 0 {
 				_ = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
+				return
+			}
+		}
+	}
+}
+
+func serveGoAwayRefusedThenOKH2C(addr string, counter *int64) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c GOAWAY refused then OK fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleGoAwayRefusedThenOKH2C(conn, counter)
+	}
+}
+
+func handleGoAwayRefusedThenOKH2C(conn net.Conn, counter *int64) {
+	if atomic.AddInt64(counter, 1)%2 == 1 {
+		handleGoAwayRefusedH2C(conn)
+		return
+	}
+	handleRawH2C(conn, false, false)
+}
+
+func serveGoAwayRefusedThenDelayedOKH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c GOAWAY refused then delayed OK fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleGoAwayRefusedThenDelayedOKH2C(conn)
+	}
+}
+
+func handleGoAwayRefusedThenDelayedOKH2C(conn net.Conn) {
+	if atomic.AddInt64(&goAwayRefusedThenDelayedOKConnections, 1)%2 == 1 {
+		handleGoAwayRefusedH2C(conn)
+		return
+	}
+	handleRawDelayedOKH2C(conn, 100*time.Millisecond)
+}
+
+func handleRawDelayedOKH2C(conn net.Conn, delay time.Duration) {
+	defer conn.Close()
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var streamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			streamID = f.Header().StreamID
+			if f.StreamEnded() {
+				time.Sleep(delay)
+				writeRawGrpcOK(framer, streamID, false)
+				return
+			}
+		case *http2.DataFrame:
+			if streamID == 0 {
+				streamID = f.Header().StreamID
+			}
+			if f.StreamEnded() {
+				time.Sleep(delay)
+				writeRawGrpcOK(framer, streamID, false)
+				return
+			}
+		}
+	}
+}
+
+func serveGoAwayAfterMessageH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c GOAWAY after message fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleGoAwayAfterMessageH2C(conn)
+	}
+}
+
+func handleGoAwayAfterMessageH2C(conn net.Conn) {
+	defer conn.Close()
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var streamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			streamID = f.Header().StreamID
+			if f.StreamEnded() {
+				writeRawGrpcMessageThenGoAway(framer, streamID)
+				return
+			}
+		case *http2.DataFrame:
+			if streamID == 0 {
+				streamID = f.Header().StreamID
+			}
+			if f.StreamEnded() {
+				writeRawGrpcMessageThenGoAway(framer, streamID)
+				return
+			}
+		}
+	}
+}
+
+func writeRawGrpcMessageThenGoAway(framer *http2.Framer, streamID uint32) {
+	headers := encodeHeaders([]hpack.HeaderField{
+		{Name: ":status", Value: "200"},
+		{Name: "content-type", Value: "application/grpc"},
+	})
+	_ = framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: headers,
+		EndHeaders:    true,
+	})
+	_ = framer.WriteData(streamID, false, grpcFrame(0, nil))
+	_ = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
+}
+
+func serveGoAwayMaxThenOKH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c GOAWAY MaxInt32 then OK fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleGoAwayMaxThenOKH2C(conn)
+	}
+}
+
+func handleGoAwayMaxThenOKH2C(conn net.Conn) {
+	defer conn.Close()
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var streamID uint32
+	var sentGoAway bool
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			streamID = f.Header().StreamID
+			if !sentGoAway && streamID > 0 {
+				_ = framer.WriteGoAway(maxHTTP2ClientStreamID, http2.ErrCodeNo, nil)
+				sentGoAway = true
+			}
+			if f.StreamEnded() {
+				writeRawGrpcOK(framer, streamID, false)
+				return
+			}
+		case *http2.DataFrame:
+			if streamID == 0 {
+				streamID = f.Header().StreamID
+			}
+			if !sentGoAway && streamID > 0 {
+				_ = framer.WriteGoAway(maxHTTP2ClientStreamID, http2.ErrCodeNo, nil)
+				sentGoAway = true
+			}
+			if f.StreamEnded() {
+				writeRawGrpcOK(framer, streamID, false)
 				return
 			}
 		}

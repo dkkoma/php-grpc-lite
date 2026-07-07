@@ -20,7 +20,7 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
     }
     state->completed = true;
 }
-int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, zval *return_value, grpc_lite_status_result *setup_failure)
+int server_streaming_call_open_resource(const char *key, size_t key_len, const char *host, size_t host_len, zend_long port, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, zend_long max_receive_message_length, size_t max_response_metadata_bytes, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, uint32_t retry_attempt, zval *return_value, grpc_lite_status_result *setup_failure)
 {
     h2_connection *connection;
     server_streaming_call_state *state;
@@ -28,17 +28,12 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
     h2_request_headers request_headers;
     const char *error_message = NULL;
     char error_detail[256] = {0};
-    uint64_t deadline_abs_us = 0;
     zend_long remaining_timeout_us = 0;
     int rv;
 
     error_message = validate_channel_inputs(key, key_len, host, host_len, (int64_t) port, authority, authority_len, tls_verify_name, tls_verify_name_len);
     if (error_message != NULL) {
         zend_throw_exception(NULL, error_message, 0);
-        return FAILURE;
-    }
-    if (timeout_us < 0) {
-        zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
         return FAILURE;
     }
     error_message = validate_grpc_path(path, path_len);
@@ -51,7 +46,6 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
         zend_throw_exception(NULL, "gRPC request message exceeds 32-bit frame length", 0);
         return FAILURE;
     }
-    deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
     connection = get_persistent_connection(key, key_len, host, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, deadline_abs_us, error_detail, sizeof(error_detail), NULL, &error_message);
     if (connection == NULL) {
         if (setup_failure != NULL) {
@@ -84,6 +78,7 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
 #endif
     memset(&state->call, 0, sizeof(state->call));
     state->call.connection = connection;
+    state->call.retry_attempt = retry_attempt;
     state->call.grpc_status = -1;
     state->call.http_status = -1;
     state->call.request = (const uint8_t *) ZSTR_VAL(state->request);
@@ -237,6 +232,7 @@ static void server_streaming_call_fill_status_result(grpc_lite_streaming_next_re
     result->status.details = zend_string_copy(status_result.details);
     grpc_protocol_copy_metadata_map(&result->initial_metadata, &state->call, false);
     grpc_protocol_copy_metadata_map(&result->trailing_metadata, &state->call, true);
+    grpc_lite_attempt_outcome_from_call(&state->call, state->delivered_messages > 0, &result->outcome);
     zend_string_release(status_result.details);
 }
 

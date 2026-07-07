@@ -1915,6 +1915,7 @@ PHP_FUNCTION(grpc_lite_server_streaming_open)
     char *tls_verify_name = NULL;
     size_t tls_verify_name_len = 0;
     zend_string *connection_key = NULL;
+    uint64_t deadline_abs_us = 0;
 
     ZEND_PARSE_PARAMETERS_START(5, 14)
         Z_PARAM_STRING(key, key_len)
@@ -1934,6 +1935,12 @@ PHP_FUNCTION(grpc_lite_server_streaming_open)
         Z_PARAM_STRING_OR_NULL(tls_verify_name, tls_verify_name_len)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (timeout_us < 0) {
+        zend_throw_exception(NULL, "timeout must be non-negative microseconds", 0);
+        RETURN_THROWS();
+    }
+    deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
+
     (void) key;
     (void) key_len;
     connection_key = grpc_lite_build_bench_connection_key(host, host_len, port, authority, authority_len, tls_verify_name, tls_verify_name_len, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len);
@@ -1942,7 +1949,7 @@ PHP_FUNCTION(grpc_lite_server_streaming_open)
         RETURN_THROWS();
     }
 
-    if (server_streaming_call_open_resource(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), host, host_len, port, path, path_len, request, request_len, headers_zv, NULL, timeout_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, effective_max_response_metadata_bytes((int64_t) -1, (int64_t) -1), authority, authority_len, tls_verify_name, tls_verify_name_len, return_value, NULL) != SUCCESS) {
+    if (server_streaming_call_open_resource(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), host, host_len, port, path, path_len, request, request_len, headers_zv, NULL, deadline_abs_us, use_tls, root_certs, root_certs_len, cert_chain, cert_chain_len, private_key, private_key_len, max_receive_message_length, effective_max_response_metadata_bytes((int64_t) -1, (int64_t) -1), authority, authority_len, tls_verify_name, tls_verify_name_len, 0, return_value, NULL) != SUCCESS) {
         zend_string_release(connection_key);
         RETURN_THROWS();
     }

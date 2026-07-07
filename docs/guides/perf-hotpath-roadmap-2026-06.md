@@ -75,7 +75,7 @@
 各 issue のブランチで、マージ前に以下を通す。
 
 1. **テスト**
-   - PHPT: `./tools/test/check-phpt.sh`(Go test-server ports 50051–50060 preflight)
+   - PHPT: `./tools/test/check-phpt.sh`(Go test-server ports 50051–50065 preflight)
    - C unit: `./tools/test/check-c-unit.sh`
    - 静的解析: `./tools/test/check-c-static-analysis.sh`
    - 統合: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist`

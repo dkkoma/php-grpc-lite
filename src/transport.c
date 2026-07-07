@@ -2086,6 +2086,9 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
         if (connection != NULL) {
             grpc_call *active_stream = connection->active_streams;
             mark_connection_draining(connection, frame->goaway.last_stream_id, frame->goaway.error_code);
+            if (frame->goaway.last_stream_id == INT32_MAX) {
+                return 0;
+            }
             while (active_stream != NULL) {
                 grpc_call *next_active_stream = active_stream->next_active_stream;
                 if (active_stream->stream_id > 0 && frame->goaway.last_stream_id < active_stream->stream_id) {

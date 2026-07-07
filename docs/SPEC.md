@@ -88,6 +88,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 - gRPC framing は `1 byte compressed-flag + 4 byte big-endian length + payload`。
 - TLSではALPNで `h2` を交渉する。h2c(plaintext)ではHTTP/2 prior knowledgeで接続する。
 - 圧縮messageは圧縮実装が入るまで `STATUS_UNIMPLEMENTED` とする。
+- `GOAWAY` で `last_stream_id` より大きいstream、または `RST_STREAM(REFUSED_STREAM)` で、response metadata / DATA / status / parser途中状態が一切ない初回attemptだけは「server未処理」として1回だけtransparent retryする。これはretry policyやidempotency判断ではなく、gRPC仕様上未処理が保証されるtransport lifecycleの再送である。absolute deadlineは初回のものを維持し、`grpc-timeout` は再送時の残時間から再計算する。`GOAWAY(last_stream_id=2147483647)` は二段階GOAWAYのdraining通知として扱い、既存streamをrefusedにしない。
 
 ### 4.3 TLS 戦略
 
@@ -253,6 +254,7 @@ request metadata は transport へ渡す前に共通正規化する。key は lo
 
 ## 変更履歴
 
+- **2026-07-08**: GOAWAY refused / RST_STREAM(REFUSED_STREAM) のtransparent retry方針を追加。server未処理が保証される初回attemptだけを1回再送し、deadline維持、GOAWAY/RSTのconnection cache扱い、二段階GOAWAYのdraining-only扱いを仕様化。
 - **2026-06-11**: ドキュメント棚卸し。Composer autoload対象(任意利用の `GrpcLite\OpenTelemetry` helper)の記述を実態へ修正。解決済みの未決事項(test server選定、ベンチ手法、マルチアーキテクチャ、デバッグ出力、generated stub確認)を整理。request metadata 256 values / response metadata 128 entries / persistent connection cache 128 の固定上限を明文化。
 - **2026-05-31**: C extension architecture policyを追加。root extension layout、translation unit/source list、internal header/public include境界、diagnostic build境界、transport/TLS setup分離、hot path変更時のbenchmark要件を明記。
 - **2026-04-25**: 初版作成。目的・スコープ・段階戦略・TLS/HTTP/2 方針・API 互換目標・開発環境を確定。
