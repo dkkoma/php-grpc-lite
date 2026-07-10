@@ -34,7 +34,7 @@ unary / server streaming の client-side enforcement、`STATUS_DEADLINE_EXCEEDED
 |---|---|---|
 | trailers-only response | body なしで `grpc-status` が header block に来ても status として扱う | unary immediate error、server streaming immediate error |
 | `grpc-message` percent decode | percent-encoded UTF-8 を decode し、不正 encoding でも壊れない | `%20`、UTF-8、壊れた `%` |
-| missing trailers | trailers が欠落した場合は適切な non-OK status を合成する | `STATUS_UNKNOWN` + details の妥当性 |
+| missing trailers | trailers が欠落した場合は適切な non-OK status を合成する | `STATUS_INTERNAL` + details "server closed the stream without sending trailers"(grpc-go 準拠、2026-07-10 に `STATUS_UNKNOWN` から変更) |
 | HTTP non-200 | gRPC status が無い HTTP error を gRPC status に合成する | 404/503/502 等 |
 | content-type mismatch | `application/grpc` でない応答を成功扱いしない | proxy/html/json response |
 | `grpc-status-details-bin` | status details がある場合に矛盾を検出する | status code mismatch はエラー扱い |
@@ -59,7 +59,7 @@ reserved / fixed headers と key/value validation の観測結果は `docs/resea
 
 ## 6. Compression / Encoding
 
-2026-04-28 時点で、未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` として明示エラー化済み。実際の gzip 対応は未実装。
+2026-04-28 時点で、未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` として明示エラー化済み。実際の gzip 対応は未実装。2026-07-10 に公式実装(C-core / grpc-go のクライアント側分類)へ合わせて `STATUS_INTERNAL` に変更。
 
 | 項目 | 期待 | テスト観点 |
 |---|---|---|

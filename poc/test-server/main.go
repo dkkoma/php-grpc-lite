@@ -470,6 +470,14 @@ func serveNonGrpcH2C() {
 			w.Header().Set("grpc-status", "0")
 			return
 		}
+		if r.Header.Get("x-bench-grpc-response") == "no-trailers" {
+			// message を届けたあと trailers (grpc-status) を送らず clean END_STREAM で
+			// 閉じる fixture。trailers 欠落を INTERNAL に分類する経路を固定する。
+			w.Header().Set("content-type", "application/grpc")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			return
+		}
 		if r.Header.Get("x-bench-grpc-response") == "declared-large-truncated" {
 			w.Header().Set("content-type", "application/grpc")
 			w.Header().Set("trailer", "grpc-status")

@@ -55,6 +55,12 @@ $assertUnaryStatus(
     Grpc\STATUS_INTERNAL,
     'unsupported grpc-encoding: gzip',
 );
+// message 受信後に trailers (grpc-status) なしで clean END_STREAM → INTERNAL
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['no-trailers']],
+    Grpc\STATUS_INTERNAL,
+    'server closed the stream without sending trailers',
+);
 $assertUnaryStatus(
     ['x-bench-grpc-response' => ['partial-frame']],
     Grpc\STATUS_INTERNAL,
@@ -127,6 +133,12 @@ $assertStreamStatus(
     ['x-bench-grpc-status' => ['abc']],
     Grpc\STATUS_UNKNOWN,
     'invalid grpc-status trailer',
+    1,
+);
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['no-trailers']],
+    Grpc\STATUS_INTERNAL,
+    'server closed the stream without sending trailers',
     1,
 );
 $assertStreamStatus(
