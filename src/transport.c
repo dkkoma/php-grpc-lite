@@ -2108,26 +2108,15 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
     }
     if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
-        && (frame->headers.cat == NGHTTP2_HCAT_RESPONSE
-            || (frame->headers.cat == NGHTTP2_HCAT_HEADERS && call->expect_final_response))) {
-        /* nghttp2 category contract: only the first response HEADERS is
-         * NGHTTP2_HCAT_RESPONSE. With informational (1xx) responses, further
-         * non-final blocks and the final response HEADERS all arrive as
-         * NGHTTP2_HCAT_HEADERS, so response validation must be deferred until
-         * the non-1xx block. */
-        if (call->http_status >= 100 && call->http_status < 200) {
-            call->expect_final_response = true;
-        } else {
-            call->expect_final_response = false;
-            call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-            if (!call->content_type_seen && !(call->grpc_status_seen && call->initial_headers_end_stream)) {
-                call->invalid_content_type = true;
-                call->discard_response_body = true;
-            }
-            if (call->initial_grpc_status_seen && !call->initial_headers_end_stream) {
-                call->invalid_grpc_status = true;
-                call->discard_response_body = true;
-            }
+        && frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+        call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
+        if (!call->content_type_seen && !(call->grpc_status_seen && call->initial_headers_end_stream)) {
+            call->invalid_content_type = true;
+            call->discard_response_body = true;
+        }
+        if (call->initial_grpc_status_seen && !call->initial_headers_end_stream) {
+            call->invalid_grpc_status = true;
+            call->discard_response_body = true;
         }
     } else if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id

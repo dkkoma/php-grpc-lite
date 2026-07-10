@@ -35,7 +35,7 @@ unary / server streaming の client-side enforcement、`STATUS_DEADLINE_EXCEEDED
 | trailers-only response | body なしで `grpc-status` が header block に来ても status として扱う | unary immediate error、server streaming immediate error |
 | `grpc-message` percent decode | percent-encoded UTF-8 を decode し、不正 encoding でも壊れない | `%20`、UTF-8、壊れた `%` |
 | missing trailers (DATA END_STREAM) | :status 200 で stream が DATA frame の END_STREAM で終わり `grpc-status` が無い場合は INTERNAL | `STATUS_INTERNAL` + details "server closed the stream without sending trailers"(grpc-go `handleData` 準拠、2026-07-10 に `STATUS_UNKNOWN` から変更) |
-| missing grpc-status (HEADERS END_STREAM) | headers-only 応答や `grpc-status` を含まない trailing HEADERS で終わる場合は UNKNOWN のまま | `STATUS_UNKNOWN`(grpc-go `operateHeaders` 準拠)。headers-only / custom trailers / `grpc-message` のみ、および 1xx 経由の terminal frame 判別 |
+| missing grpc-status (HEADERS END_STREAM) | headers-only 応答や `grpc-status` を含まない trailing HEADERS で終わる場合は UNKNOWN のまま | `STATUS_UNKNOWN`(grpc-go `operateHeaders` 準拠)。headers-only / custom trailers / `grpc-message` のみ |
 | HTTP non-200 | gRPC status が無い HTTP error を gRPC status に合成する | 404/503/502 等 |
 | content-type mismatch | `application/grpc` でない応答を成功扱いしない | proxy/html/json response |
 | `grpc-status-details-bin` | status details がある場合に矛盾を検出する | status code mismatch はエラー扱い |

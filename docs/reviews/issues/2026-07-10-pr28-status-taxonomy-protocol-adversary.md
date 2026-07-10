@@ -12,9 +12,11 @@
 - `tests/phpt/022-error-and-http-validation.phpt`
 - `tests/Integration/CompressionTest.php`
 - `docs/issues/open/2026-07-08-status-taxonomy-official-alignment.md`
+- `docs/issues/open/2026-07-10-informational-1xx-response-handling.md`
 - `docs/design/grpc-call-exchange-state.md`
 - `docs/design/protocol-classification-boundary.md`
 - `docs/verification/compatibility-control-checklist.md`
+- `docs/verification/test-fixtures.md`
 
 ## Reviewer Role
 
@@ -22,7 +24,7 @@
 
 ## Review Prompt Summary
 
-- PR #28 (`origin/main...ce5872d`) を、公式 protocol / implementation に対する status taxonomy、`grpc-status` / HTTP status / RST_STREAM / clean END_STREAM / local transport error の優先順位、connection / stream / call lifecycle、missing-trailers 誤分類の観点から敵対的に確認した。既存レビューで解消済みの docs 更新と通常の no-trailers details 統合テストは重複指摘しない。修正commit `f5a2f751621cecbb447db7d89222df435fcf7849` で再レビューし、前回のMediumとDesign Decisionの解消、および新しいcall-local lifecycle fieldの設計資料反映を確認した。
+- PR #28 (`origin/main...ce5872d`) を、公式 protocol / implementation に対する status taxonomy、`grpc-status` / HTTP status / RST_STREAM / clean END_STREAM / local transport error の優先順位、connection / stream / call lifecycle、missing-trailers 誤分類の観点から敵対的に確認した。既存レビューで解消済みの docs 更新と通常の no-trailers details 統合テストは重複指摘しない。修正commit `f5a2f751621cecbb447db7d89222df435fcf7849` で再レビューし、前回のMediumとDesign Decisionの解消を確認した。さらにcurrent HEAD `0f1cc090a9ecf04ecc9b7f4b78b719101b21456b` でfix commit `375c3ddd73a040f99de5b6fb3f217b36020d3344` を第三者視点で再レビューし、field ownership mapのLow解消と、追加された1xx / final response header-block lifecycleを確認した。
 
 ## Issues
 
@@ -55,13 +57,13 @@
 - Inline comment anchor: `src/status_core.c:67`（PR added predicate）。「この1行はgrpc-goのDATA pathだけでなくHEADERS clean closeにも適用され、ext-grpcは追加fixture自体でもUNKNOWN/payload非nullだったため、どのpolicyを選ぶか明示してほしい」というinline commentにする。補助anchorは `poc/test-server/main.go:475`。
 - Fix summary: compatibility policyとして **grpc-go exact** を明示採用した。call-localに `initial_headers_end_stream` と `trailing_headers_seen` を保持し、`:status 200` のclean closeかつstatus欠落を、DATA END_STREAMなら `INTERNAL`、initial / trailing HEADERS END_STREAMなら `UNKNOWN` と分類する。issueのdecision logにext-grpcとの差と採用理由を残し、headers-only、custom trailers、grpc-message-only、DATA no-trailersをunary / server streaming fixtureで固定した。`
 - Fix commit: `f5a2f751621cecbb447db7d89222df435fcf7849`
-- Verification: `再レビューで nghttp2 frame callback -> call-local flags -> grpc_lite_status_code_from_call() のlifecycleとpriorityを確認。./tools/test/check-c-unit.sh PASS、./tools/test/check-phpt.sh PASS (17/17)。PHPT 022でDATA END_STREAMはINTERNAL + fixed details、HEADERS END_STREAMはUNKNOWN、grpc-message-onlyはUNKNOWN + peer details、server streamingでは既受信messageを1件yieldすることを確認。nghttp2のHTTP messaging validationではtrailing HEADERSはEND_STREAM必須のため、NGHTTP2_HCAT_HEADERSをterminal observationとして扱う前提も成立する。`
+- Verification: `再レビューで nghttp2 frame callback -> call-local flags -> grpc_lite_status_code_from_call() のlifecycleとpriorityを確認。./tools/test/check-c-unit.sh PASS、./tools/test/check-phpt.sh PASS (17/17)。PHPT 022でDATA END_STREAMはINTERNAL + fixed details、HEADERS END_STREAMはUNKNOWN、grpc-message-onlyはUNKNOWN + peer details、server streamingでは既受信messageを1件yieldすることを確認。第三パスで前回の「NGHTTP2_HCAT_HEADERSをterminal observationとして扱える」という判断を訂正した。nghttp2 categoryには1xx後のnon-terminal final response HEADERSも含まれるためcategory単独ではterminalを表さない。`375c3ddd73a040f99de5b6fb3f217b36020d3344` が `NGHTTP2_FLAG_END_STREAM` gateを追加したことで、DATA / HEADERS terminal判別自体は正しくなった。`
 - Notes: false-positive auditで、PR前から存在する non-terminal `grpc-status` / RST_STREAM precedenceは除外した。全 clean closeをINTERNALにする明示policyならterminal frame kindは不要なので、それ自体をcorrectness bugとはしない。ext-grpc comparatorは既存 `dev-ext-grpc` source-built image上の runtime `grpc 1.80.0` / PHP `8.4.20` / `aarch64` で実施した観測であり、`ghcr.io/dkkoma/ext-grpc-artifacts` の明示artifact tagを使った再現ではない。選択したgrpc-go exact policyとext-grpc divergenceはissueのdecision logに記録されたため、本Design DecisionはAcceptedとする。
 
 ### REVIEW-20260710-003: `grpc_call` field ownership mapに `trailing_headers_seen` が反映されていない
 
 - Severity: `Low`
-- Status: `Open`
+- Status: `Fixed`
 - Reviewer role: `HTTP/2 / gRPC status taxonomy protocol adversary`
 - Finding: terminal frame kindをstatus taxonomyへ渡すcall-local stateとして `trailing_headers_seen` を追加したが、`grpc_call` の責務とlifetimeを明文化するfield ownership mapは新fieldを列挙していない。このmapは将来のfield分割やlifecycle変更時の設計基準と明記されているため、実装と設計資料がずれている。
 - Evidence: `src/grpc_exchange_state.h:60` に `trailing_headers_seen` が追加され、`src/transport.c:2121-2127` がtrailing HEADERS観測時にsetし、`src/status_core.c:69-70` がmissing-trailers分類に使用する。一方、`docs/design/grpc-call-exchange-state.md:15` の「gRPC statusとvalidation flag」行は `initial_headers_end_stream` までしか列挙せず、同文書末尾は「この文書をfield ownership mapとして使う」としている。
@@ -69,15 +71,31 @@
 - Why it matters: runtime bugではないが、missing-trailers分類の成立条件からこのfieldを落とすと、将来のstruct整理やcallback責務変更でDATA / HEADERS差が再び潰される可能性がある。今回明示採用したgrpc-go exact policyの保守可能性に直接関係する。
 - Recommended fix: `docs/design/grpc-call-exchange-state.md` のresponsibility mapへ `trailing_headers_seen` を追加し、`initial_headers_end_stream` と組でterminal frame shapeをcall lifetime中に保持することを短く記す。
 - Inline comment anchor: `src/grpc_exchange_state.h:60`（PR added line）。新fieldを既存のfield ownership mapにも追加するよう指摘する。
+- Fix summary: `docs/design/grpc-call-exchange-state.md` の「gRPC statusとvalidation flag」行へ `trailing_headers_seen` を追加し、END_STREAM付きtrailing HEADERSをframe callbackが記録してstatus resolutionがterminal DATA / HEADERSを区別するlifetimeを明記した。同じ変更で1xx後のfinal response待ちを表す `expect_final_response` もfield mapへ追加した。`
+- Fix commit: `375c3ddd73a040f99de5b6fb3f217b36020d3344`
+- Verification: `current HEADの src/grpc_exchange_state.h:59-61 と docs/design/grpc-call-exchange-state.md:15 を照合し、initial_headers_end_stream / trailing_headers_seen / expect_final_responseの3 fieldとproducer / consumer説明がmapに反映されたことを確認。./tools/test/check-c-unit.sh PASS、./tools/test/check-phpt.sh PASS (17/17)。`
+- Notes: `docs/design/protocol-classification-boundary.md` には新predicateが正しく反映済みであり、指摘はexchange-state ownership mapの同期漏れだけに限定する。第三パスではこの同期漏れは解消済みと判断した。
+
+### REVIEW-20260710-004: fix commitが部分的な1xx成功経路をstatus-taxonomy PRへ持ち込んでいる
+
+- Severity: `Medium`
+- Status: `Open`
+- Reviewer role: `HTTP/2 / gRPC status taxonomy protocol adversary`
+- Finding: fix commitは、従来失敗していた1xx応答を `expect_final_response` で成功させる新しいprotocol経路をstatus-taxonomy PRへ追加し、fixture / PHPT / docsでも対応済みとしている。しかしこのfieldはheader block完了後の `on_frame_recv_callback()` でしか使われず、個々のfieldを処理する既存 `on_header_callback()` は1xx / final initial / trailingのsemantic phaseを知らない。そのため新たに成功扱いとなった経路で、最初の1xx `HCAT_RESPONSE` のfieldはfinal responseのcall-global validation/status stateへ入り、1xx後のfinal response `HCAT_HEADERS` のfieldはtrailing metadataとして保存される。frame-endでfinal responseと判定しても、すでに行われたmetadata追加や `content_type_seen` / `invalid_content_type` / `grpc_status_seen` / `initial_grpc_status_seen` / `grpc_message` / `grpc_encoding` の更新を修復できない。
+- Evidence: [nghttp2 headers category](https://nghttp2.org/documentation/enums.html#c.nghttp2_headers_category) は1xx後のfinal response HEADERSも `NGHTTP2_HCAT_HEADERS` になると明記する。`src/transport.c:1990-2055` はraw categoryだけで `trailing` とinitial grpc statusを決め、全semantic fieldとmetadataをcallへ即時反映する。一方、`src/transport.c:2111-2131` が `expect_final_response` で1xx / finalを判定するのは全header callback完了後である。[RFC 8297 §2](https://www.rfc-editor.org/rfc/rfc8297.html#section-2) は103 fieldがfinal responseの処理へ影響してはならず、final fieldの代替にもならないと定める。current HEADの既存fixtureで `x-bench-observe-authority=1` を直接送るとunary / server streamingとも `x-bench-authority` はinitial metadataに入るが、`x-bench-early-hints=1` を併用するとunaryはstatus OK、server streamingはstatus OK / 1 messageのまま、`x-bench-authority` が `getMetadata()` から消えて `getTrailingMetadata()` へ移った。後者にはfinal blockの `content-type` / `trailer` / `content-length` / `date` も入った。追加PHPT `tests/phpt/022-error-and-http-validation.phpt:95-108,217-228` はfieldを持たない103に対するpayload/statusだけをassertし、metadata ownershipも1xx field isolationも検証しない。
+- Expected model: 本PRのstatus-taxonomy修正は、`trailing_headers_seen` をEND_STREAM付きHEADERSだけに限定する最小変更でDATA / HEADERS terminal判別を直し、独立した1xx response lifecycleは別issue / PRへ残す。将来1xxを対応する場合はresponse header blockにcall-localなsemantic phase（informational / final initial / trailing）を持たせ、そのphaseをfield callback時点で確定してから、informational fieldの隔離とpost-1xx final `HCAT_HEADERS` のinitial metadata処理を行う。
+- Why it matters: 1xxを挟むだけでPHP-visible initial/trailing metadataが反転する。さらに1xx内の `content-type` がfinal responseのcontent-type欠落を誤って満たす、またはinvalid flag/body discardを立てて正常final responseを拒否する可能性がある。1xx内の `grpc-status` / `grpc-message` / `grpc-encoding` もwire status、details、compression classificationを汚染でき、unary / server streaming双方でstatus/details precedenceがpeerのinformational hintに左右される。gRPC serverで1xxが稀でも、明示追加したprotocol経路のstate invariantとしては成立していない。
+- Recommended fix: PR #28から `expect_final_response`、`x-bench-early-hints` fixture、対応PHPT、1xx対応済みのdocs記述を外し、すでに分割した `docs/issues/open/2026-07-10-informational-1xx-response-handling.md` の別PRへ戻す。`trailing_headers_seen` の `NGHTTP2_FLAG_END_STREAM` gateとfield ownership map修正は本PRに残す。1xx実装をあえて本PRへ残す場合だけ、`on_begin_headers_callback()` 等のblock phase、1xx field隔離、final initial metadata分類を実装し、unary / server streamingでmetadataとsemantic field isolationを追加検証する。
+- Inline comment anchor: `src/transport.c:2112`（fix commit added line）。final response classificationをframe-endで行っているため、同じblockのheader callbackには間に合わない。補助anchorは `src/transport.c:1990`。
 - Fix summary: `pending`
 - Fix commit: `pending`
-- Verification: `pending: docs/design/grpc-call-exchange-state.md と src/grpc_exchange_state.h のfield map照合`
-- Notes: `docs/design/protocol-classification-boundary.md` には新predicateが正しく反映済みであり、指摘はexchange-state ownership mapの同期漏れだけに限定する。
+- Verification: `./tools/test/check-c-unit.sh PASS (protocol_core / status_core / transport_core); ./tools/test/check-phpt.sh PASS (17/17); existing x-bench-observe-authority fixtureによるunary / server streaming direct-vs-103 metadata probeで再現。`
+- Notes: false-positive / scope auditとして、`on_header_callback()` がraw nghttp2 categoryでmetadataとsemantic fieldを処理する構造自体はfix commit以前から存在し、一般的な1xx未対応をPR regressionとして要求しない。本指摘は `375c3ddd73a040f99de5b6fb3f217b36020d3344` がその既存制限を解かないまま `expect_final_response` で1xxを成功経路へ昇格し、対応済みとして同PRへ追加した範囲だけを対象とする。`trailing_headers_seen` のEND_STREAM gateとDATA / HEADERS terminal taxonomyは妥当であり、1xx部分をsplitすれば本指摘は解消する。`
 
 ## Review Result
 
 - Blocker: `none`
 - High: `none`
-- Medium: `none`
-- Low: `1`
+- Medium: `1`
+- Low: `none`
 - Design Decision: `none`

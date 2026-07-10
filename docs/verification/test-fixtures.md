@@ -68,7 +68,6 @@
 | `x-bench-grpc-response=custom-trailers-no-status` | `grpc-status` を含まないtrailing HEADERS (`x-bench-trailer` のみ) で閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-grpc-response=grpc-message-only-trailers` | `grpc-message` はあるが `grpc-status` を含まないtrailing HEADERSで閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-grpc-encoding` | response `grpc-encoding` を指定する (message自体はflag=0)。`x-bench-grpc-status` 併用でtrailerも返す | `tests/phpt/022-error-and-http-validation.phpt` |
-| `x-bench-early-hints=1` | final responseの前に1xx (103 Early Hints) HEADERSを送る。1xx後のfinal response HEADERSがHCAT_HEADERSで届くterminal frame判別のfixtureで、他のcontrolと併用する | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-observe-authority=1` | observed authorityを `x-bench-authority` として返す | authority / TLS identity diagnostics |
 
 ## Fixture ownership

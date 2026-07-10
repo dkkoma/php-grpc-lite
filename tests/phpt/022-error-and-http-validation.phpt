@@ -92,20 +92,6 @@ $assertUnaryStatus(
     Grpc\STATUS_INTERNAL,
     'server closed the stream without sending trailers',
 );
-// 1xx (103) 後の final response HEADERS は HCAT_HEADERS で届くが、
-// non-terminal HEADERS なので DATA END_STREAM の trailers 欠落判定を抑止しない
-$assertUnaryStatus(
-    ['x-bench-grpc-response' => ['no-trailers'], 'x-bench-early-hints' => ['1']],
-    Grpc\STATUS_INTERNAL,
-    'server closed the stream without sending trailers',
-);
-// 1xx 経由でも正常応答は成功する
-[$earlyHintsResponse, $earlyHintsStatus] = $client->BenchUnary(new BenchRequest(), [
-    'x-bench-grpc-status' => ['0'],
-    'x-bench-early-hints' => ['1'],
-])->wait();
-grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $earlyHintsStatus->code, 'early hints unary status');
-grpc_lite_phpt_assert_true($earlyHintsResponse instanceof \Helloworld\BenchReply, 'early hints unary response type');
 $assertUnaryStatus(
     ['x-bench-grpc-response' => ['partial-frame']],
     Grpc\STATUS_INTERNAL,
@@ -212,18 +198,6 @@ $assertStreamStatus(
     ['x-bench-grpc-response' => ['no-trailers']],
     Grpc\STATUS_INTERNAL,
     'server closed the stream without sending trailers',
-    1,
-);
-$assertStreamStatus(
-    ['x-bench-grpc-response' => ['no-trailers'], 'x-bench-early-hints' => ['1']],
-    Grpc\STATUS_INTERNAL,
-    'server closed the stream without sending trailers',
-    1,
-);
-$assertStreamStatus(
-    ['x-bench-early-hints' => ['1'], 'x-bench-grpc-status' => ['0']],
-    Grpc\STATUS_OK,
-    '',
     1,
 );
 $assertStreamStatus(
