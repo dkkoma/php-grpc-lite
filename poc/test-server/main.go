@@ -423,6 +423,12 @@ func envInt(key string) (int, bool) {
 
 func serveNonGrpcH2C() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-bench-early-hints") == "1" {
+			// final response の前に 1xx (103 Early Hints) HEADERS を送る。
+			// nghttp2 では 1xx 後の final response HEADERS が HCAT_HEADERS で
+			// 届くため、terminal frame 判別の fixture として他 control と併用する。
+			w.WriteHeader(http.StatusEarlyHints)
+		}
 		if r.Header.Get("x-bench-observe-authority") == "1" {
 			w.Header().Set("content-type", "application/grpc")
 			w.Header().Set("x-bench-authority", r.Host)

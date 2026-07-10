@@ -230,7 +230,7 @@ C layout refactorはbehavioral compatibilityを変えない。status taxonomy、
 - [x] ~~`grpc-message` の percent decode~~ → status details へ入れる前に `rawurldecode()` する(2026-04-27)
 - [x] ~~HTTP status / `content-type: application/grpc` validation~~ → `grpc-status` が無い非 gRPC 応答は HTTP status から gRPC status を合成し、HTTP 200 でも `content-type` が `application/grpc` でなければ `STATUS_UNKNOWN` とする(2026-04-28)
 - [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなくtransport I/Oにも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともにRPC deadlineをconnect / TLS handshake / read-write poll loopの上限として扱い、deadline超過を `STATUS_DEADLINE_EXCEEDED` に変換する。`grpc-timeout` は8桁制限に収まるよう `u` / `m` / `S` / `M` / `H` へ単位変換する(2026-05-04)
-- [x] ~~圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化~~ → 未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` にする(2026-04-28) → 公式実装(C-core / grpc-go)に合わせ `STATUS_INTERNAL` へ変更(2026-07-10)
+- [x] ~~圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化~~ → 未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` にする(2026-04-28) → 公式実装(C-core / grpc-go)に合わせ `STATUS_INTERNAL` へ変更し、失敗条件を per-message の Compressed-Flag=1 のみに限定。`grpc-encoding` header 宣言だけでは失敗せず、flag=0 messageは成功する(2026-07-10)
 - [x] ~~binary metadata(`*-bin`)の ext-grpc 互換確認~~ → PHP API の値は raw binary、HTTP/2 wire は base64 として扱う。単一 raw binary value の request/initial/trailing round-trip を ext-grpc と照合(2026-04-28)
 - [x] ~~binary metadata の同一 key 複数 value における ext-grpc 互換確認~~ → 公式 ext-grpc PHP API は最後 value のみ可視だが、php-grpc-lite は gRPC 仕様準拠を優先し、同一 key 複数 values を `array<string, list<string>>` として保持する(2026-05-04)
 

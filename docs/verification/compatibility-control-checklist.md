@@ -34,7 +34,8 @@ unary / server streaming の client-side enforcement、`STATUS_DEADLINE_EXCEEDED
 |---|---|---|
 | trailers-only response | body なしで `grpc-status` が header block に来ても status として扱う | unary immediate error、server streaming immediate error |
 | `grpc-message` percent decode | percent-encoded UTF-8 を decode し、不正 encoding でも壊れない | `%20`、UTF-8、壊れた `%` |
-| missing trailers | trailers が欠落した場合は適切な non-OK status を合成する | `STATUS_INTERNAL` + details "server closed the stream without sending trailers"(grpc-go 準拠、2026-07-10 に `STATUS_UNKNOWN` から変更) |
+| missing trailers (DATA END_STREAM) | :status 200 で stream が DATA frame の END_STREAM で終わり `grpc-status` が無い場合は INTERNAL | `STATUS_INTERNAL` + details "server closed the stream without sending trailers"(grpc-go `handleData` 準拠、2026-07-10 に `STATUS_UNKNOWN` から変更) |
+| missing grpc-status (HEADERS END_STREAM) | headers-only 応答や `grpc-status` を含まない trailing HEADERS で終わる場合は UNKNOWN のまま | `STATUS_UNKNOWN`(grpc-go `operateHeaders` 準拠)。headers-only / custom trailers / `grpc-message` のみ、および 1xx 経由の terminal frame 判別 |
 | HTTP non-200 | gRPC status が無い HTTP error を gRPC status に合成する | 404/503/502 等 |
 | content-type mismatch | `application/grpc` でない応答を成功扱いしない | proxy/html/json response |
 | `grpc-status-details-bin` | status details がある場合に矛盾を検出する | status code mismatch はエラー扱い |
@@ -59,11 +60,12 @@ reserved / fixed headers と key/value validation の観測結果は `docs/resea
 
 ## 6. Compression / Encoding
 
-2026-04-28 時点で、未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` として明示エラー化済み。実際の gzip 対応は未実装。2026-07-10 に公式実装(C-core / grpc-go のクライアント側分類)へ合わせて `STATUS_INTERNAL` に変更。
+2026-04-28 時点で、未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` として明示エラー化済み。実際の gzip 対応は未実装。2026-07-10 に公式実装(C-core / grpc-go のクライアント側分類)へ合わせて `STATUS_INTERNAL` に変更し、失敗条件を per-message の Compressed-Flag=1 に限定した。`grpc-encoding` header は宣言の観測のみで、flag=0 message は未対応 encoding 下でも成功する(grpc-go `checkRecvPayload` 準拠)。
 
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
-| unsupported response encoding | 未対応の `grpc-encoding` や compressed flag=1 を成功 decode しない | 明示的な non-OK / exception 方針 |
+| compressed message (flag=1) | Compressed-Flag=1 の message を成功 decode しない | `STATUS_INTERNAL`。encoding 宣言ありは "unsupported grpc-encoding: ..."、なしは "compressed gRPC messages are not supported" |
+| unsupported encoding 宣言のみ (flag=0) | `grpc-encoding` header 宣言だけでは失敗しない | gzip 宣言 + flag=0 + `grpc-status: 0` → OK、trailers-only non-OK → wire status |
 | per-message compression | 対応後は message ごとに独立して decompress する | streaming で複数 compressed message |
 | request encoding | 対応する場合は `grpc-encoding` と compressed flag を揃える | unary request、server streaming request |
 
