@@ -190,9 +190,12 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
                 snprintf(call.last_io_error_detail, sizeof(call.last_io_error_detail), "%s", connection->last_error_detail);
             }
             if (socket_timeout) {
+                /* Deadline expiry is stream-scoped: reset only this stream
+                 * and leave the persistent connection reusable for the next
+                 * call instead of paying a new TCP + TLS handshake. */
                 call.timed_out = true;
-            }
-            if (!call.stream_closed) {
+                cancel_grpc_call_stream(&call, NGHTTP2_CANCEL);
+            } else if (!call.stream_closed) {
                 mark_connection_dead(connection, nread == 0 ? 0 : errno);
             }
             break;

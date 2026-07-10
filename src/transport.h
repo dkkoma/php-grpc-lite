@@ -78,6 +78,7 @@ int register_grpc_call_stream(h2_connection *connection, grpc_call *call);
 void mark_grpc_call_stream_registration_failed(h2_connection *connection, grpc_call *call);
 int send_pending_h2_frames(h2_connection *connection, grpc_call *call);
 int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
+void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code);
 void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
 void destroy_server_streaming_call_state(server_streaming_call_state *state);
 void server_streaming_call_state_dtor(zend_resource *rsrc);

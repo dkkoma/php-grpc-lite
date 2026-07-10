@@ -8,13 +8,9 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
         return;
     }
     free_queued_response_payloads(&state->call);
-    if (connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection) && state->call.stream_id > 0) {
-        int rv = nghttp2_submit_rst_stream(state->call.connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, NGHTTP2_CANCEL);
-        if (rv == 0) {
-            rv = send_pending_h2_frames(state->call.connection, &state->call);
-        }
-        if (rv != 0) {
-            mark_connection_dead(state->call.connection, rv);
+    if (connection_owned_by_server_streaming_call_state(state->call.connection, state)) {
+        cancel_grpc_call_stream(&state->call, NGHTTP2_CANCEL);
+        if (!connection_usable(state->call.connection)) {
             detach_persistent_connection_by_ptr(state->call.connection);
         }
     }

@@ -2,7 +2,7 @@
 
 - Status: Open
 - Created: 2026-07-08
-- Branch: (未着手)
+- Branch: codex/issue-deadline-rst-stream-keep-connection
 - Owner: Claude
 
 ## Background
@@ -44,9 +44,25 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 
 ## Progress
 
+- 2026-07-11: `cancel_grpc_call_stream()`(`src/transport.c`)を追加。stream単位の RST_STREAM(CANCEL) submit + 送出を共通化し、unary の socket timeout 分岐(`src/unary_call.c`)を `mark_connection_dead` から本helperへ置き換えた。
+- 2026-07-11: 既存の streaming cancel 経路の潜在バグを修正。`cancel_active_server_streaming_call_state` / `server_streaming_call_terminate_with_cancel` は `send_pending_h2_frames(connection, &state->call)` で **期限切れの call deadline** をwrite deadlineに使っており、deadline経路ではRSTが書けず即 `mark_connection_dead` になっていた。helperはRST書き込みに専用のgrace deadline(`GRPC_LITE_CANCEL_RST_WRITE_GRACE_US` = 50ms)を使う。
+- 2026-07-11: persistent connection reuse時に `setup_deadline_abs_us` / `setup_timed_out` を採用コールのdeadlineへ更新するようにした(`get_persistent_connection`)。従来は接続作成時のdeadlineが残留し、deadline超過後に温存した接続で deadlineなしの後続コールがwrite fallback deadline(期限切れ)により即 ETIMEDOUT になった。timeout時に接続を破棄していた従来挙動では露見しなかった潜在バグ。
+- 2026-07-11: トレースの `wire.frame_out` に RST_STREAM の `error_code` を追加(inbound側と対称)。
+- 2026-07-11: PHPT `tests/phpt/033-deadline-rst-stream-connection-reuse.phpt` を追加。unary / server streaming それぞれの deadline 超過後に、ワイヤ上の RST_STREAM(error_code=8) と、後続 unary コールの `persistent_reused=true` + STATUS_OK をトレースで固定。
+
 ## Verification
 
+- `tools/test/check-phpt.sh`: 18/18 PASS(新規 033 を含む)。
+- `tools/test/check-c-unit.sh`: protocol_core / status_core / transport_core すべてPASS。
+- PHPUnit 統合テスト: 31 tests / 116 assertions OK。
+- `tools/test/check-c-static-analysis.sh`: pass(指摘なし)。
+- トレース実測: timeout時に `wire.frame_out` RST_STREAM error_code=8 が出て、直後のコールが `persistent_reused=true` で成功することを確認(2026-07-11)。
+
 ## Decision Log
+
+- 計画にあった「RST送出後の短時間drain」は実装しない(2026-07-11)。RST_STREAM submit時点でnghttp2はstreamをclose済み扱いにするためdrainで待つ対象がなく、読み残しframeはnghttp2のclosed-stream無視 + 次回reuse時のpreflight drain(`preflight_persistent_connection`)が既に消化する。streaming側のuser cancel経路も同じ前提で運用済み。
+- RST書き込みのgrace deadlineは50msとする。localhost/同リージョンのRTTに対して十分で、書き込みがそれ以上blockする接続は再利用に値しないため従来どおり`mark_connection_dead`にフォールバックする。
+- Non-Goalどおり、write block中(`send_callback`内)のタイムアウトは接続破棄のまま維持する。frame境界を保証できないため。
 
 ## Close Criteria
 

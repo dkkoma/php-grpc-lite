@@ -14,6 +14,7 @@
 #define GRPC_LITE_RECV_SCRATCH_SIZE 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
+#define GRPC_LITE_CANCEL_RST_WRITE_GRACE_US 50000
 
 void destroy_h2_connection(h2_connection *connection);
 void destroy_persistent_connection_entry(persistent_connection_entry *entry, bool destroy_connection);
@@ -22,6 +23,7 @@ bool connection_owned_by_server_streaming_call_state(h2_connection *connection, 
 bool connection_owned_by_call(h2_connection *connection, grpc_call *call);
 void clear_connection_server_streaming_call_state_owner(server_streaming_call_state *state);
 void clear_connection_call_owner(h2_connection *connection, grpc_call *call);
+void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code);
 void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code);
 void destroy_server_streaming_call_state(server_streaming_call_state *state);
 void server_streaming_call_state_dtor(zend_resource *rsrc);
@@ -301,22 +303,42 @@ void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
     call->connection_owned = false;
 }
 
-void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code)
+/* Close one stream with RST_STREAM so the connection itself stays reusable
+ * (deadline expiry and user cancellation are stream-scoped per
+ * PROTOCOL-HTTP2.md; only connection-level failures kill the connection).
+ * The call's own deadline has typically already expired when this runs, so
+ * the RST write gets its own short grace deadline instead of the call
+ * deadline; a failed write still marks the connection dead inside
+ * send_pending_h2_frames_with_deadline. Bytes the server already sent for
+ * the cancelled stream are handled later: nghttp2 ignores frames for reset
+ * streams, and the persistent preflight drain consumes anything pending
+ * before the next call reuses the connection. */
+void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
 {
+    h2_connection *connection;
     int rv;
 
-    if (state == NULL || state->completed || !connection_owned_by_server_streaming_call_state(state->call.connection, state) || !connection_usable(state->call.connection) || state->call.stream_id <= 0) {
+    if (call == NULL) {
         return;
     }
-    rv = nghttp2_submit_rst_stream(state->call.connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, error_code);
-    if (rv != 0) {
-        mark_connection_dead(state->call.connection, rv);
+    connection = call->connection;
+    if (connection == NULL || !connection_usable(connection) || call->stream_id <= 0 || call->stream_closed) {
         return;
     }
-    rv = send_pending_h2_frames(state->call.connection, &state->call);
+    rv = nghttp2_submit_rst_stream(connection->session, NGHTTP2_FLAG_NONE, call->stream_id, error_code);
     if (rv != 0) {
-        mark_connection_dead(state->call.connection, rv);
+        mark_connection_dead(connection, rv);
+        return;
     }
+    send_pending_h2_frames_with_deadline(connection, NULL, monotonic_us() + GRPC_LITE_CANCEL_RST_WRITE_GRACE_US);
+}
+
+void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code)
+{
+    if (state == NULL || state->completed || !connection_owned_by_server_streaming_call_state(state->call.connection, state)) {
+        return;
+    }
+    cancel_grpc_call_stream(&state->call, error_code);
 }
 
 void destroy_server_streaming_call_state(server_streaming_call_state *state)
@@ -630,6 +652,8 @@ static void grpc_lite_trace_outbound_frame_record(h2_connection *connection, con
         grpc_lite_trace_settings_entries_from_payload(fp, data + 9, frame_len);
     } else if (type == NGHTTP2_WINDOW_UPDATE && length >= 13 && frame_len == 4) {
         fprintf(fp, ",\"window_size_increment\":%u", grpc_lite_read_be32(data + 9) & 0x7fffffffU);
+    } else if (type == NGHTTP2_RST_STREAM && length >= 13 && frame_len == 4) {
+        fprintf(fp, ",\"error_code\":%u", grpc_lite_read_be32(data + 9));
     }
     if (type == NGHTTP2_HEADERS) {
         /* Never dump the HPACK block even with GRPC_LITE_TRACE_WIRE_BYTES: it is
@@ -1644,6 +1668,13 @@ h2_connection *get_persistent_connection(const char *key, size_t key_len, const 
     if (persistent_reused != NULL) {
         *persistent_reused = true;
     }
+    /* Connection-scoped writes without a call deadline (send_callback /
+     * send_pending_h2_frames fallback) use setup_deadline_abs_us. Refresh it
+     * to the adopting call's deadline so a deadline that expired on a
+     * previous call (e.g. a DEADLINE_EXCEEDED stream cancelled with
+     * RST_STREAM) cannot fail later writes on the reused connection. */
+    connection->setup_deadline_abs_us = deadline_abs_us;
+    connection->setup_timed_out = false;
     return connection;
 }
 
