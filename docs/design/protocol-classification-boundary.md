@@ -36,8 +36,8 @@
 | Message too large | `response_message_too_large`, parser counters | response DATA parser | `RESOURCE_EXHAUSTED` |
 | Read-ahead queue too large | `response_queue_limit_exceeded`, queue counters | server streaming queue helper | `RESOURCE_EXHAUSTED` |
 | Malformed gRPC frame | `malformed_response_frame` | response DATA parser, invalid PUSH_PROMISE | `INTERNAL` |
-| Unsupported compression | `compressed_response_seen`, `unsupported_response_encoding`, `grpc_encoding` | response DATA parser, `grpc-encoding` header | `INTERNAL` |
-| Missing trailers | `stream_closed`, `stream_error_code == NGHTTP2_NO_ERROR`, `grpc_status` absent, `http_status == 200` | `on_stream_close_callback()` | `INTERNAL` |
+| Unsupported compression | `compressed_response_seen`, `unsupported_response_encoding`, `grpc_encoding` | response DATA parser (Compressed-Flag=1 のみ。`grpc-encoding` header は観測のみで、flag=0 message は未対応 encoding 下でも成功する) | `INTERNAL` |
+| Missing trailers | `stream_closed`, `stream_error_code == NGHTTP2_NO_ERROR`, `grpc_status` absent, `http_status == 200`, `!initial_headers_end_stream`, `!trailing_headers_seen` | `on_stream_close_callback()`, `on_frame_recv_callback()` (DATA END_STREAM のみ。HEADERS END_STREAM は `UNKNOWN`、grpc-go `handleData` / `operateHeaders` 準拠) | `INTERNAL` |
 | Stream reset | `stream_reset_seen`, `stream_error_code` | `on_frame_recv_callback()` | HTTP/2 error code mapping in `status_core.c` |
 | GOAWAY refused stream | `stream_refused_seen`, `stream_error_code` | GOAWAY handling in `on_frame_recv_callback()` | `UNAVAILABLE` |
 

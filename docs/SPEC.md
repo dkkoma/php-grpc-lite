@@ -87,7 +87,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 - gRPC は status を **HTTP/2 trailers**(`grpc-status`, `grpc-message`)で返す。
 - gRPC framing は `1 byte compressed-flag + 4 byte big-endian length + payload`。
 - TLSではALPNで `h2` を交渉する。h2c(plaintext)ではHTTP/2 prior knowledgeで接続する。
-- 圧縮messageは圧縮実装が入るまで `STATUS_INTERNAL` とする(クライアント側で処理できないserver messageは [compression.md](https://github.com/grpc/grpc/blob/master/doc/compression.md) により INTERNAL。2026-07-10 に `STATUS_UNIMPLEMENTED` から変更)。
+- Compressed-Flag=1 のmessageは圧縮実装が入るまで `STATUS_INTERNAL` とする(クライアント側で処理できないserver messageは [compression.md](https://github.com/grpc/grpc/blob/master/doc/compression.md) により INTERNAL。2026-07-10 に `STATUS_UNIMPLEMENTED` から変更)。`grpc-encoding` headerは宣言に過ぎず、flag=0 messageは未対応encoding下でも通常どおりdecodeする(grpc-go `checkRecvPayload` 準拠)。
 - `GOAWAY` で `last_stream_id` より大きいstream、または `RST_STREAM(REFUSED_STREAM)` で、response metadata / DATA / status / parser途中状態が一切ない初回attemptだけは「server未処理」として1回だけtransparent retryする。これはretry policyやidempotency判断ではなく、gRPC仕様上未処理が保証されるtransport lifecycleの再送である。absolute deadlineは初回のものを維持し、`grpc-timeout` は再送時の残時間から再計算する。`GOAWAY(last_stream_id=2147483647)` は二段階GOAWAYのdraining通知として扱い、既存streamをrefusedにしない。
 
 ### 4.3 TLS 戦略

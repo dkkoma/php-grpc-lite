@@ -50,10 +50,41 @@ $assertUnaryStatus(
     Grpc\STATUS_INTERNAL,
     'compressed gRPC messages are not supported',
 );
+// grpc-encoding は宣言に過ぎない: flag=0 message は未対応 encoding 下でも成功する
+[$gzipIdentityResponse, $gzipIdentityStatus] = $client->BenchUnary(new BenchRequest(), [
+    'x-bench-grpc-encoding' => ['gzip'],
+    'x-bench-grpc-status' => ['0'],
+])->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $gzipIdentityStatus->code, 'gzip advertised flag=0 unary status');
+grpc_lite_phpt_assert_true($gzipIdentityResponse instanceof \Helloworld\BenchReply, 'gzip advertised flag=0 unary response type');
+// gzip advertise + trailers-only non-OK は wire status をそのまま返す
 $assertUnaryStatus(
-    ['x-bench-grpc-encoding' => ['gzip']],
+    ['x-bench-grpc-response' => ['headers-only'], 'x-bench-grpc-encoding' => ['gzip'], 'x-bench-grpc-status' => ['5']],
+    Grpc\STATUS_NOT_FOUND,
+    '',
+);
+// flag=1 かつ未対応 encoding は INTERNAL (encoding 起因の details)
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['compressed-flag'], 'x-bench-grpc-encoding' => ['gzip']],
     Grpc\STATUS_INTERNAL,
     'unsupported grpc-encoding: gzip',
+);
+// headers-only END_STREAM (grpc-status なし) は UNKNOWN のまま (grpc-go operateHeaders)
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['headers-only']],
+    Grpc\STATUS_UNKNOWN,
+    '',
+);
+// grpc-status を含まない trailing HEADERS も UNKNOWN
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['custom-trailers-no-status']],
+    Grpc\STATUS_UNKNOWN,
+    '',
+);
+$assertUnaryStatus(
+    ['x-bench-grpc-response' => ['grpc-message-only-trailers']],
+    Grpc\STATUS_UNKNOWN,
+    'trailers without status',
 );
 // message 受信後に trailers (grpc-status) なしで clean END_STREAM → INTERNAL
 $assertUnaryStatus(
@@ -125,9 +156,37 @@ $assertStreamStatus(
     'compressed gRPC messages are not supported',
 );
 $assertStreamStatus(
-    ['x-bench-grpc-encoding' => ['gzip']],
+    ['x-bench-grpc-encoding' => ['gzip'], 'x-bench-grpc-status' => ['0']],
+    Grpc\STATUS_OK,
+    '',
+    1,
+);
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['headers-only'], 'x-bench-grpc-encoding' => ['gzip'], 'x-bench-grpc-status' => ['5']],
+    Grpc\STATUS_NOT_FOUND,
+    '',
+);
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['compressed-flag'], 'x-bench-grpc-encoding' => ['gzip']],
     Grpc\STATUS_INTERNAL,
     'unsupported grpc-encoding: gzip',
+);
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['headers-only']],
+    Grpc\STATUS_UNKNOWN,
+    '',
+);
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['custom-trailers-no-status']],
+    Grpc\STATUS_UNKNOWN,
+    '',
+    1,
+);
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['grpc-message-only-trailers']],
+    Grpc\STATUS_UNKNOWN,
+    'trailers without status',
+    1,
 );
 $assertStreamStatus(
     ['x-bench-grpc-status' => ['abc']],

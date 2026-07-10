@@ -434,12 +434,46 @@ func serveNonGrpcH2C() {
 		}
 		if r.Header.Get("x-bench-grpc-response") == "compressed-flag" {
 			w.Header().Set("content-type", "application/grpc")
+			if encoding := r.Header.Get("x-bench-grpc-encoding"); encoding != "" {
+				w.Header().Set("grpc-encoding", encoding)
+			}
 			if grpcStatus := r.Header.Get("x-bench-grpc-status"); grpcStatus != "" {
 				w.Header().Set("trailer", "grpc-status")
 				defer w.Header().Set("grpc-status", grpcStatus)
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(grpcFrame(1, nil))
+			return
+		}
+		if r.Header.Get("x-bench-grpc-response") == "headers-only" {
+			// grpc-status を x-bench-grpc-status で指定すると trailers-only 応答、
+			// 未指定なら grpc-status なしの headers-only END_STREAM になる。
+			w.Header().Set("content-type", "application/grpc")
+			if encoding := r.Header.Get("x-bench-grpc-encoding"); encoding != "" {
+				w.Header().Set("grpc-encoding", encoding)
+			}
+			if grpcStatus := r.Header.Get("x-bench-grpc-status"); grpcStatus != "" {
+				w.Header().Set("grpc-status", grpcStatus)
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Header.Get("x-bench-grpc-response") == "custom-trailers-no-status" {
+			// message のあと grpc-status を含まない trailing HEADERS で閉じる fixture。
+			w.Header().Set("content-type", "application/grpc")
+			w.Header().Set("trailer", "x-bench-trailer")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			w.Header().Set("x-bench-trailer", "1")
+			return
+		}
+		if r.Header.Get("x-bench-grpc-response") == "grpc-message-only-trailers" {
+			// grpc-message はあるが grpc-status を含まない trailing HEADERS。
+			w.Header().Set("content-type", "application/grpc")
+			w.Header().Set("trailer", "grpc-message")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(grpcFrame(0, nil))
+			w.Header().Set("grpc-message", "trailers without status")
 			return
 		}
 		if r.Header.Get("x-bench-grpc-response") == "two-messages" {
@@ -487,8 +521,15 @@ func serveNonGrpcH2C() {
 			return
 		}
 		if encoding := r.Header.Get("x-bench-grpc-encoding"); encoding != "" {
+			// grpc-encoding を advertise しつつ Compressed-Flag=0 の message を返す。
+			// x-bench-grpc-status 指定時は trailer も送る (encoding 宣言だけでは
+			// 失敗しないことを固定するため)。
 			w.Header().Set("content-type", "application/grpc")
 			w.Header().Set("grpc-encoding", encoding)
+			if grpcStatus := r.Header.Get("x-bench-grpc-status"); grpcStatus != "" {
+				w.Header().Set("trailer", "grpc-status")
+				defer w.Header().Set("grpc-status", grpcStatus)
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(grpcFrame(0, nil))
 			return

@@ -94,15 +94,22 @@ static void test_http2_stream_error_mapping(void)
 
 static void test_missing_trailers_mapping(void)
 {
-    /* :status 200, clean END_STREAM, no grpc-status: mandatory trailers are
-     * missing -> INTERNAL (grpc-go: "server closed the stream without sending
-     * trailers"). */
+    /* :status 200, stream ended cleanly on a DATA frame, no grpc-status:
+     * mandatory trailers are missing -> INTERNAL (grpc-go handleData: "server
+     * closed the stream without sending trailers"). */
     ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.stream_closed = true, false);
     /* Not yet closed (e.g. transport error before END_STREAM) keeps the
      * UNKNOWN fallback. */
     ASSERT_STATUS(GRPC_STATUS_UNKNOWN, (void) 0, false);
     /* Closed but with a grpc-status present uses the wire status. */
     ASSERT_STATUS(GRPC_STATUS_OK, call.stream_closed = true; call.grpc_status = GRPC_STATUS_OK, false);
+    /* Streams ending on a HEADERS frame stay UNKNOWN (grpc-go operateHeaders):
+     * headers-only response without grpc-status ... */
+    ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_closed = true; call.initial_headers_end_stream = true, false);
+    /* ... and trailing HEADERS lacking grpc-status. */
+    ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_closed = true; call.trailing_headers_seen = true, false);
+    /* Non-clean close (local error without an RST frame) keeps UNKNOWN. */
+    ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_closed = true; call.stream_error_code = NGHTTP2_PROTOCOL_ERROR, false);
 }
 
 static void test_transparent_retryable_unprocessed_predicate(void)

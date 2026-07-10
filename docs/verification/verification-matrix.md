@@ -26,7 +26,8 @@ Legend:
 | HTTP status fallback without grpc-status | covered | covered | `tests/phpt/022-error-and-http-validation.phpt` |
 | Invalid / non-gRPC content-type | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php` |
 | Invalid grpc-status value | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php`, `tests/unit/test_protocol_core.c` |
-| Compressed response flag / unsupported encoding | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
+| Compressed response flag / unsupported encoding (flag=1のみ失敗、encoding宣言+flag=0は成功) | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
+| Missing trailers (DATA END_STREAM → INTERNAL / HEADERS END_STREAM → UNKNOWN) | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/unit/test_status_core.c` |
 | Malformed / partial gRPC frame | covered | thin | `tests/phpt/022-error-and-http-validation.phpt`, `tests/phpt/024-control-semantics.phpt` |
 | Call credentials metadata merge | covered | covered | `tests/phpt/023-metadata-and-call-credentials.phpt` |
 | Insecure channel rejects call credentials | covered | covered | `tests/phpt/004-object-lifecycle.phpt`, `tests/phpt/023-metadata-and-call-credentials.phpt` |

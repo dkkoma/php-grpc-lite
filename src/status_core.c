@@ -60,11 +60,14 @@ int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
                 return GRPC_STATUS_UNKNOWN;
         }
     }
-    /* :status 200 stream closed cleanly without any grpc-status: trailers are
-     * a mandatory part of the response per PROTOCOL-HTTP2.md, so their absence
-     * is a protocol violation (grpc-go: "server closed the stream without
-     * sending trailers" -> INTERNAL). */
-    if (call->stream_closed && call->stream_error_code == NGHTTP2_NO_ERROR && call->http_status == 200) return GRPC_STATUS_INTERNAL;
+    /* :status 200 stream ended cleanly on a DATA frame without any grpc-status:
+     * trailers are a mandatory part of the response per PROTOCOL-HTTP2.md, so
+     * their absence is a protocol violation (grpc-go handleData: "server closed
+     * the stream without sending trailers" -> INTERNAL). Streams that end on a
+     * HEADERS frame (headers-only response or trailers lacking grpc-status)
+     * keep the UNKNOWN fallback, matching grpc-go operateHeaders. */
+    if (call->stream_closed && call->stream_error_code == NGHTTP2_NO_ERROR && call->http_status == 200
+        && !call->initial_headers_end_stream && !call->trailing_headers_seen) return GRPC_STATUS_INTERNAL;
     return GRPC_STATUS_UNKNOWN;
 }
 
