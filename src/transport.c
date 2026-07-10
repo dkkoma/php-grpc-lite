@@ -2487,7 +2487,12 @@ static int append_custom_request_header_value(h2_request_headers *headers, zend_
     name_str = zend_string_copy(key);
     binary_header = is_binary_metadata_header(name_str);
     if (binary_header) {
+        /* PROTOCOL-HTTP2 recommends emitting un-padded base64 for -bin values. */
         value_str = php_base64_encode((const unsigned char *) Z_STRVAL_P(value), Z_STRLEN_P(value));
+        while (ZSTR_LEN(value_str) > 0 && ZSTR_VAL(value_str)[ZSTR_LEN(value_str) - 1] == '=') {
+            ZSTR_LEN(value_str)--;
+        }
+        ZSTR_VAL(value_str)[ZSTR_LEN(value_str)] = '\0';
     } else {
         value_str = zend_string_copy(Z_STR_P(value));
     }
