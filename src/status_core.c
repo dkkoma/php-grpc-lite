@@ -68,6 +68,14 @@ bool grpc_lite_call_response_started(grpc_call *call)
     if (call->http_status >= 0 || call->metadata_entry_count > 0 || call->grpc_status_seen || call->initial_grpc_status_seen || call->grpc_status >= 0) {
         return true;
     }
+    /* Response validation flags can be set before any entry/status is stored
+     * (e.g. the first metadata entry alone exceeds the size limit). They still
+     * prove the server started responding on this stream. */
+    if (call->metadata_too_large || call->content_type_seen || call->invalid_content_type
+        || call->unsupported_response_encoding || call->invalid_grpc_status
+        || call->response_queue_limit_exceeded || call->grpc_message != NULL) {
+        return true;
+    }
     if (call->response_message_count > 0 || call->response_queue_head != NULL) {
         return true;
     }

@@ -108,6 +108,13 @@ static void test_transparent_retryable_unprocessed_predicate(void)
     ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, queued_payload payload; memset(&payload, 0, sizeof(payload)); call.stream_refused_seen = true; call.response_queue_head = &payload, false);
     ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.response_header_len = 1, false);
     ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.response_payload_len = 1, false);
+
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.metadata_too_large = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.content_type_seen = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.invalid_content_type = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.unsupported_response_encoding = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.invalid_grpc_status = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_RST_STREAM, true, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_REFUSED_STREAM; call.response_queue_limit_exceeded = true, false);
 }
 
 int main(void)

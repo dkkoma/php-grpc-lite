@@ -557,10 +557,13 @@ func handleRawH2C(conn net.Conn, sendGoAway bool, firstConnectionEOF bool) {
 		return
 	}
 
-	preface := make([]byte, len(http2.ClientPreface))
-	if _, err := io.ReadFull(conn, preface); err != nil {
+	if !readClientPreface(conn) {
 		return
 	}
+	handleRawAfterPrefaceH2C(conn, sendGoAway)
+}
+
+func handleRawAfterPrefaceH2C(conn net.Conn, sendGoAway bool) {
 	framer := http2.NewFramer(conn, conn)
 	if err := framer.WriteSettings(); err != nil {
 		return
@@ -774,10 +777,21 @@ func serveGoAwayRefusedH2C(addr string) {
 
 func handleGoAwayRefusedH2C(conn net.Conn) {
 	defer conn.Close()
-	preface := make([]byte, len(http2.ClientPreface))
-	if _, err := io.ReadFull(conn, preface); err != nil {
+	if !readClientPreface(conn) {
 		return
 	}
+	handleGoAwayRefusedAfterPrefaceH2C(conn)
+}
+
+func readClientPreface(conn net.Conn) bool {
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return false
+	}
+	return string(preface) == http2.ClientPreface
+}
+
+func handleGoAwayRefusedAfterPrefaceH2C(conn net.Conn) {
 	framer := http2.NewFramer(conn, conn)
 	if err := framer.WriteSettings(); err != nil {
 		return
@@ -824,11 +838,17 @@ func serveGoAwayRefusedThenOKH2C(addr string, counter *int64) {
 }
 
 func handleGoAwayRefusedThenOKH2C(conn net.Conn, counter *int64) {
-	if atomic.AddInt64(counter, 1)%2 == 1 {
-		handleGoAwayRefusedH2C(conn)
+	defer conn.Close()
+	// Count only real HTTP/2 clients: bare TCP preflight probes (SKIPIF,
+	// runner readiness checks) must not consume the refused/OK alternation.
+	if !readClientPreface(conn) {
 		return
 	}
-	handleRawH2C(conn, false, false)
+	if atomic.AddInt64(counter, 1)%2 == 1 {
+		handleGoAwayRefusedAfterPrefaceH2C(conn)
+		return
+	}
+	handleRawAfterPrefaceH2C(conn, false)
 }
 
 func serveGoAwayRefusedThenDelayedOKH2C(addr string) {
@@ -848,19 +868,20 @@ func serveGoAwayRefusedThenDelayedOKH2C(addr string) {
 }
 
 func handleGoAwayRefusedThenDelayedOKH2C(conn net.Conn) {
-	if atomic.AddInt64(&goAwayRefusedThenDelayedOKConnections, 1)%2 == 1 {
-		handleGoAwayRefusedH2C(conn)
+	defer conn.Close()
+	// Count only real HTTP/2 clients: bare TCP preflight probes (SKIPIF,
+	// runner readiness checks) must not consume the refused/OK alternation.
+	if !readClientPreface(conn) {
 		return
 	}
-	handleRawDelayedOKH2C(conn, 100*time.Millisecond)
+	if atomic.AddInt64(&goAwayRefusedThenDelayedOKConnections, 1)%2 == 1 {
+		handleGoAwayRefusedAfterPrefaceH2C(conn)
+		return
+	}
+	handleRawDelayedOKAfterPrefaceH2C(conn, 100*time.Millisecond)
 }
 
-func handleRawDelayedOKH2C(conn net.Conn, delay time.Duration) {
-	defer conn.Close()
-	preface := make([]byte, len(http2.ClientPreface))
-	if _, err := io.ReadFull(conn, preface); err != nil {
-		return
-	}
+func handleRawDelayedOKAfterPrefaceH2C(conn net.Conn, delay time.Duration) {
 	framer := http2.NewFramer(conn, conn)
 	if err := framer.WriteSettings(); err != nil {
 		return
