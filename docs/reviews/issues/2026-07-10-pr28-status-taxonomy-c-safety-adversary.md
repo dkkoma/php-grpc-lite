@@ -19,7 +19,7 @@
 
 ## Review Prompt Summary
 
-- PR #28 の current HEAD `0f1cc090a9ecf04ecc9b7f4b78b719101b21456b` を、前回対象`f5a2f751621cecbb447db7d89222df435fcf7849`からの修正commit `375c3ddd73a040f99de5b6fb3f217b36020d3344`を中心に第三パス再レビューした。前回MediumのEND_STREAM gate修正、追加された`expect_final_response`の初期化/retry/reuse、nghttp2 callback ordering、informational/final response transition、metadata/validation ownershipを確認した。scopeは`375c3dd`が追加したstateと元のstatus-taxonomy fixへの影響に限定し、既存の一般的な1xx/invalid-sequence gapは新規指摘へ混ぜない。
+- PR #28 の current HEAD `093b808809420616dfb990417607584ea4dd209a` を、第三パス対象`0f1cc090a9ecf04ecc9b7f4b78b719101b21456b`からのrevert差分に限定して第四パス再レビューした。不完全な1xx成功経路の`expect_final_response` field/callback、early-hints fixture/PHPT、current design記述が完全に除去され、元のstatus-taxonomy fixで必要な`trailing_headers_seen`のEND_STREAM gateだけが残ることを確認した。unary/server streaming/transparent retry/benchの初期化とreuseも再監査し、一般的な1xx対応はscope外とした。
 
 ## Issues
 
@@ -48,10 +48,10 @@
 - Expected model: call fieldはframe categoryではなくterminal eventを表す。少なくとも`NGHTTP2_FLAG_END_STREAM`を伴うHEADERSだけを`terminal_headers_end_stream`（または同等のfield）として記録し、DATA END_STREAMとの区別に使う。initial response後のnon-terminal second HEADERSはgrpc-go exact policyなら独立したmalformed/protocol-error classificationにし、1xxを扱う場合はinformational/final response lifecycleと区別する。
 - Why it matters: malformed peerまたはinformational responseを含む合法HTTP/2 sequenceが一度generic HEADERSを通るだけで、新設したDATA-vs-HEADERS taxonomyがcall終了まで汚染される。PRの判断ログが宣言する「grpc-go exact」と異なるuser-visible code/detailsになり、field名・comment・unit testが誤ったproducer invariantを正しいものとして固定する。memory corruptionではないが、adversarial server responseに対するprotocol classification bypassである。
 - Recommended fix: `trailing_headers_seen`をEND_STREAM確認付きのterminal fieldへ変更し、`on_frame_recv_callback()`で`(frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0`の場合だけ立てる。raw h2 fixtureで少なくとも (a) trailing HEADERS + END_STREAM + statusなし → UNKNOWN、(b) non-terminal second HEADERSの後にDATA END_STREAM → INTERNAL（またはより早いmalformed INTERNAL）をunary/server streaming双方で固定する。必要なら1xx後のfinal response HEADERSを別fixtureにしてcategory単独ではtrailersを表さないことも固定する。
-- Inline comment anchor: `src/transport.c:2127`（current HEADで追加された代入行）。
-- Fix summary: `on_frame_recv_callback()`はgeneric `NGHTTP2_HCAT_HEADERS`だけでは`trailing_headers_seen`を立てず、`NGHTTP2_FLAG_END_STREAM`付きの場合だけterminal HEADERSとして記録するようになった。103後のnon-terminal final response HEADERSからDATA END_STREAMへ進むfixtureも追加され、同categoryを見ただけではmissing-trailers INTERNALを抑止しないことをunary/server streamingで固定した。
-- Fix commit: `375c3ddd73a040f99de5b6fb3f217b36020d3344`
-- Verification: `src/transport.c:2132-2142 producer gate audit; ./tools/test/check-c-unit.sh pass; ./tools/test/check-c-static-analysis.sh pass; ./tools/test/check-phpt.sh 17/17 pass at 0f1cc09; early-hints + no-trailers unary/server-streaming PHPT paths pass`
+- Inline comment anchor: 修正前`f5a2f75:src/transport.c:2127`。current HEADのfixは`src/transport.c:2129-2130`。
+- Fix summary: `on_frame_recv_callback()`はgeneric `NGHTTP2_HCAT_HEADERS`だけでは`trailing_headers_seen`を立てず、`NGHTTP2_FLAG_END_STREAM`付きの場合だけterminal HEADERSとして記録する。`375c3dd`で一時追加された1xx fixture/成功経路は`093b808`で別issueへrevertされたが、前回指摘の本体であるEND_STREAM gateはそのまま維持された。
+- Fix commit: `375c3ddd73a040f99de5b6fb3f217b36020d3344`（END_STREAM gate）、`093b808809420616dfb990417607584ea4dd209a`（scope-expanded 1xx path revert）
+- Verification: `src/transport.c:2121-2131 producer gate audit at 093b808; ./tools/test/check-c-unit.sh pass; ./tools/test/check-c-static-analysis.sh pass; ./tools/test/check-phpt.sh 17/17 pass。PHPT 022のDATA END_STREAM/no trailers -> INTERNALとtrailing HEADERS END_STREAM/no status -> UNKNOWNはunary/server streamingで維持される。`
 - Notes: initial response後のnon-terminal`grpc-status`受理全体はPR前から存在するため、本指摘は新設fieldがEND_STREAMなしのgeneric HEADERSをterminal eventとして記録し、新設predicateを誤って抑止する範囲に限定する。
 
 ## Review Result
@@ -69,32 +69,39 @@
 - GOAWAY refused pathは`stream_error_code = NGHTTP2_REFUSED_STREAM`、`stream_refused_seen = true`を設定してからstreamをunregisterする。新しい`stream_error_code == NGHTTP2_NO_ERROR`条件とは衝突しない。
 - compression / unsupported encodingのdetails分岐は既存の`zend_string`をcopyまたは新規allocateして返し、unary/server streaming result assemblyがcopy後に元をreleaseする既存ownershipを維持する。追加行にNULL dereference、UAF、長さ計算、integer overflowはない。
 - bench専用batch pathは同じ`grpc_call`をiteration間で再利用するが、productionの`resolve_grpc_call_status()`を使用せず、各iterationで`stream_closed`、`grpc_status`、`http_status`、`stream_error_code`、`compressed_response_seen`をresetする。今回のproduction taxonomy変更によるstale-state伝播はない。
-- `trailing_headers_seen` / `expect_final_response`を含む追加boolはproduction unaryのattempt-local stack objectとserver streamingのattempt-local `ecalloc` resourceでzero initializeされ、transparent retryもfresh call/resourceを作る。bench callbackは両fieldを更新せずstatus taxonomyも呼ばないため、bench reuseに今回の新field由来のstale-state伝播はない。
+- `expect_final_response`は`grpc_call`、production callback、fixture/PHPTから除去され、runtime symbol/referenceは残っていない。bool fieldだけのrevertなのでcleanup/ownership追加処理も不要であり、field削除後のlayoutを全translation unitが同じheaderからcompileする内部structのためABI mismatchはない。
+- 残る`trailing_headers_seen`はproduction unaryのattempt-local stack objectとserver streamingのattempt-local `ecalloc` resourceでzero initializeされ、transparent retryもfresh call/resourceを作る。bench callbackはこのfieldを更新せずstatus taxonomyも呼ばないため、bench reuseにstale-state伝播はない。
 - `grpc_encoding`はduplicate headerで旧`zend_string`をreleaseしてから新規allocateし、call cleanupで1回releaseする。Compressed-Flag helperは有効なcall-owned stringをreadするだけで、direct/non-direct parserともflag設定後にbody discard/RSTへ遷移する。追加経路にNULL dereference、UAF、double free、length overflowは見つからなかった。
 - compression details selectionはfresh production callで2つのclassification flagがともにfalseから始まり、Compressed-Flag=`1`でnon-identity `grpc_encoding`があれば`unsupported_response_encoding`だけ、無ければ`compressed_response_seen`だけを立てるため、`unsupported grpc-encoding: <name>`とgeneric compressed-message detailsの分岐は決定的である。non-empty peer `grpc_message`を全local synthesisより優先する既存policyは今回変更されておらず、このPR固有のfindingにはしない。missing-trailers detailsはcodeが`INTERNAL`になったDATA-close shapeだけで新設文言へ到達し、HEADERS-closeの`UNKNOWN`では空またはpeer `grpc-message`を維持する。
-- `./tools/test/check-c-static-analysis.sh` (`0f1cc09`): pass。
-- `./tools/test/check-c-unit.sh` (`0f1cc09`): pass（`protocol_core` / `status_core` / `transport_core`）。
-- `./tools/test/check-phpt.sh` (`0f1cc09`): 17/17 pass。変更されたcompression、DATA END_STREAM、headers-only/trailing HEADERS、103→final responseのunary/server streaming経路を含む。103 testsはmetadata phaseをassertしない。
-- current 50054 fixtureへのone-off PHP probe (`x-bench-early-hints=1`, `x-bench-grpc-status=0`): unary / server streamingともstatus `OK(0)`だがinitial metadataは空、final response headers (`content-type`, `trailer`, `content-length`, `date`)はtrailing metadataへ入ることを再現した。このprotocol/metadata phase findingはprotocol-adversaryの`REVIEW-20260710-004`へ集約し、C safety reviewでは重複countしない。
+- `./tools/test/check-c-static-analysis.sh` (`093b808`): pass。
+- `./tools/test/check-c-unit.sh` (`093b808`): pass（`protocol_core` / `status_core` / `transport_core`）。
+- `./tools/test/check-phpt.sh` (`093b808`): 17/17 pass。compression、DATA END_STREAM、headers-only/trailing HEADERSのunary/server streaming経路を含む。revert対象の103成功経路はfixture/testともcurrent suiteから除去済み。
 - GitHub Native QA (`ce5872d`): Static analysis、NTS PHPT + C coverage、Crash/UB check、ZTS PHPTはいずれもsuccess。
 
-### `trailing_headers_seen` / `expect_final_response` initialization / reset audit
+### `trailing_headers_seen` initialization / reset audit
 
-- Production unary: `grpc_lite_unary_call_perform_core_on_connection()`はattemptごとにstack上の`grpc_call`全体を`memset(0)`する。wrapperのtransparent retry loopは同関数を再呼び出して別のfresh objectを作るため、`expect_final_response`を含めattempt間でfieldは継承されない。
-- Production server streaming: `server_streaming_call_open_resource()`はattemptごとに`server_streaming_call_state`を`ecalloc`し、さらにembedded `state->call`全体を`memset(0)`する。transparent retryは旧resourceをdestructして同open関数からfresh resourceを作る。diagnostic server-streaming entry pointも同じopen関数をattempt 0で使うため、stale `expect_final_response`は無い。
-- Raw diagnostic batch: `grpc_lite_bench_unary_batch()`のstack `grpc_call`はbatch開始時に全体zero-initされ、iteration間でreuseされる。iteration resetには両fieldが無いが、専用`bench_on_frame_recv_callback()` / `bench_on_header_callback()`はproduction-onlyの`trailing_headers_seen` / `expect_final_response`を一度もsetせず、raw benchは`grpc_lite_status_code_from_call()` / `resolve_grpc_call_status()`も呼ばない。したがって現行callback setではstale-state findingはない。ただし将来bench callbackをproduction callbackへ統合する場合はfull per-iteration resetが必要になる。
+- Production unary: `grpc_lite_unary_call_perform_core_on_connection()`はattemptごとにstack上の`grpc_call`全体を`memset(0)`する。wrapperのtransparent retry loopは同関数を再呼び出して別のfresh objectを作るため、attempt間でfieldは継承されない。
+- Production server streaming: `server_streaming_call_open_resource()`はattemptごとに`server_streaming_call_state`を`ecalloc`し、さらにembedded `state->call`全体を`memset(0)`する。transparent retryは旧resourceをdestructして同open関数からfresh resourceを作る。diagnostic server-streaming entry pointも同じopen関数をattempt 0で使う。
+- Raw diagnostic batch: `grpc_lite_bench_unary_batch()`のstack `grpc_call`はbatch開始時に全体zero-initされ、iteration間でreuseされる。iteration resetには`trailing_headers_seen`が無いが、専用`bench_on_frame_recv_callback()` / `bench_on_header_callback()`はこのproduction-only fieldを一度もsetせず、raw benchは`grpc_lite_status_code_from_call()` / `resolve_grpc_call_status()`も呼ばない。したがって現行callback setではstale-state findingはない。ただし将来bench callbackをproduction callbackへ統合する場合はfull per-iteration resetが必要になる。
 - Tests: C status unitのmacroも各assertで`grpc_call`全体をzero-initする。fixture間のstate leakはない。
+
+### Fourth-pass revert completeness audit
+
+- Runtime C: `src/grpc_exchange_state.h`から`expect_final_response`を削除し、`on_frame_recv_callback()`は通常の`HCAT_RESPONSE` validationへ戻った。current runtime sourceに同fieldのproducer/consumerは無い。
+- Fixture/tests: `poc/test-server/main.go`の`x-bench-early-hints` controlとPHPT 022の4ケース（unary 2 / streaming 2）は削除された。current fixture inventoryからもcontrolが除去され、別issueだけが将来の再実装scopeとして記録する。
+- Final retained change: `trailing_headers_seen`のstruct field、status coreの`!trailing_headers_seen` predicate、`on_frame_recv_callback()`の`NGHTTP2_FLAG_END_STREAM` gate、current ownership docは互いに整合する。fieldをsetするproduction callbackは1箇所、consumerはstatus taxonomyの1箇所で、revertによるdead/stale branchはない。
+- Historical docs: status-taxonomy issue/review record内の`expect_final_response`言及は追加・却下・revertの判断履歴でありcurrent designの主張ではない。current design docはfieldを除去済み。
 
 ### nghttp2 callback-order audit
 
-- [nghttp2 session receive contract](https://nghttp2.org/documentation/nghttp2_session_recv.html)ではvalid inbound HEADERSは、各`on_header_callback()`、header block完了後の`on_frame_recv_callback()`、そのframeがstreamを閉じる場合の`on_stream_close_callback()`の順で通知される。従ってterminal HEADERSでは`grpc_status` / `grpc_message` / metadataが先に保存され、次にframe-level markerが保存され、最後に`stream_closed` / close error codeが保存される。close callback内ではstream user dataが有効で、unregister後のstatus resolutionはunary stack/resourceを直接参照するためUAFはない。103 frame完了時にsetされた`expect_final_response`は後続final blockのheader callback時点では利用可能だが現実装が参照しない。このphase ownership問題はprotocol-adversaryの`REVIEW-20260710-004`がownerであり、本fileではC固有のduplicate issueを作らない。
+- [nghttp2 session receive contract](https://nghttp2.org/documentation/nghttp2_session_recv.html)ではvalid inbound HEADERSは、各`on_header_callback()`、header block完了後の`on_frame_recv_callback()`、そのframeがstreamを閉じる場合の`on_stream_close_callback()`の順で通知される。従ってterminal HEADERSでは`grpc_status` / `grpc_message` / metadataが先に保存され、次にEND_STREAM-gated frame markerが保存され、最後に`stream_closed` / close error codeが保存される。close callback内ではstream user dataが有効で、unregister後のstatus resolutionはunary stack/resourceを直接参照するためUAFはない。
 - inbound DATAは`on_data_chunk_recv_callback()`の後に`on_frame_recv_callback()`、END_STREAMなら`on_stream_close_callback()`となる。現実装はDATAのEND_STREAMをpositive fieldへ保存せず、「terminal HEADERS fieldが無いclean close」として推論する。`375c3dd`のEND_STREAM gateによりnon-terminal generic HEADERSはこの推論を汚染しなくなり、REVIEW-20260710-002は解消した。
 - inbound RST_STREAMは`on_frame_recv_callback()`で`stream_reset_seen` / wire error codeを保存してからclose callbackへ進む。GOAWAY refused pathはactive callへrefused/closed stateを直接保存してunregisterする。いずれもmissing-trailers predicateより高priorityのstateを持ち、今回のfield初期化/reset問題はない。
 
-### Third-pass cross-review deduplication
+### Third/fourth-pass cross-review deduplication
 
-- `375c3dd`の`expect_final_response`がframe callbackにだけ導入され、先行するheader callbackがfinal response fieldsをtrailing metadataへ保存する問題は実測で確認した。ただしこれはC memory/lifetime固有の別問題ではなく、[protocol adversarial reviewのREVIEW-20260710-004](2026-07-10-pr28-status-taxonomy-protocol-adversary.md)と同一findingであるため、そちらへ集約した。
-- C safety固有には、追加boolの未初期化、attempt/iteration間stale state、callback後UAF、string ownership破壊、status priorityの新たな不整合は見つからなかった。scopeを限定した推奨（1xx machineryを別PRへ戻しEND_STREAM gateだけ残す）もprotocol review側に記録されている。
+- `375c3dd`の`expect_final_response`がframe callbackにだけ導入され、先行するheader callbackがfinal response fieldsをtrailing metadataへ保存する問題は[protocol adversarial reviewのREVIEW-20260710-004](2026-07-10-pr28-status-taxonomy-protocol-adversary.md)へ集約した。`093b808`は同field/fixture/testsをPR #28からrevertし、独立1xx issueへ戻したため、C側にもproblematic phase stateは残らない。
+- C safety固有には、revert後のdangling field reference、未初期化、attempt/iteration間stale state、callback後UAF、string ownership破壊、status priorityの新たな不整合は見つからなかった。
 
 ## Second-pass False-positive Audit
 

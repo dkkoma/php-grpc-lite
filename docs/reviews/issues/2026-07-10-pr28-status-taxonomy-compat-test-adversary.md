@@ -24,7 +24,7 @@
 
 ## Review Prompt Summary
 
-- PR #28 の current HEAD `0f1cc090a9ecf04ecc9b7f4b78b719101b21456b` を `f5a2f75..HEAD` とcommit単位 (`375c3dd` / `686432b` / `0f1cc09`) で第三パス再確認した。前回のchecklist / SPEC、ownership mapの修正を確認し、その後に追加された1xx fixture / PHPTのunary / server streaming metadata / status parity、current docs、work issue / release handoff、PR説明をレビューした。status-taxonomy PRのスコープを広げる一般的1xx対応は求めず、`375c3dd` が追加した不完全な1xx成功経路のMediumはprotocol-adversary `REVIEW-20260710-004` に集約して重複countしない。
+- PR #28 の current HEAD `093b808809420616dfb990417607584ea4dd209a` を `0f1cc09..HEAD` で第四パス再確認した。第三パスのPR説明Low、不完全な1xx code / fixture / PHPT / active docsの撤去、分割issueの未着手future scope、元のcompression / missing-statusのunary / server streaming matrix、current docs / release handoffを確認した。一般的1xx対応は要求せず、work issueのRelated issues説明だけが古いLowはprotocol-adversary `REVIEW-20260710-005` に集約して重複countしない。
 
 ## Issues
 
@@ -62,7 +62,7 @@
 ### REVIEW-20260710-003: PR説明が最終的なcompression / missing-status behaviorを反映していない
 
 - Severity: `Low`
-- Status: `Open`
+- Status: `Fixed`
 - Reviewer role: `PHP-visible API compatibility / test fixture / release-documentation adversarial reviewer`
 - Finding: repository内のcurrent docs / testsは最終policyへ更新済みだが、PR #28の説明本文は、未対応 `grpc-encoding` 宣言を広くINTERNALにすると読める旧説明と、`:status 200` のclean close / trailers欠落をterminal frameに関係なくINTERNALにする旧説明を残している。
 - Evidence: connected GitHub PR metadataの第三パスauditで、PR本文の項目1が「unsupported `grpc-encoding` → INTERNAL」をCompressed-Flag=1に限定せず、項目3と実装メモが「`:status 200` + clean close + trailers無し → INTERNAL」をDATA END_STREAMに限定していないことを確認した。current source of truthは `docs/SPEC.md:90,233`、`docs/verification/compatibility-control-checklist.md:37-38,63-68`、`docs/issues/open/2026-07-08-status-taxonomy-official-alignment.md:62-65,76-81,103-104`。
@@ -70,9 +70,9 @@
 - Why it matters: PR本文はreviewerとrelease note作成者が最初に読む変更概要であり、現状のままだと変更対象のstatus / details / payload条件を過大に伝える。実装やrepository docsの追加変更は不要で、PR本文だけの引き継ぎ問題である。
 - Recommended fix: PR本文の項目1をCompressed-Flag=1限定 + `grpc-encoding` header / flag=0例外へ書き換え、項目3と実装メモをDATA END_STREAM → INTERNAL / HEADERS END_STREAM → UNKNOWNに書き分ける。新しいcode / test / design workは追加しない。
 - Inline comment anchor: PR description全体へのreview comment。code inline指摘にしない。
-- Fix summary: `pending`
-- Fix commit: `not applicable (PR description edit)`
-- Verification: PR説明とcurrent repository docs / PHPTの目視照合。
+- Fix summary: PR説明のcompression項目をCompressed-Flag=1のみINTERNAL、`grpc-encoding` 宣言 + flag=0は成功 / wire statusに従うと書き分けた。missing-status項目はDATA END_STREAM → INTERNAL / HEADERS END_STREAM → UNKNOWNのgrpc-go-exact policyに更新し、実装メモも1xx対応を別issueへrevert / splitした現状に合わせた。
+- Fix commit: `not applicable (PR description metadata edit; synchronized with 093b808 cleanup)`
+- Verification: connected GitHub PR metadataの第四パスauditで、項目1のCompressed-Flag=1限定 + flag=0成功 / wire status、項目3のDATA END_STREAM限定 + HEADERS UNKNOWN、implementation notesのgrpc-go exact + 1xx split / revertを確認。current `docs/SPEC.md`、compatibility checklist、PHPT 022と一致。
 
 ## Consolidation Audit
 
@@ -80,23 +80,25 @@
 - generic clean-close predicateがDATA / HEADERS END_STREAMを区別しないMediumも `f5a2f75` で修正済み。`initial_headers_end_stream` と `trailing_headers_seen` でterminal frameを区別し、PHPT 022とC unitはDATAのINTERNAL / initialまたはtrailing HEADERSのUNKNOWNを固定する。runtime findingはprotocol-adversary側でfix statusを管理する。
 - DATA END_STREAM missing-statusでgrpc-go strictnessとofficial ext-grpc drop-inが分かれるDesign Decisionは、work issue `docs/issues/open/2026-07-08-status-taxonomy-official-alignment.md:90` で **grpc-go exact** を明示的に採用済み。HEADERS terminalはUNKNOWN、DATA terminalはINTERNAL、`grpc-message` only trailersはUNKNOWN + peer detailsとする。accepted decisionとしてprotocol-adversary側で管理し、本fileではopen countしない。
 - `grpc_call` responsibility mapに `trailing_headers_seen` が無いドキュメント欠落は `375c3dd` で修正済み。`docs/design/grpc-call-exchange-state.md:15` は `initial_headers_end_stream` / `trailing_headers_seen` のproducer / consumerを現行structに合わせて説明する。protocol-adversary `REVIEW-20260710-003` がfix statusを管理し、本fileでは重複countしない。
-- `375c3dd` が追加した1xx成功経路は、PHPT 022がunary / server streamingのstatusとmessage countのparityは固定するが、1xx field隔離とfinal initial metadata ownershipをassertしない。`x-bench-early-hints=1` の103もheaderを設定する前に送られるためsemantic field汚染を再現しない。これはprotocol-adversary `REVIEW-20260710-004` のheader-phase / scope Mediumと同じ根なので、本fileでは別findingにしない。status-taxonomy PRでは `expect_final_response` / 1xx fixture / PHPT /対応済みdocsをsplitし、`trailing_headers_seen` のEND_STREAM gateだけを残すのが最小修正になる。
+- `375c3dd` が追加した不完全な1xx成功経路は `093b808` で修正済み。`expect_final_response`、`x-bench-early-hints`、unary / server streamingの1xx PHPT、active design / verification docsの対応済み記述がPR #28から消え、`trailing_headers_seen` のEND_STREAM gateだけが残る。protocol-adversary `REVIEW-20260710-004` で `Status: Fixed` を管理する。
+- `docs/issues/open/2026-07-10-informational-1xx-response-handling.md` は `Status: Open` / branch未着手 / 別PR scopeとし、却下されたframe-end実装、必要なsemantic phase、informational field隔離、initial / trailing metadata ownershipのunary / server streaming testをfuture workとして正確に記録する。本PRで追加の1xx実装を要求しない。
 - work issueの `Status: Open` と `docs/issues/open/` 配置は、PR未mergeかつ通常severityのreview findingが残る現在は正しい。merge前にClosedへ移す指摘はworkflow timingの誤りなので取り下げた。全finding修正・再review・merge後にfix commit / verificationを追記してclosedへ移すのがrepository運用に合う。
-- release noteの実体はversion release時に作るrepository運用であり、このPRでGitHub Release本文を先行作成しないこと自体はfindingにしない。work issue `:67-76` のobservable change表はCompressed-Flag=1の2種、header + flag=0、HTTP_1_1_REQUIRED、DATA missing trailers、HEADERS missing statusを列挙済みで、release handoffとして十分。
-- `686432b` はflag=0 / 1xxを別issueに記録したが、1xx code / fixture / PHPT自体はPR #28に残している。記録分割だけでscope Mediumが解消したとは判定しない。この判定はprotocol-adversary `REVIEW-20260710-004` に集約する。
+- release noteの実体はversion release時に作るrepository運用であり、このPRでGitHub Release本文を先行作成しないこと自体はfindingにしない。work issue `:74-83` のobservable change表はCompressed-Flag=1の2種、header + flag=0、HTTP_1_1_REQUIRED、DATA missing trailers、HEADERS missing statusを列挙済みで、release handoffとして十分。
+- parent work issueのRelated issues導入文は2件とも「codeは分離せず記録のみ分割」とするが、`093b808` 後はflag=0だけがPR同梱、1xxはcodeもfuture issueへ分離済みである。このcurrent summary Lowはprotocol-adversary `REVIEW-20260710-005` に集約し、本fileでは重複countしない。
 
 ## Review Result
 
 - Blocker: `none`
 - High: `none`
-- Medium: `none` (過去の1件は `Fixed`; 1xxのopen Mediumはprotocol-adversary `REVIEW-20260710-004` に集約)
-- Low: `1` (`Open`; 過去の1件は `Fixed`)
+- Medium: `none` (過去の1件とprotocol-adversary集約の1xx Mediumは `Fixed`)
+- Low: `none` (過去の2件は `Fixed`; work issue summaryのopen Lowはprotocol-adversary `REVIEW-20260710-005` に集約)
 - Design Decision: `none` (grpc-go exactの1件は明示的にaccepted / documented)
 
 ## Verification
 
 - parent reviewerがcurrent HEADで `./tools/test/check-phpt.sh` をDocker内で再実行し、17/17 passを確認した。あわせてPHPUnit 31 tests / 116 assertions、C unit 3 suites、C static analysisもpassした。
-- `375c3dd` 実装 / fixture / PHPTに対するrepository記録は `./tools/test/check-phpt.sh` 17/17 pass。`375c3dd..0f1cc09` はissue / review recordだけの変更で、`src/` / `tests/` / `poc/test-server/main.go` の差分は無いことを `git diff --quiet` で確認。
+- `0f1cc09..093b808` を静的照合し、`src/` / `poc/test-server/main.go` / `tests/` / active design・verification docsから `expect_final_response` / `x-bench-early-hints` / 1xx対応済み表現が消えたことを確認。`rg` で同範囲の1xx関連残存はnone。
+- PHPT 022はunary / server streamingの両方で、header + flag=0 + status0のOK、header + flag=0 + trailers-only status5のwire NOT_FOUND、header + flag=1のINTERNAL、HEADERS missing statusのUNKNOWN、DATA no-trailersのINTERNAL + detailsを維持。fixture inventory / verification matrixもこれらのactive controlだけを列挙する。
 - `git diff --check origin/main...HEAD`: pass。
 - official comparatorはcompose `dev-ext-grpc`（`docker/Dockerfile.ext-grpc` のunpinned `pecl install grpc`、GHCR artifactではない）を使用。runtimeはext-grpc `1.80.0` / PHP `8.4.20` CLI / Linux `aarch64`。
 - updated 50054 fixtureへのofficial ext-grpc comparatorは、gzip header + flag=0 + status0が `BenchReply / OK`、gzip header + flag=0 + headers-only status5が `null / NOT_FOUND`で、f5a2f75の主要compatibility fixと一致。
