@@ -57,6 +57,7 @@ struct _grpc_call {
     bool grpc_status_seen;
     bool initial_grpc_status_seen;
     bool initial_headers_end_stream;
+    bool trailing_headers_seen;
     size_t response_message_count;
     size_t max_response_messages;
     size_t max_receive_message_bytes;

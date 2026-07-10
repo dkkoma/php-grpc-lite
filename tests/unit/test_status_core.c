@@ -53,8 +53,8 @@ static void test_priority_order(void)
     ASSERT_STATUS(GRPC_STATUS_RESOURCE_EXHAUSTED, call.metadata_too_large = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_RESOURCE_EXHAUSTED, call.response_queue_limit_exceeded = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.malformed_response_frame = true; call.grpc_status = GRPC_STATUS_OK, false);
-    ASSERT_STATUS(GRPC_STATUS_UNIMPLEMENTED, call.compressed_response_seen = true; call.grpc_status = GRPC_STATUS_OK, false);
-    ASSERT_STATUS(GRPC_STATUS_UNIMPLEMENTED, call.unsupported_response_encoding = true; call.grpc_status = GRPC_STATUS_OK, false);
+    ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.compressed_response_seen = true; call.grpc_status = GRPC_STATUS_OK, false);
+    ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.unsupported_response_encoding = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_PERMISSION_DENIED, call.grpc_status = GRPC_STATUS_PERMISSION_DENIED, false);
 }
 
@@ -88,7 +88,28 @@ static void test_http2_stream_error_mapping(void)
     ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_FRAME_SIZE_ERROR, false);
     ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_COMPRESSION_ERROR, false);
     ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_CONNECT_ERROR, false);
+    ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_HTTP_1_1_REQUIRED, false);
     ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_reset_seen = true; call.stream_error_code = 0xffffu, false);
+}
+
+static void test_missing_trailers_mapping(void)
+{
+    /* :status 200, stream ended cleanly on a DATA frame, no grpc-status:
+     * mandatory trailers are missing -> INTERNAL (grpc-go handleData: "server
+     * closed the stream without sending trailers"). */
+    ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.stream_closed = true, false);
+    /* Not yet closed (e.g. transport error before END_STREAM) keeps the
+     * UNKNOWN fallback. */
+    ASSERT_STATUS(GRPC_STATUS_UNKNOWN, (void) 0, false);
+    /* Closed but with a grpc-status present uses the wire status. */
+    ASSERT_STATUS(GRPC_STATUS_OK, call.stream_closed = true; call.grpc_status = GRPC_STATUS_OK, false);
+    /* Streams ending on a HEADERS frame stay UNKNOWN (grpc-go operateHeaders):
+     * headers-only response without grpc-status ... */
+    ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_closed = true; call.initial_headers_end_stream = true, false);
+    /* ... and trailing HEADERS lacking grpc-status. */
+    ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_closed = true; call.trailing_headers_seen = true, false);
+    /* Non-clean close (local error without an RST frame) keeps UNKNOWN. */
+    ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_closed = true; call.stream_error_code = NGHTTP2_PROTOCOL_ERROR, false);
 }
 
 static void test_transparent_retryable_unprocessed_predicate(void)
@@ -122,6 +143,7 @@ int main(void)
     test_priority_order();
     test_http_fallback_mapping();
     test_http2_stream_error_mapping();
+    test_missing_trailers_mapping();
     test_transparent_retryable_unprocessed_predicate();
 
     if (failures != 0) {

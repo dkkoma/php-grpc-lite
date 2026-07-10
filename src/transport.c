@@ -2045,11 +2045,12 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         if (call->grpc_encoding != NULL) {
             zend_string_release(call->grpc_encoding);
         }
+        /* grpc-encoding only declares which algorithm compressed messages
+         * would use; each message's Compressed-Flag decides whether it is
+         * actually compressed. Flag=0 messages must decode normally even
+         * under an unsupported encoding (grpc-go checkRecvPayload), so the
+         * failure is raised by the DATA parser when it sees flag=1. */
         call->grpc_encoding = zend_string_init((const char *) value, valuelen, 0);
-        if (!grpc_protocol_is_identity_encoding(value, valuelen)) {
-            call->unsupported_response_encoding = true;
-            call->discard_response_body = true;
-        }
     }
     if (grpc_protocol_add_response_metadata_entry(call, name, namelen, value, valuelen, trailing) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -2116,6 +2117,17 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
         if (call->initial_grpc_status_seen && !call->initial_headers_end_stream) {
             call->invalid_grpc_status = true;
             call->discard_response_body = true;
+        }
+    } else if (frame->hd.type == NGHTTP2_HEADERS
+        && frame->hd.stream_id == call->stream_id
+        && frame->headers.cat == NGHTTP2_HCAT_HEADERS) {
+        /* Trailing HEADERS block (with or without grpc-status). Only an
+         * END_STREAM HEADERS terminates the stream; recording anything else
+         * here would let a non-terminal HEADERS suppress the missing-trailers
+         * INTERNAL classification in status_core.c even though the stream
+         * actually ended on a DATA frame. */
+        if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
+            call->trailing_headers_seen = true;
         }
     } else if (frame->hd.type == NGHTTP2_RST_STREAM && frame->hd.stream_id == call->stream_id) {
         call->stream_reset_seen = true;
@@ -2213,18 +2225,22 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
             if (call->malformed_response_frame) {
                 return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
             }
-            if (call->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
-            }
-            return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
-        case GRPC_STATUS_UNIMPLEMENTED:
             if (call->unsupported_response_encoding) {
                 if (call->grpc_encoding != NULL && ZSTR_LEN(call->grpc_encoding) > 0) {
                     return strpprintf(0, "unsupported grpc-encoding: %s", ZSTR_VAL(call->grpc_encoding));
                 }
                 return zend_string_init("unsupported grpc-encoding", sizeof("unsupported grpc-encoding") - 1, 0);
             }
-            return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
+            if (call->compressed_response_seen) {
+                return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
+            }
+            if (call->stream_reset_seen) {
+                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
+            }
+            if (call->stream_closed && call->grpc_status < 0) {
+                return zend_string_init("server closed the stream without sending trailers", sizeof("server closed the stream without sending trailers") - 1, 0);
+            }
+            return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
         case GRPC_STATUS_CANCELLED:
             return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
         default:
@@ -2584,6 +2600,20 @@ void free_request_headers(h2_request_headers *headers)
     headers->custom_value_count = 0;
 }
 
+/* Compressed-Flag=1 with no decompression support: attribute the failure to
+ * the advertised grpc-encoding when one was declared, otherwise to the flag
+ * itself. Both map to INTERNAL in status_core.c. */
+static void grpc_protocol_flag_compressed_message(grpc_call *call)
+{
+    if (call->grpc_encoding != NULL
+        && !grpc_protocol_is_identity_encoding((const uint8_t *) ZSTR_VAL(call->grpc_encoding), ZSTR_LEN(call->grpc_encoding))) {
+        call->unsupported_response_encoding = true;
+    } else {
+        call->compressed_response_seen = true;
+    }
+    call->discard_response_body = true;
+}
+
 int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
 {
     size_t offset = 0;
@@ -2629,8 +2659,7 @@ int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, gr
                 return 0;
             }
             if (call->response_header_buf[0] == 1) {
-                call->compressed_response_seen = true;
-                call->discard_response_body = true;
+                grpc_protocol_flag_compressed_message(call);
                 if (session != NULL && call->stream_id > 0) {
                     nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
                 }
@@ -2687,7 +2716,8 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
         return 0;
     }
 
-    while (offset < len && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame) {
+    while (offset < len && !call->response_message_too_large && !call->compressed_response_seen
+        && !call->unsupported_response_encoding && !call->malformed_response_frame) {
         if (call->response_header_len < 5) {
             size_t need = 5 - call->response_header_len;
             size_t take = need < len - offset ? need : len - offset;
@@ -2747,8 +2777,7 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 continue;
             }
             if (call->response_header_buf[0] == 1) {
-                call->compressed_response_seen = true;
-                call->discard_response_body = true;
+                grpc_protocol_flag_compressed_message(call);
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;

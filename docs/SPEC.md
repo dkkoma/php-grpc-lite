@@ -87,7 +87,7 @@ runtime transportは nghttp2 + 自前socket/TLS の1系統とする。PHP userla
 - gRPC は status を **HTTP/2 trailers**(`grpc-status`, `grpc-message`)で返す。
 - gRPC framing は `1 byte compressed-flag + 4 byte big-endian length + payload`。
 - TLSではALPNで `h2` を交渉する。h2c(plaintext)ではHTTP/2 prior knowledgeで接続する。
-- 圧縮messageは圧縮実装が入るまで `STATUS_UNIMPLEMENTED` とする。
+- Compressed-Flag=1 のmessageは圧縮実装が入るまで `STATUS_INTERNAL` とする(クライアント側で処理できないserver messageは [compression.md](https://github.com/grpc/grpc/blob/master/doc/compression.md) により INTERNAL。2026-07-10 に `STATUS_UNIMPLEMENTED` から変更)。`grpc-encoding` headerは宣言に過ぎず、flag=0 messageは未対応encoding下でも通常どおりdecodeする(grpc-go `checkRecvPayload` 準拠)。
 - `GOAWAY` で `last_stream_id` より大きいstream、または `RST_STREAM(REFUSED_STREAM)` で、response metadata / DATA / status / parser途中状態が一切ない初回attemptだけは「server未処理」として1回だけtransparent retryする。これはretry policyやidempotency判断ではなく、gRPC仕様上未処理が保証されるtransport lifecycleの再送である。absolute deadlineは初回のものを維持し、`grpc-timeout` は再送時の残時間から再計算する。`GOAWAY(last_stream_id=2147483647)` は二段階GOAWAYのdraining通知として扱い、既存streamをrefusedにしない。
 
 ### 4.3 TLS 戦略
@@ -230,7 +230,7 @@ C layout refactorはbehavioral compatibilityを変えない。status taxonomy、
 - [x] ~~`grpc-message` の percent decode~~ → status details へ入れる前に `rawurldecode()` する(2026-04-27)
 - [x] ~~HTTP status / `content-type: application/grpc` validation~~ → `grpc-status` が無い非 gRPC 応答は HTTP status から gRPC status を合成し、HTTP 200 でも `content-type` が `application/grpc` でなければ `STATUS_UNKNOWN` とする(2026-04-28)
 - [x] ~~client-side deadline enforcement(gax の `timeout` option を `grpc-timeout` header だけでなくtransport I/Oにも反映し、クライアント側でも `DEADLINE_EXCEEDED` を保証する)~~ → unary / server streaming ともにRPC deadlineをconnect / TLS handshake / read-write poll loopの上限として扱い、deadline超過を `STATUS_DEADLINE_EXCEEDED` に変換する。`grpc-timeout` は8桁制限に収まるよう `u` / `m` / `S` / `M` / `H` へ単位変換する(2026-05-04)
-- [x] ~~圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化~~ → 未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` にする(2026-04-28)
+- [x] ~~圧縮(`grpc-encoding`, compressed flag=1)の扱い。未対応なら明示エラー化~~ → 未対応の `grpc-encoding` と compressed flag=1 は `STATUS_UNIMPLEMENTED` にする(2026-04-28) → 公式実装(C-core / grpc-go)に合わせ `STATUS_INTERNAL` へ変更し、失敗条件を per-message の Compressed-Flag=1 のみに限定。`grpc-encoding` header 宣言だけでは失敗せず、flag=0 messageは成功する(2026-07-10)
 - [x] ~~binary metadata(`*-bin`)の ext-grpc 互換確認~~ → PHP API の値は raw binary、HTTP/2 wire は base64 として扱う。単一 raw binary value の request/initial/trailing round-trip を ext-grpc と照合(2026-04-28)
 - [x] ~~binary metadata の同一 key 複数 value における ext-grpc 互換確認~~ → 公式 ext-grpc PHP API は最後 value のみ可視だが、php-grpc-lite は gRPC 仕様準拠を優先し、同一 key 複数 values を `array<string, list<string>>` として保持する(2026-05-04)
 

@@ -61,9 +61,13 @@
 | `x-bench-http-status` | HTTP statusを指定する。`grpc-status` がないHTTP responseのfallback mappingを見る | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-content-type` | response `content-type` を指定する | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php` |
 | `x-bench-grpc-status` | trailersの `grpc-status` を指定する | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php` |
-| `x-bench-grpc-response=compressed-flag` | compressed flag=1のgRPC frameを返す | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
+| `x-bench-grpc-response=compressed-flag` | compressed flag=1のgRPC frameを返す。`x-bench-grpc-encoding` 併用で `grpc-encoding` も advertise する | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
 | `x-bench-grpc-response=partial-frame` | incomplete gRPC frameを返す | `tests/phpt/022-error-and-http-validation.phpt` |
-| `x-bench-grpc-encoding` | response `grpc-encoding` を指定する | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-grpc-response=no-trailers` | message送信後、trailers (`grpc-status`) なしのclean END_STREAM (DATA) で閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-grpc-response=headers-only` | headers-only END_STREAMで閉じる。`x-bench-grpc-status` 指定時はtrailers-only応答、未指定時は `grpc-status` なし | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-grpc-response=custom-trailers-no-status` | `grpc-status` を含まないtrailing HEADERS (`x-bench-trailer` のみ) で閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-grpc-response=grpc-message-only-trailers` | `grpc-message` はあるが `grpc-status` を含まないtrailing HEADERSで閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-grpc-encoding` | response `grpc-encoding` を指定する (message自体はflag=0)。`x-bench-grpc-status` 併用でtrailerも返す | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-observe-authority=1` | observed authorityを `x-bench-authority` として返す | authority / TLS identity diagnostics |
 
 ## Fixture ownership
