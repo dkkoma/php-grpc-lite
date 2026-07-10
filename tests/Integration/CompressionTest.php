@@ -35,7 +35,7 @@ final class CompressionTest extends TestCase
         }
 
         self::assertSame(0, $count);
-        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $call->getStatus()->code);
+        self::assertSame(\Grpc\STATUS_INTERNAL, $call->getStatus()->code);
         self::assertSame('compressed gRPC messages are not supported', $call->getStatus()->details);
     }
 
@@ -48,7 +48,7 @@ final class CompressionTest extends TestCase
         ])->wait();
 
         self::assertNull($response);
-        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $status->code);
+        self::assertSame(\Grpc\STATUS_INTERNAL, $status->code);
         self::assertSame('compressed gRPC messages are not supported', $status->details);
     }
 
@@ -63,7 +63,7 @@ final class CompressionTest extends TestCase
             'x-bench-grpc-status' => ['0'],
         ])->wait();
 
-        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $failedStatus->code);
+        self::assertSame(\Grpc\STATUS_INTERNAL, $failedStatus->code);
         self::assertNotNull($response);
         self::assertSame(\Grpc\STATUS_OK, $status->code, $status->details);
     }
@@ -83,7 +83,7 @@ final class CompressionTest extends TestCase
         }
 
         self::assertSame(0, $count);
-        self::assertSame(\Grpc\STATUS_UNIMPLEMENTED, $call->getStatus()->code);
+        self::assertSame(\Grpc\STATUS_INTERNAL, $call->getStatus()->code);
         self::assertSame('compressed gRPC messages are not supported', $call->getStatus()->details);
     }
 }

@@ -47,12 +47,12 @@ $assertUnaryStatus(
 );
 $assertUnaryStatus(
     ['x-bench-grpc-response' => ['compressed-flag']],
-    Grpc\STATUS_UNIMPLEMENTED,
+    Grpc\STATUS_INTERNAL,
     'compressed gRPC messages are not supported',
 );
 $assertUnaryStatus(
     ['x-bench-grpc-encoding' => ['gzip']],
-    Grpc\STATUS_UNIMPLEMENTED,
+    Grpc\STATUS_INTERNAL,
     'unsupported grpc-encoding: gzip',
 );
 $assertUnaryStatus(
@@ -115,12 +115,12 @@ grpc_lite_phpt_assert_same('invalid gRPC content-type: application/grpcfoo', $ca
 
 $assertStreamStatus(
     ['x-bench-grpc-response' => ['compressed-flag']],
-    Grpc\STATUS_UNIMPLEMENTED,
+    Grpc\STATUS_INTERNAL,
     'compressed gRPC messages are not supported',
 );
 $assertStreamStatus(
     ['x-bench-grpc-encoding' => ['gzip']],
-    Grpc\STATUS_UNIMPLEMENTED,
+    Grpc\STATUS_INTERNAL,
     'unsupported grpc-encoding: gzip',
 );
 $assertStreamStatus(

@@ -2213,18 +2213,22 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
             if (call->malformed_response_frame) {
                 return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
             }
-            if (call->stream_reset_seen) {
-                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
-            }
-            return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
-        case GRPC_STATUS_UNIMPLEMENTED:
             if (call->unsupported_response_encoding) {
                 if (call->grpc_encoding != NULL && ZSTR_LEN(call->grpc_encoding) > 0) {
                     return strpprintf(0, "unsupported grpc-encoding: %s", ZSTR_VAL(call->grpc_encoding));
                 }
                 return zend_string_init("unsupported grpc-encoding", sizeof("unsupported grpc-encoding") - 1, 0);
             }
-            return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
+            if (call->compressed_response_seen) {
+                return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
+            }
+            if (call->stream_reset_seen) {
+                return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
+            }
+            if (call->stream_closed && call->grpc_status < 0) {
+                return zend_string_init("server closed the stream without sending trailers", sizeof("server closed the stream without sending trailers") - 1, 0);
+            }
+            return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
         case GRPC_STATUS_CANCELLED:
             return zend_string_init("Cancelled", sizeof("Cancelled") - 1, 0);
         default:

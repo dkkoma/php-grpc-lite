@@ -30,7 +30,9 @@ int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
     if (call->invalid_content_type) return GRPC_STATUS_UNKNOWN;
     if (call->response_message_too_large || call->metadata_too_large || call->response_queue_limit_exceeded) return GRPC_STATUS_RESOURCE_EXHAUSTED;
     if (call->malformed_response_frame) return GRPC_STATUS_INTERNAL;
-    if (call->compressed_response_seen || call->unsupported_response_encoding) return GRPC_STATUS_UNIMPLEMENTED;
+    /* Client-side inability to process a server message is INTERNAL per
+     * compression.md; UNIMPLEMENTED is reserved for the server-side case. */
+    if (call->compressed_response_seen || call->unsupported_response_encoding) return GRPC_STATUS_INTERNAL;
     if (call->grpc_status >= 0) return call->grpc_status;
     if (call->stream_refused_seen) return GRPC_STATUS_UNAVAILABLE;
     if (call->stream_reset_seen) {
@@ -52,11 +54,17 @@ int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
             case NGHTTP2_FRAME_SIZE_ERROR:
             case NGHTTP2_COMPRESSION_ERROR:
             case NGHTTP2_CONNECT_ERROR:
+            case NGHTTP2_HTTP_1_1_REQUIRED:
                 return GRPC_STATUS_INTERNAL;
             default:
                 return GRPC_STATUS_UNKNOWN;
         }
     }
+    /* :status 200 stream closed cleanly without any grpc-status: trailers are
+     * a mandatory part of the response per PROTOCOL-HTTP2.md, so their absence
+     * is a protocol violation (grpc-go: "server closed the stream without
+     * sending trailers" -> INTERNAL). */
+    if (call->stream_closed && call->stream_error_code == NGHTTP2_NO_ERROR && call->http_status == 200) return GRPC_STATUS_INTERNAL;
     return GRPC_STATUS_UNKNOWN;
 }
 
