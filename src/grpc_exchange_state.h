@@ -40,6 +40,10 @@ struct _grpc_call {
     zend_string *grpc_message;
     uint32_t stream_error_code;
     bool stream_reset_seen;
+    /* This side submitted RST_STREAM for the stream (deadline expiry / user
+     * cancel); a mid-message stream end is then cancellation semantics, not a
+     * malformed (truncated) response. */
+    bool locally_cancelled;
     bool stream_refused_seen;
     int http_status;
     bool compressed_response_seen;

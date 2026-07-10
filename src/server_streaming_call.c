@@ -348,9 +348,11 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     }
 
     if (!call->response_message_too_large && !call->compressed_response_seen && !call->stream_reset_seen
+            && !call->locally_cancelled
             && (call->response_header_len != 0 || call->response_payload != NULL || call->response_payload_offset != 0)) {
-        /* RST_STREAM mid-message keeps its own status taxonomy (e.g. CANCEL
-         * -> CANCELLED) instead of being reported as malformed framing. */
+        /* RST_STREAM mid-message (received or locally submitted) keeps its
+         * own status taxonomy (e.g. CANCEL -> CANCELLED) instead of being
+         * reported as malformed framing. */
         call->malformed_response_frame = true;
     }
     state->completed = true;

@@ -307,12 +307,15 @@ void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
  * (deadline expiry and user cancellation are stream-scoped per
  * PROTOCOL-HTTP2.md; only connection-level failures kill the connection).
  * The call's own deadline has typically already expired when this runs, so
- * the RST write gets its own short grace deadline instead of the call
- * deadline; a failed write still marks the connection dead inside
- * send_pending_h2_frames_with_deadline. Bytes the server already sent for
- * the cancelled stream are handled later: nghttp2 ignores frames for reset
- * streams, and the persistent preflight drain consumes anything pending
- * before the next call reuses the connection. */
+ * the flush gets its own short grace deadline instead of the call deadline.
+ * The grace bounds the flush of ALL pending session frames (the RST plus any
+ * queued WINDOW_UPDATE / SETTINGS ack / sendable DATA of other streams), not
+ * just the 13-byte RST; exceeding it marks the connection dead inside
+ * send_pending_h2_frames_with_deadline, which degrades to the pre-change
+ * behaviour (connection teardown). Bytes the server already sent for the
+ * cancelled stream stay harmless: nghttp2 ignores frames for reset streams
+ * while keeping flow-control accounting and HPACK state in sync, and the
+ * persistent preflight drain consumes bytes already pending at adoption. */
 void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
 {
     h2_connection *connection;
@@ -325,12 +328,22 @@ void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
     if (connection == NULL || !connection_usable(connection) || call->stream_id <= 0 || call->stream_closed) {
         return;
     }
+    call->locally_cancelled = true;
     rv = nghttp2_submit_rst_stream(connection->session, NGHTTP2_FLAG_NONE, call->stream_id, error_code);
     if (rv != 0) {
         mark_connection_dead(connection, rv);
         return;
     }
-    send_pending_h2_frames_with_deadline(connection, NULL, monotonic_us() + GRPC_LITE_CANCEL_RST_WRITE_GRACE_US);
+    rv = send_pending_h2_frames_with_deadline(connection, NULL, monotonic_us() + GRPC_LITE_CANCEL_RST_WRITE_GRACE_US);
+    if (rv == 0) {
+        /* The stream failure (e.g. deadline expiry) was already recorded on
+         * the call; wipe the connection-scoped copy so a later call on this
+         * kept connection cannot inherit "HTTP/2 transport deadline exceeded"
+         * details from a stream it never ran. */
+        connection->last_error_detail[0] = '\0';
+        connection->last_io_errno = 0;
+        connection->last_ssl_error = 0;
+    }
 }
 
 void cancel_active_server_streaming_call_state(server_streaming_call_state *state, uint32_t error_code)
@@ -1611,6 +1624,13 @@ h2_connection *create_h2_connection(const char *host, zend_long port, const char
         destroy_h2_connection(connection);
         return NULL;
     }
+    /* setup_deadline_abs_us is a setup-scoped absolute deadline; clear it once
+     * setup completes so it cannot leak into the write-deadline fallback of
+     * later deadline-less calls on this (possibly persistent) connection.
+     * Deadlines are call/stream-scoped: each call's writes carry
+     * call->deadline_abs_us, and connection-scoped writes without a deadline
+     * wait indefinitely, same as a connection created without one. */
+    connection->setup_deadline_abs_us = 0;
     build_authority(connection->authority, sizeof(connection->authority), host, (int64_t) port, authority, authority_len);
     return connection;
 }
@@ -1668,13 +1688,6 @@ h2_connection *get_persistent_connection(const char *key, size_t key_len, const 
     if (persistent_reused != NULL) {
         *persistent_reused = true;
     }
-    /* Connection-scoped writes without a call deadline (send_callback /
-     * send_pending_h2_frames fallback) use setup_deadline_abs_us. Refresh it
-     * to the adopting call's deadline so a deadline that expired on a
-     * previous call (e.g. a DEADLINE_EXCEEDED stream cancelled with
-     * RST_STREAM) cannot fail later writes on the reused connection. */
-    connection->setup_deadline_abs_us = deadline_abs_us;
-    connection->setup_timed_out = false;
     return connection;
 }
 
