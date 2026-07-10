@@ -58,6 +58,7 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 - PHPUnit 統合テスト: 31 tests / 116 assertions OK。
 - `tools/test/check-c-static-analysis.sh`: pass(指摘なし)。
 - トレース実測: timeout時に `wire.frame_out` RST_STREAM error_code=8 が出て、直後のコールが `persistent_reused=true` で成功することを確認(2026-07-11)。
+- ドメインモデルレビュー再レビュー(修正コミット caeac40 対象): 全6件adequate、新規指摘なし。PHPT 033単体3回 + スイート3回連続PASSで安定性確認(2026-07-11)。
 
 ## Decision Log
 
