@@ -157,11 +157,11 @@ HTTP/2 transportはChannel lifetimeに対応するHTTP/2 sessionをC側のpersis
 
 FPMではworker process内でrequestをまたいでpersistent connectionを再利用する。ZTS / FrankenPHP workerではthread-local module globals上のcacheとして扱い、threadをまたいでsocket/sessionを共有しない。PHP userlandではchannelを保持しない。
 
-connectionが壊れた場合、transport層では同じRPCを自動retryしない。send/recv errorやEOFはconnectionをdead扱いにし、そのRPCはエラーとして返す。GOAWAYを受けたconnectionはdraining扱いにし、新規RPCには使わない。次のRPC開始時に新しいHTTP/2 connectionを作る。
+connectionが壊れた場合、send/recv errorやEOFはconnectionをdead扱いにし、そのRPCはエラーとして返す。GOAWAYを受けたconnectionはdraining扱いにし、新規RPCには使わない。GOAWAYで `last_stream_id` より大きいactive stream、または `RST_STREAM(REFUSED_STREAM)` で、response metadata / DATA / status / parser途中状態がない初回attemptだけは、server未処理が保証されるため1回だけtransparent retryする。GOAWAY refusedではdraining connectionをcacheから外して新しいHTTP/2 connectionへ再送し、RST_STREAM(REFUSED_STREAM)ではconnectionがusableなら同じconnection上に新しいstreamを作る。`GOAWAY(last_stream_id=2147483647)` は二段階GOAWAYの1回目としてdrainingのみを意味し、既存streamをrefused扱いにしない。
 
 stream-local failureはconnection failureと分ける。message size超過、metadata size超過、unsupported compression、malformed gRPC frame、invalid content-typeなどは該当streamへ `RST_STREAM` を送り、RPC statusへ変換する。nghttp2 session / socket がconnection errorになっていなければpersistent connectionは再利用可能として扱う。
 
-retry policyやidempotency判断はtransport lifecycleとは分離し、将来の明示機能として扱う。
+retry policyやidempotency判断はtransport lifecycleとは分離し、将来の明示機能として扱う。上記transparent retryは、retry policyではなくserver未処理が保証されるtransport lifecycleの再送に限定する。
 
 HTTP/2 resourceの所有権はC extension側に閉じる。`grpc_call` per-call stateが持つbody buffer、queued payload、metadata、`grpc-message` はcall完了・failure・resource destructorのいずれでも同じcleanup pathを通す。明示cancel時と未完了server streaming resource destructorでは、対象streamへ `RST_STREAM(CANCEL)` を送る。stream cancelはconnection failureではないため、socket/TLS/nghttp2 sessionがusableであればpersistent connectionは再利用する。
 

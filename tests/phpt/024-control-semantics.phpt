@@ -6,7 +6,7 @@ if (!extension_loaded('grpc')) {
     die('skip grpc extension not loaded');
 }
 require __DIR__ . '/helpers.inc';
-grpc_lite_phpt_skip_if_integration_unavailable([50051, 50055, 50056, 50057, 50058, 50059, 50060]);
+grpc_lite_phpt_skip_if_integration_unavailable([50051, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065]);
 ?>
 --FILE--
 <?php
@@ -66,8 +66,8 @@ foreach ($eofStatuses as $index => $code) {
 $rstUnary = $client('test-server:50058');
 [$firstResponse, $firstStatus] = $rstUnary->BenchUnary(new BenchRequest())->wait();
 [$secondResponse, $secondStatus] = $rstUnary->BenchUnary(new BenchRequest())->wait();
-grpc_lite_phpt_assert_same(null, $firstResponse, 'RST unary first response');
-grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $firstStatus->code, 'RST unary first status');
+grpc_lite_phpt_assert_true($firstResponse !== null, 'RST unary first response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $firstStatus->code, 'RST unary first status');
 grpc_lite_phpt_assert_true($secondResponse !== null, 'RST unary second response');
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $secondStatus->code, 'RST unary second status');
 
@@ -82,15 +82,57 @@ $secondCount = 0;
 foreach ($secondCall->responses() as $_reply) {
     $secondCount++;
 }
-grpc_lite_phpt_assert_same(0, $firstCount, 'RST stream first count');
-grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $firstCall->getStatus()->code, 'RST stream first status');
+grpc_lite_phpt_assert_same(1, $firstCount, 'RST stream first count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $firstCall->getStatus()->code, 'RST stream first status');
 grpc_lite_phpt_assert_same(1, $secondCount, 'RST stream second count');
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $secondCall->getStatus()->code, 'RST stream second status');
+
+[$goAwayRetryResponse, $goAwayRetryStatus] = $client('test-server:50061')->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($goAwayRetryResponse !== null, 'GOAWAY transparent retry unary response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $goAwayRetryStatus->code, 'GOAWAY transparent retry unary status');
+
+$goAwayRetryRequest = new BenchRequest();
+$goAwayRetryRequest->setMessageCount(1);
+$goAwayRetryCall = $client('test-server:50063')->BenchServerStream($goAwayRetryRequest);
+$goAwayRetryCount = 0;
+foreach ($goAwayRetryCall->responses() as $_reply) {
+    $goAwayRetryCount++;
+}
+grpc_lite_phpt_assert_same(1, $goAwayRetryCount, 'GOAWAY transparent retry stream count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $goAwayRetryCall->getStatus()->code, 'GOAWAY transparent retry stream status');
+
+[$goAwayMaxResponse, $goAwayMaxStatus] = $client('test-server:50062')->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($goAwayMaxResponse !== null, 'GOAWAY MaxInt32 unary response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $goAwayMaxStatus->code, 'GOAWAY MaxInt32 unary status');
 
 [$goAwayResponse, $goAwayStatus] = $client('test-server:50060')->BenchUnary(new BenchRequest())->wait();
 grpc_lite_phpt_assert_same(null, $goAwayResponse, 'GOAWAY response');
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $goAwayStatus->code, 'GOAWAY status');
 grpc_lite_phpt_assert_same('HTTP/2 stream refused by GOAWAY', $goAwayStatus->details, 'GOAWAY details');
+
+$goAwayAlwaysRefusedCall = $client('test-server:50060')->BenchServerStream(new BenchRequest());
+$goAwayAlwaysRefusedCount = 0;
+foreach ($goAwayAlwaysRefusedCall->responses() as $_reply) {
+    $goAwayAlwaysRefusedCount++;
+}
+grpc_lite_phpt_assert_same(0, $goAwayAlwaysRefusedCount, 'GOAWAY always refused stream count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $goAwayAlwaysRefusedCall->getStatus()->code, 'GOAWAY always refused stream status');
+
+$goAwayAfterMessageCall = $client('test-server:50064')->BenchServerStream(new BenchRequest());
+$goAwayAfterMessageCount = 0;
+foreach ($goAwayAfterMessageCall->responses() as $_reply) {
+    $goAwayAfterMessageCount++;
+}
+grpc_lite_phpt_assert_same(1, $goAwayAfterMessageCount, 'GOAWAY after message stream count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $goAwayAfterMessageCall->getStatus()->code, 'GOAWAY after message stream status');
+
+$deadlineRetryCall = $client('test-server:50065')->BenchServerStream(new BenchRequest(), [], ['timeout' => 50000]);
+$deadlineRetryCount = 0;
+foreach ($deadlineRetryCall->responses() as $_reply) {
+    $deadlineRetryCount++;
+}
+grpc_lite_phpt_assert_same(0, $deadlineRetryCount, 'GOAWAY retry deadline stream count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $deadlineRetryCall->getStatus()->code, 'GOAWAY retry deadline stream status');
 
 // Scenario group 4: abandoning a server stream must not poison later RPCs.
 $mainClient = $client();

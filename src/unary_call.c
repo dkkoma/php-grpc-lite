@@ -74,7 +74,7 @@ static zend_string *grpc_lite_unary_take_response_payload(grpc_call *call)
     return payload;
 }
 
-static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused,
+static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, uint32_t retry_attempt,
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zval *diagnostic_result,
 #endif
@@ -97,6 +97,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
 
     memset(&call, 0, sizeof(call));
     call.connection = connection;
+    call.retry_attempt = retry_attempt;
     call.grpc_status = -1;
     call.http_status = -1;
     call.max_response_messages = 1;
@@ -234,6 +235,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         typed_result->status.details = zend_string_copy(status_result.details);
         grpc_protocol_copy_metadata_map(&typed_result->initial_metadata, &call, false);
         grpc_protocol_copy_metadata_map(&typed_result->trailing_metadata, &call, true);
+        grpc_lite_attempt_outcome_from_call(&call, false, &typed_result->outcome);
     }
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 	    if (diagnostic_result != NULL) {
@@ -252,7 +254,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
 int grpc_lite_unary_call_perform_diagnostic_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, zend_long timeout_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, zval *return_value)
 {
     uint64_t deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, primary_user_agent, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, return_value, NULL);
+    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, primary_user_agent, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, 0, return_value, NULL);
 }
 #endif
 
@@ -268,12 +270,12 @@ void grpc_lite_unary_result_dtor(grpc_lite_unary_result *result)
     zval_ptr_dtor(&result->trailing_metadata);
 }
 
-int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, grpc_lite_unary_result *result)
+int grpc_lite_unary_call_perform_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, uint32_t retry_attempt, grpc_lite_unary_result *result)
 {
     memset(result, 0, sizeof(*result));
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
-    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, primary_user_agent, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, NULL, result);
+    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, primary_user_agent, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, retry_attempt, NULL, result);
 #else
-    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, primary_user_agent, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, result);
+    return grpc_lite_unary_call_perform_core_on_connection(connection, path, path_len, request, request_len, headers_zv, primary_user_agent, deadline_abs_us, max_receive_message_length, max_response_metadata_bytes, connection_reused, persistent_reused, retry_attempt, result);
 #endif
 }

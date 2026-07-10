@@ -32,6 +32,7 @@ struct _grpc_call {
     grpc_call *next_active_stream;
     zend_string *method_path;
     int32_t stream_id;
+    uint32_t retry_attempt;
     bool stream_registered;
     bool connection_owned;
     bool stream_closed;

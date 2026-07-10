@@ -121,6 +121,8 @@ zend_long header_value_to_long(const uint8_t *value, size_t valuelen);
 #endif
 zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen);
 int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled);
+bool grpc_lite_call_response_started(grpc_call *call);
+void grpc_lite_attempt_outcome_from_call(grpc_call *call, bool userland_response_observed, grpc_lite_attempt_outcome *outcome);
 int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);

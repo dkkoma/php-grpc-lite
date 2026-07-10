@@ -192,20 +192,12 @@ static void grpc_lite_trace_record_call(grpc_lite_call_obj *call, const char *ev
     fclose(fp);
 }
 
-static zend_long grpc_lite_call_timeout_us(grpc_lite_call_obj *call)
+static uint64_t grpc_lite_call_deadline_abs_us(grpc_lite_call_obj *call)
 {
-    uint64_t now;
     if (call->deadline_us <= 0 || call->deadline_us == ZEND_LONG_MAX) {
         return 0;
     }
-    now = monotonic_us();
-    if ((uint64_t) call->deadline_us <= now) {
-        return 1;
-    }
-    if ((uint64_t) call->deadline_us - now > (uint64_t) ZEND_LONG_MAX) {
-        return ZEND_LONG_MAX;
-    }
-    return (zend_long) ((uint64_t) call->deadline_us - now);
+    return (uint64_t) call->deadline_us;
 }
 
 static void grpc_lite_copy_metadata(zval *dest, zval *src)
@@ -437,21 +429,33 @@ static void grpc_lite_make_status_object(zval *status, int code, zend_string *de
     }
 }
 
+static void grpc_lite_mark_unary_failed(grpc_lite_call_obj *call, int code, zend_string *details)
+{
+    grpc_lite_mark_call_failed(call, code, details);
+    call->unary_performed = true;
+    if (call->unary_response_payload != NULL) {
+        zend_string_release(call->unary_response_payload);
+        call->unary_response_payload = NULL;
+    }
+}
+
 static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
 {
     grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
     grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
     zend_string *key;
-    h2_connection *h2;
+    h2_connection *h2 = NULL;
     bool persistent_reused = false;
+    bool final_persistent_reused = false;
     const char *error_message = NULL;
     char error_detail[256] = {0};
     uint64_t deadline_abs_us = 0;
-    zend_long timeout_us = grpc_lite_call_timeout_us(call);
     grpc_lite_unary_result result;
     zend_string *payload = NULL;
     int status_code;
     zend_string *details;
+    uint32_t retry_attempt;
+    bool have_result = false;
 
     if (call->request_payload == NULL) {
         zend_throw_exception(NULL, "Call has no request message", 0);
@@ -473,51 +477,57 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         zend_throw_exception(NULL, "Grpc\\Channel connection key is not initialized", 0);
         return FAILURE;
     }
-    deadline_abs_us = timeout_us > 0 ? monotonic_us() + (uint64_t) timeout_us : 0;
-    h2 = get_persistent_connection(
-        ZSTR_VAL(key),
-        ZSTR_LEN(key),
-        ZSTR_VAL(channel->host),
-        channel->port,
-        channel->authority != NULL ? ZSTR_VAL(channel->authority) : NULL,
-        channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
-        channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,
-        channel->tls_verify_name != NULL ? ZSTR_LEN(channel->tls_verify_name) : 0,
-        credentials->type != GRPC_LITE_CREDENTIALS_INSECURE,
-        credentials->root_certs != NULL ? ZSTR_VAL(credentials->root_certs) : NULL,
-        credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
-        credentials->cert_chain != NULL ? ZSTR_VAL(credentials->cert_chain) : NULL,
-        credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
-        credentials->private_key != NULL ? ZSTR_VAL(credentials->private_key) : NULL,
-        credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
-        deadline_abs_us,
-        error_detail,
-        sizeof(error_detail),
-        &persistent_reused,
-        &error_message);
-    if (h2 == NULL) {
-        bool deadline_exceeded = (deadline_abs_us > 0 && monotonic_us() >= deadline_abs_us)
-            || (error_message != NULL && strcmp(error_message, "HTTP/2 transport deadline exceeded") == 0);
-        int code = deadline_exceeded ? GRPC_STATUS_DEADLINE_EXCEEDED : GRPC_STATUS_UNAVAILABLE;
-        zend_string *details = zend_string_init(error_message != NULL ? error_message : "failed to open persistent connection", strlen(error_message != NULL ? error_message : "failed to open persistent connection"), 0);
-        zval_ptr_dtor(&call->initial_metadata);
-        array_init(&call->initial_metadata);
-        zval_ptr_dtor(&call->trailing_metadata);
-        array_init(&call->trailing_metadata);
-        zval_ptr_dtor(&call->status);
-        grpc_lite_make_status_object(&call->status, code, details, &call->trailing_metadata);
-        call->initial_metadata_ready = true;
-        call->status_ready = true;
-        call->unary_performed = true;
-        if (call->unary_response_payload != NULL) {
-            zend_string_release(call->unary_response_payload);
-            call->unary_response_payload = NULL;
+    deadline_abs_us = grpc_lite_call_deadline_abs_us(call);
+    for (retry_attempt = 0; retry_attempt < 2; retry_attempt++) {
+        error_message = NULL;
+        error_detail[0] = '\0';
+        persistent_reused = false;
+        h2 = get_persistent_connection(
+            ZSTR_VAL(key),
+            ZSTR_LEN(key),
+            ZSTR_VAL(channel->host),
+            channel->port,
+            channel->authority != NULL ? ZSTR_VAL(channel->authority) : NULL,
+            channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
+            channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,
+            channel->tls_verify_name != NULL ? ZSTR_LEN(channel->tls_verify_name) : 0,
+            credentials->type != GRPC_LITE_CREDENTIALS_INSECURE,
+            credentials->root_certs != NULL ? ZSTR_VAL(credentials->root_certs) : NULL,
+            credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
+            credentials->cert_chain != NULL ? ZSTR_VAL(credentials->cert_chain) : NULL,
+            credentials->cert_chain != NULL ? ZSTR_LEN(credentials->cert_chain) : 0,
+            credentials->private_key != NULL ? ZSTR_VAL(credentials->private_key) : NULL,
+            credentials->private_key != NULL ? ZSTR_LEN(credentials->private_key) : 0,
+            deadline_abs_us,
+            error_detail,
+            sizeof(error_detail),
+            &persistent_reused,
+            &error_message);
+        if (h2 == NULL) {
+            bool deadline_exceeded = (deadline_abs_us > 0 && monotonic_us() >= deadline_abs_us)
+                || (error_message != NULL && strcmp(error_message, "HTTP/2 transport deadline exceeded") == 0);
+            int code = deadline_exceeded ? GRPC_STATUS_DEADLINE_EXCEEDED : GRPC_STATUS_UNAVAILABLE;
+            zend_string *failure_details = zend_string_init(error_message != NULL ? error_message : "failed to open persistent connection", strlen(error_message != NULL ? error_message : "failed to open persistent connection"), 0);
+            grpc_lite_mark_unary_failed(call, code, failure_details);
+            zend_string_release(failure_details);
+            grpc_lite_trace_record_call(call, "rpc.end", "unary", code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, 0);
+            return SUCCESS;
         }
-        zend_string_release(details);
-        grpc_lite_trace_record_call(call, "rpc.end", "unary", code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, 0);
-        return SUCCESS;
+        if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, channel->primary_user_agent, deadline_abs_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, retry_attempt, &result) != SUCCESS) {
+            return FAILURE;
+        }
+        have_result = true;
+        final_persistent_reused = persistent_reused;
+        if (!result.outcome.transparent_retryable_unprocessed) {
+            break;
+        }
+        if (result.outcome.refused_kind == GRPC_LITE_REFUSED_GOAWAY) {
+            remove_unusable_persistent_connection(ZSTR_VAL(key), ZSTR_LEN(key), h2);
+        }
+        grpc_lite_unary_result_dtor(&result);
+        have_result = false;
     }
-    if (grpc_lite_unary_call_perform_on_connection(h2, ZSTR_VAL(call->method), ZSTR_LEN(call->method), ZSTR_VAL(call->request_payload), ZSTR_LEN(call->request_payload), &call->metadata, channel->primary_user_agent, deadline_abs_us, channel->max_receive_message_length, channel->max_response_metadata_bytes, true, persistent_reused, &result) != SUCCESS) {
+    if (!have_result) {
         return FAILURE;
     }
     status_code = result.status.code;
@@ -551,18 +561,17 @@ static int grpc_lite_perform_call_unary(grpc_lite_call_obj *call)
         }
     }
     call->unary_performed = true;
-    grpc_lite_trace_record_call(call, "rpc.end", "unary", status_code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, call->unary_response_payload != NULL ? ZSTR_LEN(call->unary_response_payload) : 0, persistent_reused ? 1 : 0);
+    grpc_lite_trace_record_call(call, "rpc.end", "unary", status_code, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, call->unary_response_payload != NULL ? ZSTR_LEN(call->unary_response_payload) : 0, final_persistent_reused ? 1 : 0);
     zend_string_release(details);
     grpc_lite_unary_result_dtor(&result);
     return SUCCESS;
 }
 
-static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
+static int grpc_lite_open_call_stream_attempt(grpc_lite_call_obj *call, uint64_t deadline_abs_us, uint32_t retry_attempt, bool prepare_metadata)
 {
     grpc_lite_channel_obj *channel = Z_GRPC_LITE_CHANNEL_P(&call->channel);
     grpc_lite_channel_credentials_obj *credentials = Z_GRPC_LITE_CHANNEL_CREDENTIALS_P(&channel->credentials);
     zend_string *key;
-    zend_long timeout_us = grpc_lite_call_timeout_us(call);
     grpc_lite_status_result setup_failure = {0};
 
     if (call->server_streaming_opened) {
@@ -575,12 +584,14 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     if (grpc_lite_trace_enabled() && call->trace_started_us == 0) {
         call->trace_started_us = monotonic_us();
     }
-    if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
-        grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", GRPC_STATUS_UNAUTHENTICATED, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
-        return SUCCESS;
-    }
-    if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
-        return FAILURE;
+    if (prepare_metadata) {
+        if (grpc_lite_fail_if_call_credentials_require_secure_channel(call, channel)) {
+            grpc_lite_trace_record_call(call, "rpc.end", "server_streaming", GRPC_STATUS_UNAUTHENTICATED, call->request_payload != NULL ? ZSTR_LEN(call->request_payload) : 0, 0, -1);
+            return SUCCESS;
+        }
+        if (grpc_lite_merge_call_credentials_metadata(call, channel) != SUCCESS) {
+            return FAILURE;
+        }
     }
     key = channel->connection_key;
     if (key == NULL) {
@@ -589,6 +600,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     }
 
     zval_ptr_dtor(&call->server_streaming_resource);
+    ZVAL_UNDEF(&call->server_streaming_resource);
     if (server_streaming_call_open_resource(
             ZSTR_VAL(key),
             ZSTR_LEN(key),
@@ -601,7 +613,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
             ZSTR_LEN(call->request_payload),
             &call->metadata,
             channel->primary_user_agent,
-            timeout_us,
+            deadline_abs_us,
             credentials->type != GRPC_LITE_CREDENTIALS_INSECURE,
             credentials->root_certs != NULL ? ZSTR_VAL(credentials->root_certs) : NULL,
             credentials->root_certs != NULL ? ZSTR_LEN(credentials->root_certs) : 0,
@@ -615,6 +627,7 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
             channel->authority != NULL ? ZSTR_LEN(channel->authority) : 0,
             channel->tls_verify_name != NULL ? ZSTR_VAL(channel->tls_verify_name) : NULL,
             channel->tls_verify_name != NULL ? ZSTR_LEN(channel->tls_verify_name) : 0,
+            retry_attempt,
             &call->server_streaming_resource,
             &setup_failure) != SUCCESS) {
         return FAILURE;
@@ -627,25 +640,44 @@ static int grpc_lite_open_call_stream(grpc_lite_call_obj *call)
     return SUCCESS;
 }
 
+static int grpc_lite_retry_call_stream(grpc_lite_call_obj *call, uint64_t deadline_abs_us)
+{
+    call->server_streaming_opened = false;
+    return grpc_lite_open_call_stream_attempt(call, deadline_abs_us, 1, false);
+}
+
 static int grpc_lite_server_streaming_next_for_call(grpc_lite_call_obj *call, grpc_lite_streaming_next_result *result)
 {
-    if (!call->server_streaming_opened && grpc_lite_open_call_stream(call) != SUCCESS) {
-        return FAILURE;
+    uint64_t deadline_abs_us = grpc_lite_call_deadline_abs_us(call);
+
+    for (;;) {
+        if (!call->server_streaming_opened && grpc_lite_open_call_stream_attempt(call, deadline_abs_us, 0, true) != SUCCESS) {
+            return FAILURE;
+        }
+        if (call->status_ready) {
+            zval *code_zv;
+            zval *details_zv;
+            memset(result, 0, sizeof(*result));
+            result->done = true;
+            code_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "code", sizeof("code") - 1, 0, NULL);
+            details_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "details", sizeof("details") - 1, 0, NULL);
+            result->status.code = (code_zv != NULL && Z_TYPE_P(code_zv) == IS_LONG) ? (int) Z_LVAL_P(code_zv) : GRPC_STATUS_UNKNOWN;
+            result->status.details = (details_zv != NULL && Z_TYPE_P(details_zv) == IS_STRING) ? zend_string_copy(Z_STR_P(details_zv)) : zend_string_copy(zend_empty_string);
+            grpc_lite_copy_metadata(&result->initial_metadata, &call->initial_metadata);
+            grpc_lite_copy_metadata(&result->trailing_metadata, &call->trailing_metadata);
+            return SUCCESS;
+        }
+        if (server_streaming_call_next_resource(&call->server_streaming_resource, result) != SUCCESS) {
+            return FAILURE;
+        }
+        if (!result->outcome.transparent_retryable_unprocessed || call->initial_metadata_ready || call->status_ready) {
+            return SUCCESS;
+        }
+        grpc_lite_streaming_next_result_dtor(result);
+        if (grpc_lite_retry_call_stream(call, deadline_abs_us) != SUCCESS) {
+            return FAILURE;
+        }
     }
-    if (call->status_ready) {
-        zval *code_zv;
-        zval *details_zv;
-        memset(result, 0, sizeof(*result));
-        result->done = true;
-        code_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "code", sizeof("code") - 1, 0, NULL);
-        details_zv = zend_read_property(Z_OBJCE(call->status), Z_OBJ(call->status), "details", sizeof("details") - 1, 0, NULL);
-        result->status.code = (code_zv != NULL && Z_TYPE_P(code_zv) == IS_LONG) ? (int) Z_LVAL_P(code_zv) : GRPC_STATUS_UNKNOWN;
-        result->status.details = (details_zv != NULL && Z_TYPE_P(details_zv) == IS_STRING) ? zend_string_copy(Z_STR_P(details_zv)) : zend_string_copy(zend_empty_string);
-        grpc_lite_copy_metadata(&result->initial_metadata, &call->initial_metadata);
-        grpc_lite_copy_metadata(&result->trailing_metadata, &call->trailing_metadata);
-        return SUCCESS;
-    }
-    return server_streaming_call_next_resource(&call->server_streaming_resource, result);
 }
 
 static void grpc_lite_add_event_metadata(zval *event, zval *metadata)

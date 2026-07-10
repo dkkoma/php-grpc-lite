@@ -2,7 +2,7 @@
 
 この文書は、local test-server と検証用 metadata control protocol の読み方をまとめる。
 
-`poc/test-server/main.go` は、通常のgRPC serverだけでなく、HTTP/2 / gRPC lifecycleの異常系を再現するfixtureも同時に起動する。PHPT runnerは `test-server:50051` から `test-server:50060` までをpreflightする。
+`poc/test-server/main.go` は、通常のgRPC serverだけでなく、HTTP/2 / gRPC lifecycleの異常系を再現するfixtureも同時に起動する。PHPT runnerは `test-server:50051` から `test-server:50065` までをpreflightする。
 
 ## Ports
 
@@ -18,6 +18,11 @@
 | `50058` | raw h2c server RST_STREAM fixture | 同一connectionの最初のunary streamを `REFUSED_STREAM`、次streamをOKにする | `tests/phpt/024-control-semantics.phpt` |
 | `50059` | raw h2c server RST_STREAM fixture | 同一connectionの最初のserver streaming streamを `REFUSED_STREAM`、次streamをOKにする | `tests/phpt/024-control-semantics.phpt` |
 | `50060` | raw h2c GOAWAY refused fixture | request streamを受けた直後に `GOAWAY(last_stream_id=0)` を送る。stream refused by GOAWAYを検証する | `tests/phpt/024-control-semantics.phpt` |
+| `50061` | raw h2c GOAWAY refused then OK fixture | unary用。奇数回の接続で `GOAWAY(last_stream_id=0)` によりrequest streamをrefuseし、偶数回の接続でOKを返す。transparent retryを検証する | `tests/phpt/024-control-semantics.phpt` |
+| `50062` | raw h2c GOAWAY MaxInt32 then OK fixture | request stream上で `GOAWAY(last_stream_id=2147483647)` を送ってからOKを返す。二段階GOAWAYの1回目をdrainingのみとして扱うことを検証する | `tests/phpt/024-control-semantics.phpt` |
+| `50063` | raw h2c GOAWAY refused then OK fixture | server streaming用。独立counterで初回接続refused、retry接続OKを返す | `tests/phpt/024-control-semantics.phpt` |
+| `50064` | raw h2c GOAWAY after message fixture | 1 messageを送った後に `GOAWAY(last_stream_id=0)` を送る。userlandへmessage delivery後はtransparent retryしないことを検証する | `tests/phpt/024-control-semantics.phpt` |
+| `50065` | raw h2c GOAWAY refused then delayed OK fixture | 初回接続refused、retry接続はdeadline超過後にOKを返す。server streaming retryでabsolute deadlineが延長されないことを検証する | `tests/phpt/024-control-semantics.phpt` |
 
 ## Service methods
 
@@ -65,5 +70,5 @@
 
 - `poc/test-server/main.go` がfixture behaviorの一次ソース。
 - `tests/phpt/helpers.inc` はPHPTからtest-server到達性を確認する。
-- `tools/test/check-phpt.sh` と `tools/test/check-c-coverage.sh` は `50051`-`50060` を必須preflightとして扱う。
+- `tools/test/check-phpt.sh` と `tools/test/check-c-coverage.sh` は `50051`-`50065` を必須preflightとして扱う。
 - fixture behaviorを変える場合は、該当PHPT/PHPUnitだけでなく `docs/verification/verification-matrix.md` も更新する。

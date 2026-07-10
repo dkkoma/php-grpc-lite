@@ -2,7 +2,7 @@
 
 - Status: Open
 - Created: 2026-07-08
-- Branch: (未着手)
+- Branch: codex/issue-goaway-transparent-retry
 - Owner: Claude
 
 ## Background
@@ -73,12 +73,37 @@ Google のフロントエンドは max connection age により定期的に GOAW
 
 ## Progress
 
+- 2026-07-08: `grpc_lite_attempt_outcome` を `grpc_lite_unary_result` / `grpc_lite_streaming_next_result` に追加し、status/details文字列ではなく `transparent_retryable_unprocessed` / refused kind / response started を呼び出し側へ伝搬するようにした。
+- 2026-07-08: `status_core.c` にresponse未開始判定とtransparent retryable predicateを追加した。条件は初回attempt、GOAWAY refusedまたは `RST_STREAM(REFUSED_STREAM)`、HTTP status / response metadata / grpc-status / response message / queued payload / parser途中状態なし、かつserver streamingではuserland未delivery。
+- 2026-07-08: GOAWAY受信時の `last_stream_id == 2147483647` をdraining-onlyとして扱い、既存active streamをrefused/closedにしないようにした。
+- 2026-07-08: unaryはwrapper adapterのperform呼び出し側で1回だけ再attemptするようにした。GOAWAY refusedではdraining connectionをcacheから外して新connectionへ、`RST_STREAM(REFUSED_STREAM)` ではconnectionがusableなら同じconnection上の新streamへ再送する。
+- 2026-07-08: server streamingはreceive pathで、最初のmessage/statusをuserlandへ返す前のretryable outcomeだけを1回再openするようにした。stream resource openはabsolute deadlineを受け取り、retry attemptでも同じdeadlineの残時間から `grpc-timeout` とI/O deadlineを導出する。
+- 2026-07-08: Go raw h2c fixture ports `50061`-`50065` を追加した。`50061` はunary GOAWAY refused then OK、`50063` はserver streaming GOAWAY refused then OK、`50064` は1 message後GOAWAY、`50065` はGOAWAY refused後にdeadline超過までOKを遅延するfixture。`50062` は `last_stream_id=2147483647` の二段階GOAWAY fixture。
+- 2026-07-08: `tests/phpt/024-control-semantics.phpt` を新挙動に更新し、RST/GOAWAY transparent retry成功、always refused後のUNAVAILABLE、delivery後非retry、deadline非延長、二段階GOAWAYを固定した。C unitにはretryable predicate境界条件を追加した。
+- 2026-07-08: fixture catalog、code-reading guide、transport design、protocol classification boundary、SPEC、preflight runnerのport listを現行挙動へ更新した。
+- 2026-07-08: HTTP/2 / gRPC domain model reviewを実施し、High 1件 / Low 1件を修正後、再レビューで Blocker / High / Medium / Low がすべて none になった。記録: `docs/reviews/issues/2026-07-08-goaway-transparent-retry-domain-review.md`。
+
 ## Verification
+
+- `git diff --check` : PASS
+- `gofmt -w poc/test-server/main.go` : 実行済み
+- `./tools/test/check-c-static-analysis.sh` : PASS（ホスト側で実行）
+- `./tools/test/check-c-unit.sh` : PASS。protocol_core / status_core / transport_core すべて通過（retryable predicate 境界テスト含む）
+- `./tools/test/check-phpt.sh` : PASS 16/16。test-server イメージを新 fixture ポート 50061-50065 込みで再ビルドして実行。透過リトライシナリオを含む 024 も PASS
+- `./tools/test/check-crash-ub.sh` : PASS。ASan/UBSan クリーン、fuzz 20000 runs エラーなし
+- ビルド修正: `grpc_lite_attempt_outcome_from_call` / `grpc_lite_call_response_started` の宣言が `status_core.h` のみで、拡張本体が参照する `transport.h` に無くコンパイルエラーになっていたため、`transport.h` に宣言を追加（Codex 環境では Docker ビルド不可のため未検出だった）
+- Domain model review: `docs/reviews/issues/2026-07-08-goaway-transparent-retry-domain-review.md` で再レビュー後 `Blocker: none / High: none / Medium: none / Low: none`。
 
 ## Decision Log
 
 - 2026-07-08: Codex (gpt-5.5) レビューを反映。retryable 述語の厳密化、RST_STREAM(REFUSED_STREAM) の別経路判定、streaming のリトライオーナーを receive path へ、GOAWAY/RST でのキャッシュ処理分離、二段階 GOAWAY、fixture 追加を Plan に追記。
 - RST_STREAM(REFUSED_STREAM) 再試行を同一接続で行うか新規接続を強制するかは実装時に決定して記録する（初期方針: 同一 healthy 接続に再 stream）。
+- 2026-07-08: 作業branchは `codex/issue-goaway-transparent-retry`。
+- 2026-07-08: RST_STREAM(REFUSED_STREAM) のtransparent retryは同一connectionがusableな場合に同じconnection上の新streamで行う。これはstream-local refusalでありconnection drainingではないため、cacheから外さない。
+- 2026-07-08: GOAWAY refusedのtransparent retryはdraining connectionをpersistent cacheから外して新connectionで行う。GOAWAYはconnection lifecycle eventであり、新規streamへ使わないため。
+- 2026-07-08: retry判定はstatus code/detailsではなくattempt outcomeとしてresultへ伝搬する。status taxonomyはアプリへ返す最終status、attempt outcomeはwrapper orchestrationのretry判断として分離する。
+- 2026-07-08: server streaming resource openはrelative timeoutではなくabsolute deadlineを受け取る形にした。transparent retryは同じgRPC Callの再attemptであり、retryでdeadline予算を延長しない。
+- 2026-07-08: `GOAWAY(last_stream_id=2147483647)` は二段階GOAWAYの1回目としてdraining-onlyにする。既存streamはrefusedにせず、後続の小さい `last_stream_id` で初めて対象active streamをrefusedにする。
 
 ## Close Criteria
 

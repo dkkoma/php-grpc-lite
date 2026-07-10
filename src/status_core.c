@@ -60,4 +60,67 @@ int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
     return GRPC_STATUS_UNKNOWN;
 }
 
+bool grpc_lite_call_response_started(grpc_call *call)
+{
+    if (call == NULL) {
+        return true;
+    }
+    if (call->http_status >= 0 || call->metadata_entry_count > 0 || call->grpc_status_seen || call->initial_grpc_status_seen || call->grpc_status >= 0) {
+        return true;
+    }
+    /* Response validation flags can be set before any entry/status is stored
+     * (e.g. the first metadata entry alone exceeds the size limit). They still
+     * prove the server started responding on this stream. */
+    if (call->metadata_too_large || call->content_type_seen || call->invalid_content_type
+        || call->unsupported_response_encoding || call->invalid_grpc_status
+        || call->response_queue_limit_exceeded || call->grpc_message != NULL) {
+        return true;
+    }
+    if (call->response_message_count > 0 || call->response_queue_head != NULL) {
+        return true;
+    }
+    if (call->response_header_len != 0 || call->response_payload_len != 0 || call->response_payload_offset != 0 || call->response_payload != NULL) {
+        return true;
+    }
+    if (call->body.s != NULL && ZSTR_LEN(call->body.s) > 0) {
+        return true;
+    }
+    return false;
+}
+
+static grpc_lite_refused_kind grpc_lite_refused_kind_from_call(grpc_call *call)
+{
+    if (call == NULL) {
+        return GRPC_LITE_REFUSED_NONE;
+    }
+    if (call->stream_refused_seen) {
+        return GRPC_LITE_REFUSED_GOAWAY;
+    }
+    if (call->stream_reset_seen && call->stream_error_code == NGHTTP2_REFUSED_STREAM) {
+        return GRPC_LITE_REFUSED_RST_STREAM;
+    }
+    return GRPC_LITE_REFUSED_NONE;
+}
+
+void grpc_lite_attempt_outcome_from_call(grpc_call *call, bool userland_response_observed, grpc_lite_attempt_outcome *outcome)
+{
+    grpc_lite_refused_kind refused_kind;
+
+    if (outcome == NULL) {
+        return;
+    }
+    outcome->transparent_retryable_unprocessed = false;
+    outcome->refused_kind = GRPC_LITE_REFUSED_NONE;
+    outcome->response_started = grpc_lite_call_response_started(call);
+
+    refused_kind = grpc_lite_refused_kind_from_call(call);
+    outcome->refused_kind = refused_kind;
+    if (call == NULL || refused_kind == GRPC_LITE_REFUSED_NONE) {
+        return;
+    }
+    outcome->transparent_retryable_unprocessed = call->retry_attempt == 0
+        && !outcome->response_started
+        && !userland_response_observed;
+}
+
 #endif

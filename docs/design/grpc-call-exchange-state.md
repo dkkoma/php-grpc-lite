@@ -10,6 +10,7 @@
 |---|---|---|---|
 | bench専用の観測 | `fd`, `bytes_sent`, `bytes_received`, `data_read_calls`, `data_recv_calls`, `last_session_error`, frame counter群, `bench` | `PHP_GRPC_LITE_ENABLE_BENCH` buildだけ。production semanticsのownerではない | diagnostic only |
 | HTTP/2 connectionとの紐づき | `connection`, `next_active_stream`, `stream_id`, `stream_registered`, `connection_owned` | active HTTP/2 streamとしてconnectionに登録されている間。unaryはstack-owned `grpc_call`、server streamingはresource-owned `grpc_call` | hot |
+| transparent retry attempt | `retry_attempt` | wrapper adapterがattemptごとにsetする。`status_core.c` がattempt outcomeへ写し、wrapper adapterが1回限りの再送判断に使う | hot on failure |
 | stream lifecycle / reset状態 | `stream_closed`, `stream_error_code`, `stream_reset_seen`, `stream_refused_seen` | nghttp2 callbackとread loopが更新し、status resolutionが読む | hot |
 | gRPC statusとvalidation flag | `grpc_status`, `grpc_message`, `http_status`, `compressed_response_seen`, `response_message_too_large`, `malformed_response_frame`, `metadata_too_large`, `content_type_seen`, `invalid_content_type`, `unsupported_response_encoding`, `response_queue_limit_exceeded`, `discard_response_body`, `invalid_grpc_status`, `grpc_status_seen`, `initial_grpc_status_seen`, `initial_headers_end_stream` | response header/data processingが更新し、`grpc_lite_status_code_from_call()` とresult buildingが読む | hot |
 | response header値 | `content_type`, `grpc_encoding` | response metadata callbackでsetし、cleanupでreleaseする | medium |
