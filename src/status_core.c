@@ -60,6 +60,11 @@ int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
                 return GRPC_STATUS_UNKNOWN;
         }
     }
+    /* The transport connection broke under the stream (client-observed
+     * connection failure after the call started) -> UNAVAILABLE per the gRPC
+     * status taxonomy; wire status / deadline / cancel / reset above are more
+     * specific and win. */
+    if (call->connection_broken) return GRPC_STATUS_UNAVAILABLE;
     /* :status 200 stream ended cleanly on a DATA frame without any grpc-status:
      * trailers are a mandatory part of the response per PROTOCOL-HTTP2.md, so
      * their absence is a protocol violation (grpc-go handleData: "server closed

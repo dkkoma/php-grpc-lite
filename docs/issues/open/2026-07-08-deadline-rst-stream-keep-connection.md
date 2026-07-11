@@ -60,12 +60,14 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 - トレース実測: timeout時に `wire.frame_out` RST_STREAM error_code=8 が出て、直後のコールが `persistent_reused=true` で成功することを確認(2026-07-11)。
 - ドメインモデルレビュー再レビュー(修正コミット caeac40 対象): 全6件adequate、新規指摘なし。PHPT 033単体3回 + スイート3回連続PASSで安定性確認(2026-07-11)。
 - PR #29 敵対的レビュー対応(REVIEW-20260711-007〜009): PHPT 20/20 PASS(新規034/035含む)、対象3テスト3回連続PASS、C unit / PHPUnit 31 tests / 静的解析 pass(2026-07-11)。
+- PR #29 敵対的レビュー第二パス対応(REVIEW-20260711-010〜013): PHPT 21/21 PASS(新規036、002-ini更新)、対象4テストをFAILベースで23回連続実行しflakeなし、C unit(connection_broken taxonomy追加) / PHPUnit / 静的解析 pass(2026-07-11)。
 
 ## Decision Log
 
 - 計画にあった「RST送出後の短時間drain」は実装しない(2026-07-11)。RST_STREAM submit時点でnghttp2はstreamをclose済み扱いにするためdrainで待つ対象がなく、読み残しframeはnghttp2のclosed-stream無視 + 次回reuse時のpreflight drain(`preflight_persistent_connection`)が既に消化する。streaming側のuser cancel経路も同じ前提で運用済み。
 - RST書き込みのgrace deadlineは50msとする。このgraceはRST 13 bytesだけでなく、その時点のsession pending frame一式(並行streamのWINDOW_UPDATE / SETTINGS ack / 送信可能DATAを含む)のflush上限である。localhost/同リージョンのRTTに対して十分で、flushがそれ以上blockする接続は再利用に値しないため従来どおり`mark_connection_dead`にフォールバックする(縮退先は従来挙動の接続破棄で安全側)。
 - Non-Goalどおり、write block中(`send_callback`内)のタイムアウトは接続破棄のまま維持する。frame境界を保証できないため。
+- PR #29 敵対的レビュー第二パス(High: nghttp2 fatal後のsession API / High: draining上cancelのno-op化によるUAF / Medium: survivor statusのUNKNOWN / Medium: PHPT 035のbarrier欠如)を受けて追加対応(2026-07-11)。dead後のcleanupはlocal bookkeepingのみ(unregisterのdead skip)、stream-scoped closeのgateを `connection_io_allowed` に統一(drainingでもRST送出)、shared connection deathは `connection_broken` flag経由で `UNAVAILABLE` に分類。PHPT 035はkernel TCP receive window(~64KiB)の物理制約によりproduction cap(64KiB)超のbacklog滞留が不可能と判明したため、`grpc_lite.preflight_drain_max_bytes` iniを導入し、SO_SNDBUF縮小によるACK barrier(fixture :50068/:50069)+小cap指定で決定的化した。
 - PR #29 敵対的レビュー(High: dead session再駆動 / Medium: preflight drain cap時のreuse保証 / Low: multiplexテストの順序)を受けて追加対応(2026-07-11)。dead connectionは全owner streamに対してterminalとし(`connection_io_allowed` + streaming pullループのguard + send経路のdead早期return、drainingはadmit済みstream継続を許可)、reuseはbest-effortとSPECに明記してcap fallbackをPHPT 035で固定、PHPT 033のsurvivorはRST後まで生存させワイヤ順序をassertする。fault injectionによるRST flush失敗の決定的再現は現行harnessでは不可のため、fixture :50066のTCP切断で同じ不変条件(dead-under-another-owner)を固定した。
 
 ## Close Criteria

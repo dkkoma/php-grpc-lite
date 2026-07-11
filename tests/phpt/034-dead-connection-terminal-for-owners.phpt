@@ -47,7 +47,11 @@ grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $status->code, 'unary B stat
 $responses->next();
 grpc_lite_phpt_assert_same(false, $responses->valid(), 'stream A yields no further messages');
 $streamStatus = $streamCall->getStatus();
-grpc_lite_phpt_assert_true($streamStatus->code !== Grpc\STATUS_OK, 'stream A terminal status is not OK');
+// Client-observed connection break after the response started maps to
+// UNAVAILABLE per the gRPC status taxonomy, with the transport failure
+// snapshotted into the details.
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $streamStatus->code, 'stream A terminal status is UNAVAILABLE');
+grpc_lite_phpt_assert_true(is_string($streamStatus->details) && $streamStatus->details !== '', 'stream A terminal details carry the transport failure');
 
 $lines = array_values(array_filter(explode("\n", trim((string) file_get_contents($traceFile)))));
 unlink($traceFile);

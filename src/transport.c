@@ -12,7 +12,6 @@
  */
 
 #define GRPC_LITE_RECV_SCRATCH_SIZE 65536
-#define GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES 65536
 #define GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS 64
 #define GRPC_LITE_CANCEL_RST_WRITE_GRACE_US 50000
 
@@ -144,7 +143,13 @@ static void unregister_grpc_call_stream(grpc_call *call)
         return;
     }
     connection = call->connection;
-    if (connection->session != NULL) {
+    if (connection->session != NULL && !connection->dead) {
+        /* After a fatal nghttp2 return the library only permits
+         * nghttp2_session_del() (error contract), so on a dead connection
+         * unregistering is local bookkeeping only. Leaving the stream user
+         * data set is safe: dead connections are never driven again
+         * (connection_io_allowed gates every send/recv), and
+         * nghttp2_session_del() does not invoke stream callbacks. */
         nghttp2_session_set_stream_user_data(connection->session, call->stream_id, NULL);
     }
     if (connection->active_streams == call) {
@@ -326,7 +331,14 @@ void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
         return;
     }
     connection = call->connection;
-    if (connection == NULL || !connection_usable(connection) || call->stream_id <= 0 || call->stream_closed) {
+    /* Gate on connection_io_allowed, not connection_usable: a draining
+     * connection (GOAWAY received) must still let admitted streams close
+     * with RST_STREAM. Skipping the RST there would leave the nghttp2
+     * stream open while the caller frees the grpc_call that
+     * data_provider.source.ptr still points at — another admitted owner
+     * driving the session would then hit a use-after-free in
+     * data_source_read_callback / h2_send_data_callback. */
+    if (connection == NULL || !connection_io_allowed(connection) || call->stream_id <= 0 || call->stream_closed) {
         return;
     }
     call->locally_cancelled = true;
@@ -360,7 +372,7 @@ void destroy_server_streaming_call_state(server_streaming_call_state *state)
     if (state == NULL) {
         return;
     }
-    if (!state->completed && !state->call.stream_closed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection) && state->call.stream_id > 0) {
+    if (!state->completed && !state->call.stream_closed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_io_allowed(state->call.connection) && state->call.stream_id > 0) {
         cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);
         if (!connection_usable(state->call.connection)) {
             detach_persistent_connection_by_ptr(state->call.connection);
@@ -911,12 +923,22 @@ bool connection_entry_matches_key(persistent_connection_entry *entry, const char
     return identity_matches(entry->connection_key_identity, key, key_len);
 }
 
+static size_t effective_preflight_drain_max_bytes(void)
+{
+    zend_long configured = PHP_GRPC_LITE_G(preflight_drain_max_bytes);
+    if (configured < 4096) {
+        return 4096;
+    }
+    return (size_t) configured;
+}
+
 static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us)
 {
     uint8_t *buffer;
     size_t buffer_len;
     size_t total_read = 0;
     size_t iterations = 0;
+    size_t max_bytes = effective_preflight_drain_max_bytes();
     bool reached_read_boundary = false;
 
     if (!connection_usable(connection)) {
@@ -925,7 +947,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
     buffer = h2_connection_recv_scratch(connection);
     buffer_len = connection->recv_scratch_len;
 
-    while (iterations < GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS && total_read < GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES) {
+    while (iterations < GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS && total_read < max_bytes) {
         ssize_t nread;
         iterations++;
 

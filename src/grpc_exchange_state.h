@@ -44,6 +44,11 @@ struct _grpc_call {
      * cancel); a mid-message stream end is then cancellation semantics, not a
      * malformed (truncated) response. */
     bool locally_cancelled;
+    /* The shared connection died under this stream (killed by its own I/O
+     * failure or by another owner). Connection breakage maps to UNAVAILABLE
+     * per the gRPC status taxonomy unless a more specific signal (wire
+     * grpc-status, deadline, cancel, reset) already decided the outcome. */
+    bool connection_broken;
     bool stream_refused_seen;
     int http_status;
     bool compressed_response_seen;

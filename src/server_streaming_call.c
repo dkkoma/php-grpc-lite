@@ -263,7 +263,19 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
              * expired). Dead is terminal for every stream: re-driving the
              * session could emit bytes after a partial frame or block a
              * deadline-less call forever. Draining stays allowed — a GOAWAY
-             * admitted this stream, so it runs to completion. */
+             * admitted this stream, so it runs to completion. Snapshot the
+             * connection-scoped failure onto the call: the connection object
+             * may be released before this call resolves its status, and the
+             * breakage maps to UNAVAILABLE. */
+            call->connection_broken = true;
+            if (state->call.connection != NULL) {
+                if (call->last_io_error_detail[0] == '\0') {
+                    snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "%s", state->call.connection->last_error_detail);
+                }
+                if (call->last_io_errno == 0) {
+                    call->last_io_errno = state->call.connection->last_io_errno;
+                }
+            }
             state->completed = true;
             break;
         }
@@ -416,7 +428,7 @@ int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv)
         zend_throw_exception(NULL, "invalid grpc_lite_server_streaming_call_state resource", 0);
         return FAILURE;
     }
-    if (!state->completed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection)) {
+    if (!state->completed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_io_allowed(state->call.connection)) {
         state->cancelled = true;
         state->call.grpc_status = GRPC_STATUS_CANCELLED;
         server_streaming_call_terminate_with_cancel(state);

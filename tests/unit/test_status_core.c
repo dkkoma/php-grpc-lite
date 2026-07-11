@@ -112,6 +112,19 @@ static void test_missing_trailers_mapping(void)
     ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.stream_closed = true; call.stream_error_code = NGHTTP2_PROTOCOL_ERROR, false);
 }
 
+static void test_connection_broken_mapping(void)
+{
+    /* Connection broke under the stream after the response started
+     * (:status 200 seen, no trailers): UNAVAILABLE, not the UNKNOWN
+     * fallback. */
+    ASSERT_STATUS(GRPC_STATUS_UNAVAILABLE, call.connection_broken = true, false);
+    /* More specific signals win over connection breakage. */
+    ASSERT_STATUS(GRPC_STATUS_DEADLINE_EXCEEDED, call.connection_broken = true; call.timed_out = true, false);
+    ASSERT_STATUS(GRPC_STATUS_CANCELLED, call.connection_broken = true, true);
+    ASSERT_STATUS(GRPC_STATUS_OK, call.connection_broken = true; call.grpc_status = GRPC_STATUS_OK, false);
+    ASSERT_STATUS(GRPC_STATUS_CANCELLED, call.connection_broken = true; call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_CANCEL, false);
+}
+
 static void test_transparent_retryable_unprocessed_predicate(void)
 {
     ASSERT_OUTCOME(true, GRPC_LITE_REFUSED_GOAWAY, false, call.stream_refused_seen = true, false);
@@ -144,6 +157,7 @@ int main(void)
     test_http_fallback_mapping();
     test_http2_stream_error_mapping();
     test_missing_trailers_mapping();
+    test_connection_broken_mapping();
     test_transparent_retryable_unprocessed_predicate();
 
     if (failures != 0) {

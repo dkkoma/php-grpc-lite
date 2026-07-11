@@ -18,6 +18,7 @@ grpc_lite_phpt_assert_same('16384', ini_get('grpc_lite.http2_max_frame_size'), '
 grpc_lite_phpt_assert_same('65536', ini_get('grpc_lite.http2_max_header_list_size'), 'max header list size ini');
 grpc_lite_phpt_assert_same('32', ini_get('grpc_lite.server_streaming_read_ahead_max_messages'), 'read-ahead messages ini');
 grpc_lite_phpt_assert_same('8388608', ini_get('grpc_lite.server_streaming_read_ahead_max_bytes'), 'read-ahead bytes ini');
+grpc_lite_phpt_assert_same('65536', ini_get('grpc_lite.preflight_drain_max_bytes'), 'preflight drain cap ini');
 
 grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_messages', '4') !== false, 'read-ahead messages can be changed at runtime');
 grpc_lite_phpt_assert_true(ini_set('grpc_lite.server_streaming_read_ahead_max_bytes', '262144') !== false, 'read-ahead bytes can be changed at runtime');

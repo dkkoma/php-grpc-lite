@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -583,6 +584,254 @@ func serveLifecycleH2C() {
 	go serveGoAwayAfterMessageH2C(":50064")
 	go serveGoAwayRefusedThenDelayedOKH2C(":50065")
 	go serveStreamThenKillOnSecondRequestH2C(":50066")
+	go serveGoAwayMaxKeepStreamOpenH2C(":50067")
+	go serveBacklogFloodH2C(":50068", ":50069")
+}
+
+// serveGoAwayMaxKeepStreamOpenH2C answers the first request with response
+// HEADERS plus one gRPC message, then sends GOAWAY(MaxInt32) (draining-only
+// two-stage GOAWAY: the stream stays admitted) and keeps the stream open
+// without trailers. Lets a client test pin that an explicit cancel on a
+// draining connection still emits RST_STREAM for the admitted stream.
+func serveGoAwayMaxKeepStreamOpenH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c GOAWAY-max keep-stream-open fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleGoAwayMaxKeepStreamOpenH2C(conn)
+	}
+}
+
+func handleGoAwayMaxKeepStreamOpenH2C(conn net.Conn) {
+	defer conn.Close()
+	if !readClientPreface(conn) {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var streamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			if streamID == 0 {
+				streamID = f.Header().StreamID
+			}
+		case *http2.DataFrame:
+			if f.Header().StreamID == streamID && f.StreamEnded() {
+				headers := encodeHeaders([]hpack.HeaderField{
+					{Name: ":status", Value: "200"},
+					{Name: "content-type", Value: "application/grpc"},
+				})
+				_ = framer.WriteHeaders(http2.HeadersFrameParam{
+					StreamID:      streamID,
+					BlockFragment: headers,
+					EndHeaders:    true,
+				})
+				_ = framer.WriteData(streamID, false, grpcFrame(0, nil))
+				_ = framer.WriteGoAway(uint32(2147483647), http2.ErrCodeNo, nil)
+			}
+		case *http2.RSTStreamFrame:
+			// The client cancelled the admitted stream; nothing further.
+		}
+	}
+}
+
+// serveBacklogFloodH2C serves a stream fixture with a control channel that
+// lets the test deterministically place a response backlog in the client
+// kernel's receive buffer. "arm\n" marks the next HTTP/2 connection as the
+// flood target: its first request gets response HEADERS plus one message and
+// the stream stays open. "flood\n" shrinks the server send buffer and writes
+// 48KiB of DATA — Write returning with a tiny SO_SNDBUF means the client's
+// TCP stack ACKed (received) nearly all of it, which is the barrier — then
+// replies "ready\n". Unarmed HTTP/2 connections get a normal OK gRPC
+// exchange so a follow-up call succeeds on a fresh connection.
+type backlogFloodState struct {
+	mu       sync.Mutex
+	armed    bool
+	conn     *net.TCPConn
+	framer   *http2.Framer
+	streamID uint32
+}
+
+var backlogFlood backlogFloodState
+
+func serveBacklogFloodH2C(dataAddr, controlAddr string) {
+	dataLis, err := net.Listen("tcp", dataAddr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", dataAddr, err)
+	}
+	controlLis, err := net.Listen("tcp", controlAddr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", controlAddr, err)
+	}
+	log.Printf("listening on %s (raw h2c backlog flood fixture, control %s)", dataAddr, controlAddr)
+	go func() {
+		for {
+			conn, err := dataLis.Accept()
+			if err != nil {
+				log.Printf("accept %s error: %v", dataAddr, err)
+				continue
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				if !readClientPreface(conn) {
+					return
+				}
+				// "arm" (control channel) marks the next HTTP/2 connection
+				// as the flood target; every other connection serves a
+				// normal OK exchange. This keeps the fixture re-runnable
+				// across test-suite invocations.
+				backlogFlood.mu.Lock()
+				armed := backlogFlood.armed
+				backlogFlood.armed = false
+				backlogFlood.mu.Unlock()
+				if armed {
+					handleBacklogFloodFirstConnH2C(conn)
+					return
+				}
+				handleRawAfterPrefaceH2C(conn, false)
+			}(conn)
+		}
+	}()
+	for {
+		conn, err := controlLis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", controlAddr, err)
+			continue
+		}
+		go handleBacklogFloodControl(conn)
+	}
+}
+
+func handleBacklogFloodFirstConnH2C(conn net.Conn) {
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var streamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				backlogFlood.mu.Lock()
+				_ = framer.WriteSettingsAck()
+				backlogFlood.mu.Unlock()
+			}
+		case *http2.HeadersFrame:
+			if streamID == 0 {
+				streamID = f.Header().StreamID
+			}
+		case *http2.DataFrame:
+			if f.Header().StreamID == streamID && f.StreamEnded() {
+				backlogFlood.mu.Lock()
+				headers := encodeHeaders([]hpack.HeaderField{
+					{Name: ":status", Value: "200"},
+					{Name: "content-type", Value: "application/grpc"},
+				})
+				_ = framer.WriteHeaders(http2.HeadersFrameParam{
+					StreamID:      streamID,
+					BlockFragment: headers,
+					EndHeaders:    true,
+				})
+				_ = framer.WriteData(streamID, false, grpcFrame(0, nil))
+				backlogFlood.conn, _ = conn.(*net.TCPConn)
+				backlogFlood.framer = framer
+				backlogFlood.streamID = streamID
+				backlogFlood.mu.Unlock()
+			}
+		case *http2.RSTStreamFrame:
+			// The client cancelled the flooded stream; keep the connection
+			// open so pending backlog stays valid until the client closes.
+		}
+	}
+}
+
+func handleBacklogFloodControl(conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	for {
+		command, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		switch command {
+		case "arm\n":
+			backlogFlood.mu.Lock()
+			if backlogFlood.conn != nil {
+				_ = backlogFlood.conn.Close()
+			}
+			backlogFlood.armed = true
+			backlogFlood.conn = nil
+			backlogFlood.framer = nil
+			backlogFlood.streamID = 0
+			backlogFlood.mu.Unlock()
+			if _, err := conn.Write([]byte("armed\n")); err != nil {
+				return
+			}
+		case "flood\n":
+			backlogFlood.mu.Lock()
+			target := backlogFlood.conn
+			framer := backlogFlood.framer
+			streamID := backlogFlood.streamID
+			backlogFlood.mu.Unlock()
+			if target == nil || framer == nil {
+				_, _ = conn.Write([]byte("error\n"))
+				return
+			}
+			// Tiny SO_SNDBUF: TCP keeps data in the send buffer until the
+			// peer ACKs it, so once these Writes return, all but the last
+			// few KiB are resident in the client kernel's receive buffer.
+			// That is the arrival barrier the test needs before it adopts
+			// the connection. The backlog must fit the client's TCP receive
+			// window (~64KiB with default tcp_rmem / tcp_adv_win_scale), so
+			// it is 3 x 16KiB = 48KiB and the client test lowers its
+			// preflight drain cap below that via ini.
+			_ = target.SetWriteBuffer(4096)
+			chunk := make([]byte, 16384)
+			failed := false
+			for i := 0; i < 3; i++ {
+				backlogFlood.mu.Lock()
+				err := framer.WriteData(streamID, false, chunk)
+				backlogFlood.mu.Unlock()
+				if err != nil {
+					failed = true
+					break
+				}
+			}
+			if failed {
+				_, _ = conn.Write([]byte("error\n"))
+				return
+			}
+			if _, err := conn.Write([]byte("ready\n")); err != nil {
+				return
+			}
+		default:
+			return
+		}
+	}
 }
 
 // serveStreamThenKillOnSecondRequestH2C answers the first request with

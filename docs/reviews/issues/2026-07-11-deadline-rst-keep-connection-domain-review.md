@@ -154,12 +154,73 @@
 - Verification: PHPT 033、3回連続PASS。
 - Notes: 補足で除外されたidle RST候補(MAX_CONCURRENT_STREAMS中のpending request)は対応不要と確認済み。
 
+### REVIEW-20260711-010: nghttp2 fatal return後にcleanupが `nghttp2_session_set_stream_user_data` を呼ぶ
+
+- Severity: `High`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 second-pass review comment)`
+- Finding: `cancel_grpc_call_stream` で `nghttp2_submit_rst_stream` / `nghttp2_session_send` がfatal(`NGHTTP2_ERR_NOMEM` / `NGHTTP2_ERR_CALLBACK_FAILURE`)を直接返した後も、owner cleanupの `unregister_grpc_call_stream` が `nghttp2_session_set_stream_user_data` を呼ぶ。nghttp2のerror contractはdirect fatal return後に許す操作を `nghttp2_session_del()` のみに限定している。
+- Evidence: `src/transport.c` `unregister_grpc_call_stream` / `cancel_grpc_call_stream`
+- Expected model: fatal後のsessionはcorrupted。cleanupはlocal bookkeepingのみで、session APIは `nghttp2_session_del()` 以外呼ばない。
+- Why it matters: contract違反はcorrupted session上の未定義動作であり、将来のnghttp2更新で顕在化し得る。
+- Recommended fix: fatal後のunregisterをlocal bookkeepingのみにし、fault injectionで固定する。
+- Fix summary: `unregister_grpc_call_stream` で `connection->dead` の場合は `nghttp2_session_set_stream_user_data` をskipし、local bookkeepingのみにした。fatal経路はすべて `mark_connection_dead` を経由するためdeadゲートで網羅される。stream user dataが残っても、dead接続はsend/recvともに `connection_io_allowed` ゲートで二度と駆動されず、`nghttp2_session_del()` はstream callbackを呼ばないため安全。nghttp2 API呼び出し失敗のfault injectionは現行harnessに注入点がなく決定的に再現できないため、コード上の不変条件(dead ⇒ session APIは `session_del` のみ)をコメントで明文化した。fault injection hookの導入は必要になれば別issueで扱う。
+- Fix commit: pending
+- Verification: PHPT 21/21 PASS。dead後にsession APIへ到達する経路がないことをコードレビューで確認(全fatal経路が `mark_connection_dead` 経由 → unregister skip + I/Oゲート)。
+- Notes: PHPT 034(TCP EOF)はこの分岐を通らないが、dead後cleanupの共通経路(unregister skip)は同一。
+
+### REVIEW-20260711-011: draining接続上のadmit済みstreamのcancel/destroyがno-opになりUAFの可能性
+
+- Severity: `High`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 second-pass review comment)`
+- Finding: `cancel_grpc_call_stream` / streaming cancel / destructorが `connection_usable`(draining除外)をgateに使うため、GOAWAY admit済みstreamの明示cancelがno-opになる。resource破棄で `grpc_call` / requestがfreeされるが、nghttp2は `data_provider.source.ptr` を保持したままで、別のadmit済みownerがsessionをsend駆動すると `data_source_read_callback` / `h2_send_data_callback` が解放済みpointerを参照しUAFになる。
+- Evidence: `src/transport.c` cancel helper / `src/server_streaming_call.c` cancel_resource・destroy
+- Expected model: stream-localなclose gateはsession I/O許可(`connection_io_allowed`)と同じ基準を使い、RST成功またはconnection deadのどちらかを満たしてからcall stateを解放する。
+- Why it matters: use-after-freeはメモリ安全性の欠陥で、FrankenPHP worker常駐プロセスでは攻撃面にも運用リスクにもなる。
+- Recommended fix: close gateを `connection_io_allowed` に揃える。
+- Fix summary: `cancel_grpc_call_stream` / `destroy_server_streaming_call_state` / `server_streaming_call_cancel_resource` のgateを `connection_usable` から `connection_io_allowed` へ変更。draining接続でもRSTをsubmit+flushしてstreamをcloseしてからcall stateを解放する(RST submitでnghttp2がstreamとdata providerを解放)。flush失敗時はdead → 以後sessionは駆動されないため解放済みpointerは参照されない。fixture `:50067`(message + GOAWAY(MaxInt32) + stream保持)を追加し、PHPT 036でdraining接続上のcancelがワイヤにRST_STREAM(CANCEL)を出すことを固定。
+- Fix commit: pending
+- Verification: PHPT 036追加(GOAWAY後のRST送出をトレースで確認、status CANCELLED)。21/21 PASS。
+- Notes: unaryのdeadline超過on drainingも同gateで RST が送出されるようになる(従来はskipされ、stack上のcallをdata providerが指したままreturnし得た)。
+
+### REVIEW-20260711-012: shared connection deathのsurvivor statusがUNKNOWNになる
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 second-pass review comment)`
+- Finding: dead-terminal guardは `completed=true` にするだけで、`:status 200` と1 message受信済みのsurvivorはstatus fallbackで `UNKNOWN(2)` になる(実測detailsは connection側fallback経由)。gRPC status taxonomyではclient側の「data送信後のconnection break」は `UNAVAILABLE`。PHPT 034の `!== OK` assertは誤分類を見逃す。
+- Evidence: `src/server_streaming_call.c` guard branch、`src/status_core.c`、fixture `:50066` 実測
+- Expected model: response開始後にclientが観測したconnection breakageは `UNAVAILABLE`。wire status / deadline / cancel / reset のより特異的な信号が先に決まっていればそちらが勝つ。
+- Why it matters: statusはretry判断の一次入力。UNKNOWNはUNAVAILABLEと違いgaxの自動retry対象にならないことが多く、worker運用での回復性に直結する。
+- Recommended fix: call-ownedにtransport failureをsnapshotし、UNAVAILABLEへ分類。テストはexact assert。
+- Fix summary: `grpc_call.connection_broken` flagを追加し、guard branchでconnectionの `last_error_detail` / `last_io_errno` をcallへsnapshotして立てる。`grpc_lite_status_code_from_call` にwire status / deadline / cancel / reset の後・UNKNOWN fallbackの前で `UNAVAILABLE` を返す分岐を追加。PHPT 034はexact `UNAVAILABLE` + details non-emptyをassert。C unit(`test_status_core.c`)に優先順位含む5ケースを追加。
+- Fix commit: pending
+- Verification: C unit `test_connection_broken_mapping` PASS、PHPT 034 PASS。
+- Notes: response_startedのままtransparent retry不可(outcome predicateは不変)。
+
+### REVIEW-20260711-013: PHPT 035のbacklogがcancel前にclient側到着済みである保証がない
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 second-pass review comment)`
+- Finding: 最初のmessage直後のcancel時点で追加の64KiB超がclient socketへ到着済みとは限らず、実測でPASS 11 / FAIL 1のflake(backlogがcap未満ならreuse成功で `persistent_reused=false` assertが崩れる)。
+- Evidence: `tests/phpt/035-preflight-drain-cap-fallback.phpt` 実測
+- Expected model: cap fallbackのpinは「backlogがclient kernelに到着済み」をbarrierで証明してから行う。
+- Why it matters: 中核仕様のテストがflakeすると回帰検出力が下がる。
+- Recommended fix: control connectionでの送信開始指示 + client側到着を証明するbarrier + cap到達のtrace assert。
+- Fix summary: fixture `:50068`(data) / `:50069`(control)を追加。"arm"で次のHTTP/2接続をflood対象に指定し、"flood"でSO_SNDBUFを4KiBへ縮小して48KiBのDATAを書き込む。TCPはACKまでデータをsend bufferに保持するため、Write完了="client kernelへの到着"がbarrierになる。調査の結果、default kernel設定(`tcp_rmem` 131072 / `tcp_adv_win_scale=1`)ではclientのTCP receive windowが約64KiBで、production capの64KiB超を未読のままkernelに滞留させることは物理的に不可能(レビュアー実測flakeの根本原因)。そのためdrain capを `grpc_lite.preflight_drain_max_bytes` ini(default 65536、PHP_INI_SYSTEM)へ昇格し、テストは--INI--でcap=16KiB、backlog=48KiB(window内)として決定的にcap超過を作る。cap到達(preflight read >= 16KiB)をトレースでassertしてからfresh connection(`persistent_reused=false`、preface 2本)を期待する。
+- Fix commit: pending
+- Verification: PHPT 035をFAILベースで23回連続実行しflakeなし。PHPT 21/21 PASS(002-iniにdefault値assert追加)。
+- Notes: production defaultの挙動は不変。kernel windowの制約はfixtureとPHPTのコメントに記録した。
+
 ## Review Result
 
 - Blocker: none
-- High: 2 (Fixed)
-- Medium: 2 (Fixed)
+- High: 4 (Fixed)
+- Medium: 4 (Fixed)
 - Low: 4 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
+- PR #29 敵対的レビュー第二パス(2026-07-11、HEAD 6795a5a): High 2 / Medium 2 を追加受領(REVIEW-20260711-010〜013)、全件Fixed
