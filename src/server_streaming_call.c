@@ -257,6 +257,16 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large && !call->response_queue_limit_exceeded) {
         int rv;
         ssize_t nread;
+        if (!connection_io_allowed(state->call.connection)) {
+            /* Another owner of this shared connection killed it between two
+             * next() pulls (e.g. a failed RST flush after its deadline
+             * expired). Dead is terminal for every stream: re-driving the
+             * session could emit bytes after a partial frame or block a
+             * deadline-less call forever. Draining stays allowed — a GOAWAY
+             * admitted this stream, so it runs to completion. */
+            state->completed = true;
+            break;
+        }
         if (call->deadline_abs_us > 0 && monotonic_us() >= call->deadline_abs_us) {
             call->timed_out = true;
             cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);

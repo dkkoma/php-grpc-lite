@@ -582,6 +582,77 @@ func serveLifecycleH2C() {
 	go serveGoAwayRefusedThenOKH2C(":50063", &goAwayRefusedThenOKStreamingConnections)
 	go serveGoAwayAfterMessageH2C(":50064")
 	go serveGoAwayRefusedThenDelayedOKH2C(":50065")
+	go serveStreamThenKillOnSecondRequestH2C(":50066")
+}
+
+// serveStreamThenKillOnSecondRequestH2C answers the first request with
+// response HEADERS plus one gRPC message and keeps that stream open (no
+// trailers). When a second request arrives on the same connection it closes
+// the TCP connection abruptly. This lets a client test pin that a connection
+// killed under one call is terminal for another in-flight stream that shares
+// it.
+func serveStreamThenKillOnSecondRequestH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c stream-then-kill-on-second-request fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleStreamThenKillOnSecondRequestH2C(conn)
+	}
+}
+
+func handleStreamThenKillOnSecondRequestH2C(conn net.Conn) {
+	defer conn.Close()
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(conn, preface); err != nil {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	var firstStreamID uint32
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			if firstStreamID == 0 {
+				firstStreamID = f.Header().StreamID
+			} else if f.Header().StreamID != firstStreamID {
+				return
+			}
+		case *http2.DataFrame:
+			if f.Header().StreamID != firstStreamID {
+				return
+			}
+			if f.StreamEnded() {
+				headers := encodeHeaders([]hpack.HeaderField{
+					{Name: ":status", Value: "200"},
+					{Name: "content-type", Value: "application/grpc"},
+				})
+				_ = framer.WriteHeaders(http2.HeadersFrameParam{
+					StreamID:      firstStreamID,
+					BlockFragment: headers,
+					EndHeaders:    true,
+				})
+				_ = framer.WriteData(firstStreamID, false, grpcFrame(0, nil))
+			}
+		}
+	}
 }
 
 func serveRawH2C(addr string, sendGoAway bool, firstConnectionEOF bool) {

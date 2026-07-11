@@ -32,6 +32,7 @@ void mark_connection_dead(h2_connection *connection, int error_code);
 void set_connection_error_detail(h2_connection *connection, const char *detail);
 void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
 bool connection_usable(h2_connection *connection);
+bool connection_io_allowed(h2_connection *connection);
 persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);
 bool connection_entry_matches_key(persistent_connection_entry *entry, const char *key, size_t key_len);
 static bool drain_pending_connection_data_for_reuse(h2_connection *connection, uint64_t deadline_abs_us);
@@ -854,6 +855,17 @@ void mark_connection_draining(h2_connection *connection, int32_t last_stream_id,
 bool connection_usable(h2_connection *connection)
 {
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
+}
+
+/* Whether an already-admitted stream may keep driving socket / nghttp2 I/O
+ * on this connection. Unlike connection_usable this allows draining: streams
+ * a GOAWAY admitted (id <= last_stream_id) must run to completion. A dead
+ * connection is terminal for every owner — after a failed send the session
+ * state no longer matches the wire (partial frame), so re-driving it could
+ * emit garbage or block a deadline-less call forever. */
+bool connection_io_allowed(h2_connection *connection)
+{
+    return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead;
 }
 
 static bool identity_matches(zend_string *stored, const char *expected, size_t expected_len)
@@ -1820,6 +1832,12 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
     int rv;
 
     if (connection == NULL || connection->session == NULL) {
+        return NGHTTP2_ERR_INVALID_ARGUMENT;
+    }
+    if (connection->dead || connection->fd < 0) {
+        /* Dead is terminal for every owner: a previous failed send may have
+         * left a partial frame on the wire, so the session must never be
+         * driven again (not even to flush an RST). */
         return NGHTTP2_ERR_INVALID_ARGUMENT;
     }
     connection->current_io_call = call;

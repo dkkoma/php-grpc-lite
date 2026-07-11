@@ -61,9 +61,12 @@ grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'unary status after st
 // 4. a deadline-less in-flight stream must survive another call's deadline
 // expiry on the shared connection (write deadlines are stream-scoped: the
 // expired unary deadline must not leak into the streaming call's writes).
+// The survivor's remaining messages (700ms apart, no delay before the first)
+// land well after the concurrent unary's 300ms RST, so the stream is still
+// active at RST time and keeps reading afterwards.
 $request = new BenchRequest();
 $request->setMessageCount(3);
-$request->setServerDelayMs(100);
+$request->setServerDelayMs(700);
 $survivor = $client->BenchServerStream($request, []);
 $survivorResponses = $survivor->responses();
 $survivorCount = 0;
@@ -110,6 +113,37 @@ grpc_lite_phpt_assert_true($rstFrames[0]['stream_id'] !== $rstFrames[1]['stream_
 grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $rstFrames[0]['rpc_method'] ?? null, 'first RST_STREAM belongs to the timed-out unary call');
 grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchServerStream', $rstFrames[1]['rpc_method'] ?? null, 'second RST_STREAM belongs to the timed-out streaming call');
 grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $rstFrames[2]['rpc_method'] ?? null, 'third RST_STREAM belongs to the concurrent timed-out unary call');
+
+// Multiplex evidence: the survivor stream is still active when the
+// concurrent unary's RST goes out (its trailers arrive later), and it is
+// never reset itself.
+$survivorStreamId = null;
+foreach ($records as $record) {
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'HEADERS'
+        && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/BenchServerStream') {
+        $survivorStreamId = $record['stream_id'] ?? null;
+    }
+}
+grpc_lite_phpt_assert_true($survivorStreamId !== null, 'survivor stream id found');
+grpc_lite_phpt_assert_true($survivorStreamId !== ($rstFrames[1]['stream_id'] ?? null), 'survivor is not the timed-out streaming call');
+$concurrentRstUs = $rstFrames[2]['monotonic_us'] ?? 0;
+$survivorTrailersUs = null;
+foreach ($records as $record) {
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'RST_STREAM'
+        && ($record['stream_id'] ?? null) === $survivorStreamId) {
+        throw new RuntimeException('unexpected RST_STREAM for the survivor stream');
+    }
+    if (($record['event'] ?? null) === 'wire.frame_in'
+        && ($record['frame_type'] ?? null) === 'HEADERS'
+        && ($record['stream_id'] ?? null) === $survivorStreamId
+        && ((($record['flags'] ?? 0) & 0x1) === 0x1)) {
+        $survivorTrailersUs = $record['monotonic_us'] ?? null;
+    }
+}
+grpc_lite_phpt_assert_true($survivorTrailersUs !== null, 'survivor terminal HEADERS observed');
+grpc_lite_phpt_assert_true($survivorTrailersUs > $concurrentRstUs, 'survivor was still active when the concurrent RST was sent');
 
 // Connection evidence: every call after the first reused the persistent connection.
 grpc_lite_phpt_assert_same(4, count($unaryEnds), 'unary rpc.end count');

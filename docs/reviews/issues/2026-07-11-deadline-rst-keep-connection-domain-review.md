@@ -109,11 +109,57 @@
 - Verification: ドキュメントレビュー。
 - Notes: nghttp2 が closed stream を pruning した後に極端に遅い frame が届いた場合は nghttp2 が RST_STREAM(STREAM_CLOSED) 等で応答することがあるが、connection error にはならず reuse 安全性は保たれる。
 
+### REVIEW-20260711-007: RST flush失敗などでdeadになったconnectionを共有する別streamがI/Oを再駆動できる
+
+- Severity: `High`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 review comment)`
+- Finding: `mark_connection_dead` はflagを立てるだけで、`stream_owner_count > 0` ならfd/sessionは残る。server streamingのpullループ(`server_streaming_call_next_resource_core`)は `connection_usable` を確認せずに `send_pending_h2_frames` / `connection_recv` を呼ぶため、next()間に別ownerがconnectionをdeadにした場合(本PRで追加されたRST flush失敗経路を含む)、partial frame後のsessionへwriteを再駆動したり、deadlineなしcallがdead fdで待ち続けたりし得る。
+- Evidence: `src/server_streaming_call.c` next core loop、`src/transport.c` `mark_connection_dead` / `send_pending_h2_frames_with_deadline`
+- Expected model: dead/fatal sessionは全ownerに対してterminal。以後のsocket/nghttp2 I/Oは禁止。`draining` は一律拒否せず、GOAWAYでadmit済みのstreamは完走できる。
+- Why it matters: partial HTTP/2 frame後のsession再駆動はワイヤ破壊、deadlineなしcallのhangは実運用のworker停止に直結する。
+- Recommended fix: dead後は全ownerからI/Oを禁止しterminalへ遷移。RST submit・flush失敗をfault injectionで固定。
+- Fix summary: `connection_io_allowed()`(dead / fd / sessionを確認し、drainingは許す)を追加し、streaming pullループ先頭でterminal化。`send_pending_h2_frames_with_deadline` にもdead時の早期エラーreturnを追加し、どの経路からもdead sessionを再駆動できないようにした。flush失敗のfault injectionは現行harnessで決定的に再現できないため、fixture `:50066`(1本目のstreamへmessage送出後保持、2本目のrequestでTCP切断)で「別ownerがdeadにした後の生存stream」不変条件を直接固定した。
+- Fix commit: pending
+- Verification: PHPT 034追加(生存streamのnext()がterminalになり、dead後のwire I/Oイベントがトレース上に一切ないこと)。20/20 PASS、対象3テスト3回連続PASS。
+- Notes: flush失敗そのもの(partial write)の縮退は従来から `send_pending_h2_frames_with_deadline` 内の `mark_connection_dead` が担保しており、本修正は「dead後の再駆動禁止」を全ownerへ拡張するもの。
+
+### REVIEW-20260711-008: 64KiB backlog時のconnection reuse保証をSPECが過大に記述
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 review comment)`
+- Finding: cancel済みstreamのbacklogがpreflight drain上限(64KiB / 64 iterations)を超えて到着済みの場合、drainはEAGAIN境界に達せず `mark_connection_draining` → 新規接続となる。SPEC §4.2の「到着済みbytesはpreflight drainが消化する」は実装の保証範囲を超えていた。
+- Evidence: `src/transport.c` `drain_pending_connection_data_for_reuse`(`GRPC_LITE_PREFLIGHT_DRAIN_MAX_BYTES`)、レビュアー実測(message_count=1000 / payload 64KiB → follow-up `persistent_reused=false`)
+- Expected model: reuseはbest-effort。cap超過時は安全側(draining → 新規接続)へフォールバックし、後続コールの成功は維持される。
+- Why it matters: SPECが実装より強い保証を謳うと将来の変更判断を誤らせる。
+- Recommended fix: bounded adoptionの実装、またはbest-effort明記 + cap fallbackテスト。
+- Fix summary: 選択肢(b)を採用。SPEC §4.2にreuseがbest-effortであることとcap fallback挙動を明記し、PHPT 035(64KiB×200 messagesのbacklog + user cancel → follow-upがSTATUS_OK、`persistent_reused=false`、connection preface 2本)でfallback安全性を固定。bounded adoption(未読GOAWAY処理後のadmit)は本PRのスコープを超えるため実装しない。
+- Fix commit: pending
+- Verification: PHPT 035追加、3回連続PASS。
+- Notes: bounded adoptionを将来実装する場合はPHPT 035のfallback assertionとSPEC §4.2を同時に更新する。
+
+### REVIEW-20260711-009: PHPT 033 part 4のsurvivorがRSTより先にcloseし得る
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 review comment)`
+- Finding: survivor(3 messages @100ms、初回遅延なし)は約200msで完了し、300ms deadlineの並行unaryのRSTより先にcloseし得るため、RST時点のmultiplex・RST後のread・deadline scope非漏洩を検証できていない。
+- Evidence: `tests/phpt/033-deadline-rst-stream-connection-reuse.phpt` part 4
+- Expected model: multiplex検証はRST時点でsurvivorがactiveであることをワイヤ順序で固定する。
+- Why it matters: 本PRの中核不変条件(deadlineのstream-scope性)の回帰検出力が下がる。
+- Recommended fix: survivor delayをdeadlineより長くし、terminal HEADERSがRST後・survivor宛RSTなし・最終OKをassert。
+- Fix summary: survivor delayを700msへ変更(trailersは並行RSTの約1秒後)。トレースからsurvivorのstream idを特定し、(1) survivor宛 `wire.frame_out` RST_STREAMが存在しない、(2) survivorのterminal HEADERS(`flags & END_STREAM`)の `monotonic_us` が並行RSTより後、(3) 全message受信 + STATUS_OK、をassertした。
+- Fix commit: pending
+- Verification: PHPT 033、3回連続PASS。
+- Notes: 補足で除外されたidle RST候補(MAX_CONCURRENT_STREAMS中のpending request)は対応不要と確認済み。
+
 ## Review Result
 
 - Blocker: none
-- High: 1 (Fixed)
-- Medium: 1 (Fixed)
-- Low: 3 (Fixed)
+- High: 2 (Fixed)
+- Medium: 2 (Fixed)
+- Low: 4 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
+- PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
