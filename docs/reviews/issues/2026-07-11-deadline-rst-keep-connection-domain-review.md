@@ -347,12 +347,55 @@
 - Verification: PHPT 038 PASS(unary/streamingともexact details)、影響5テスト(024/033/038/039/040)8回反復FAILなし、C unit 3/3(status taxonomy非変更)、full PHPT 25/25。
 - Notes: server供給 `grpc_message` の優先は従来どおり維持(deadline raceでserverがmessage付きtrailersを返した場合の情報は落とさない)。
 
+### REVIEW-20260713-001: production sanitizer laneがbench laneに置換され、production-onlyのmemory bugがgateから外れる
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 sixth-pass review comment)`
+- Finding: 第五パスで `check-c-sanitizer.sh` が常に `--enable-grpc-bench` を有効にするよう変更されたが、bench buildは `grpc_call` layoutとunary coreのsignature/分岐を変えるためproductionとは異なるbinary。非benchのcoverage/ZTS laneはsanitizerでなく、CIのCrash/UB laneはprotocol-core fuzzerのみ。production-onlyのlayout/分岐に入るmemory bugがsanitizer gateから外れる。
+- Evidence: `tools/test/check-c-sanitizer.sh`、`src/grpc_exchange_state.h` のbench限定member、`src/unary_call.c` のbench限定引数/分岐
+- Expected model: production full sanitizerとbench+fault sanitizerの2 laneを実行し、どちらのbinaryもsanitizer gateに残す。
+- Why it matters: sanitizerは最後のmemory-safety gate。検証対象binaryの置換はgapを静かに作る。
+- Recommended fix: 2 lane実行。
+- Fix summary: `check-c-sanitizer.sh` のPHPT実行を `run_phpt_lane()` に共通化し、**production lane**(`--enable-grpc` のみ。純production binaryで全PHPTを実行、fault/bench系4テストはSKIP)と **bench+fault lane**(`--enable-grpc-test-fault --enable-grpc-bench`。全26テスト実行)を順に実行する構成へ変更。各laneでbuild→extension load確認→run-testsを行い、laneごとにログを分離。
+- Fix commit: 24abba3
+- Verification: sanitizerスイート実行で production lane 22 PASS / 4 SKIP、bench-fault lane 26/26 PASS、ASan/UBSan報告ゼロ(halt_on_error下でexit 0)。
+- Notes: 旧来のlaneは `--enable-grpc --enable-grpc-test-fault` だったため、fault seamすら持たない純productionのsanitizer実行はむしろ従来より厳密になった。
+
+### REVIEW-20260713-002: PHPT 001のbench期待値が同一moduleのMINFO由来で外部不変条件にならない
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 sixth-pass review comment)`
+- Finding: 001はMINFOの "grpc_lite bench diagnostics" 行からbench関数の露出期待値を導くため、MINFOと関数表の整合性しか検査できない。build flagの誤りで両方が有効になった場合(production laneへのbench混入)もPASSする。
+- Evidence: `tests/phpt/001-load.phpt`
+- Expected model: 期待値はmodule外部(runner)が宣言し、production lane自身が非露出をassertする。
+- Recommended fix: `GRPC_LITE_EXPECT_BENCH=0|1` をrunnerから渡す。
+- Fix summary: 001の期待値を `GRPC_LITE_EXPECT_BENCH` 環境変数(未設定=production期待、つまり非露出)へ変更し、MINFO行と関数露出の両方を同じ外部期待と照合。benchをbuildするrunner(`check-phpt.sh`、sanitizer bench-fault lane)だけが `=1` を宣言し、ZTS/coverage/素のproduction実行はデフォルトの非露出assertを受ける。
+- Fix commit: 24abba3
+- Verification: bench lane(EXPECT=1)26/26、sanitizer production lane(EXPECT=0)で001 PASS、ZTS(bench無効・EXPECT未設定)24 PASS / 2 SKIP。
+- Notes: 未設定デフォルトを非露出側に倒したため、bench buildを期待宣言なしで走らせると001がFAILする(意図的に露出を宣言させる設計)。
+
+### REVIEW-20260713-003: unary mem-recv fatalのownership修正がsanitizer regressionで固定されていない
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 sixth-pass review comment)`
+- Finding: e424689はsubmit fatalに加えregister失敗と `nghttp2_session_mem_recv` fatalのownership cleanupも変更したが、PHPT 040は `submit-request-fatal` しか通らない。reviewerはfocused ASanで現行コードの安全性は確認済みだが、repository regressionが存在しない。
+- Evidence: `src/unary_call.c` mem_recv fatal branch、`tests/phpt/040`
+- Expected model: 変更したFAILURE branchはそれぞれregressionで固定する。
+- Recommended fix: `rst-submit-fatal` × 小receive limit + 大responseでmem-recv fatalへ到達するPHPT(2 attempt・ASan無報告・cache非残留)。
+- Fix summary: PHPT 041を追加。`GRPC_LITE_TEST_FAULT=rst-submit-fatal` + `max_receive_message_length=8` + 1KiB responseで、callback内policy RSTのfatal → `nghttp2_session_mem_recv` fatal → unary coreのdetach+destroy → diagnostic callerがpointerへ触れない経路を2 attemptで固定。さらに130 distinct-key sweep(authority可変)で全attemptが "nghttp2_session_mem_recv failed"(cache exhaustionでない)かつpreface 132本(消費済みconnectionの再利用なし)であることをassert。mem_recv branchの `detach_persistent_connection_by_ptr` を一時除去した状態で041が実際にFAILする(sweepがcache limitに到達する)ことを確認し、regressionの検出力を実証した。041はsanitizer bench-fault laneでも実行される。
+- Fix commit: 24abba3
+- Verification: PHPT 041 PASS(NTS/sanitizer bench-fault lane)、detach除去時FAIL確認、影響4テスト(001/038/040/041)8回反復FAILなし。
+- Notes: register失敗branchは `nghttp2_session_set_stream_user_data` の失敗を外部から誘発できないためPHPT固定対象外(レビュー指摘のスコープもmem-recvのみ)。
+
 ## Review Result
 
 - Blocker: none
 - High: 7 (Fixed)
-- Medium: 8 (Fixed)
-- Low: 6 (Fixed)
+- Medium: 9 (Fixed)
+- Low: 8 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
@@ -360,3 +403,4 @@
 - PR #29 敵対的レビュー第三パス(2026-07-12、HEAD be1b97e): High 1 / Medium 1 / Low 2 を追加受領(REVIEW-20260712-001〜004)、全件Fixed
 - PR #29 敵対的レビュー第四パス(2026-07-12、HEAD 2af2d58): High 1 / Medium 2 を追加受領(REVIEW-20260712-005〜007)、全件Fixed
 - PR #29 敵対的レビュー第五パス(2026-07-12、HEAD 287bc93): High 1 / Medium 1 を追加受領(REVIEW-20260712-008〜009)、全件Fixed
+- PR #29 敵対的レビュー第六パス(2026-07-13、HEAD 3081608): Medium 1 / Low 2 を追加受領(REVIEW-20260713-001〜003)、全件Fixed
