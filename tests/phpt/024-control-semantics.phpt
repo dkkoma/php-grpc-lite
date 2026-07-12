@@ -25,9 +25,18 @@ $client = static function (string $target = 'test-server:50051'): GreeterClient 
     ]);
 };
 
-// Scenario group 1: malformed response frame and connection setup failure.
+// Scenario group 1: connection break mid-message and connection setup failure.
+// :50057 sends response HEADERS plus a partial gRPC message header, then
+// closes the TCP connection: a client-observed connection break maps to
+// UNAVAILABLE for both call kinds (INTERNAL is reserved for a clean
+// END_STREAM inside a Length-Prefixed-Message).
 [, $status] = $client('test-server:50057')->BenchUnary(new BenchRequest())->wait();
-grpc_lite_phpt_assert_true($status->code !== Grpc\STATUS_OK, 'malformed unary frame must fail');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $status->code, 'unary connection break mid-message status');
+
+$midStreamCall = $client('test-server:50057')->BenchServerStream(new BenchRequest());
+foreach ($midStreamCall->responses() as $_reply) {
+}
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $midStreamCall->getStatus()->code, 'streaming connection break mid-message status');
 
 [, $status] = $client('test-server:59999')->BenchUnary(new BenchRequest(), [], ['timeout' => 50000])->wait();
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $status->code, 'connection refused unary status');

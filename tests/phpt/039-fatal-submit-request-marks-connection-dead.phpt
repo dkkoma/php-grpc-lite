@@ -7,6 +7,7 @@ if (!extension_loaded('grpc')) {
 }
 require __DIR__ . '/helpers.inc';
 grpc_lite_phpt_skip_if_integration_unavailable([50051]);
+grpc_lite_phpt_skip_if_test_fault_seam_unavailable();
 ?>
 --ENV--
 GRPC_LITE_TRACE_FILE=/tmp/grpc-lite-trace-039.jsonl
@@ -54,6 +55,25 @@ foreach ($streamCall->responses() as $_reply) {
 }
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $streamCall->getStatus()->code, 'streaming setup failure status');
 
+// Cache retention regression: every fatal must evict its dead cache entry
+// immediately. With lazy per-key eviction only, 128+ distinct connection
+// keys would fill the persistent cache and later calls would fail with
+// "persistent connection cache limit exceeded" instead of the submit fault.
+$hello2 = new HelloRequest();
+$hello2->setName('CacheSweep');
+for ($i = 0; $i < 130; $i++) {
+    $keyedClient = new GreeterClient('test-server:50051', [
+        'credentials' => ChannelCredentials::createInsecure(),
+        'grpc.default_authority' => "authority-$i.test",
+    ]);
+    $throwable = grpc_lite_phpt_expect_throw(
+        static function () use ($keyedClient, $hello2): void {
+            $keyedClient->SayHello($hello2)->wait();
+        },
+    );
+    grpc_lite_phpt_assert_contains('nghttp2_submit_request failed', $throwable->getMessage(), "fatal #$i is a submit failure, not cache exhaustion");
+}
+
 $lines = array_values(array_filter(explode("\n", trim((string) file_get_contents($traceFile)))));
 unlink($traceFile);
 
@@ -68,8 +88,9 @@ foreach ($lines as $line) {
         throw new RuntimeException('no stream frames may reach the wire after a fatal submit: ' . $line);
     }
 }
-// Each attempt found the previous connection dead and opened a fresh one.
-grpc_lite_phpt_assert_same(3, $prefaceCount, 'a dead connection was never reused');
+// Each attempt found the previous connection dead (or evicted) and opened a
+// fresh one: 3 initial attempts + 130 distinct-key sweep attempts.
+grpc_lite_phpt_assert_same(133, $prefaceCount, 'a dead connection was never reused');
 
 echo "OK\n";
 ?>

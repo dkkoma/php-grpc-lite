@@ -158,12 +158,17 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     if (call.stream_id < 0) {
         if (nghttp2_is_fatal((int) call.stream_id)) {
             /* Fatal submit corrupts the session (nghttp2 error contract):
-             * the connection must never be reused or driven again. */
+             * the connection must never be reused or driven again. Detach
+             * from the persistent cache right away — eviction is otherwise
+             * lazy and per-key, so dead entries under distinct keys would
+             * pile up until the cache limit rejects new connections. */
             mark_connection_dead(connection, (int) call.stream_id);
+            detach_persistent_connection_by_ptr(connection);
         }
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&call);
+        destroy_detached_connection_if_unowned(connection);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }

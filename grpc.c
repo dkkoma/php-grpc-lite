@@ -77,6 +77,9 @@ PHP_MINIT_FUNCTION(grpc_lite)
 #endif
     REGISTER_INI_ENTRIES();
     grpc_lite_trace_cache_init();
+#ifdef PHP_GRPC_LITE_ENABLE_TEST_FAULT
+    grpc_lite_test_fault_init();
+#endif
     le_server_streaming_call_state = zend_register_list_destructors_ex(server_streaming_call_state_dtor, NULL, "grpc_lite_server_streaming_call_state", module_number);
 
     if (grpc_lite_register_surface_classes() != SUCCESS) {
@@ -151,6 +154,9 @@ PHP_MINFO_FUNCTION(grpc_lite)
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_messages", INI_STR("grpc_lite.server_streaming_read_ahead_max_messages"));
     php_info_print_table_row(2, "grpc_lite.server_streaming_read_ahead_max_bytes", INI_STR("grpc_lite.server_streaming_read_ahead_max_bytes"));
     php_info_print_table_row(2, "grpc_lite.preflight_drain_max_bytes", INI_STR("grpc_lite.preflight_drain_max_bytes"));
+#ifdef PHP_GRPC_LITE_ENABLE_TEST_FAULT
+    php_info_print_table_row(2, "grpc_lite test fault seam", "enabled");
+#endif
     php_info_print_table_end();
 }
 

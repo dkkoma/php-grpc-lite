@@ -884,20 +884,42 @@ bool connection_io_allowed(h2_connection *connection)
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead;
 }
 
-/* Test-only fault injection. GRPC_LITE_TEST_FAULT holds a comma-separated
- * list of fault names honored by dedicated seams ("rst-submit-fatal",
- * "submit-request-fatal"); never set in production. Evaluated once per
- * process, mirroring the GRPC_LITE_TRACE_FILE diagnostics hook. */
+#ifdef PHP_GRPC_LITE_ENABLE_TEST_FAULT
+/* Test-only fault injection, compiled in only with --enable-grpc-test-fault.
+ * GRPC_LITE_TEST_FAULT holds a comma-separated list of fault names honored
+ * by dedicated seams ("rst-submit-fatal", "submit-request-fatal"). The env
+ * value is copied once at MINIT into a process-owned buffer: caching the
+ * getenv() pointer itself would dangle after userland putenv() frees the
+ * backing storage, and the copy is written before any request thread runs
+ * (ZTS-safe read-only access afterwards). */
+static char grpc_lite_test_faults[128];
+
+void grpc_lite_test_fault_init(void)
+{
+    const char *value = getenv("GRPC_LITE_TEST_FAULT");
+
+    grpc_lite_test_faults[0] = '\0';
+    if (value != NULL) {
+        snprintf(grpc_lite_test_faults, sizeof(grpc_lite_test_faults), "%s", value);
+    }
+}
+
 bool grpc_lite_test_fault_enabled(const char *fault_name)
 {
-    static const char *faults = NULL;
+    const char *cursor = grpc_lite_test_faults;
+    size_t name_len = strlen(fault_name);
 
-    if (faults == NULL) {
-        const char *value = getenv("GRPC_LITE_TEST_FAULT");
-        faults = value != NULL ? value : "";
+    while (*cursor != '\0') {
+        const char *comma = strchr(cursor, ',');
+        size_t token_len = comma != NULL ? (size_t) (comma - cursor) : strlen(cursor);
+        if (token_len == name_len && memcmp(cursor, fault_name, name_len) == 0) {
+            return true;
+        }
+        cursor = comma != NULL ? comma + 1 : cursor + token_len;
     }
-    return faults[0] != '\0' && strstr(faults, fault_name) != NULL;
+    return false;
 }
+#endif
 
 /* Record a client-observed transport connection failure (socket/TLS send
  * failure, recv EOF/error) on the call so it resolves as UNAVAILABLE per the

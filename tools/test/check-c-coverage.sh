@@ -16,7 +16,7 @@ docker compose run --rm dev bash -lc '
     cd /workspace
     make clean >/tmp/grpc-coverage-clean.log 2>&1 || true
     phpize >/tmp/grpc-coverage-phpize.log
-    CFLAGS="-O0 -g --coverage" LDFLAGS="--coverage" ./configure --enable-grpc >/tmp/grpc-coverage-configure.log
+    CFLAGS="-O0 -g --coverage" LDFLAGS="--coverage" ./configure --enable-grpc --enable-grpc-test-fault >/tmp/grpc-coverage-configure.log
     make -j$(nproc) >/tmp/grpc-coverage-make.log
 
     cd /workspace

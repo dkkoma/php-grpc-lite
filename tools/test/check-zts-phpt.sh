@@ -15,7 +15,7 @@ docker compose run --build --rm dev-zts bash -lc '
     make clean >/tmp/grpc-zts-phpt-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     phpize >/tmp/grpc-zts-phpize.log
-    ./configure --enable-grpc >/tmp/grpc-zts-configure.log
+    ./configure --enable-grpc --enable-grpc-test-fault >/tmp/grpc-zts-configure.log
     make -j$(nproc) >/tmp/grpc-zts-make.log
 
     cd /workspace

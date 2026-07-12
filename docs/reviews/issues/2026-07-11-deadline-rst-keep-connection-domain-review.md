@@ -272,14 +272,60 @@
 - Verification: PHPT 037 PASS、対象7テスト15回反復FAILなし、check-c-sanitizer.sh実行。
 - Notes: なし
 
+### REVIEW-20260712-005: test fault seamがproduction buildに組み込まれ、getenv pointerのcacheがrequest跨ぎでdanglingになる
+
+- Severity: `High`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 fourth-pass review comment)`
+- Finding: `grpc_lite_test_fault_enabled()` にbuild guardがなく通常buildのsubmit/cancel/parser pathへ組み込まれる。さらに最初のRPCで取得した `getenv()` のraw pointerをprocess-staticへ保存するため、`putenv()` 後にdangling(reviewer実測: ASan buildの2 request目で `strstr()` がheap-use-after-free)。ZTSでは同期なしstatic read/write raceもある。
+- Evidence: `src/transport.c` 旧 `grpc_lite_test_fault_enabled`、`config.m4`
+- Expected model: fault seamはdefault-offのtest build defineでcompile out。test buildでもMINIT-owned copy + exact token match(trace hookと同じMINIT copy方式)。
+- Why it matters: production pathへのtest seam混入とUAF/data race。
+- Recommended fix: compile out + MINIT copy + exact token match + request跨ぎASan/ZTS regression。
+- Fix summary: `--enable-grpc-test-fault`(default off)を追加し、seam全体を `PHP_GRPC_LITE_ENABLE_TEST_FAULT` でguard(未定義時は `grpc_lite_test_fault_enabled` をconstant falseマクロにして呼び出しbranchごとcompile out)。有効時はMINITで `GRPC_LITE_TEST_FAULT` を固定バッファへcopyし(getenv pointerを保持しない、MINITはthread起動前なのでZTS読み取り専用で安全)、カンマ区切りのexact token matchで判定。check-phpt / check-zts-phpt / check-c-sanitizer / check-c-coverage のtest buildにflagを追加。PHPT 038に putenv(削除+別値) 後も挙動が変わらないMINIT snapshot regressionと、superstring decoy token("submit-request-fatal-decoy")によるexact match regressionを追加。038/039はseam未buildの場合SKIP(phpinfo行で検出)。
+- Fix commit: pending
+- Verification: production build(`--enable-grpc` のみ)がwarningなしでビルドでき038/039がSKIPすること、test-fault build 24/24、ZTSスイート24/24、sanitizerスイート24/24・報告ゼロ。
+- Notes: multi-request(FPM)のUAF再現はharness外だが、原因のpointer保持自体を排除しputenv regressionで固定した。
+
+### REVIEW-20260712-006: partial message中のconnection breakがserver streamingでINTERNALに誤分類
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 fourth-pass review comment)`
+- Finding: streamingのterminal pathはparser途中stateがあると無条件に `malformed_response_frame` を立て、status priorityで `connection_broken` より先に評価される。fixture :50057(HEADERS + 3-byte partial header + TCP close)でunaryは `UNAVAILABLE(14)`、streamingは `INTERNAL(13)` になる。
+- Evidence: `src/server_streaming_call.c` truncated判定、`src/status_core.c` priority
+- Expected model: TCP/TLS connection breakは両call kindとも `UNAVAILABLE`。clean END_STREAM途中のframeのみ `INTERNAL`。
+- Why it matters: retry判断の一次入力の誤分類。unary/streamingでの非一貫。
+- Recommended fix: streamingのtruncated判定に connection break 除外を追加。
+- Fix summary: streamingのtruncated判定の除外条件に `!call->connection_broken` を追加しコメントを更新。PHPT 024の :50057 ケースをexact `UNAVAILABLE` に強化し、server streamingケースを追加。
+- Fix commit: pending
+- Verification: PHPT 024 PASS(unary/streamingともUNAVAILABLE)。
+- Notes: response-started callのtransparent retry不可は不変(outcome predicate非変更)。
+
+### REVIEW-20260712-007: unary submit fatalのdead connectionがcacheに残留し、distinct keyの累積でcache limitに達する
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 fourth-pass review comment)`
+- Finding: submit fatal branchはdead化のみでcacheをdetachせず、wrapperもFAILURE即returnするためlazy per-key evictionが働かない。異なるauthority 129件のfatal注入で128 dead entryがcacheを占有し、129件目が "persistent connection cache limit exceeded" になる(reviewer実測)。PHPT 039は同一keyのため検出しない。
+- Evidence: `src/unary_call.c` submit fatal branch、`src/transport.c` cache limit
+- Expected model: fatal cleanup内でdead entryを即時detachし、最後のowner解放後に破棄。
+- Why it matters: 長寿命workerでのcache枯渇 → 新規接続不能。
+- Recommended fix: fatal branchで即時detach + 多key regression。
+- Fix summary: unary / streaming の submit fatal branch で `detach_persistent_connection_by_ptr()` を呼び即時evict(unaryは `destroy_detached_connection_if_unowned` も追加、streamingはdestroy経路のclear ownerが破棄を担う)。PHPT 039に `grpc.default_authority` を変えた130 keyのsweepを追加し、全件が "nghttp2_submit_request failed"(cache exhaustionでない)かつpreface 133本(dead entryの再利用なし)であることを固定。
+- Fix commit: pending
+- Verification: PHPT 039 PASS(130 key sweep含む)、影響8テスト8回反復FAILなし。
+- Notes: なし
+
 ## Review Result
 
 - Blocker: none
-- High: 5 (Fixed)
-- Medium: 5 (Fixed)
+- High: 6 (Fixed)
+- Medium: 7 (Fixed)
 - Low: 6 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
 - PR #29 敵対的レビュー第二パス(2026-07-11、HEAD 6795a5a): High 2 / Medium 2 を追加受領(REVIEW-20260711-010〜013)、全件Fixed
 - PR #29 敵対的レビュー第三パス(2026-07-12、HEAD be1b97e): High 1 / Medium 1 / Low 2 を追加受領(REVIEW-20260712-001〜004)、全件Fixed
+- PR #29 敵対的レビュー第四パス(2026-07-12、HEAD 2af2d58): High 1 / Medium 2 を追加受領(REVIEW-20260712-005〜007)、全件Fixed

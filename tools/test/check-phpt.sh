@@ -12,7 +12,7 @@ docker compose run --rm dev bash -lc '
     make clean >/tmp/grpc-phpt-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     phpize >/tmp/grpc-phpize.log
-    ./configure --enable-grpc >/tmp/grpc-configure.log
+    ./configure --enable-grpc --enable-grpc-test-fault >/tmp/grpc-configure.log
     make -j$(nproc) >/tmp/grpc-make.log
     cd /workspace
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }

@@ -7,10 +7,11 @@ if (!extension_loaded('grpc')) {
 }
 require __DIR__ . '/helpers.inc';
 grpc_lite_phpt_skip_if_integration_unavailable([50051]);
+grpc_lite_phpt_skip_if_test_fault_seam_unavailable();
 ?>
 --ENV--
 GRPC_LITE_TRACE_FILE=/tmp/grpc-lite-trace-038.jsonl
-GRPC_LITE_TEST_FAULT=rst-submit-fatal
+GRPC_LITE_TEST_FAULT=rst-submit-fatal,submit-request-fatal-decoy
 --FILE--
 <?php
 declare(strict_types=1);
@@ -31,7 +32,10 @@ file_put_contents($traceFile, '');
 // NGHTTP2_ERR_NOMEM (GRPC_LITE_TEST_FAULT=rst-submit-fatal). After a fatal
 // return the nghttp2 error contract allows only nghttp2_session_del(), so
 // the connection must go dead, no RST may reach the wire, and every later
-// call must run on a fresh connection.
+// call must run on a fresh connection. The env also carries
+// "submit-request-fatal-decoy": token matching must be exact, so the decoy
+// must NOT trip the submit-request seam (a substring match would make every
+// call in this test throw instead).
 $opts = ['credentials' => ChannelCredentials::createInsecure()];
 $channel = new Channel('test-server:50051', $opts);
 $client = new GreeterClient('test-server:50051', $opts, $channel);
@@ -48,6 +52,15 @@ $hello = new HelloRequest();
 $hello->setName('AfterFatal');
 [, $status] = $client->SayHello($hello)->wait();
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'follow-up unary status');
+
+// The fault set is a MINIT-owned copy: later putenv() must neither change
+// the active faults nor leave the seam reading freed environment storage
+// (the original seam cached the raw getenv() pointer, which dangles after
+// putenv()).
+putenv('GRPC_LITE_TEST_FAULT');
+putenv('GRPC_LITE_TEST_FAULT=submit-request-fatal');
+[, $status] = $client->SayHello($hello)->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'putenv does not alter the MINIT fault snapshot');
 
 // 3. response-policy RST inside a session callback (message too large): the
 // policy flag decides the status, the fatal submit kills the connection.
@@ -73,7 +86,7 @@ $records = array_map(static function (string $line): array {
 }, $lines);
 
 $prefaceCount = 0;
-$followUpEnd = null;
+$sayHelloEnds = [];
 foreach ($records as $record) {
     if (($record['event'] ?? null) === 'wire.frame_out' && ($record['frame_type'] ?? null) === 'RST_STREAM') {
         throw new RuntimeException('no RST_STREAM may reach the wire after a fatal submit: ' . json_encode($record));
@@ -82,14 +95,17 @@ foreach ($records as $record) {
         $prefaceCount++;
     }
     if (($record['event'] ?? null) === 'rpc.end' && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/SayHello') {
-        $followUpEnd = $record;
+        $sayHelloEnds[] = $record;
     }
 }
 
-grpc_lite_phpt_assert_same(false, $followUpEnd['persistent_reused'] ?? null, 'dead connection was not reused');
-// Call 1 opens connection #1 and kills it (fatal cancel submit). Calls 2 and
-// 3 share connection #2 (same connection key; message-length limits are not
-// part of the key), which call 3's fatal policy submit kills again.
+grpc_lite_phpt_assert_same(2, count($sayHelloEnds), 'SayHello rpc.end count');
+grpc_lite_phpt_assert_same(false, $sayHelloEnds[0]['persistent_reused'] ?? null, 'dead connection was not reused');
+grpc_lite_phpt_assert_same(true, $sayHelloEnds[1]['persistent_reused'] ?? null, 'healthy connection stays reusable');
+// Call 1 opens connection #1 and kills it (fatal cancel submit). The two
+// SayHello calls and the limited streaming call share connection #2 (same
+// connection key; message-length limits are not part of the key), which the
+// final fatal policy submit kills again.
 grpc_lite_phpt_assert_same(2, $prefaceCount, 'every call after a fatal ran on a fresh connection');
 
 echo "OK\n";

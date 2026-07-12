@@ -130,8 +130,12 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
     if (state->call.stream_id < 0) {
         if (nghttp2_is_fatal((int) state->call.stream_id)) {
             /* Fatal submit corrupts the session (nghttp2 error contract):
-             * the connection must never be reused or driven again. */
+             * the connection must never be reused or driven again. Detach
+             * from the persistent cache right away — eviction is otherwise
+             * lazy and per-key, so dead entries under distinct keys would
+             * pile up until the cache limit rejects new connections. */
             mark_connection_dead(connection, (int) state->call.stream_id);
+            detach_persistent_connection_by_ptr(connection);
         }
         if (setup_failure != NULL) {
             setup_failure->code = GRPC_STATUS_UNAVAILABLE;
@@ -365,11 +369,13 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     }
 
     if (!call->response_message_too_large && !call->compressed_response_seen && !call->stream_reset_seen
-            && !call->locally_cancelled
+            && !call->locally_cancelled && !call->connection_broken
             && (call->response_header_len != 0 || call->response_payload != NULL || call->response_payload_offset != 0)) {
         /* RST_STREAM mid-message (received or locally submitted) keeps its
-         * own status taxonomy (e.g. CANCEL -> CANCELLED) instead of being
-         * reported as malformed framing. */
+         * own status taxonomy (e.g. CANCEL -> CANCELLED), and a TCP/TLS
+         * connection break mid-message is UNAVAILABLE, not malformed
+         * framing: only a clean END_STREAM inside a Length-Prefixed-Message
+         * is a server protocol violation (INTERNAL). */
         call->malformed_response_frame = true;
     }
     state->completed = true;

@@ -88,7 +88,13 @@ void set_connection_error_detail(h2_connection *connection, const char *detail);
 void mark_connection_draining(h2_connection *connection, int32_t last_stream_id, uint32_t error_code);
 bool connection_usable(h2_connection *connection);
 bool connection_io_allowed(h2_connection *connection);
+#ifdef PHP_GRPC_LITE_ENABLE_TEST_FAULT
+void grpc_lite_test_fault_init(void);
 bool grpc_lite_test_fault_enabled(const char *fault_name);
+#else
+/* Production builds compile the test fault seams out entirely. */
+#define grpc_lite_test_fault_enabled(fault_name) false
+#endif
 void grpc_call_note_connection_broken(grpc_call *call);
 zend_string *grpc_lite_build_connection_key(const char *host, size_t host_len, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, int credentials_type, zend_string *root_certs, zend_string *cert_chain, zend_string *private_key);
 persistent_connection_entry *create_persistent_connection_entry(h2_connection *connection, const char *key, size_t key_len);

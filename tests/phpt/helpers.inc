@@ -83,6 +83,21 @@ function grpc_lite_phpt_can_connect(string $host, int $port): bool
     return true;
 }
 
+function grpc_lite_phpt_test_fault_seam_available(): bool
+{
+    ob_start();
+    phpinfo(INFO_MODULES);
+    $info = (string) ob_get_clean();
+    return str_contains($info, 'grpc_lite test fault seam');
+}
+
+function grpc_lite_phpt_skip_if_test_fault_seam_unavailable(): void
+{
+    if (!grpc_lite_phpt_test_fault_seam_available()) {
+        die('skip extension built without --enable-grpc-test-fault');
+    }
+}
+
 function grpc_lite_phpt_skip_if_integration_unavailable(array $ports = [50051]): void
 {
     if (!is_file(grpc_lite_phpt_autoload_path())) {
