@@ -98,6 +98,13 @@ function grpc_lite_phpt_skip_if_test_fault_seam_unavailable(): void
     }
 }
 
+function grpc_lite_phpt_skip_if_bench_diagnostics_unavailable(): void
+{
+    if (!function_exists('grpc_lite_unary')) {
+        die('skip extension built without --enable-grpc-bench');
+    }
+}
+
 function grpc_lite_phpt_skip_if_integration_unavailable(array $ports = [50051]): void
 {
     if (!is_file(grpc_lite_phpt_autoload_path())) {

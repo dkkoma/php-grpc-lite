@@ -2372,6 +2372,13 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
     if (call->grpc_message != NULL && ZSTR_LEN(call->grpc_message) > 0) {
         return zend_string_copy(call->grpc_message);
     }
+    if (code == GRPC_STATUS_DEADLINE_EXCEEDED && call->timed_out) {
+        /* Deadline expiry is the primary call outcome. Errors recorded while
+         * tearing the stream down afterwards (e.g. a fatal RST_STREAM submit
+         * marking the connection dead) are secondary connection-cleanup
+         * failures and must not replace the deadline details. */
+        return zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
+    }
     if (call->stream_refused_seen) {
         return zend_string_init("HTTP/2 stream refused by GOAWAY", sizeof("HTTP/2 stream refused by GOAWAY") - 1, 0);
     }

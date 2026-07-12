@@ -91,7 +91,7 @@ docker compose run --build --rm \
     CC=clang \
     CFLAGS="-O1 -g -fno-omit-frame-pointer $sanitizer_flags" \
     LDFLAGS="$sanitizer_flags" \
-        ./configure --enable-grpc --enable-grpc-test-fault --with-php-config="$php_config_bin" >/tmp/grpc-sanitizer-configure.log
+        ./configure --enable-grpc --enable-grpc-test-fault --enable-grpc-bench --with-php-config="$php_config_bin" >/tmp/grpc-sanitizer-configure.log
     make -j$(nproc) >/tmp/grpc-sanitizer-make.log
 
     cd /workspace

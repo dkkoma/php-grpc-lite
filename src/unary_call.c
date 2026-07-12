@@ -74,6 +74,13 @@ static zend_string *grpc_lite_unary_take_response_payload(grpc_call *call)
     return payload;
 }
 
+/* Connection lifetime contract for callers:
+ * - SUCCESS: the connection pointer stays valid (possibly dead); the caller
+ *   owns eviction of unusable connections (connection_usable +
+ *   remove_unusable_persistent_connection).
+ * - FAILURE: any branch that made the connection unusable has already
+ *   detached it from the persistent cache and destroyed it once unowned, so
+ *   the caller must not dereference the connection pointer again. */
 static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, uint32_t retry_attempt,
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zval *diagnostic_result,
@@ -175,9 +182,11 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     grpc_lite_trace_request_headers(&call, request_headers.nva, request_headers.len);
     if (register_grpc_call_stream(connection, &call) != SUCCESS) {
         mark_grpc_call_stream_registration_failed(connection, &call);
+        detach_persistent_connection_by_ptr(connection);
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&call);
+        destroy_detached_connection_if_unowned(connection);
         zend_throw_exception(NULL, "failed to register HTTP/2 stream", 0);
         return FAILURE;
     }
@@ -219,6 +228,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(connection, rv);
+            detach_persistent_connection_by_ptr(connection);
             clear_connection_call_owner(connection, &call);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&call);

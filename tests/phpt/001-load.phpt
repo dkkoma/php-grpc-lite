@@ -31,6 +31,12 @@ foreach ([
     grpc_lite_phpt_assert_same($expected, constant($name), $name);
 }
 
+// The bench diagnostic surface must exist exactly when the build opted in
+// with --enable-grpc-bench (MINFO row). In particular a production build
+// (no MINFO row) must not expose any of these functions.
+ob_start();
+phpinfo(INFO_MODULES);
+$benchBuild = str_contains((string) ob_get_clean(), 'grpc_lite bench diagnostics');
 foreach ([
     'grpc_lite_unary',
     'grpc_lite_server_streaming_open',
@@ -38,7 +44,13 @@ foreach ([
     'grpc_lite_server_streaming_cancel',
     'grpc_lite_bench_unary_batch',
 ] as $function) {
-    grpc_lite_phpt_assert_true(!function_exists($function), "$function must not be exposed in production build");
+    grpc_lite_phpt_assert_same(
+        $benchBuild,
+        function_exists($function),
+        $benchBuild
+            ? "$function must be exposed in a --enable-grpc-bench build"
+            : "$function must not be exposed in production build",
+    );
 }
 
 echo "OK\n";

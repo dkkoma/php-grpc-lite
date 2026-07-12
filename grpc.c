@@ -157,6 +157,9 @@ PHP_MINFO_FUNCTION(grpc_lite)
 #ifdef PHP_GRPC_LITE_ENABLE_TEST_FAULT
     php_info_print_table_row(2, "grpc_lite test fault seam", "enabled");
 #endif
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+    php_info_print_table_row(2, "grpc_lite bench diagnostics", "enabled");
+#endif
     php_info_print_table_end();
 }
 

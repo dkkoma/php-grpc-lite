@@ -40,12 +40,15 @@ $opts = ['credentials' => ChannelCredentials::createInsecure()];
 $channel = new Channel('test-server:50051', $opts);
 $client = new GreeterClient('test-server:50051', $opts, $channel);
 
-// 1. deadline expiry: the cancel path hits the fatal submit. The status
-// stays DEADLINE_EXCEEDED (timed_out outranks the connection failure).
+// 1. deadline expiry: the cancel path hits the fatal submit. The deadline is
+// the primary call outcome, so code AND details both stay deadline-specific
+// (the fatal RST submit is secondary connection cleanup and must not leak
+// "nghttp2 error: Out of memory" into the details).
 $request = new BenchRequest();
 $request->setServerDelayMs(2000);
 [, $status] = $client->BenchUnary($request, [], ['timeout' => 300_000])->wait();
 grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $status->code, 'unary deadline status');
+grpc_lite_phpt_assert_same('HTTP/2 transport deadline exceeded', $status->details, 'unary deadline details');
 
 // 2. the dead connection must not be reused.
 $hello = new HelloRequest();
@@ -62,7 +65,23 @@ putenv('GRPC_LITE_TEST_FAULT=submit-request-fatal');
 [, $status] = $client->SayHello($hello)->wait();
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $status->code, 'putenv does not alter the MINIT fault snapshot');
 
-// 3. response-policy RST inside a session callback (message too large): the
+// 3. server-streaming deadline between two pulls: the first message arrives,
+// then the deadline expires before the next pull and the cancel path hits the
+// fatal RST submit. Same contract as the unary case: exact deadline code AND
+// details, and the killed connection is never reused.
+$request = new BenchRequest();
+$request->setMessageCount(5);
+$request->setServerDelayMs(2000);
+$deadlineCall = $client->BenchServerStream($request, [], ['timeout' => 300_000]);
+$deadlineMessages = 0;
+foreach ($deadlineCall->responses() as $_reply) {
+    $deadlineMessages++;
+}
+grpc_lite_phpt_assert_same(1, $deadlineMessages, 'streaming deadline message count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $deadlineCall->getStatus()->code, 'streaming deadline status');
+grpc_lite_phpt_assert_same('HTTP/2 transport deadline exceeded', $deadlineCall->getStatus()->details, 'streaming deadline details');
+
+// 4. response-policy RST inside a session callback (message too large): the
 // policy flag decides the status, the fatal submit kills the connection.
 $clientLimited = new GreeterClient('test-server:50051', [
     'credentials' => ChannelCredentials::createInsecure(),
@@ -103,10 +122,11 @@ grpc_lite_phpt_assert_same(2, count($sayHelloEnds), 'SayHello rpc.end count');
 grpc_lite_phpt_assert_same(false, $sayHelloEnds[0]['persistent_reused'] ?? null, 'dead connection was not reused');
 grpc_lite_phpt_assert_same(true, $sayHelloEnds[1]['persistent_reused'] ?? null, 'healthy connection stays reusable');
 // Call 1 opens connection #1 and kills it (fatal cancel submit). The two
-// SayHello calls and the limited streaming call share connection #2 (same
-// connection key; message-length limits are not part of the key), which the
-// final fatal policy submit kills again.
-grpc_lite_phpt_assert_same(2, $prefaceCount, 'every call after a fatal ran on a fresh connection');
+// SayHello calls and the deadline streaming call share connection #2, whose
+// fatal cancel submit kills it again. The limited streaming call then opens
+// connection #3 (same connection key; message-length limits are not part of
+// the key), which the final fatal policy submit kills as well.
+grpc_lite_phpt_assert_same(3, $prefaceCount, 'every call after a fatal ran on a fresh connection');
 
 echo "OK\n";
 ?>
