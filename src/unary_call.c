@@ -152,8 +152,15 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     data_provider.read_callback = data_source_read_callback;
     data_provider.source.ptr = &call;
 
-    call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
+    call.stream_id = grpc_lite_test_fault_enabled("submit-request-fatal")
+        ? NGHTTP2_ERR_NOMEM
+        : nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (call.stream_id < 0) {
+        if (nghttp2_is_fatal((int) call.stream_id)) {
+            /* Fatal submit corrupts the session (nghttp2 error contract):
+             * the connection must never be reused or driven again. */
+            mark_connection_dead(connection, (int) call.stream_id);
+        }
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&call);
@@ -173,6 +180,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     rv = send_pending_h2_frames(connection, &call);
     if (rv != 0) {
         mark_connection_dead(connection, rv);
+        grpc_call_note_connection_broken(&call);
         goto build_unary_result;
     }
 
@@ -197,6 +205,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
                 cancel_grpc_call_stream(&call, NGHTTP2_CANCEL);
             } else if (!call.stream_closed) {
                 mark_connection_dead(connection, nread == 0 ? 0 : errno);
+                grpc_call_note_connection_broken(&call);
             }
             break;
         }
@@ -216,6 +225,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             rv = send_pending_h2_frames(connection, &call);
             if (rv != 0) {
                 mark_connection_dead(connection, rv);
+                grpc_call_note_connection_broken(&call);
                 break;
             }
         }

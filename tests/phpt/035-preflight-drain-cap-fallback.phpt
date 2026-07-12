@@ -93,6 +93,7 @@ foreach ($records as $record) {
 // and only then is the fresh-connection fallback the pinned expectation. If
 // bounded adoption ever lands, update this together with SPEC §4.2.
 grpc_lite_phpt_assert_true($preflightBytes >= 16384, 'preflight drain read up to its cap');
+grpc_lite_phpt_assert_true($preflightBytes <= 16384, 'preflight drain never reads past its cap');
 grpc_lite_phpt_assert_true(is_array($followUpEnd), 'follow-up rpc.end exists');
 grpc_lite_phpt_assert_same(false, $followUpEnd['persistent_reused'] ?? null, 'follow-up fell back to a fresh connection');
 grpc_lite_phpt_assert_same(2, $prefaceCount, 'exactly two connections were opened');

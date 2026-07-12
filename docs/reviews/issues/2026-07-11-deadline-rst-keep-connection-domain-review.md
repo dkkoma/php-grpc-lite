@@ -214,13 +214,72 @@
 - Verification: PHPT 035をFAILベースで23回連続実行しflakeなし。PHPT 21/21 PASS(002-iniにdefault値assert追加)。
 - Notes: production defaultの挙動は不変。kernel windowの制約はfixtureとPHPTのコメントに記録した。
 
+### REVIEW-20260712-001: nghttp2 fatal returnが全call siteでdead遷移になっていない
+
+- Severity: `High`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 third-pass review comment)`
+- Finding: unary / server streaming の `nghttp2_submit_request` fatal returnはconnectionを再利用可能なまま残し、response callback/parser内の `nghttp2_submit_rst_stream`(14箇所)は戻り値を捨てていた。fatal(NGHTTP2_ERR_NOMEM等)後も同一mem-recv内の後続callbackやsession getter / want_write / session_sendへ進み得る。nghttp2のerror contractはfatal return後に `nghttp2_session_del()` のみを許す。
+- Evidence: `src/unary_call.c` / `src/server_streaming_call.c` submit_request、`src/transport.c` parser内RST submit全site
+- Expected model: `nghttp2_is_fatal(rv)` を共通判定にし、fatalは即deadへ遷移。callback内fatalは最外のregistered callbackからfailureを返しmem_recvを即時unwind。
+- Why it matters: corrupted session上の継続操作は未定義動作。
+- Recommended fix: 共通判定 + dead化 + callback unwind + fault injectionで固定。
+- Fix summary: `grpc_protocol_submit_rst_stream_in_callback()` を追加し、parser/callback内の全RST submit(14箇所)を置換。fatal時は `mark_connection_dead` + `NGHTTP2_ERR_CALLBACK_FAILURE` を最外callbackへ伝播してmem_recvを即時unwind(`mark_server_streaming_read_ahead_limit_exceeded` はint化して伝播)。unary / streaming の `nghttp2_submit_request` fatalは `mark_connection_dead`。fault injection seam `GRPC_LITE_TEST_FAULT`(env、"rst-submit-fatal" / "submit-request-fatal"、trace hookと同型のprocess単位評価)を導入し、PHPT 038(cancel経路+callback policy経路のfatal → dead → wire上にRSTなし・fresh connection・statusはtimed_out/policy flagが優先)とPHPT 039(submit-request fatal → dead → 再attemptが毎回fresh connection・stream frameがwireに出ない)で固定。
+- Fix commit: pending
+- Verification: PHPT 24/24 PASS、対象7テスト15回連続反復でFAILなし。
+- Notes: fault seamはfatalを「シミュレート」する(実際のnghttp2呼び出しをskip)ため、fault有効時もsessionは実際にはcorruptしない。テストが固定するのは「fatal後にsession APIへ到達しない」制御フロー。
+
+### REVIEW-20260712-002: same-pullのconnection breakがUNKNOWNのまま
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 third-pass review comment)`
+- Finding: `connection_broken` はpull開始時にdead済みのguardでしか立たず、同一pull内のsocket/TLS send failure / non-timeout recv EOF/errorは `completed=true` のみで、response開始済みならUNKNOWN(2)になる(fixture :50066でreviewer実測、details "recv failed: Connection reset by peer")。
+- Evidence: `src/server_streaming_call.c` next core loop、`src/unary_call.c` recv loop
+- Expected model: client観測のconnection breakはresponse開始後もUNAVAILABLE。nghttp2 direct fatalは別taxonomy。
+- Why it matters: UNKNOWNはgax等の自動retry対象にならないことが多く、回復性に直結。
+- Recommended fix: connection-I/O由来の各dead transitionでcallへsnapshotし、exact UNAVAILABLEを固定。
+- Fix summary: `grpc_call_note_connection_broken()` helper(timed_outはno-op、connectionのerror detail/errnoをcallへsnapshot)を追加し、streaming loopのsend failure / non-timeout recv failure / post-recv send failure、unary loopの同経路すべてに適用。mem_recv(nghttp2)失敗経路は別taxonomyのため適用外。PHPT 034はfixture :50066のcross-pull経路をexact UNAVAILABLEで固定済み(same-pull経路もhelperを共有)。
+- Fix commit: pending
+- Verification: PHPT 24/24 PASS(024の50057 mid-stream failure経路含む)、C unit `test_connection_broken_mapping` PASS。
+- Notes: unary側の同経路(EOF mid-response)も同時にUNAVAILABLE化した(taxonomy一貫性)。
+
+### REVIEW-20260712-003: preflight drain capが実際のread上限になっていない
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 third-pass review comment)`
+- Finding: drain loopは合計値で判定するが各readは常に64KiBを要求し、INI=16384でも `requested_len=65536 / result_len=49179` とcapを超えて読む。
+- Evidence: `src/transport.c` `drain_pending_connection_data_for_reuse`
+- Expected model: capはdrainの実予算であり、単一readがovershootしない。
+- Recommended fix: read長を `min(buffer_len, max_bytes - total_read)` にし、合計read ≤ capをassert。
+- Fix summary: read長を残余capでクリップ(TLS/socket両経路とtrace requested_lenも更新)。PHPT 035に `preflightBytes <= cap` assertを追加。
+- Fix commit: pending
+- Verification: PHPT 035 PASS(sum == 16384を上下両側からassert)。
+- Notes: なし
+
+### REVIEW-20260712-004: draining UAFの元shape(pending request DATA + destructor + 別owner drive)が回帰テストで固定されていない
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 third-pass review comment)`
+- Finding: PHPT 036はGOAWAY後のRST送出のみ固定し、pending DATA provider + destructor + second admitted owner driveのUAF shapeを作らない。`h2_send_data_callback` のlifetimeコメントにも「draining なら session_send しない」という誤った前提が残る。
+- Evidence: `tests/phpt/036-draining-connection-cancel-sends-rst.phpt`、`src/transport.c` lifetimeコメント
+- Expected model: UAF修正はoriginal shapeのsanitizer regressionで固定する。
+- Recommended fix: small initial window + large request A + admitted B + GOAWAY + A destructor + B/WINDOW_UPDATE driveをASan/UBSanで通す。コメント修正。
+- Fix summary: fixture `:50070`(INITIAL_WINDOW_SIZE=1024 + connection WINDOW_UPDATE、stream Aへrequest未消費のままmessage応答、BにGOAWAY(MaxInt32)→messageの順で応答、500ms後にAのwindowを開けてBを完走)を追加し、PHPT 037で「A(256KiB request、DATA deferred)を1 message受信後にdraining上でdestruct → RST(A)がGOAWAY後にwireへ出る → 遅延WINDOW_UPDATE(A)を跨いでBがOK完走」を固定。streamingのwire openは最初のrecv batchで遅延実行されるため、Aは1 message読んでstreamをopenしてからdestructする(request DATAはwindow飢餓でdeferredのまま)。`h2_send_data_callback` のlifetimeコメントを「RSTでstream closeしてからfree、またはdead(I/Oゲート)」へ修正。GOAWAYはmessageの前に送出しTCP順序でdraining観測を決定的にした。sanitizer(ASan/UBSan)スイートで全PHPTを実行。
+- Fix commit: pending
+- Verification: PHPT 037 PASS、対象7テスト15回反復FAILなし、check-c-sanitizer.sh実行。
+- Notes: なし
+
 ## Review Result
 
 - Blocker: none
-- High: 4 (Fixed)
-- Medium: 4 (Fixed)
-- Low: 4 (Fixed)
+- High: 5 (Fixed)
+- Medium: 5 (Fixed)
+- Low: 6 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
 - PR #29 敵対的レビュー第二パス(2026-07-11、HEAD 6795a5a): High 2 / Medium 2 を追加受領(REVIEW-20260711-010〜013)、全件Fixed
+- PR #29 敵対的レビュー第三パス(2026-07-12、HEAD be1b97e): High 1 / Medium 1 / Low 2 を追加受領(REVIEW-20260712-001〜004)、全件Fixed

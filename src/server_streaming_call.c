@@ -124,8 +124,15 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
     data_provider.source.ptr = &state->call;
-    state->call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
+    state->call.stream_id = grpc_lite_test_fault_enabled("submit-request-fatal")
+        ? NGHTTP2_ERR_NOMEM
+        : nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (state->call.stream_id < 0) {
+        if (nghttp2_is_fatal((int) state->call.stream_id)) {
+            /* Fatal submit corrupts the session (nghttp2 error contract):
+             * the connection must never be reused or driven again. */
+            mark_connection_dead(connection, (int) state->call.stream_id);
+        }
         if (setup_failure != NULL) {
             setup_failure->code = GRPC_STATUS_UNAVAILABLE;
             setup_failure->details = zend_string_init("nghttp2_submit_request failed", sizeof("nghttp2_submit_request failed") - 1, 0);
@@ -263,19 +270,8 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
              * expired). Dead is terminal for every stream: re-driving the
              * session could emit bytes after a partial frame or block a
              * deadline-less call forever. Draining stays allowed — a GOAWAY
-             * admitted this stream, so it runs to completion. Snapshot the
-             * connection-scoped failure onto the call: the connection object
-             * may be released before this call resolves its status, and the
-             * breakage maps to UNAVAILABLE. */
-            call->connection_broken = true;
-            if (state->call.connection != NULL) {
-                if (call->last_io_error_detail[0] == '\0') {
-                    snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "%s", state->call.connection->last_error_detail);
-                }
-                if (call->last_io_errno == 0) {
-                    call->last_io_errno = state->call.connection->last_io_errno;
-                }
-            }
+             * admitted this stream, so it runs to completion. */
+            grpc_call_note_connection_broken(call);
             state->completed = true;
             break;
         }
@@ -288,10 +284,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
         rv = send_pending_h2_frames(state->call.connection, call);
         if (rv != 0) {
             mark_connection_dead(state->call.connection, rv);
-            if (call->timed_out) {
-                state->completed = true;
-                break;
-            }
+            grpc_call_note_connection_broken(call);
             state->completed = true;
             break;
         }
@@ -311,6 +304,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
                 cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);
             } else {
                 mark_connection_dead(state->call.connection, nread == 0 ? 0 : errno);
+                grpc_call_note_connection_broken(call);
             }
             state->completed = true;
             break;
@@ -327,6 +321,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             rv = send_pending_h2_frames(state->call.connection, call);
             if (rv != 0) {
                 mark_connection_dead(state->call.connection, rv);
+                grpc_call_note_connection_broken(call);
                 state->completed = true;
                 break;
             }

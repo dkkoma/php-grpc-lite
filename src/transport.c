@@ -86,7 +86,7 @@ void free_request_headers(h2_request_headers *headers);
 int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len);
 static bool server_streaming_read_ahead_limit_would_exceed(grpc_call *call, size_t payload_len);
-static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call);
+static int mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call);
 int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload);
 void free_queued_response_payloads(grpc_call *call);
 void grpc_protocol_mark_response_metadata_as_trailing(grpc_call *call);
@@ -342,7 +342,11 @@ void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
         return;
     }
     call->locally_cancelled = true;
-    rv = nghttp2_submit_rst_stream(connection->session, NGHTTP2_FLAG_NONE, call->stream_id, error_code);
+    if (grpc_lite_test_fault_enabled("rst-submit-fatal")) {
+        rv = NGHTTP2_ERR_NOMEM;
+    } else {
+        rv = nghttp2_submit_rst_stream(connection->session, NGHTTP2_FLAG_NONE, call->stream_id, error_code);
+    }
     if (rv != 0) {
         mark_connection_dead(connection, rv);
         return;
@@ -880,6 +884,74 @@ bool connection_io_allowed(h2_connection *connection)
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead;
 }
 
+/* Test-only fault injection. GRPC_LITE_TEST_FAULT holds a comma-separated
+ * list of fault names honored by dedicated seams ("rst-submit-fatal",
+ * "submit-request-fatal"); never set in production. Evaluated once per
+ * process, mirroring the GRPC_LITE_TRACE_FILE diagnostics hook. */
+bool grpc_lite_test_fault_enabled(const char *fault_name)
+{
+    static const char *faults = NULL;
+
+    if (faults == NULL) {
+        const char *value = getenv("GRPC_LITE_TEST_FAULT");
+        faults = value != NULL ? value : "";
+    }
+    return faults[0] != '\0' && strstr(faults, fault_name) != NULL;
+}
+
+/* Record a client-observed transport connection failure (socket/TLS send
+ * failure, recv EOF/error) on the call so it resolves as UNAVAILABLE per the
+ * gRPC status taxonomy. Deadline expiry stays DEADLINE_EXCEEDED (no-op when
+ * timed_out), and the connection-scoped error detail is snapshotted because
+ * the connection object may be released before the call resolves. nghttp2
+ * fatal returns keep their own taxonomy and must not use this. */
+void grpc_call_note_connection_broken(grpc_call *call)
+{
+    h2_connection *connection;
+
+    if (call == NULL || call->timed_out) {
+        return;
+    }
+    call->connection_broken = true;
+    connection = call->connection;
+    if (connection == NULL) {
+        return;
+    }
+    if (call->last_io_error_detail[0] == '\0' && connection->last_error_detail[0] != '\0') {
+        snprintf(call->last_io_error_detail, sizeof(call->last_io_error_detail), "%s", connection->last_error_detail);
+    }
+    if (call->last_io_errno == 0) {
+        call->last_io_errno = connection->last_io_errno;
+    }
+}
+
+/* Submit a policy RST_STREAM from inside an nghttp2 session callback.
+ * Returns 0 when the RST was queued or skipped (no session / no stream) and
+ * on non-fatal submit errors: the response-policy flag already set on the
+ * call decides the outcome either way. A fatal return corrupts the session
+ * per the nghttp2 error contract (only nghttp2_session_del() is allowed
+ * afterwards), so mark the connection dead and return
+ * NGHTTP2_ERR_CALLBACK_FAILURE for the registered callback to unwind
+ * nghttp2_session_mem_recv immediately. */
+static int grpc_protocol_submit_rst_stream_in_callback(nghttp2_session *session, grpc_call *call, uint32_t error_code)
+{
+    int rv;
+
+    if (session == NULL || call == NULL || call->stream_id <= 0) {
+        return 0;
+    }
+    if (grpc_lite_test_fault_enabled("rst-submit-fatal")) {
+        rv = NGHTTP2_ERR_NOMEM;
+    } else {
+        rv = nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, error_code);
+    }
+    if (nghttp2_is_fatal(rv)) {
+        mark_connection_dead(call->connection, rv);
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return 0;
+}
+
 static bool identity_matches(zend_string *stored, const char *expected, size_t expected_len)
 {
     if (stored == NULL) {
@@ -949,16 +1021,23 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
 
     while (iterations < GRPC_LITE_PREFLIGHT_DRAIN_MAX_ITERATIONS && total_read < max_bytes) {
         ssize_t nread;
+        /* Never read past the cap: the cap is the actual drain budget, not a
+         * post-hoc accounting threshold, so a single large read must not
+         * overshoot it. */
+        size_t read_len = buffer_len;
+        if (max_bytes - total_read < read_len) {
+            read_len = max_bytes - total_read;
+        }
         iterations++;
 
         if (connection->ssl != NULL) {
-            int ssl_read = SSL_read(connection->ssl, buffer, (int) buffer_len);
+            int ssl_read = SSL_read(connection->ssl, buffer, (int) read_len);
             if (ssl_read > 0) {
                 nread = ssl_read;
-                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read", buffer_len, nread, 0, 0);
+                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read", read_len, nread, 0, 0);
             } else {
                 int ssl_error = SSL_get_error(connection->ssl, ssl_read);
-                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read_retry", buffer_len, ssl_read, ssl_error, 0);
+                grpc_lite_trace_transport_io(connection, "wire.tls_preflight_read_retry", read_len, ssl_read, ssl_error, 0);
                 connection->last_ssl_error = ssl_error;
                 if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
                     reached_read_boundary = true;
@@ -974,7 +1053,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
                 return false;
             }
         } else {
-            nread = recv(connection->fd, buffer, buffer_len, MSG_DONTWAIT);
+            nread = recv(connection->fd, buffer, read_len, MSG_DONTWAIT);
             if (nread == 0) {
                 set_connection_error_detail(connection, "persistent connection closed by peer before reuse");
                 mark_connection_dead(connection, 0);
@@ -988,7 +1067,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
                 mark_connection_dead(connection, errno);
                 return false;
             }
-            grpc_lite_trace_transport_io(connection, "wire.socket_preflight_read", buffer_len, nread, 0, 0);
+            grpc_lite_trace_transport_io(connection, "wire.socket_preflight_read", read_len, nread, 0, 0);
         }
 
         total_read += (size_t) nread;
@@ -1956,11 +2035,13 @@ ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, u
 /* Lifetime invariant: source->ptr is the grpc_call that owns the request
  * bytes (unary: stack frame of the perform function; streaming:
  * state->request zend_string). Every path that lets the call struct go away
- * first ensures either the stream is closed (nghttp2 has detached the
- * outbound DATA item) or the connection is dead/draining (nghttp2_session_send
- * is never called again and nghttp2_session_del invokes no send callbacks),
- * so this callback can never fire with a dangling source. Keep that guarantee
- * when adding early-return paths around the send/recv loops. */
+ * first ensures either the stream is closed (RST_STREAM submitted via
+ * cancel_grpc_call_stream — including on draining connections, whose
+ * admitted streams keep driving nghttp2_session_send — detaches the
+ * outbound DATA item) or the connection is dead (connection_io_allowed
+ * gates every send/recv and nghttp2_session_del invokes no send callbacks),
+ * so this callback can never fire with a dangling source. Keep that
+ * guarantee when adding early-return paths around the send/recv loops. */
 int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
@@ -2219,9 +2300,7 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
     } else if (frame->hd.type == NGHTTP2_PUSH_PROMISE && frame->hd.stream_id == call->stream_id) {
         call->malformed_response_frame = true;
         call->discard_response_body = true;
-        if (session != NULL && call->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_PROTOCOL_ERROR);
-        }
+        return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_PROTOCOL_ERROR);
     }
     return 0;
 }
@@ -2705,10 +2784,7 @@ int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, gr
     if (call->grpc_status_seen) {
         call->invalid_grpc_status = true;
         call->discard_response_body = true;
-        if (session != NULL && call->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-        }
-        return 0;
+        return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
     }
 
     while (offset < len && !call->response_message_too_large) {
@@ -2729,34 +2805,22 @@ int grpc_protocol_validate_response_message_lengths(nghttp2_session *session, gr
             if (call->max_response_messages > 0 && ++call->response_message_count > call->max_response_messages) {
                 call->malformed_response_frame = true;
                 call->discard_response_body = true;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
-                return 0;
+                return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
             }
             if (call->response_header_buf[0] > 1) {
                 call->malformed_response_frame = true;
                 call->discard_response_body = true;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
-                return 0;
+                return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
             }
             if (call->response_header_buf[0] == 1) {
                 grpc_protocol_flag_compressed_message(call);
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
-                return 0;
+                return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
             }
             call->response_payload_offset = 0;
             if ((size_t) call->response_payload_len > call->max_receive_message_bytes) {
                 call->response_message_too_large = true;
                 call->discard_response_body = true;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-                }
-                return 0;
+                return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
             }
             if (call->response_payload_len == 0) {
                 call->response_header_len = 0;
@@ -2789,10 +2853,7 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
     if (call->grpc_status_seen) {
         call->invalid_grpc_status = true;
         call->discard_response_body = true;
-        if (session != NULL && call->stream_id > 0) {
-            nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-        }
-        return 0;
+        return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
     }
     if (call->discard_response_body) {
         /* Validation already failed (invalid content-type, unsupported
@@ -2822,8 +2883,8 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+                if (grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL) != 0) {
+                    return NGHTTP2_ERR_CALLBACK_FAILURE;
                 }
                 continue;
             }
@@ -2833,8 +2894,8 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+                if (grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL) != 0) {
+                    return NGHTTP2_ERR_CALLBACK_FAILURE;
                 }
                 continue;
             }
@@ -2844,8 +2905,8 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+                if (grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL) != 0) {
+                    return NGHTTP2_ERR_CALLBACK_FAILURE;
                 }
                 continue;
             }
@@ -2855,8 +2916,8 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+                if (grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL) != 0) {
+                    return NGHTTP2_ERR_CALLBACK_FAILURE;
                 }
                 continue;
             }
@@ -2865,14 +2926,13 @@ int grpc_protocol_process_response_data_direct(nghttp2_session *session, grpc_ca
                 call->response_header_len = 0;
                 call->response_payload_len = 0;
                 call->response_payload_offset = 0;
-                if (session != NULL && call->stream_id > 0) {
-                    nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+                if (grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL) != 0) {
+                    return NGHTTP2_ERR_CALLBACK_FAILURE;
                 }
                 continue;
             }
             if (server_streaming_read_ahead_limit_would_exceed(call, call->response_payload_len)) {
-                mark_server_streaming_read_ahead_limit_exceeded(session, call);
-                return 0;
+                return mark_server_streaming_read_ahead_limit_exceeded(session, call);
             }
             call->response_payload_offset = 0;
             {
@@ -2936,27 +2996,24 @@ static bool server_streaming_read_ahead_limit_would_exceed(grpc_call *call, size
             || call->response_queue_bytes > max_bytes - payload_len);
 }
 
-static void mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call)
+static int mark_server_streaming_read_ahead_limit_exceeded(nghttp2_session *session, grpc_call *call)
 {
     if (call == NULL) {
-        return;
+        return 0;
     }
     call->response_queue_limit_exceeded = true;
     call->discard_response_body = true;
     call->response_header_len = 0;
     call->response_payload_len = 0;
     call->response_payload_offset = 0;
-    if (session != NULL && call->stream_id > 0) {
-        nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-    }
+    return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
 }
 
 int enqueue_response_payload(nghttp2_session *session, grpc_call *call, zend_string *payload)
 {
     if (server_streaming_read_ahead_limit_would_exceed(call, ZSTR_LEN(payload))) {
         zend_string_release(payload);
-        mark_server_streaming_read_ahead_limit_exceeded(session, call);
-        return 0;
+        return mark_server_streaming_read_ahead_limit_exceeded(session, call);
     }
 
     queued_payload *entry = emalloc(sizeof(queued_payload));
@@ -3002,13 +3059,7 @@ int grpc_protocol_add_response_metadata_entry(grpc_call *call, const uint8_t *na
         || call->metadata_bytes > call->max_response_metadata_bytes - entry_bytes) {
         call->metadata_too_large = true;
         call->discard_response_body = true;
-        if (call->stream_id > 0) {
-            nghttp2_session *session = call->connection != NULL ? call->connection->session : NULL;
-            if (session != NULL) {
-                nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
-            }
-        }
-        return 0;
+        return grpc_protocol_submit_rst_stream_in_callback(call->connection != NULL ? call->connection->session : NULL, call, NGHTTP2_CANCEL);
     }
 
     entry = emalloc(sizeof(metadata_entry));
