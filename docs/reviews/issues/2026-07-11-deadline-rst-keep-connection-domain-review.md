@@ -317,11 +317,41 @@
 - Verification: PHPT 039 PASS(130 key sweep含む)、影響8テスト8回反復FAILなし。
 - Notes: なし
 
+### REVIEW-20260712-008: unary coreとdiagnostic callerのconnection lifetime契約不一致によるUAF
+
+- Severity: `High`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 fifth-pass review comment)`
+- Finding: submit fatal時、unary coreはconnectionをdead化・cacheからdetachし、owner clear後に破棄してFAILUREを返す。一方 `--enable-grpc-bench` のdiagnostic caller(`grpc_lite_unary`)はFAILURE後も同じraw pointerを `connection_usable()` へ渡す。reviewer実測: bench+test-fault併用ASan buildで `submit-request-fatal` 注入の1コール目からdeterministicにheap-use-after-free(free=`unary_call.c` fatal branch / read=`diagnostic/bench.c` failure branch)。real `nghttp2_submit_request` fatalでも同一branchへ到達する。
+- Evidence: `src/diagnostic/bench.c` failure branch、`src/unary_call.c` submit fatal branch
+- Expected model: callee/callerでconnection lifetime契約を一意にする。calleeがFAILUREでconnectionを消費するなら、callerはpointerへ再度触れない。
+- Why it matters: bench診断buildでのUAF。契約の非一意性はfatal cleanupの変更ごとに同型バグを再生産する。
+- Recommended fix: diagnostic failure branchからconnection参照を除去(またはdetach/destroyをkey保持callerへ統一)+ bench+test-fault併用ASan regression。
+- Fix summary: 契約を「FAILUREはconnectionを消費して返る(unusable化したbranchはdetach+destroy済み)/ SUCCESSはpointer有効でcallerがevict」に統一してcore定義へ明文化。unary coreはsubmit fatalに加えregister失敗(`mark_grpc_call_stream_registration_failed` はdead化する)・`nghttp2_session_mem_recv` fatalのFAILURE branchでも `detach_persistent_connection_by_ptr` + `destroy_detached_connection_if_unowned` を行い、diagnostic callerのFAILURE branchからconnection参照(`connection_usable` / `remove_unusable_persistent_connection`)を除去。`check-phpt.sh` / `check-c-sanitizer.sh` に `--enable-grpc-bench` を追加し、PHPT 040(`grpc_lite_unary` × `submit-request-fatal` を2 attempt)を追加。旧callerコードを一時復元したASan buildで040が実際にheap-use-after-freeでFAILすることを確認し、修正版でPASSすることを確認(regressionの検出力を実証)。PHPT 001はbench surface露出をMINFO行 "grpc_lite bench diagnostics" とのiff関係でassertする形へ変更(production buildの非露出保証は維持)。
+- Fix commit: e424689
+- Verification: sanitizerスイート(bench+test-fault)25/25 PASS・報告ゼロ(旧コードでは040がASan UAFでFAIL)、test-fault+benchビルド PHPT 25/25、production build(`--enable-grpc` のみ)warningなし+001 PASS+038/039/040 SKIP、ZTS 24 PASS/1 SKIP(040、bench無効ビルド)。
+- Notes: streaming diagnostic caller(`grpc_lite_server_streaming_open`)はraw pointerを保持せず、streaming側のstate destroy経路は従来からunusable時にdetach+destroyするため同型問題なし(確認済み)。
+
+### REVIEW-20260712-009: RST submit fatal時にdeadlineのstatus detailsがconnection errorに上書きされる
+
+- Severity: `Medium`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 fifth-pass review comment)`
+- Finding: server streamingで1 message受信後・次のpull前にdeadlineが切れ、cancelのRST submitがfatalになると、status codeは `DEADLINE_EXCEEDED(4)` のままだがdetailsが "nghttp2 error: Out of memory" になる(reviewer実測)。code resolverは `timed_out` を最優先する一方、details resolverはconnection error detail(`last_io_error_detail` / `connection->last_error_detail`)をdeadline固有detailsより先に返すため。PHPT 038はcodeしかassertせず見逃していた。
+- Evidence: `src/status_core.c` code priority、`src/transport.c` `grpc_lite_status_details_from_call`
+- Expected model: deadlineはprimary call outcome、RST送出失敗はsecondaryなconnection-cleanup failure。PHP可視のcode/detailsをともにdeadlineへ揃える。
+- Why it matters: リトライ/タイムアウト調整の運用判断がdetails文字列に依存するケースで誤誘導する。code/detailsの不整合はドメインモデル(status taxonomyの優先順位)の破れ。
+- Recommended fix: details resolverにtimed_out優先を追加し、PHPT 038へbetween-pull streaming deadlineのexact code/details assertを追加。
+- Fix summary: `grpc_lite_status_details_from_call` に「`code == DEADLINE_EXCEEDED && call->timed_out` ならdeadline固有details("HTTP/2 transport deadline exceeded")を返す」分岐をI/O error detail評価より前(server供給の `grpc_message` の直後)へ追加。PHPT 038の既存unary deadlineケースにexact details assertを追加し、between-pull server-streaming deadlineケース(1 message受信 → deadline → fatal RST submit)を新設してexact code/details・受信message数1・後続callのfresh connection(preface 3本)を固定。
+- Fix commit: e424689
+- Verification: PHPT 038 PASS(unary/streamingともexact details)、影響5テスト(024/033/038/039/040)8回反復FAILなし、C unit 3/3(status taxonomy非変更)、full PHPT 25/25。
+- Notes: server供給 `grpc_message` の優先は従来どおり維持(deadline raceでserverがmessage付きtrailersを返した場合の情報は落とさない)。
+
 ## Review Result
 
 - Blocker: none
-- High: 6 (Fixed)
-- Medium: 7 (Fixed)
+- High: 7 (Fixed)
+- Medium: 8 (Fixed)
 - Low: 6 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
@@ -329,3 +359,4 @@
 - PR #29 敵対的レビュー第二パス(2026-07-11、HEAD 6795a5a): High 2 / Medium 2 を追加受領(REVIEW-20260711-010〜013)、全件Fixed
 - PR #29 敵対的レビュー第三パス(2026-07-12、HEAD be1b97e): High 1 / Medium 1 / Low 2 を追加受領(REVIEW-20260712-001〜004)、全件Fixed
 - PR #29 敵対的レビュー第四パス(2026-07-12、HEAD 2af2d58): High 1 / Medium 2 を追加受領(REVIEW-20260712-005〜007)、全件Fixed
+- PR #29 敵対的レビュー第五パス(2026-07-12、HEAD 287bc93): High 1 / Medium 1 を追加受領(REVIEW-20260712-008〜009)、全件Fixed
