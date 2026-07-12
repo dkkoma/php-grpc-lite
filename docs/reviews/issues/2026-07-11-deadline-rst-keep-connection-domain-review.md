@@ -283,7 +283,7 @@
 - Why it matters: production pathへのtest seam混入とUAF/data race。
 - Recommended fix: compile out + MINIT copy + exact token match + request跨ぎASan/ZTS regression。
 - Fix summary: `--enable-grpc-test-fault`(default off)を追加し、seam全体を `PHP_GRPC_LITE_ENABLE_TEST_FAULT` でguard(未定義時は `grpc_lite_test_fault_enabled` をconstant falseマクロにして呼び出しbranchごとcompile out)。有効時はMINITで `GRPC_LITE_TEST_FAULT` を固定バッファへcopyし(getenv pointerを保持しない、MINITはthread起動前なのでZTS読み取り専用で安全)、カンマ区切りのexact token matchで判定。check-phpt / check-zts-phpt / check-c-sanitizer / check-c-coverage のtest buildにflagを追加。PHPT 038に putenv(削除+別値) 後も挙動が変わらないMINIT snapshot regressionと、superstring decoy token("submit-request-fatal-decoy")によるexact match regressionを追加。038/039はseam未buildの場合SKIP(phpinfo行で検出)。
-- Fix commit: pending
+- Fix commit: 3e128d4
 - Verification: production build(`--enable-grpc` のみ)がwarningなしでビルドでき038/039がSKIPすること、test-fault build 24/24、ZTSスイート24/24、sanitizerスイート24/24・報告ゼロ。
 - Notes: multi-request(FPM)のUAF再現はharness外だが、原因のpointer保持自体を排除しputenv regressionで固定した。
 
@@ -298,7 +298,7 @@
 - Why it matters: retry判断の一次入力の誤分類。unary/streamingでの非一貫。
 - Recommended fix: streamingのtruncated判定に connection break 除外を追加。
 - Fix summary: streamingのtruncated判定の除外条件に `!call->connection_broken` を追加しコメントを更新。PHPT 024の :50057 ケースをexact `UNAVAILABLE` に強化し、server streamingケースを追加。
-- Fix commit: pending
+- Fix commit: 3e128d4
 - Verification: PHPT 024 PASS(unary/streamingともUNAVAILABLE)。
 - Notes: response-started callのtransparent retry不可は不変(outcome predicate非変更)。
 
@@ -313,7 +313,7 @@
 - Why it matters: 長寿命workerでのcache枯渇 → 新規接続不能。
 - Recommended fix: fatal branchで即時detach + 多key regression。
 - Fix summary: unary / streaming の submit fatal branch で `detach_persistent_connection_by_ptr()` を呼び即時evict(unaryは `destroy_detached_connection_if_unowned` も追加、streamingはdestroy経路のclear ownerが破棄を担う)。PHPT 039に `grpc.default_authority` を変えた130 keyのsweepを追加し、全件が "nghttp2_submit_request failed"(cache exhaustionでない)かつpreface 133本(dead entryの再利用なし)であることを固定。
-- Fix commit: pending
+- Fix commit: 3e128d4
 - Verification: PHPT 039 PASS(130 key sweep含む)、影響8テスト8回反復FAILなし。
 - Notes: なし
 
