@@ -52,6 +52,7 @@ docker compose run --rm dev bash -lc '
         done
     }
     cleanup_phpt_artifacts
+    GRPC_LITE_EXPECT_BENCH=1 \
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
         -d extension=/workspace/modules/grpc.so \

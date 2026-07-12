@@ -31,12 +31,18 @@ foreach ([
     grpc_lite_phpt_assert_same($expected, constant($name), $name);
 }
 
-// The bench diagnostic surface must exist exactly when the build opted in
-// with --enable-grpc-bench (MINFO row). In particular a production build
-// (no MINFO row) must not expose any of these functions.
+// The bench diagnostic surface must match the lane's declared expectation:
+// only runners that intentionally build --enable-grpc-bench export
+// GRPC_LITE_EXPECT_BENCH=1; everything else (including a bare production
+// run) expects non-exposure. The expectation is external input on purpose —
+// deriving it from this module's own MINFO would also pass when a build-flag
+// mistake exposes the bench surface in a production lane. The MINFO row must
+// agree with the same external expectation.
+$expectBench = getenv('GRPC_LITE_EXPECT_BENCH') === '1';
 ob_start();
 phpinfo(INFO_MODULES);
-$benchBuild = str_contains((string) ob_get_clean(), 'grpc_lite bench diagnostics');
+$minfoBench = str_contains((string) ob_get_clean(), 'grpc_lite bench diagnostics');
+grpc_lite_phpt_assert_same($expectBench, $minfoBench, 'MINFO bench diagnostics row must match the lane expectation');
 foreach ([
     'grpc_lite_unary',
     'grpc_lite_server_streaming_open',
@@ -45,11 +51,11 @@ foreach ([
     'grpc_lite_bench_unary_batch',
 ] as $function) {
     grpc_lite_phpt_assert_same(
-        $benchBuild,
+        $expectBench,
         function_exists($function),
-        $benchBuild
-            ? "$function must be exposed in a --enable-grpc-bench build"
-            : "$function must not be exposed in production build",
+        $expectBench
+            ? "$function must be exposed in a --enable-grpc-bench lane"
+            : "$function must not be exposed in a production lane",
     );
 }
 

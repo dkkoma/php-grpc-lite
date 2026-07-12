@@ -85,19 +85,7 @@ docker compose run --build --rm \
     fi
 
     cd /workspace
-    make clean >/tmp/grpc-sanitizer-clean.log 2>&1 || true
-    rm -rf .libs modules *.lo *.o *.dep
-    "$phpize_bin" >/tmp/grpc-sanitizer-phpize.log
-    CC=clang \
-    CFLAGS="-O1 -g -fno-omit-frame-pointer $sanitizer_flags" \
-    LDFLAGS="$sanitizer_flags" \
-        ./configure --enable-grpc --enable-grpc-test-fault --enable-grpc-bench --with-php-config="$php_config_bin" >/tmp/grpc-sanitizer-configure.log
-    make -j$(nproc) >/tmp/grpc-sanitizer-make.log
-
-    cd /workspace
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }
-    "${php_sanitized[@]}" -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
-        || { echo "grpc extension failed to load from /workspace/modules/grpc.so" >&2; exit 1; }
 
     "${php_sanitized[@]}" -r '\''
         foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065, 50066, 50067, 50068, 50069, 50070] as $port) {
@@ -134,7 +122,6 @@ docker compose run --build --rm \
         done
     }
 
-    cleanup_phpt_artifacts
     test_php=/tmp/php-grpc-lite-sanitized-php
     cat > "$test_php" <<'\''SH'\''
 #!/usr/bin/env sh
@@ -144,9 +131,35 @@ SH
     run_tests=/opt/php-sanitizer/lib/php/build/run-tests.php
     test -f "$run_tests" || run_tests=/usr/src/php/run-tests.php
 
-    TEST_PHP_EXECUTABLE="$test_php" \
-        "${php_sanitized[@]}" "$run_tests" -q \
-        -d extension=/workspace/modules/grpc.so \
-        /workspace/tests/phpt
-    cleanup_phpt_artifacts
+    # Two sanitizer lanes: the production lane runs the exact production
+    # binary (no fault seam, no bench surface; fault/bench PHPTs SKIP) so
+    # production-only layout/branch memory bugs stay behind the sanitizer
+    # gate, and the bench+fault lane runs the fault-injection and bench
+    # diagnostic regressions (e.g. PHPT 038-041).
+    run_phpt_lane() {
+        lane_name="$1"; shift
+        expect_bench="$1"; shift
+        echo "=== sanitizer PHPT lane: $lane_name ==="
+        cd /workspace
+        make clean >"/tmp/grpc-sanitizer-clean-$lane_name.log" 2>&1 || true
+        rm -rf .libs modules *.lo *.o *.dep
+        "$phpize_bin" >"/tmp/grpc-sanitizer-phpize-$lane_name.log"
+        CC=clang \
+        CFLAGS="-O1 -g -fno-omit-frame-pointer $sanitizer_flags" \
+        LDFLAGS="$sanitizer_flags" \
+            ./configure "$@" --with-php-config="$php_config_bin" >"/tmp/grpc-sanitizer-configure-$lane_name.log"
+        make -j$(nproc) >"/tmp/grpc-sanitizer-make-$lane_name.log"
+        "${php_sanitized[@]}" -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
+            || { echo "grpc extension failed to load from /workspace/modules/grpc.so ($lane_name lane)" >&2; exit 1; }
+        cleanup_phpt_artifacts
+        GRPC_LITE_EXPECT_BENCH="$expect_bench" \
+        TEST_PHP_EXECUTABLE="$test_php" \
+            "${php_sanitized[@]}" "$run_tests" -q \
+            -d extension=/workspace/modules/grpc.so \
+            /workspace/tests/phpt
+        cleanup_phpt_artifacts
+    }
+
+    run_phpt_lane production 0 --enable-grpc
+    run_phpt_lane bench-fault 1 --enable-grpc --enable-grpc-test-fault --enable-grpc-bench
 '
