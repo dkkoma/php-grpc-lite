@@ -70,6 +70,8 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 - PR #29 敵対的レビュー第五パス対応(REVIEW-20260712-008〜009): test-fault+benchビルド PHPT 25/25 PASS(新規040、038強化)、sanitizerスイート(bench併用)25/25・報告ゼロ — 旧callerコードを一時復元すると040がASan heap-use-after-freeで実際にFAILすることを確認しregressionの検出力を実証、production build warningなし+001 PASS+fault系SKIP、ZTS 24 PASS/1 SKIP(040)、影響5テスト8回反復FAILなし、C unit 3/3 / PHPUnit 31 / cppcheck(production+bench両構成)pass(2026-07-12)。
 - PR #29 敵対的レビュー第六パス対応(REVIEW-20260713-001〜003): sanitizer 2 lane(production lane 22 PASS/4 SKIP + bench-fault lane 26/26 PASS・報告ゼロ)、NTS PHPT 26/26 PASS(新規041)、ZTS 24 PASS/2 SKIP、041はdetach一時除去で実際にFAILすることを確認、影響4テスト8回反復FAILなし、PHPUnit 31 OK。Cソース変更なし(テスト+スクリプトのみ)のためC unit/cppcheckは前回結果が有効(2026-07-13)。
 
+- PR #29 敵対的レビュー第七パス対応(REVIEW-20260713-004〜006): NTS PHPT 26/26 PASS、sanitizer 2 lane(production 22 PASS/4 SKIP + bench-fault 26/26)報告ゼロ、ZTS 24 PASS/2 SKIP、041のdestroy assertはdestroy一時除去で実際にFAILすることを確認、影響4テスト8回反復FAILなし、C unit 3/3 / cppcheck / PHPUnit 31 OK(2026-07-13)。
+
 ## Decision Log
 
 - 計画にあった「RST送出後の短時間drain」は実装しない(2026-07-11)。RST_STREAM submit時点でnghttp2はstreamをclose済み扱いにするためdrainで待つ対象がなく、読み残しframeはnghttp2のclosed-stream無視 + 次回reuse時のpreflight drain(`preflight_persistent_connection`)が既に消化する。streaming側のuser cancel経路も同じ前提で運用済み。

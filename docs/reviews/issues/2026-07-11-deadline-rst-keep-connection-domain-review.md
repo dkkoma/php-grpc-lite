@@ -390,12 +390,54 @@
 - Verification: PHPT 041 PASS(NTS/sanitizer bench-fault lane)、detach除去時FAIL確認、影響4テスト(001/038/040/041)8回反復FAILなし。
 - Notes: register失敗branchは `nghttp2_session_set_stream_user_data` の失敗を外部から誘発できないためPHPT固定対象外(レビュー指摘のスコープもmem-recvのみ)。
 
+### REVIEW-20260713-004: production laneのtest-fault seam非露出が外部期待と照合されていない
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 seventh-pass review comment)`
+- Finding: runnerが宣言する期待はbenchのみで、test-fault seamのavailabilityは同一moduleのMINFOから導出(SKIPIF)される。production laneへ誤って `--enable-grpc-test-fault` が入っても038/039がSKIP解除されてPASSするだけでsuiteは成功し得る。pure-productionのregression oracleが片側だけ。
+- Evidence: `tools/test/check-c-sanitizer.sh` lane定義、`tests/phpt/001-load.phpt`、`tests/phpt/helpers.inc`
+- Expected model: bench同様、seamの露出/非露出もrunner宣言の外部期待と照合する。
+- Recommended fix: `GRPC_LITE_EXPECT_TEST_FAULT=0|1` をrunnerから渡し、MINFO "grpc_lite test fault seam" 行を照合。
+- Fix summary: PHPT 001に `GRPC_LITE_EXPECT_TEST_FAULT`(未設定=非露出期待)とMINFO行の照合を追加。seamをbuildする全runner(`check-phpt.sh` / `check-zts-phpt.sh` / `check-c-coverage.sh` / sanitizer bench-fault lane)が `=1` を宣言し、sanitizer production laneは `=0` を明示。production laneへのseam漏出は001のFAILとして検出される。
+- Fix commit: 3ed170f
+- Verification: sanitizer production lane(EXPECT_TEST_FAULT=0)22 PASS / 4 SKIP、bench-fault lane 26/26、NTS 26/26、ZTS 24 PASS / 2 SKIP(いずれも001 PASS)。
+- Notes: helpers.incのSKIPIF用MINFO導出は残置(SKIP判定は保護対象の不変条件でなく、oracleは001が担う)。
+
+### REVIEW-20260713-005: PHPT 041がdetached connectionのdestroyまで観測していない
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 seventh-pass review comment)`
+- Finding: 041のoracleはexception/cache非残留/preface数/RST非送出のみ。mem-recv fatal branchから `destroy_detached_connection_if_unowned()` だけを除去してもdetach済みのためsweepはexhaustionせずpreface数も不変、ASanは `detect_leaks=0` のため132 connection/fd/session leakも不可視で、この1行の退行が現gateを通る。
+- Evidence: `tests/phpt/041`、`src/unary_call.c` mem_recv fatal branch、sanitizer ASAN_OPTIONS
+- Expected model: 変更したcleanupの各段(detach と destroy)がそれぞれ独立に観測されるoracleを持つ。
+- Recommended fix: test-only destroy counter / trace event、または `/proc/self/fd` 差分でdestroy-only mutationがFAILすることを確認。
+- Fix summary: `destroy_h2_connection()` に `wire.connection_close` traceイベント(`wire.connection_preface` の対、fd/dead付き)を追加し、PHPT 041で全132 connectionのdestroy(`connection_close` == 132)をassert。destroy呼び出しを一時除去した状態で041が実際にFAILする(close数0)ことを確認し、検出力を実証した。
+- Fix commit: 3ed170f
+- Verification: NTS 26/26、sanitizer両lane PASS・報告ゼロ、影響4テスト(001/029/040/041)8回反復FAILなし、C unit 3/3、cppcheck exit 0。
+- Notes: traceイベントはtest-only counterでなくproduction trace機構(`GRPC_LITE_TRACE_FILE`)への追加とした。接続lifecycleの観測はデバッグでも有用で、既存テストはevent名でfilterするため非破壊。
+
+### REVIEW-20260713-006: open issueの入口文書が実装済みのdeadline/RST lifecycleと逆の説明のまま
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 seventh-pass review comment)`
+- Finding: Backgroundは「deadline時に接続破棄・RST非送出」を現状として記載し、Planは不採用のdrain案をactiveに残し、Verificationは第六パスが第五パスより先に並ぶ。issueの中心概念を入口文書が逆に説明している。
+- Evidence: `docs/issues/open/2026-07-08-deadline-rst-stream-keep-connection.md`
+- Expected model: 入口文書は変更前/現在を明示し、supersededな計画はDecision Logへの参照付きで表示し、記録は時系列順。
+- Recommended fix: Background書き分け、Plan superseded化、Verification並び替え。
+- Fix summary: Backgroundを「変更前」(過去形)と「現在の実装」(stream-scoped RST + 接続温存)で書き分け、Planにsuperseded注記(drain不採用の理由と50ms grace deadlineへの置換、Decision Log参照)を追加して該当項を取り消し線化、Verificationを第五→第六の時系列順へ修正。
+- Fix commit: 3ed170f
+- Verification: 文書のみ(コード変更なし)。
+- Notes: なし
+
 ## Review Result
 
 - Blocker: none
 - High: 7 (Fixed)
 - Medium: 9 (Fixed)
-- Low: 8 (Fixed)
+- Low: 11 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
@@ -404,3 +446,4 @@
 - PR #29 敵対的レビュー第四パス(2026-07-12、HEAD 2af2d58): High 1 / Medium 2 を追加受領(REVIEW-20260712-005〜007)、全件Fixed
 - PR #29 敵対的レビュー第五パス(2026-07-12、HEAD 287bc93): High 1 / Medium 1 を追加受領(REVIEW-20260712-008〜009)、全件Fixed
 - PR #29 敵対的レビュー第六パス(2026-07-13、HEAD 3081608): Medium 1 / Low 2 を追加受領(REVIEW-20260713-001〜003)、全件Fixed
+- PR #29 敵対的レビュー第七パス(2026-07-13、HEAD 199bf01): Low 3 を追加受領(REVIEW-20260713-004〜006)、全件Fixed
