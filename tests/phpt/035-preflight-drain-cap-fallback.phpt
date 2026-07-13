@@ -57,9 +57,13 @@ fclose($control);
 
 $call->cancel();
 
-// Connection reuse is best-effort: with more backlog than the 64KiB drain
-// cap the adoption preflight gives up (draining) and opens a fresh
-// connection. The follow-up call must succeed either way.
+// Connection reuse is best-effort: with more backlog than the configured
+// 16KiB drain cap (--INI-- above) the adoption preflight gives up
+// (draining) and opens a fresh connection. The production 64KiB boundary
+// itself is never crossed here — the client kernel window cannot hold that
+// much unread backlog (see the fixture note above) — so this test pins the
+// cap mechanism at the lowered setting, not the default value. The
+// follow-up call must succeed either way.
 $hello = new HelloRequest();
 $hello->setName('AfterBacklog');
 [, $status] = $client->SayHello($hello)->wait();

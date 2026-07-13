@@ -474,12 +474,26 @@
 - Verification: 文書のみ(コード変更なし)。`git diff --check` クリーン。
 - Notes: なし
 
+### REVIEW-20260714-002: PHPT 035のコメントが検証していないproduction 64KiB capを主張
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 tenth-pass review comment, inline)`
+- Finding: 035の後続コール直前のコメントが「64KiB drain capを超えるbacklog」と説明するが、テストは `--INI--` で16KiBへ下げたcapに48KiB backlogを当てており、production defaultの64KiB境界は検証していない(kernel windowが64KiB超の未読backlogを保持できないため直接跨げない)。fixture説明(冒頭コメント)と16384-byte assertion(line 95-96)にも反する。
+- Evidence: `tests/phpt/035-preflight-drain-cap-fallback.phpt` line 60コメント
+- Expected model: test contractコメントはテストが実際に固定している境界(設定済み16KiB cap)を記述し、production境界を跨いでいないことを区別する。
+- Recommended fix: 「configured 16KiB drain cap」へ修正し、production 64KiB境界はkernel window制約のため直接跨いでいないことを明記。
+- Fix summary: コメントを「configured 16KiB cap(--INI--)を超えるbacklogでfallback。production 64KiB境界自体はkernel window制約で跨げないため、本テストはcap機構を下げた設定値で固定する」へ書き換え。ini導入前(固定64KiB cap時代)の設計のコメント残骸だった。
+- Fix commit: 記録反映と同一コミット
+- Verification: PHPT 035 PASS(コメントのみの変更)。
+- Notes: なし
+
 ## Review Result
 
 - Blocker: none
 - High: 7 (Fixed)
 - Medium: 9 (Fixed)
-- Low: 14 (Fixed)
+- Low: 15 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
@@ -491,3 +505,4 @@
 - PR #29 敵対的レビュー第七パス(2026-07-13、HEAD 199bf01): Low 3 を追加受領(REVIEW-20260713-004〜006)、全件Fixed
 - PR #29 敵対的レビュー第八パス(2026-07-13、HEAD 1faf80a): Low 2 を追加受領(REVIEW-20260713-007〜008)、全件Fixed
 - PR #29 敵対的レビュー第九パス(2026-07-14、HEAD 76d2827): Low 1 を追加受領(REVIEW-20260714-001)、Fixed
+- PR #29 敵対的レビュー第十パス(2026-07-14、HEAD f94d3ba): Low 1 を追加受領(REVIEW-20260714-002)、Fixed
