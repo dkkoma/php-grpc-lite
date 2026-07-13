@@ -1876,9 +1876,9 @@ PHP_FUNCTION(grpc_lite_unary)
     }
 
     if (grpc_lite_unary_call_perform_diagnostic_on_connection(connection, path, path_len, request, request_len, headers_zv, NULL, remaining_timeout_us, max_receive_message_length, effective_max_response_metadata_bytes((int64_t) -1, (int64_t) -1), true, persistent_reused, return_value) != SUCCESS) {
-        if (connection != NULL && !connection_usable(connection)) {
-            remove_unusable_persistent_connection(ZSTR_VAL(connection_key), ZSTR_LEN(connection_key), connection);
-        }
+        /* FAILURE consumes the connection: paths that made it unusable (e.g.
+         * a fatal nghttp2_submit_request) have already detached it from the
+         * cache and destroyed it, so the pointer must not be touched here. */
         zend_string_release(connection_key);
         RETURN_THROWS();
     }

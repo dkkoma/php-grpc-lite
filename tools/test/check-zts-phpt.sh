@@ -15,7 +15,7 @@ docker compose run --build --rm dev-zts bash -lc '
     make clean >/tmp/grpc-zts-phpt-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     phpize >/tmp/grpc-zts-phpize.log
-    ./configure --enable-grpc >/tmp/grpc-zts-configure.log
+    ./configure --enable-grpc --enable-grpc-test-fault >/tmp/grpc-zts-configure.log
     make -j$(nproc) >/tmp/grpc-zts-make.log
 
     cd /workspace
@@ -23,7 +23,7 @@ docker compose run --build --rm dev-zts bash -lc '
     php -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
         || { echo "grpc extension failed to load from /workspace/modules/grpc.so on ZTS PHP" >&2; exit 1; }
     php -r '\''
-        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065] as $port) {
+        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065, 50066, 50067, 50068, 50069, 50070] as $port) {
             $connected = false;
             $lastError = "";
             for ($attempt = 1; $attempt <= 30; $attempt++) {
@@ -58,6 +58,7 @@ docker compose run --build --rm dev-zts bash -lc '
     }
 
     cleanup_phpt_artifacts
+    GRPC_LITE_EXPECT_TEST_FAULT=1 \
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
         -d extension=/workspace/modules/grpc.so \

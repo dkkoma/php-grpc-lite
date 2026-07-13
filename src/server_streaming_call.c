@@ -8,13 +8,9 @@ static void server_streaming_call_terminate_with_cancel(server_streaming_call_st
         return;
     }
     free_queued_response_payloads(&state->call);
-    if (connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection) && state->call.stream_id > 0) {
-        int rv = nghttp2_submit_rst_stream(state->call.connection->session, NGHTTP2_FLAG_NONE, state->call.stream_id, NGHTTP2_CANCEL);
-        if (rv == 0) {
-            rv = send_pending_h2_frames(state->call.connection, &state->call);
-        }
-        if (rv != 0) {
-            mark_connection_dead(state->call.connection, rv);
+    if (connection_owned_by_server_streaming_call_state(state->call.connection, state)) {
+        cancel_grpc_call_stream(&state->call, NGHTTP2_CANCEL);
+        if (!connection_usable(state->call.connection)) {
             detach_persistent_connection_by_ptr(state->call.connection);
         }
     }
@@ -128,8 +124,19 @@ int server_streaming_call_open_resource(const char *key, size_t key_len, const c
     memset(&data_provider, 0, sizeof(data_provider));
     data_provider.read_callback = data_source_read_callback;
     data_provider.source.ptr = &state->call;
-    state->call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
+    state->call.stream_id = grpc_lite_test_fault_enabled("submit-request-fatal")
+        ? NGHTTP2_ERR_NOMEM
+        : nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (state->call.stream_id < 0) {
+        if (nghttp2_is_fatal((int) state->call.stream_id)) {
+            /* Fatal submit corrupts the session (nghttp2 error contract):
+             * the connection must never be reused or driven again. Detach
+             * from the persistent cache right away — eviction is otherwise
+             * lazy and per-key, so dead entries under distinct keys would
+             * pile up until the cache limit rejects new connections. */
+            mark_connection_dead(connection, (int) state->call.stream_id);
+            detach_persistent_connection_by_ptr(connection);
+        }
         if (setup_failure != NULL) {
             setup_failure->code = GRPC_STATUS_UNAVAILABLE;
             setup_failure->details = zend_string_init("nghttp2_submit_request failed", sizeof("nghttp2_submit_request failed") - 1, 0);
@@ -261,6 +268,17 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     while (call->response_queue_head == NULL && !call->stream_closed && !state->completed && !call->response_message_too_large && !call->compressed_response_seen && !call->malformed_response_frame && !call->invalid_content_type && !call->unsupported_response_encoding && !call->metadata_too_large && !call->response_queue_limit_exceeded) {
         int rv;
         ssize_t nread;
+        if (!connection_io_allowed(state->call.connection)) {
+            /* Another owner of this shared connection killed it between two
+             * next() pulls (e.g. a failed RST flush after its deadline
+             * expired). Dead is terminal for every stream: re-driving the
+             * session could emit bytes after a partial frame or block a
+             * deadline-less call forever. Draining stays allowed — a GOAWAY
+             * admitted this stream, so it runs to completion. */
+            grpc_call_note_connection_broken(call);
+            state->completed = true;
+            break;
+        }
         if (call->deadline_abs_us > 0 && monotonic_us() >= call->deadline_abs_us) {
             call->timed_out = true;
             cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);
@@ -270,10 +288,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
         rv = send_pending_h2_frames(state->call.connection, call);
         if (rv != 0) {
             mark_connection_dead(state->call.connection, rv);
-            if (call->timed_out) {
-                state->completed = true;
-                break;
-            }
+            grpc_call_note_connection_broken(call);
             state->completed = true;
             break;
         }
@@ -293,6 +308,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
                 cancel_active_server_streaming_call_state(state, NGHTTP2_CANCEL);
             } else {
                 mark_connection_dead(state->call.connection, nread == 0 ? 0 : errno);
+                grpc_call_note_connection_broken(call);
             }
             state->completed = true;
             break;
@@ -309,6 +325,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             rv = send_pending_h2_frames(state->call.connection, call);
             if (rv != 0) {
                 mark_connection_dead(state->call.connection, rv);
+                grpc_call_note_connection_broken(call);
                 state->completed = true;
                 break;
             }
@@ -352,9 +369,13 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
     }
 
     if (!call->response_message_too_large && !call->compressed_response_seen && !call->stream_reset_seen
+            && !call->locally_cancelled && !call->connection_broken
             && (call->response_header_len != 0 || call->response_payload != NULL || call->response_payload_offset != 0)) {
-        /* RST_STREAM mid-message keeps its own status taxonomy (e.g. CANCEL
-         * -> CANCELLED) instead of being reported as malformed framing. */
+        /* RST_STREAM mid-message (received or locally submitted) keeps its
+         * own status taxonomy (e.g. CANCEL -> CANCELLED), and a TCP/TLS
+         * connection break mid-message is UNAVAILABLE, not malformed
+         * framing: only a clean END_STREAM inside a Length-Prefixed-Message
+         * is a server protocol violation (INTERNAL). */
         call->malformed_response_frame = true;
     }
     state->completed = true;
@@ -408,7 +429,7 @@ int server_streaming_call_cancel_resource(zval *server_streaming_resource_zv)
         zend_throw_exception(NULL, "invalid grpc_lite_server_streaming_call_state resource", 0);
         return FAILURE;
     }
-    if (!state->completed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_usable(state->call.connection)) {
+    if (!state->completed && connection_owned_by_server_streaming_call_state(state->call.connection, state) && connection_io_allowed(state->call.connection)) {
         state->cancelled = true;
         state->call.grpc_status = GRPC_STATUS_CANCELLED;
         server_streaming_call_terminate_with_cancel(state);

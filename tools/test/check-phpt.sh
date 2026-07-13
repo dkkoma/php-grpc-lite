@@ -12,14 +12,14 @@ docker compose run --rm dev bash -lc '
     make clean >/tmp/grpc-phpt-clean.log 2>&1 || true
     rm -rf .libs modules *.lo *.o *.dep
     phpize >/tmp/grpc-phpize.log
-    ./configure --enable-grpc >/tmp/grpc-configure.log
+    ./configure --enable-grpc --enable-grpc-test-fault --enable-grpc-bench >/tmp/grpc-configure.log
     make -j$(nproc) >/tmp/grpc-make.log
     cd /workspace
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }
     php -d extension=/workspace/modules/grpc.so -r '\''exit(extension_loaded("grpc") ? 0 : 1);'\'' \
         || { echo "grpc extension failed to load from /workspace/modules/grpc.so" >&2; exit 1; }
     php -r '\''
-        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065] as $port) {
+        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065, 50066, 50067, 50068, 50069, 50070] as $port) {
             $connected = false;
             $lastError = "";
             for ($attempt = 1; $attempt <= 30; $attempt++) {
@@ -52,6 +52,8 @@ docker compose run --rm dev bash -lc '
         done
     }
     cleanup_phpt_artifacts
+    GRPC_LITE_EXPECT_BENCH=1 \
+    GRPC_LITE_EXPECT_TEST_FAULT=1 \
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
         -d extension=/workspace/modules/grpc.so \

@@ -1,5 +1,6 @@
 PHP_ARG_ENABLE([grpc], [whether to enable php-grpc-lite grpc extension], [AS_HELP_STRING([--enable-grpc], [Enable php-grpc-lite grpc extension])], [no])
 PHP_ARG_ENABLE([grpc-bench], [whether to enable php-grpc-lite benchmark-only entrypoints], [AS_HELP_STRING([--enable-grpc-bench], [Enable php-grpc-lite benchmark-only entrypoints])], [no], [no])
+PHP_ARG_ENABLE([grpc-test-fault], [whether to enable php-grpc-lite test-only fault injection seams], [AS_HELP_STRING([--enable-grpc-test-fault], [Enable php-grpc-lite test-only fault injection seams (never for production builds)])], [no], [no])
 
 if test "$PHP_GRPC" != "no"; then
   PKG_CHECK_MODULES([NGHTTP2], [libnghttp2])
@@ -11,6 +12,9 @@ if test "$PHP_GRPC" != "no"; then
   AC_DEFINE(HAVE_GRPC, 1, [Have php-grpc-lite grpc extension])
   if test "$PHP_GRPC_BENCH" != "no"; then
     AC_DEFINE(PHP_GRPC_LITE_ENABLE_BENCH, 1, [Enable php-grpc-lite benchmark-only entrypoints])
+  fi
+  if test "$PHP_GRPC_TEST_FAULT" != "no"; then
+    AC_DEFINE(PHP_GRPC_LITE_ENABLE_TEST_FAULT, 1, [Enable php-grpc-lite test-only fault injection seams])
   fi
   GRPC_VISIBILITY_CFLAGS=""
   AC_MSG_CHECKING([whether $CC supports -fvisibility=hidden])

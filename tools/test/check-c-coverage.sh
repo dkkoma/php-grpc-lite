@@ -16,7 +16,7 @@ docker compose run --rm dev bash -lc '
     cd /workspace
     make clean >/tmp/grpc-coverage-clean.log 2>&1 || true
     phpize >/tmp/grpc-coverage-phpize.log
-    CFLAGS="-O0 -g --coverage" LDFLAGS="--coverage" ./configure --enable-grpc >/tmp/grpc-coverage-configure.log
+    CFLAGS="-O0 -g --coverage" LDFLAGS="--coverage" ./configure --enable-grpc --enable-grpc-test-fault >/tmp/grpc-coverage-configure.log
     make -j$(nproc) >/tmp/grpc-coverage-make.log
 
     cd /workspace
@@ -25,7 +25,7 @@ docker compose run --rm dev bash -lc '
         || { echo "grpc extension failed to load from /workspace/modules/grpc.so" >&2; exit 1; }
 
     php -r '\''
-        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065] as $port) {
+        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065, 50066, 50067, 50068, 50069, 50070] as $port) {
             $connected = false;
             $lastError = "";
             for ($attempt = 1; $attempt <= 30; $attempt++) {
@@ -91,6 +91,7 @@ docker compose run --rm dev bash -lc '
         "$c_unit_dir/$test_name" | tee -a "$coverage_dir/c-unit.log"
     done
 
+    GRPC_LITE_EXPECT_TEST_FAULT=1 \
     TEST_PHP_EXECUTABLE="$(command -v php)" \
         php /usr/local/lib/php/build/run-tests.php -q \
         -d extension=/workspace/modules/grpc.so \

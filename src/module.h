@@ -14,6 +14,7 @@ ZEND_BEGIN_MODULE_GLOBALS(grpc_lite)
     zend_long http2_max_header_list_size;
     zend_long server_streaming_read_ahead_max_messages;
     zend_long server_streaming_read_ahead_max_bytes;
+    zend_long preflight_drain_max_bytes;
 ZEND_END_MODULE_GLOBALS(grpc_lite)
 
 ZEND_EXTERN_MODULE_GLOBALS(grpc_lite)

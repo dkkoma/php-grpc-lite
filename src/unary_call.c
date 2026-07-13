@@ -74,6 +74,13 @@ static zend_string *grpc_lite_unary_take_response_payload(grpc_call *call)
     return payload;
 }
 
+/* Connection lifetime contract for callers:
+ * - SUCCESS: the connection pointer stays valid (possibly dead); the caller
+ *   owns eviction of unusable connections (connection_usable +
+ *   remove_unusable_persistent_connection).
+ * - FAILURE: any branch that made the connection unusable has already
+ *   detached it from the persistent cache and destroyed it once unowned, so
+ *   the caller must not dereference the connection pointer again. */
 static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connection, const char *path, size_t path_len, const char *request, size_t request_len, zval *headers_zv, zend_string *primary_user_agent, uint64_t deadline_abs_us, zend_long max_receive_message_length, size_t max_response_metadata_bytes, bool connection_reused, bool persistent_reused, uint32_t retry_attempt,
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     zval *diagnostic_result,
@@ -152,20 +159,34 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     data_provider.read_callback = data_source_read_callback;
     data_provider.source.ptr = &call;
 
-    call.stream_id = nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
+    call.stream_id = grpc_lite_test_fault_enabled("submit-request-fatal")
+        ? NGHTTP2_ERR_NOMEM
+        : nghttp2_submit_request(connection->session, NULL, request_headers.nva, request_headers.len, &data_provider, NULL);
     if (call.stream_id < 0) {
+        if (nghttp2_is_fatal((int) call.stream_id)) {
+            /* Fatal submit corrupts the session (nghttp2 error contract):
+             * the connection must never be reused or driven again. Detach
+             * from the persistent cache right away — eviction is otherwise
+             * lazy and per-key, so dead entries under distinct keys would
+             * pile up until the cache limit rejects new connections. */
+            mark_connection_dead(connection, (int) call.stream_id);
+            detach_persistent_connection_by_ptr(connection);
+        }
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&call);
+        destroy_detached_connection_if_unowned(connection);
         zend_throw_exception(NULL, "nghttp2_submit_request failed", 0);
         return FAILURE;
     }
     grpc_lite_trace_request_headers(&call, request_headers.nva, request_headers.len);
     if (register_grpc_call_stream(connection, &call) != SUCCESS) {
         mark_grpc_call_stream_registration_failed(connection, &call);
+        detach_persistent_connection_by_ptr(connection);
         clear_connection_call_owner(connection, &call);
         free_request_headers(&request_headers);
         cleanup_grpc_call(&call);
+        destroy_detached_connection_if_unowned(connection);
         zend_throw_exception(NULL, "failed to register HTTP/2 stream", 0);
         return FAILURE;
     }
@@ -173,6 +194,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
     rv = send_pending_h2_frames(connection, &call);
     if (rv != 0) {
         mark_connection_dead(connection, rv);
+        grpc_call_note_connection_broken(&call);
         goto build_unary_result;
     }
 
@@ -190,10 +212,14 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
                 snprintf(call.last_io_error_detail, sizeof(call.last_io_error_detail), "%s", connection->last_error_detail);
             }
             if (socket_timeout) {
+                /* Deadline expiry is stream-scoped: reset only this stream
+                 * and leave the persistent connection reusable for the next
+                 * call instead of paying a new TCP + TLS handshake. */
                 call.timed_out = true;
-            }
-            if (!call.stream_closed) {
+                cancel_grpc_call_stream(&call, NGHTTP2_CANCEL);
+            } else if (!call.stream_closed) {
                 mark_connection_dead(connection, nread == 0 ? 0 : errno);
+                grpc_call_note_connection_broken(&call);
             }
             break;
         }
@@ -202,6 +228,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
         connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(connection, rv);
+            detach_persistent_connection_by_ptr(connection);
             clear_connection_call_owner(connection, &call);
             free_request_headers(&request_headers);
             cleanup_grpc_call(&call);
@@ -213,18 +240,21 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             rv = send_pending_h2_frames(connection, &call);
             if (rv != 0) {
                 mark_connection_dead(connection, rv);
+                grpc_call_note_connection_broken(&call);
                 break;
             }
         }
     }
 	build_unary_result:
 	    if (call.stream_closed && !call.response_message_too_large && !call.compressed_response_seen
-	            && !call.stream_reset_seen
+	            && !call.stream_reset_seen && !call.locally_cancelled
 	            && (call.response_header_len != 0 || call.response_payload != NULL || call.response_payload_offset != 0)) {
 	        /* Stream ended inside a Length-Prefixed-Message: truncated body.
 	         * Replaces the body-length integrity check the smart_str re-parse
-	         * used to perform. RST_STREAM mid-message keeps its own status
-	         * taxonomy (e.g. CANCEL -> CANCELLED), so it is not malformed. */
+	         * used to perform. RST_STREAM mid-message (received or locally
+	         * submitted) keeps its own status taxonomy (e.g. CANCEL ->
+	         * CANCELLED, deadline -> DEADLINE_EXCEEDED), so it is not
+	         * malformed. */
 	        call.malformed_response_frame = true;
 	    }
 	    resolve_grpc_call_status(&call, false, &status_result);
