@@ -432,12 +432,40 @@
 - Verification: 文書のみ(コード変更なし)。
 - Notes: なし
 
+### REVIEW-20260713-007: wire.connection_closeの命名がlocal destructor semanticsと不一致
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 eighth-pass review comment)`
+- Finding: 第七パスで追加したeventは `destroy_h2_connection()` の入口(SSL_free / close(fd) / nghttp2_session_del より前)で発火するlocal objectのdestroy開始であり、TCP FIN/RST・TLS close・GOAWAYといったwire上のcloseではない。またpreface送出前のsetup failureからも呼ばれるため「wire.connection_prefaceのcounterpart」というコメントは一般には成立しない。
+- Evidence: `src/transport.c` destroy_h2_connection、setup failure経路
+- Expected model: trace event名は観測しているsemanticsを表す(wire.* はwire上の事象、local lifecycleは別namespace)。
+- Recommended fix: `transport.connection_destroy` 等へrename、発火phaseとsetup未完了connectionでの発火をguideへ明記、041追従。
+- Fix summary: eventを `transport.connection_destroy` へrenameし、コメントを「local lifecycle event(TLS/fd/session解放前のdestructor入口、preface前のsetup failureでも発火)」へ修正。code-reading guideのtrace節に発火phaseと `wire.connection_preface` との非1対1対応を明記。PHPT 041のevent名を追従(oracleとしての検出力は第七パスで実証済みのdestroy-only mutation FAILと同一構造)。
+- Fix commit: 1c55f56
+- Verification: NTS 26/26、sanitizer 2 lane(22 PASS/4 SKIP + 26/26)報告ゼロ、ZTS 24 PASS/2 SKIP、029/041 8回反復FAILなし、C unit 3/3、cppcheck exit 0、PHPUnit 31 OK。
+- Notes: prefaceとのpair対応付け(stable connection id)は、pair自体をcontractにしない整理としたため導入しない。
+
+### REVIEW-20260713-008: issue文書にstreaming deadlineの旧説明が現在形で残存
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 eighth-pass review comment)`
+- Finding: Background(19行目)で現在の実装をstream-scoped RST + 接続温存と説明した直後、「公式実装との差異」末尾(28行目)が「deadline経路だけが接続破棄になっている」と現在形で記載され、ProgressおよびSPEC §4.2と矛盾。
+- Evidence: `docs/issues/open/2026-07-08-deadline-rst-stream-keep-connection.md`
+- Expected model: 入口文書内の変更前の記述はすべて過去形+変更前の明示で統一。
+- Recommended fix: 当該paragraphの過去形化とbest-effort reuseへの整合。
+- Fix summary: 当該paragraphを「変更前」明示+過去形へ直し、現在はunary/streamingともstream-scoped RST(CANCEL)で、reuseはSPEC §4.2どおりbest-effort(RST flushのgrace deadline超過やpreflight drain cap超過ではfresh connectionへフォールバック)である旨を追記。
+- Fix commit: 1c55f56
+- Verification: 文書のみ。
+- Notes: なし
+
 ## Review Result
 
 - Blocker: none
 - High: 7 (Fixed)
 - Medium: 9 (Fixed)
-- Low: 11 (Fixed)
+- Low: 13 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
@@ -447,3 +475,4 @@
 - PR #29 敵対的レビュー第五パス(2026-07-12、HEAD 287bc93): High 1 / Medium 1 を追加受領(REVIEW-20260712-008〜009)、全件Fixed
 - PR #29 敵対的レビュー第六パス(2026-07-13、HEAD 3081608): Medium 1 / Low 2 を追加受領(REVIEW-20260713-001〜003)、全件Fixed
 - PR #29 敵対的レビュー第七パス(2026-07-13、HEAD 199bf01): Low 3 を追加受領(REVIEW-20260713-004〜006)、全件Fixed
+- PR #29 敵対的レビュー第八パス(2026-07-13、HEAD 1faf80a): Low 2 を追加受領(REVIEW-20260713-007〜008)、全件Fixed

@@ -72,6 +72,8 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 
 - PR #29 敵対的レビュー第七パス対応(REVIEW-20260713-004〜006): NTS PHPT 26/26 PASS、sanitizer 2 lane(production 22 PASS/4 SKIP + bench-fault 26/26)報告ゼロ、ZTS 24 PASS/2 SKIP、041のdestroy assertはdestroy一時除去で実際にFAILすることを確認、影響4テスト8回反復FAILなし、C unit 3/3 / cppcheck / PHPUnit 31 OK(2026-07-13)。
 
+- PR #29 敵対的レビュー第八パス対応(REVIEW-20260713-007〜008): trace event renameと文書修正。NTS 26/26、sanitizer 2 lane(22 PASS/4 SKIP + 26/26)報告ゼロ、ZTS 24 PASS/2 SKIP、029/041 8回反復FAILなし、C unit 3/3 / cppcheck / PHPUnit 31 OK(2026-07-13)。
+
 ## Decision Log
 
 - 計画にあった「RST送出後の短時間drain」は実装しない(2026-07-11)。RST_STREAM submit時点でnghttp2はstreamをclose済み扱いにするためdrainで待つ対象がなく、読み残しframeはnghttp2のclosed-stream無視 + 次回reuse時のpreflight drain(`preflight_persistent_connection`)が既に消化する。streaming側のuser cancel経路も同じ前提で運用済み。
