@@ -39,10 +39,17 @@ foreach ([
 // mistake exposes the bench surface in a production lane. The MINFO row must
 // agree with the same external expectation.
 $expectBench = getenv('GRPC_LITE_EXPECT_BENCH') === '1';
+$expectTestFault = getenv('GRPC_LITE_EXPECT_TEST_FAULT') === '1';
 ob_start();
 phpinfo(INFO_MODULES);
-$minfoBench = str_contains((string) ob_get_clean(), 'grpc_lite bench diagnostics');
+$minfo = (string) ob_get_clean();
+$minfoBench = str_contains($minfo, 'grpc_lite bench diagnostics');
+$minfoTestFault = str_contains($minfo, 'grpc_lite test fault seam');
 grpc_lite_phpt_assert_same($expectBench, $minfoBench, 'MINFO bench diagnostics row must match the lane expectation');
+// Same external-oracle rule for the test fault seam: a production lane
+// (GRPC_LITE_EXPECT_TEST_FAULT unset/0) must fail here if the seam leaked
+// into the build, instead of silently un-skipping the fault PHPTs.
+grpc_lite_phpt_assert_same($expectTestFault, $minfoTestFault, 'MINFO test fault seam row must match the lane expectation');
 foreach ([
     'grpc_lite_unary',
     'grpc_lite_server_streaming_open',

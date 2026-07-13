@@ -12,9 +12,11 @@ gRPC のキャンセル（deadline 超過を含む）はストリーム単位の
 > RST_STREAM error codes → CANCEL(8): Mapped to call cancellation when sent by a client.
 > — [PROTOCOL-HTTP2.md § Errors](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md#errors)
 
-現状の実装は unary の受信ループ（`src/unary_call.c` の `grpc_lite_unary_call_perform_core_on_connection`、`nread <= 0` 分岐）で、socket timeout を検出すると `call.timed_out = true` にした後 `mark_connection_dead(connection, errno)` で**接続ごと破棄**する。RST_STREAM は送らない。
+**変更前**(本issue着手時点、2026-07-11以前)の実装は unary の受信ループ（`src/unary_call.c` の `grpc_lite_unary_call_perform_core_on_connection`、`nread <= 0` 分岐）で、socket timeout を検出すると `call.timed_out = true` にした後 `mark_connection_dead(connection, errno)` で**接続ごと破棄**していた。RST_STREAM は送らなかった。
 
-persistent connection が前提の FrankenPHP worker 用途では、1 回の DEADLINE_EXCEEDED のたびに TCP + TLS ハンドシェイクからやり直しになり、レイテンシ面の実害がある。また RST_STREAM を送らないため、サーバー側は クライアントが消えるまで処理を継続し得る。
+persistent connection が前提の FrankenPHP worker 用途では、1 回の DEADLINE_EXCEEDED のたびに TCP + TLS ハンドシェイクからやり直しになり、レイテンシ面の実害があった。また RST_STREAM を送らないため、サーバー側はクライアントが消えるまで処理を継続し得た。
+
+**現在の実装**(本issueの成果、Progress参照)は deadline 超過を stream-scoped 失敗として扱う: read poll timeout で `RST_STREAM(CANCEL)` を当該 stream に送出し、persistent connection は温存して後続コールで再利用する。接続を殺すのは接続レベル障害(および write block 中のタイムアウト = Non-Goal)のみ。
 
 ## 公式実装との差異
 
@@ -37,10 +39,12 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 
 ## Plan
 
-- unary 受信ループの socket timeout 分岐で、`mark_connection_dead` の代わりに RST_STREAM(CANCEL) を submit → `send_pending_h2_frames` → 短時間（数十 ms 上限）の drain で stream close を待つ。
-- drain 中に close が確認できなければ従来どおり接続破棄にフォールバック（読み残しバイトを持つ接続を再利用しないため）。
+当初計画。実装は完了済みで、drain の項は **superseded**(Decision Log 参照: RST submit 時点で nghttp2 は stream を close 済み扱いにするため drain 対象がなく、読み残しは次回 reuse 時の preflight drain が消化する。RST flush には専用の 50ms grace deadline を使い、超過時は従来どおり接続破棄へフォールバック)。
+
+- unary 受信ループの socket timeout 分岐で、`mark_connection_dead` の代わりに RST_STREAM(CANCEL) を submit → `send_pending_h2_frames`。~~短時間（数十 ms 上限）の drain で stream close を待つ~~（superseded、上記）
+- ~~drain 中に close が確認できなければ~~ RST flush が grace deadline を超過したら従来どおり接続破棄にフォールバック。
 - streaming の read timeout 経路にも同じ処理を適用。
-- PHPT: 遅延応答サーバーに対して timeout → 同じ persistent connection で後続コールが成功（`persistent_reused = true`）することを確認。
+- PHPT: 遅延応答サーバーに対して timeout → 同じ persistent connection で後続コールが成功（`persistent_reused = true`）することを確認。→ PHPT 033 で実装済み。
 
 ## Progress
 
@@ -63,8 +67,8 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 - PR #29 敵対的レビュー第二パス対応(REVIEW-20260711-010〜013): PHPT 21/21 PASS(新規036、002-ini更新)、対象4テストをFAILベースで23回連続実行しflakeなし、C unit(connection_broken taxonomy追加) / PHPUnit / 静的解析 pass(2026-07-11)。
 - PR #29 敵対的レビュー第三パス対応(REVIEW-20260712-001〜004): PHPT 24/24 PASS(新規037/038/039)、対象7テスト15回反復FAILなし、sanitizer(ASan/UBSan)スイート24/24 PASS・報告ゼロ、C unit / PHPUnit / 静的解析 pass(2026-07-12)。
 - PR #29 敵対的レビュー第四パス対応(REVIEW-20260712-005〜007): test-fault build 24/24 PASS、production build(seamなし)クリーンビルド+038/039 SKIP、ZTSスイート24/24、sanitizerスイート24/24・報告ゼロ、影響8テスト8回反復FAILなし、C unit / PHPUnit 31 / 静的解析 pass(2026-07-12)。
-- PR #29 敵対的レビュー第六パス対応(REVIEW-20260713-001〜003): sanitizer 2 lane(production lane 22 PASS/4 SKIP + bench-fault lane 26/26 PASS・報告ゼロ)、NTS PHPT 26/26 PASS(新規041)、ZTS 24 PASS/2 SKIP、041はdetach一時除去で実際にFAILすることを確認、影響4テスト8回反復FAILなし、PHPUnit 31 OK。Cソース変更なし(テスト+スクリプトのみ)のためC unit/cppcheckは前回結果が有効(2026-07-13)。
 - PR #29 敵対的レビュー第五パス対応(REVIEW-20260712-008〜009): test-fault+benchビルド PHPT 25/25 PASS(新規040、038強化)、sanitizerスイート(bench併用)25/25・報告ゼロ — 旧callerコードを一時復元すると040がASan heap-use-after-freeで実際にFAILすることを確認しregressionの検出力を実証、production build warningなし+001 PASS+fault系SKIP、ZTS 24 PASS/1 SKIP(040)、影響5テスト8回反復FAILなし、C unit 3/3 / PHPUnit 31 / cppcheck(production+bench両構成)pass(2026-07-12)。
+- PR #29 敵対的レビュー第六パス対応(REVIEW-20260713-001〜003): sanitizer 2 lane(production lane 22 PASS/4 SKIP + bench-fault lane 26/26 PASS・報告ゼロ)、NTS PHPT 26/26 PASS(新規041)、ZTS 24 PASS/2 SKIP、041はdetach一時除去で実際にFAILすることを確認、影響4テスト8回反復FAILなし、PHPUnit 31 OK。Cソース変更なし(テスト+スクリプトのみ)のためC unit/cppcheckは前回結果が有効(2026-07-13)。
 
 ## Decision Log
 

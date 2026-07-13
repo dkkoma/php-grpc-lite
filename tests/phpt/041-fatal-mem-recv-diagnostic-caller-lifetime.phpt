@@ -79,11 +79,15 @@ $lines = array_values(array_filter(explode("\n", trim((string) file_get_contents
 unlink($traceFile);
 
 $prefaceCount = 0;
+$closeCount = 0;
 foreach ($lines as $line) {
     $record = json_decode($line, true);
     grpc_lite_phpt_assert_true(is_array($record), 'trace line must be JSON object');
     if (($record['event'] ?? null) === 'wire.connection_preface') {
         $prefaceCount++;
+    }
+    if (($record['event'] ?? null) === 'wire.connection_close') {
+        $closeCount++;
     }
     if (($record['event'] ?? null) === 'wire.frame_out' && ($record['frame_type'] ?? null) === 'RST_STREAM') {
         throw new RuntimeException('no RST_STREAM may reach the wire after a fatal submit: ' . $line);
@@ -92,6 +96,11 @@ foreach ($lines as $line) {
 // Each attempt found the previous connection destroyed (never reused): 2
 // initial attempts + 130 distinct-key sweep attempts.
 grpc_lite_phpt_assert_same(132, $prefaceCount, 'a consumed connection was never reused');
+// ...and every consumed connection was actually destroyed during the run,
+// not merely detached from the cache (a detach-only regression would leak
+// all 132 connections invisibly: same exceptions, same preface count, and
+// ASan runs with leak detection disabled).
+grpc_lite_phpt_assert_same(132, $closeCount, 'every consumed connection was destroyed');
 
 echo "OK\n";
 ?>

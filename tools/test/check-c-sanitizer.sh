@@ -139,6 +139,7 @@ SH
     run_phpt_lane() {
         lane_name="$1"; shift
         expect_bench="$1"; shift
+        expect_test_fault="$1"; shift
         echo "=== sanitizer PHPT lane: $lane_name ==="
         cd /workspace
         make clean >"/tmp/grpc-sanitizer-clean-$lane_name.log" 2>&1 || true
@@ -153,6 +154,7 @@ SH
             || { echo "grpc extension failed to load from /workspace/modules/grpc.so ($lane_name lane)" >&2; exit 1; }
         cleanup_phpt_artifacts
         GRPC_LITE_EXPECT_BENCH="$expect_bench" \
+        GRPC_LITE_EXPECT_TEST_FAULT="$expect_test_fault" \
         TEST_PHP_EXECUTABLE="$test_php" \
             "${php_sanitized[@]}" "$run_tests" -q \
             -d extension=/workspace/modules/grpc.so \
@@ -160,6 +162,6 @@ SH
         cleanup_phpt_artifacts
     }
 
-    run_phpt_lane production 0 --enable-grpc
-    run_phpt_lane bench-fault 1 --enable-grpc --enable-grpc-test-fault --enable-grpc-bench
+    run_phpt_lane production 0 0 --enable-grpc
+    run_phpt_lane bench-fault 1 1 --enable-grpc --enable-grpc-test-fault --enable-grpc-bench
 '

@@ -190,6 +190,18 @@ void destroy_h2_connection(h2_connection *connection)
     if (connection == NULL) {
         return;
     }
+    if (grpc_lite_trace_file_path() != NULL) {
+        /* Counterpart of wire.connection_preface: lets tests assert that
+         * every connection consumed by a failure path is actually destroyed
+         * (a detach without destroy leaks fd + session and is otherwise
+         * invisible with leak detection disabled). */
+        FILE *fp;
+        grpc_lite_trace_open_and_lock(&fp);
+        if (fp != NULL) {
+            fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.connection_close\",\"fd\":%d,\"dead\":%s}\n", monotonic_us(), (long) getpid(), connection->fd, connection->dead ? "true" : "false");
+            grpc_lite_trace_unlock_and_close(fp);
+        }
+    }
     if (connection->ssl != NULL) {
         SSL_set_shutdown(connection->ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);
         SSL_free(connection->ssl);
