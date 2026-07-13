@@ -191,14 +191,17 @@ void destroy_h2_connection(h2_connection *connection)
         return;
     }
     if (grpc_lite_trace_file_path() != NULL) {
-        /* Counterpart of wire.connection_preface: lets tests assert that
-         * every connection consumed by a failure path is actually destroyed
-         * (a detach without destroy leaks fd + session and is otherwise
-         * invisible with leak detection disabled). */
+        /* Local lifecycle event (hence "transport.", not "wire."): records
+         * that the h2_connection object enters its destructor, before the
+         * TLS/fd/session teardown below, and also fires for connections
+         * whose setup failed before any preface reached the wire. Lets
+         * tests assert that every connection consumed by a failure path is
+         * actually destroyed (a detach without destroy leaks fd + session
+         * and is otherwise invisible with leak detection disabled). */
         FILE *fp;
         grpc_lite_trace_open_and_lock(&fp);
         if (fp != NULL) {
-            fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.connection_close\",\"fd\":%d,\"dead\":%s}\n", monotonic_us(), (long) getpid(), connection->fd, connection->dead ? "true" : "false");
+            fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"transport.connection_destroy\",\"fd\":%d,\"dead\":%s}\n", monotonic_us(), (long) getpid(), connection->fd, connection->dead ? "true" : "false");
             grpc_lite_trace_unlock_and_close(fp);
         }
     }

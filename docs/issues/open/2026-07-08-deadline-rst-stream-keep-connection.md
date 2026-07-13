@@ -25,7 +25,7 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 - **Go 公式 (grpc-go)**: context の期限切れ／キャンセルで `ClientStream.Close(err)` が呼ばれ、`err != nil` のとき `rstCode = http2.ErrCodeCancel` で RST_STREAM を送る。トランスポート（接続）はそのまま。
   - 実装: [internal/transport/client_stream.go `ClientStream.Close`](https://github.com/grpc/grpc-go/blob/master/internal/transport/client_stream.go)（`rstCode = http2.ErrCodeCancel`）
 
-なお本実装の streaming 側にはユーザー起点キャンセル用の `cancel_active_server_streaming_call_state`（`src/transport.c`）が既に RST_STREAM(CANCEL) を実装済みで、deadline 経路だけが接続破棄になっている。
+なお**変更前**の本実装では、streaming 側にユーザー起点キャンセル用の `cancel_active_server_streaming_call_state`（`src/transport.c`）が既に RST_STREAM(CANCEL) を実装済みで、deadline 経路だけが接続破棄になっていた。現在は unary / server streaming とも deadline 経路が同じ stream-scoped RST_STREAM(CANCEL) を使い、reuse は SPEC §4.2 のとおり best-effort（RST flush が grace deadline を超過した場合や preflight drain cap 超過時は fresh connection へフォールバック）である。
 
 ## Goals
 

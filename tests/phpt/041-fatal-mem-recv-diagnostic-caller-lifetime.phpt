@@ -86,7 +86,7 @@ foreach ($lines as $line) {
     if (($record['event'] ?? null) === 'wire.connection_preface') {
         $prefaceCount++;
     }
-    if (($record['event'] ?? null) === 'wire.connection_close') {
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
         $closeCount++;
     }
     if (($record['event'] ?? null) === 'wire.frame_out' && ($record['frame_type'] ?? null) === 'RST_STREAM') {
