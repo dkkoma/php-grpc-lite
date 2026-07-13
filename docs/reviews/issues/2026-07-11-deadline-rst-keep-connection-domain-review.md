@@ -460,12 +460,26 @@
 - Verification: 文書のみ。
 - Notes: なし
 
+### REVIEW-20260714-001: best-effort reuseのfallback説明がRSTの即時失敗を含まず狭い
+
+- Severity: `Low`
+- Status: `Fixed`
+- Reviewer role: `PR adversary (PR #29 ninth-pass review comment)`
+- Finding: issue文書のcurrent-state文がfallbackを「RST flushがgrace deadlineを超過した場合」とだけ説明。実装は `nghttp2_submit_rst_stream()` の即時失敗でもdead化し、`nghttp2_session_send` / socket / TLS / coalesced-buffer flushの任意の失敗でもreuseを禁止する。SPEC §4.2は「RST書き込み失敗時」と広く、issue文書だけがfallback集合を狭く記述していた。
+- Evidence: `docs/issues/open/2026-07-08-deadline-rst-stream-keep-connection.md` current-state文、`src/transport.c` cancel helper
+- Expected model: 文書のfallback説明は実装のfallback集合(submit即時失敗+flush失敗全般+drain cap)と一致する。
+- Recommended fix: 「RST submit / flush失敗〔grace deadline超過を含む〕またはpreflight drain cap超過時はfresh connectionへフォールバック」へ拡張。
+- Fix summary: current-state文をレビュー提案の形へ拡張し、即時失敗後にconnectionを捨てるのはfatal nghttp2 sessionやpartial wire stateを再駆動しない安全側lifecycle contractである旨を追記。Planのsuperseded注記と取り消し線行にも同型の狭い記述(grace deadline超過のみ)があったため同時に「失敗〔grace deadline超過を含む〕」へ揃えた。
+- Fix commit: 記録反映と同一コミット
+- Verification: 文書のみ(コード変更なし)。`git diff --check` クリーン。
+- Notes: なし
+
 ## Review Result
 
 - Blocker: none
 - High: 7 (Fixed)
 - Medium: 9 (Fixed)
-- Low: 13 (Fixed)
+- Low: 14 (Fixed)
 - Design Decision: 1 (Fixed)
 - 再レビュー(2026-07-11): 修正コミット caeac40 に対して実施、残指摘 none
 - PR #29 敵対的レビュー(2026-07-11): High 1 / Medium 1 / Low 1 を追加受領(REVIEW-20260711-007〜009)、全件Fixed
@@ -476,3 +490,4 @@
 - PR #29 敵対的レビュー第六パス(2026-07-13、HEAD 3081608): Medium 1 / Low 2 を追加受領(REVIEW-20260713-001〜003)、全件Fixed
 - PR #29 敵対的レビュー第七パス(2026-07-13、HEAD 199bf01): Low 3 を追加受領(REVIEW-20260713-004〜006)、全件Fixed
 - PR #29 敵対的レビュー第八パス(2026-07-13、HEAD 1faf80a): Low 2 を追加受領(REVIEW-20260713-007〜008)、全件Fixed
+- PR #29 敵対的レビュー第九パス(2026-07-14、HEAD 76d2827): Low 1 を追加受領(REVIEW-20260714-001)、Fixed

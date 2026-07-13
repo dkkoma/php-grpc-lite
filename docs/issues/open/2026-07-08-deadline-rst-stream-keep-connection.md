@@ -25,7 +25,7 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 - **Go 公式 (grpc-go)**: context の期限切れ／キャンセルで `ClientStream.Close(err)` が呼ばれ、`err != nil` のとき `rstCode = http2.ErrCodeCancel` で RST_STREAM を送る。トランスポート（接続）はそのまま。
   - 実装: [internal/transport/client_stream.go `ClientStream.Close`](https://github.com/grpc/grpc-go/blob/master/internal/transport/client_stream.go)（`rstCode = http2.ErrCodeCancel`）
 
-なお**変更前**の本実装では、streaming 側にユーザー起点キャンセル用の `cancel_active_server_streaming_call_state`（`src/transport.c`）が既に RST_STREAM(CANCEL) を実装済みで、deadline 経路だけが接続破棄になっていた。現在は unary / server streaming とも deadline 経路が同じ stream-scoped RST_STREAM(CANCEL) を使い、reuse は SPEC §4.2 のとおり best-effort（RST flush が grace deadline を超過した場合や preflight drain cap 超過時は fresh connection へフォールバック）である。
+なお**変更前**の本実装では、streaming 側にユーザー起点キャンセル用の `cancel_active_server_streaming_call_state`（`src/transport.c`）が既に RST_STREAM(CANCEL) を実装済みで、deadline 経路だけが接続破棄になっていた。現在は unary / server streaming とも deadline 経路が同じ stream-scoped RST_STREAM(CANCEL) を使い、reuse は SPEC §4.2 のとおり best-effort（RST submit / flush の失敗〔grace deadline 超過のほか、submit の即時失敗や `nghttp2_session_send` / socket / TLS / coalesced-buffer flush の任意の失敗を含む〕または preflight drain cap 超過時は fresh connection へフォールバック）である。即時失敗後に connection を捨てるのは、fatal な nghttp2 session や partial wire state を再駆動しないための安全側 lifecycle contract。
 
 ## Goals
 
@@ -39,10 +39,10 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 
 ## Plan
 
-当初計画。実装は完了済みで、drain の項は **superseded**(Decision Log 参照: RST submit 時点で nghttp2 は stream を close 済み扱いにするため drain 対象がなく、読み残しは次回 reuse 時の preflight drain が消化する。RST flush には専用の 50ms grace deadline を使い、超過時は従来どおり接続破棄へフォールバック)。
+当初計画。実装は完了済みで、drain の項は **superseded**(Decision Log 参照: RST submit 時点で nghttp2 は stream を close 済み扱いにするため drain 対象がなく、読み残しは次回 reuse 時の preflight drain が消化する。RST flush には専用の 50ms grace deadline を使い、flush の失敗〔grace deadline 超過を含む〕時は従来どおり接続破棄へフォールバック)。
 
 - unary 受信ループの socket timeout 分岐で、`mark_connection_dead` の代わりに RST_STREAM(CANCEL) を submit → `send_pending_h2_frames`。~~短時間（数十 ms 上限）の drain で stream close を待つ~~（superseded、上記）
-- ~~drain 中に close が確認できなければ~~ RST flush が grace deadline を超過したら従来どおり接続破棄にフォールバック。
+- ~~drain 中に close が確認できなければ~~ RST submit / flush が失敗〔grace deadline 超過を含む〕したら従来どおり接続破棄にフォールバック。
 - streaming の read timeout 経路にも同じ処理を適用。
 - PHPT: 遅延応答サーバーに対して timeout → 同じ persistent connection で後続コールが成功（`persistent_reused = true`）することを確認。→ PHPT 033 で実装済み。
 
