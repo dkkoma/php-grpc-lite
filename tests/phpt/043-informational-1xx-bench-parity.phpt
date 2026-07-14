@@ -23,6 +23,7 @@ $runBatch = static function (string $control, int $iterations = 1, int $timeoutU
         "\0\0\0\0\0",
         $iterations,
         ['x-bench-raw-response' => $control],
+        poll_loop: $timeoutUs > 0,
         timeout_us: $timeoutUs,
     );
 };

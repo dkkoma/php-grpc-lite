@@ -928,7 +928,8 @@ bool connection_io_allowed(h2_connection *connection)
 #ifdef PHP_GRPC_LITE_ENABLE_TEST_FAULT
 /* Test-only fault injection, compiled in only with --enable-grpc-test-fault.
  * GRPC_LITE_TEST_FAULT holds a comma-separated list of fault names honored
- * by dedicated seams ("rst-submit-fatal", "submit-request-fatal"). The env
+ * by dedicated seams ("rst-submit-fatal", "submit-request-fatal",
+ * "terminal-status-rst-flush-fatal"). The env
  * value is copied once at MINIT into a process-owned buffer: caching the
  * getenv() pointer itself would dangle after userland putenv() frees the
  * backing storage, and the copy is written before any request thread runs
@@ -2022,7 +2023,17 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
         uint64_t deadline_abs_us = connection->current_write_deadline_abs_us > 0
             ? connection->current_write_deadline_abs_us
             : connection->setup_deadline_abs_us;
-        if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
+        /* Test the post-nghttp2 / pre-socket flush failure edge only after
+         * the terminal RST_STREAM has produced coalesced wire bytes. */
+        if (connection->write_buffer_len > 0
+            && grpc_lite_test_fault_enabled("terminal-status-rst-flush-fatal")
+            && call != NULL
+            && call->invalid_grpc_status) {
+            errno = EPIPE;
+            connection->last_io_errno = errno;
+            snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "send failed: %s", strerror(errno));
+            rv = NGHTTP2_ERR_CALLBACK_FAILURE;
+        } else if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
             rv = NGHTTP2_ERR_CALLBACK_FAILURE;
         }
     }
@@ -2635,6 +2646,13 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
     if (code == GRPC_STATUS_RESOURCE_EXHAUSTED && call->metadata_too_large) {
         return zend_string_init("response header/metadata budget exceeded", sizeof("response header/metadata budget exceeded") - 1, 0);
     }
+    if (code == GRPC_STATUS_UNKNOWN && call->invalid_grpc_status) {
+        /* The malformed status lifecycle is the primary call failure.  A
+         * later failure while flushing its terminal RST_STREAM is retained
+         * as a connection diagnostic, but must not take ownership of public
+         * details when the status code already resolves from this flag. */
+        return zend_string_init("invalid grpc-status trailer", sizeof("invalid grpc-status trailer") - 1, 0);
+    }
     if (call->grpc_message != NULL && ZSTR_LEN(call->grpc_message) > 0) {
         return zend_string_copy(call->grpc_message);
     }
@@ -2655,9 +2673,6 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
             return strpprintf(0, "invalid gRPC content-type: %s", ZSTR_VAL(call->content_type));
         }
         return zend_string_init("invalid gRPC content-type", sizeof("invalid gRPC content-type") - 1, 0);
-    }
-    if (call->invalid_grpc_status) {
-        return zend_string_init("invalid grpc-status trailer", sizeof("invalid grpc-status trailer") - 1, 0);
     }
     switch (code) {
         case GRPC_STATUS_DEADLINE_EXCEEDED:

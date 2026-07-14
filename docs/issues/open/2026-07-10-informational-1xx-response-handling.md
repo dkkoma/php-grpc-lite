@@ -56,6 +56,8 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-4 domain model gateで、invalid-header budget超過後のTEMPORAL callback stopを0へ変換していたMedium 1件を検出した。production / diagnostic双方でTEMPORALを伝播し、invalid-frame observerは既確定の`metadata_too_large`をprotocol errorで上書きしないよう修正した。再レビュー後のBlocker / High / Medium / Low / Design Decisionはすべてnone。
 - 2026-07-15: consolidated pass-5のMedium 1件を受け、END_STREAMなし`FINAL_INITIAL`でstatus fieldを観測したvalid blockのframe-endに、production / diagnostic共有helperからmain streamへ`RST_STREAM(CANCEL)`をsubmitするようにした。`grpc-status` / `grpc-message` / `grpc-status-details-bin`のいずれでも`UNKNOWN` taxonomyを維持したままsilent peerを待たずcallを終了し、同一connectionを再利用する。
 - 2026-07-15: pass-5のLow 2件に対し、pre-final wire-header budget超過のdetailsを`response header/metadata budget exceeded`へ揃えた。invalid regular fieldを129個送るcontrolと、productionのvalue-free trace / diagnosticのiteration-local callback countを追加し、128回目のoverflowでTEMPORALが伝播して129個目を処理しないruntime oracleを固定した。
+- 2026-07-15: consolidated pass-7のLow 1件を受け、terminal status-field gateのCANCEL flushが失敗しても、public status code / detailsのprimary ownerを`invalid_grpc_status`へ揃えた。secondaryなI/O failureはcall / connection diagnosticに保持し、test-onlyのpost-nghttp2 / pre-socket-flush EPIPE seamとPHPT 044で3 status fieldのunary / server streaming、dead connection eviction、fresh follow-upを固定した。
+- 2026-07-15: pass-7のPHPT liveness Low 1件に対し、PHPT 043で`timeout_us > 0`のbatchだけ`poll_loop=true`とした。silent status-field / wire-header budgetの回帰時はdeadline-aware poll経路が約2秒で`timed_out=true`を返し、runner全体のtimeoutではなく既存assertionで失敗する。timeoutなしのbench baselineはblocking経路のままとし、blocking branch自体のdeadline挙動は変更していない。
 
 ## Verification
 
@@ -84,6 +86,12 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: invalid-header callback cutoffをmutation検証した。productionでTEMPORALを0へ変換するとPHPT 042が128対129で失敗し、diagnostic callbackをno-opにするとsilent fixtureへCANCELを送れず外側10秒guardがexit 124となった。restore後のfocused PHPT 042 / 043は2/2 PASS。
 - 2026-07-15: pass-6 HTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass5-fix-domain-model-pass6.md`。
+- 2026-07-15: pass-7 fix後の`./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）。PHPT 044でqueue済みCANCELのflush EPIPE後も3 status fieldのunary / server streamingが`UNKNOWN + invalid grpc-status trailer`を維持し、12 connection prefaceでdead connection eviction / fresh follow-upを確認した。PHPT 043の期限付きcontrolsはdeadline-aware poll経路でfailed-not-timedout / exact CANCELを維持した。
+- 2026-07-15: 意図的に応答しないTCP peerへPHPT 043と同じ`poll_loop=true / timeout_us=2_000_000` entrypointを実行し、約2.007秒で`failed=1 / timed_out=true`へ収束することを確認した。
+- 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4 suites）。
+- 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
+- 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-8 HTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass7-fix-domain-model-pass8.md`。
 
 ## Decision Log
 
