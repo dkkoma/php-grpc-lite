@@ -21,12 +21,12 @@ Legend:
 | Basic h2c success path | `tests/phpt/010-unary.phpt` | `tests/phpt/011-server-streaming.phpt` | PHPT, `tests/Integration/ControlSemanticsTest.php` |
 | Request metadata validation | covered | covered | `tests/phpt/020-request-metadata-control.phpt` |
 | Duplicate ASCII/binary metadata preservation | covered | covered | `tests/Integration/MetadataCompatibilityTest.php` |
-| Response metadata size limit | covered | covered | `tests/phpt/025-resource-limits.phpt`, `tests/Integration/MetadataCompatibilityTest.php` |
+| Response metadata size limit | covered | covered | `tests/phpt/025-resource-limits.phpt`, `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/Integration/MetadataCompatibilityTest.php` |
 | Deadline enforced client-side | covered | covered | `tests/phpt/021-deadline.phpt`, `tests/Integration/DeadlineTest.php` |
 | HTTP status fallback without grpc-status | covered | covered | `tests/phpt/022-error-and-http-validation.phpt` |
 | Invalid / non-gRPC content-type | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php` |
 | Invalid grpc-status value | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php`, `tests/unit/test_protocol_core.c` |
-| Informational 1xx response isolation / post-1xx initial metadata ownership | covered | covered | `tests/phpt/022-error-and-http-validation.phpt` |
+| Informational 1xx response isolation / malformed post-1xx taxonomy / production-bench parity | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt`, `tests/unit/test_response_header_phase.c` |
 | Compressed response flag / unsupported encoding (flag=1のみ失敗、encoding宣言+flag=0は成功) | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
 | Missing trailers (DATA END_STREAM → INTERNAL / HEADERS END_STREAM → UNKNOWN) | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/unit/test_status_core.c` |
 | Malformed / partial gRPC frame | covered | thin | `tests/phpt/022-error-and-http-validation.phpt`, `tests/phpt/024-control-semantics.phpt` |
@@ -45,6 +45,7 @@ Legend:
 | Trace file emission | covered | covered | `tests/phpt/029-trace-file.phpt` |
 | Spanner emulator compatibility | covered | covered | `tests/Integration/Spanner/*` |
 | pure protocol boundary value | parser only | parser only | `tests/unit/test_protocol_core.c`, `tests/fuzz/fuzz_protocol_core.c` |
+| response header-block semantic phase transition | state only | state only | `tests/unit/test_response_header_phase.c` |
 | status taxonomy priority | status only | status only | `tests/unit/test_status_core.c` |
 | transport入力limit / authority validation | input only | input only | `tests/unit/test_transport_core.c` |
 | ZTS build/load/PHPT | covered | covered | `.github/workflows/native-qa.yml`, `tools/test/check-zts-phpt.sh` |
@@ -68,7 +69,7 @@ Legend:
 | gate | command | protects |
 |---|---|---|
 | C static analysis | `./tools/test/check-c-static-analysis.sh` | C extension static analysis |
-| C unit | `./tools/test/check-c-unit.sh` | pure protocol/status/transport helper boundary |
+| C unit | `./tools/test/check-c-unit.sh` | pure protocol/response phase/status/transport helper boundary |
 | PHPT | `./tools/test/check-phpt.sh` | extension load、PHP-visible low-level surface、local transport behavior |
 | Crash/UB check | `./tools/test/check-crash-ub.sh` | 生成入力をASan/UBSan付きで短時間実行し、crash / undefined behaviorを検出する |
 | C coverage | `./tools/test/check-c-coverage.sh` | C unit + PHPTによるC line/function coverage |

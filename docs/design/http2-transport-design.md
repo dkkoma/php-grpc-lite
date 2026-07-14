@@ -45,7 +45,7 @@ Design requirements:
 
 ### Response HEADERS
 
-response HEADERSは `grpc_call` のcall-local phase(`INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING`)で処理する。nghttp2は最初のresponse HEADERSだけを `NGHTTP2_HCAT_RESPONSE` とし、1xx後のfinal responseも `NGHTTP2_HCAT_HEADERS` で通知するため、raw categoryをinitial / trailing ownershipとして使わない。final response未観測のblockは先頭の`:status`でphaseを確定し、1xx fieldはmetadata、content-type validation、gRPC status/message/encodingを含むcall stateへ反映せず受動的にfinal responseを待つ。1xx後の非1xx blockはinitial metadataとして保存し、initial response validationを適用する。
+response HEADERSは `grpc_call` のcall-local phase(`INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING`)で処理し、production / diagnosticは `response_header_phase.c` のpure transition helperを共有する。raw nghttp2 categoryをinitial / trailing ownershipに使わない。1xx fieldはmetadata、content-type validation、gRPC status/message/encodingへ反映しないが、pseudo-headerと反復1xxを含む全fieldをcall-local wire header budgetへ計上する。Trailing / Trailers-OnlyのstatusはEND_STREAM validityでgateし、nghttp2のinvalid-frame / protocol-RST observerが拒否したresponse sequenceのfieldは成功statusとしてcommitしない。
 
 ### Frame parser
 

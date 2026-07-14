@@ -47,6 +47,9 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: bench-enabled diagnostic nghttp2 callbackにも同じphase transitionと反復callごとのstate resetを適用し、production / diagnosticのどちらでもinformational fieldがmetadata / status観測へ混ざらないようにした。
 - 2026-07-15: `docs/SPEC.md`、response exchange / transport / protocol classification設計、code-reading guide、fixture / verification資料をsemantic phase modelへ更新した。
 - 2026-07-15: HTTP/2 / gRPC domain model reviewを実施し、Blocker / High / Medium / Low / Design Decisionの指摘はいずれもnone。記録は `docs/reviews/issues/2026-07-15-informational-1xx-response-domain-model-review.md`。
+- 2026-07-15: pass-1 adversarial review 8件を受け、response phaseとstatus commit validityのproduction / diagnostic共有pure helper、`response_header_protocol_error` taxonomy、END_STREAMなしtrailing blockのquarantine、nghttp2 invalid-frame / outbound protocol-RST観測を追加した。HTTP messaging rejectionは先行 `grpc-status: 0` とHTTP status未観測fallbackより優先し `INTERNAL` とする。
+- 2026-07-15: semantic metadata ownershipとwire header work budgetを分離し、pseudo-headerとinformational field、複数1xx blockをoverflow-safeなcall-local entry/byte counterへ累積するようにした。budget超過は `RESOURCE_EXHAUSTED` + stream-local cancelとし、同一connectionの後続RPC成功もfixtureで固定した。
+- 2026-07-15: raw h2c fixture `:50071` とPHPT 042/043を追加。END_STREAMなしtrailer、103+END_STREAM、103→missing-status HEADERS、103→DATA、informational entry/byte budget、invalid status前後のmetadata ownership、bench false-successをunary / server streamingまたはbench entrypointで固定した。PHPT 022には複数103、post-1xx Trailers-Only / invalid content-type、two-message streamingを追加し、request cardinalityを1に揃えた。
 
 ## Verification
 
@@ -56,10 +59,20 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0、skipped 0）。
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。
+- 2026-07-15: pass-1 adversarial fix後にtest-server imageをrebuildし `docker compose up -d --force-recreate test-server` PASS。raw `:50071` のexact malformed/resource/ownership/bench sequenceと、`:50054` のvalid repeated-103 / post-1xx edgeを送出した。
+- 2026-07-15: `./tools/test/check-phpt.sh` PASS（28/28 tests、failed 0、skipped 0、warned 0）。PHPT 042がunary / server streamingのmalformed sequence、wire header budgetとsame-connection follow-up、invalid-status metadata ownership、PHPT 043がbench `ok=0` / `failed=1` を含む。
+- 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4 suites）。response phase transition、call reset、status commit / metadata role truth tableを含む。
+- 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
+- 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-2 HTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は `docs/reviews/issues/2026-07-15-1xx-fix-domain-model-pass2.md`。
 
 ## Decision Log
 
 - 2026-07-10: 記録のみの issue 分割（コードは PR #28 同梱のまま）としたが、第三パスレビューで不完全性が実証されたため、コードごと本 issue の別 PR スコープへ変更。
+- 2026-07-15: nghttp2がHEADERS rejectionとDATA-after-1xxで異なるcallbackを通るため、HTTP response messaging violationはDATA framingの `malformed_response_frame` と混ぜず `response_header_protocol_error` とした。HEADERSは `on_invalid_frame_recv_callback()`、DATA-after-1xxはnghttp2が生成するoutbound `RST_STREAM(PROTOCOL_ERROR)` observerで捕捉し、重複RSTはsubmitしない。
+- 2026-07-15: final-response後のTrailing HEADERSはbegin callback時点でEND_STREAM flagを読めるため、END_STREAMなしblockのstatus/metadataはその場でquarantineする。nghttp2のblock全体validation後に別の違反が分かった場合はprotocol-error markerが先行statusより優先するため、header field全体のstaging allocationは追加しない。
+- 2026-07-15: semantic metadata map用counterをinformational fieldで増やすとownershipが混ざるため、独立したwire header entry/byte counterを導入。configured metadata hard limitと128-entry limitを全decoded response fieldのwork budgetとしても使う。
+- 2026-07-15: phase begin / `:status` / end / resetとstatusのEND_STREAM commit predicateをnghttp2 / Zend非依存のpure helperに置き、production / bench diagnosticの構造的parityをC unit transition / truth tableで守る。
 
 ## Close Criteria
 

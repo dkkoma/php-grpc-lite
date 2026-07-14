@@ -28,12 +28,13 @@
 
 | Classification | Fields | Set by | Status mapping |
 |---|---|---|---|
-| Response header-block phase | `response_header_block_phase`, `final_response_headers_seen` | `on_begin_headers_callback()`, `on_header_callback()`, `on_frame_recv_callback()` | statusへ直接写像しない。informational / final initial / trailingのfield反映境界を決める |
+| Response header-block phase | `response_header_phase`, `response_header_block_end_stream`, `response_header_block_protocol_valid` | shared phase helper、header callbacks | statusへ直接写像しない。informational / final initial / trailingのfield反映境界とblock-local commit gateを決める |
+| Response header protocol error | `response_header_protocol_error` | invalid-frame callback、final前DATAに対するoutbound protocol-RST observer、stream close fallback | `INTERNAL`。`grpc-status` / HTTP status fallbackより優先 |
 | Deadline exceeded | `timed_out` | send/recv deadline path | `DEADLINE_EXCEEDED` |
 | Invalid `grpc-status` | `invalid_grpc_status`, `grpc_status_seen`, `initial_grpc_status_seen`, `initial_headers_end_stream` | `on_header_callback()`, `on_frame_recv_callback()` | `UNKNOWN` |
 | HTTP status fallback | `http_status`, `grpc_status` absent | `on_header_callback()` | HTTP status mapping in `status_core.c` |
 | Invalid content type | `content_type_seen`, `content_type`, `invalid_content_type` | `on_header_callback()`, response HEADERS finalization | `UNKNOWN` |
-| Metadata too large | `metadata_too_large`, metadata counters | `grpc_protocol_add_response_metadata_entry()` | `RESOURCE_EXHAUSTED` |
+| Metadata too large | `metadata_too_large`, semantic metadata counters, `wire_response_header_*` | header field accounting、`grpc_protocol_add_response_metadata_entry()` | `RESOURCE_EXHAUSTED`。final HTTP status観測前でも優先 |
 | Message too large | `response_message_too_large`, parser counters | response DATA parser | `RESOURCE_EXHAUSTED` |
 | Read-ahead queue too large | `response_queue_limit_exceeded`, queue counters | server streaming queue helper | `RESOURCE_EXHAUSTED` |
 | Malformed gRPC frame | `malformed_response_frame` | response DATA parser, invalid PUSH_PROMISE | `INTERNAL` |
@@ -64,9 +65,10 @@ stream-local failureはconnection failureではない。message size、metadata 
 
 | Function | Classification responsibility | Transport action in same path |
 |---|---|---|
-| `on_begin_headers_callback()` | final response観測済みかを基にheader blockを `AWAITING_STATUS` / `TRAILING` へ分類 | なし |
-| `on_header_callback()` | 先頭の`:status`でinformational / final initialを確定し、確定phaseに従って `grpc-status`、`grpc-message`、`content-type`、`grpc-encoding`、metadata sizeを分類。informational fieldはcall stateへ反映しない | metadata size超過時に `RST_STREAM(CANCEL)` |
-| `on_frame_recv_callback()` | GOAWAY refusal、RST_STREAM、missing content-type、trailers-only misuse、PUSH_PROMISE拒否の分類 | GOAWAYでdraining化、PUSH_PROMISEで `RST_STREAM(PROTOCOL_ERROR)` |
+| `on_begin_headers_callback()` | shared helperでphaseを開始し、END_STREAMからblock-local validityを決める | なし |
+| `on_header_callback()` | 全fieldのwire budget計上、`:status`でのphase確定、valid blockのstatus/metadata/content-type分類 | budget超過時に `RST_STREAM(CANCEL)` |
+| invalid-frame / frame-send callback | nghttp2が拒否したHEADERS sequenceと、final response前DATAに対するlibrary-generated `RST_STREAM(PROTOCOL_ERROR)` を `response_header_protocol_error` へ分類 | libraryが送信するRSTを観測するだけで重複submitしない |
+| `on_frame_recv_callback()` | GOAWAY refusal、RST_STREAM、missing content-type、Trailers-Only misuse、PUSH_PROMISE拒否、phase endの分類 | GOAWAYでdraining化、PUSH_PROMISEで `RST_STREAM(PROTOCOL_ERROR)` |
 | `grpc_protocol_validate_response_message_lengths()` | unary/body aggregation pathのgRPC frame、message count、compressed flag、message size分類 | stream-local failureで `RST_STREAM(CANCEL)` |
 | `grpc_protocol_process_response_data_direct()` | server streaming direct parserのgRPC frame、message size、compressed flag、queue delivery分類 | stream-local failureで `RST_STREAM(CANCEL)` |
 | `mark_server_streaming_read_ahead_limit_exceeded()` | read-ahead queue limit分類 | `RST_STREAM(CANCEL)` |
@@ -101,14 +103,15 @@ stream-local failureはconnection failureではない。message size、metadata 
 
 | Scenario | Classification | Transport action | Connection reuse | Verification |
 |---|---|---|---|---|
-| 1xx informational response | blockを `INFORMATIONAL` としてfieldを隔離し、後続final responseを `FINAL_INITIAL` として処理 | なし。受動的にfinal responseを待つ | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt` |
+| 1xx informational response | blockを `INFORMATIONAL` としてsemantic fieldを隔離し、wire header budgetには累積。後続final responseを `FINAL_INITIAL` として処理 | valid sequenceでは受動的にfinal responseを待つ | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/phpt/042-informational-1xx-adversarial.phpt` |
+| malformed response header sequence | `response_header_protocol_error` | nghttp2がsubmitしたprotocol RSTを観測。必要な場合のみstream-local `RST_STREAM(PROTOCOL_ERROR)` | reusable if connection usable | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/unit/test_status_core.c` |
 | `grpc-status`がinvalid | `invalid_grpc_status` | bodyが来たらstream cancel | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/unit/test_protocol_core.c`, `tests/unit/test_status_core.c` |
 | `content-type` missing / invalid | `invalid_content_type` | body discard。DATAが来た場合はstream-local cancel候補 | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php` |
 | `grpc-encoding` unsupported | `unsupported_response_encoding` | body discard / stream cancel | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
 | compressed flag in gRPC frame | `compressed_response_seen` | `RST_STREAM(CANCEL)` | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
 | malformed gRPC frame | `malformed_response_frame` | `RST_STREAM(CANCEL)` | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/phpt/024-control-semantics.phpt` |
 | response message too large | `response_message_too_large` | `RST_STREAM(CANCEL)` | reusable if connection usable | `tests/phpt/025-resource-limits.phpt` |
-| response metadata too large | `metadata_too_large` | `RST_STREAM(CANCEL)` | reusable if connection usable | `tests/phpt/025-resource-limits.phpt`, `tests/Integration/MetadataCompatibilityTest.php` |
+| response metadata / wire header budget too large | `metadata_too_large` | `RST_STREAM(CANCEL)` | reusable if connection usable | `tests/phpt/025-resource-limits.phpt`, `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/Integration/MetadataCompatibilityTest.php` |
 | server streaming read-ahead too large | `response_queue_limit_exceeded` | `RST_STREAM(CANCEL)` | reusable if connection usable | server streaming resource limit / lifecycle coverage |
 | server `RST_STREAM(REFUSED_STREAM)` before response starts | `stream_reset_seen`, `stream_error_code`, attempt outcome | inbound observation only。初回attemptかつresponse未開始ならwrapper adapterが同じconnectionへ1回transparent retry | reusable if connection usable | `tests/phpt/024-control-semantics.phpt`, `tests/unit/test_status_core.c` |
 | GOAWAY refused before response starts | connection draining、`stream_refused_seen`, attempt outcome | no new stream on this connection。初回attemptかつresponse未開始ならwrapper adapterがcacheから外して新connectionへ1回transparent retry | not reused for new RPC | `tests/phpt/024-control-semantics.phpt`, `tests/unit/test_status_core.c` |

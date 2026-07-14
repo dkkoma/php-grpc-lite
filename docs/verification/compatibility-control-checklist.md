@@ -33,7 +33,8 @@ unary / server streaming の client-side enforcement、`STATUS_DEADLINE_EXCEEDED
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
 | trailers-only response | body なしで `grpc-status` が header block に来ても status として扱う | unary immediate error、server streaming immediate error |
-| informational 1xx response | 1xx fieldをmetadata / validation / status stateから隔離し、後続final responseをinitial HEADERSとして処理する | unary / server streamingで103 + status 0、103 + missing trailers、semantic field汚染 |
+| informational 1xx response | 1xx fieldをmetadata / validation / status stateから隔離し、後続final responseをinitial HEADERSとして処理する。wire resource budgetには累積する | unary / server streamingで複数103、Trailers-Only、invalid final content-type、entry/byte budget |
+| malformed response header sequence | END_STREAMなしTrailers、END_STREAM付き1xx、final response前DATA / missing `:status` は `INTERNAL`。block内statusは成功としてcommitしない | raw h2cのexact sequenceをunary / server streamingで確認 |
 | `grpc-message` percent decode | percent-encoded UTF-8 を decode し、不正 encoding でも壊れない | `%20`、UTF-8、壊れた `%` |
 | missing trailers (DATA END_STREAM) | :status 200 で stream が DATA frame の END_STREAM で終わり `grpc-status` が無い場合は INTERNAL | `STATUS_INTERNAL` + details "server closed the stream without sending trailers"(grpc-go `handleData` 準拠、2026-07-10 に `STATUS_UNKNOWN` から変更) |
 | missing grpc-status (HEADERS END_STREAM) | headers-only 応答や `grpc-status` を含まない trailing HEADERS で終わる場合は UNKNOWN のまま | `STATUS_UNKNOWN`(grpc-go `operateHeaders` 準拠)。headers-only / custom trailers / `grpc-message` のみ |
@@ -52,8 +53,8 @@ reserved / fixed headers と key/value validation の観測結果は `docs/resea
 | binary metadata | `*-bin` は PHP API 上 raw binary、HTTP/2 wire 上 base64 として扱う | 同一 key 複数 values、padded/unpadded、`,` join の split、不正 base64 |
 | duplicate metadata | 同一 key 複数 values を gRPC 仕様準拠で保持する | request echo、initial metadata、trailing metadata、ext-grpc PHP API との差分明示 |
 | reserved `grpc-*` / fixed headers | application metadata として不正な reserved key を混ぜない | `grpc-status`、`grpc-message`、`grpc-timeout`、`grpc-encoding`、`te`、`content-type`、`user-agent` |
-| initial/trailing split | body 前後とresponse header-block phaseでmetadataを正しく分離する | normal response、trailers-only、1xx fieldは非公開、1xx後のfinal `HCAT_HEADERS` はinitial、server streaming first payload 前/final payload 後 |
-| metadata size | 過大 metadata の扱いを決める | header count、value bytes、header list size 超過、native 固定 buffer 排除 |
+| initial/trailing split | body 前後とresponse header-block roleでmetadataを正しく分離する | normal response、trailers-only、1xx fieldは非公開、1xx後のfinal `HCAT_HEADERS` はinitial、invalid `grpc-status` の前後fieldも同じtrailing role |
+| metadata size | semantic metadata ownershipとwire header work budgetを分離する | pseudo-header / informational field / 複数1xxを含むheader countとbytes、超過後のconnection reuse |
 | authority / gax headers | 実用 metadata と transport header が衝突しない | `:authority`、`grpc.primary_user_agent`、`x-goog-api-client`、`x-goog-request-params` |
 
 2026-04-28 時点で、単一 raw binary value の `*-bin` request / initial / trailing metadata round-trip は php-grpc-lite と ext-grpc で一致確認済み。

@@ -163,8 +163,8 @@ gRPC over HTTP/2として最低限以下を確認する。
 - `grpc-timeout` はcall deadlineから生成され、user metadataからは上書きさせない。
 - `user-agent`、`grpc-status`、`grpc-message`、`grpc-status-details-bin` などlibrary-owned metadataをuser metadataから送らない。
 - response `content-type` を検証する。
-- 1xx informational fieldはmetadata、content-type validation、gRPC status/message/encodingへ反映せず、1xx後のfinal response metadataをinitial ownershipとする。
-- `grpc-status` / `grpc-message` / `grpc-status-details-bin` はtrailers semanticsで扱う。
+- 1xx informational fieldはmetadata、content-type validation、gRPC status/message/encodingへ反映せず、1xx後のfinal response metadataをinitial ownershipとする。semantic isolationとwire header resource accountingは別責務とし、informational fieldもhard budgetに含める。
+- `grpc-status` / `grpc-message` / `grpc-status-details-bin` はEND_STREAM付きのvalidなTrailers / Trailers-Only semanticsで扱い、invalid blockで先行観測したstatusを成功としてcommitしない。
 - trailers-only errorを扱う。
 - compression未対応時は明示statusに変換する。
 - duplicate metadata values / binary metadataのshapeがSPECと一致している。

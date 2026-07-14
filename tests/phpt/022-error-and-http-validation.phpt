@@ -103,6 +103,24 @@ $assertUnaryStatus(
 ])->wait();
 grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $earlyHintsStatus->code, 'early hints unary status');
 grpc_lite_phpt_assert_true($earlyHintsResponse instanceof \Helloworld\BenchReply, 'early hints unary response type');
+$assertUnaryStatus(
+    [
+        'x-bench-early-hints' => ['1'],
+        'x-bench-grpc-response' => ['headers-only'],
+        'x-bench-grpc-status' => ['5'],
+    ],
+    Grpc\STATUS_NOT_FOUND,
+    '',
+);
+$assertUnaryStatus(
+    [
+        'x-bench-early-hints' => ['1'],
+        'x-bench-content-type' => ['text/plain'],
+        'x-bench-grpc-status' => ['0'],
+    ],
+    Grpc\STATUS_UNKNOWN,
+    'invalid gRPC content-type: text/plain',
+);
 
 $earlyHintsMetadataCall = $client->BenchUnary(new BenchRequest(), [
     'x-bench-early-hints' => ['1'],
@@ -116,6 +134,7 @@ grpc_lite_phpt_assert_true(!array_key_exists('x-bench-authority', $earlyHintsMet
 
 $pollutedEarlyHintsCall = $client->BenchUnary(new BenchRequest(), [
     'x-bench-early-hints' => ['1'],
+    'x-bench-early-hints-count' => ['2'],
     'x-bench-early-hints-pollution' => ['1'],
     'x-bench-observe-authority' => ['1'],
 ]);
@@ -174,7 +193,7 @@ grpc_lite_phpt_assert_true($emptyResponse instanceof \Helloworld\BenchReply, 'em
 
 $assertStreamStatus = static function (array $metadata, int $code, string $details, int $expectedCount = 0) use ($client): void {
     $request = new BenchRequest();
-    $request->setMessageCount(10);
+    $request->setMessageCount(1);
     $call = $client->BenchServerStream($request, $metadata);
     $count = 0;
     foreach ($call->responses() as $_reply) {
@@ -186,7 +205,7 @@ $assertStreamStatus = static function (array $metadata, int $code, string $detai
 };
 
 $request = new BenchRequest();
-$request->setMessageCount(10);
+$request->setMessageCount(1);
 $call = $client->BenchServerStream($request, [
     'x-bench-content-type' => ['application/grpcfoo'],
 ]);
@@ -260,9 +279,36 @@ $assertStreamStatus(
     '',
     1,
 );
+$assertStreamStatus(
+    [
+        'x-bench-early-hints' => ['1'],
+        'x-bench-grpc-response' => ['headers-only'],
+        'x-bench-grpc-status' => ['5'],
+    ],
+    Grpc\STATUS_NOT_FOUND,
+    '',
+);
+$assertStreamStatus(
+    [
+        'x-bench-early-hints' => ['1'],
+        'x-bench-content-type' => ['text/plain'],
+        'x-bench-grpc-status' => ['0'],
+    ],
+    Grpc\STATUS_UNKNOWN,
+    'invalid gRPC content-type: text/plain',
+);
+$assertStreamStatus(
+    [
+        'x-bench-early-hints' => ['1'],
+        'x-bench-grpc-response' => ['two-messages'],
+    ],
+    Grpc\STATUS_OK,
+    '',
+    2,
+);
 
 $earlyHintsStreamRequest = new BenchRequest();
-$earlyHintsStreamRequest->setMessageCount(10);
+$earlyHintsStreamRequest->setMessageCount(1);
 $earlyHintsStreamCall = $client->BenchServerStream($earlyHintsStreamRequest, [
     'x-bench-early-hints' => ['1'],
     'x-bench-observe-authority' => ['1'],
@@ -277,9 +323,10 @@ grpc_lite_phpt_assert_same(['test-server:50054'], $earlyHintsStreamCall->getMeta
 grpc_lite_phpt_assert_true(!array_key_exists('x-bench-authority', $earlyHintsStreamCall->getTrailingMetadata()), 'early hints stream authority not trailing metadata');
 
 $pollutedEarlyHintsStreamRequest = new BenchRequest();
-$pollutedEarlyHintsStreamRequest->setMessageCount(10);
+$pollutedEarlyHintsStreamRequest->setMessageCount(1);
 $pollutedEarlyHintsStreamCall = $client->BenchServerStream($pollutedEarlyHintsStreamRequest, [
     'x-bench-early-hints' => ['1'],
+    'x-bench-early-hints-count' => ['2'],
     'x-bench-early-hints-pollution' => ['1'],
     'x-bench-observe-authority' => ['1'],
 ]);
@@ -315,7 +362,7 @@ $assertStreamStatus(
 );
 
 $request = new BenchRequest();
-$request->setMessageCount(10);
+$request->setMessageCount(1);
 $call = $client->BenchServerStream($request, [
     'x-bench-grpc-response' => ['partial-frame'],
 ]);
@@ -330,7 +377,7 @@ grpc_lite_phpt_assert_contains('malformed gRPC response frame', $call->getStatus
 memory_reset_peak_usage();
 $beforeLargeTruncatedStream = memory_get_usage(true);
 $request = new BenchRequest();
-$request->setMessageCount(10);
+$request->setMessageCount(1);
 $call = $client->BenchServerStream($request, [
     'x-bench-grpc-response' => ['declared-large-truncated'],
 ]);

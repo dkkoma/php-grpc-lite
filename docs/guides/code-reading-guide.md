@@ -246,12 +246,12 @@ nghttp2の `NGHTTP2_HCAT_RESPONSE` / `NGHTTP2_HCAT_HEADERS` は、そのままgR
 
 transportは1 RPCごとのheader-block phaseを次の順序で確定します。
 
-1. `on_begin_headers_callback()` は、final response未観測なら `GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS`、観測済みなら `GRPC_RESPONSE_HEADER_BLOCK_TRAILING` を `response_header_block_phase` に設定する。
+1. `on_begin_headers_callback()` はshared pure helperで、final response未観測なら `GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS`、観測済みなら `GRPC_RESPONSE_HEADER_BLOCK_TRAILING` を `response_header_phase.block_phase` に設定し、blockのEND_STREAM validityも記録する。
 2. `AWAITING_STATUS` blockの先頭の`:status`が100–199なら `GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL` とし、block内の全fieldを無視してfinal responseを待つ。
 3. 非1xxの`:status`なら `GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL` とし、`final_response_headers_seen` を設定する。同じblockのcustom metadataをinitial metadataへ保存してinitial response validationを適用する。これは1xx後に `HCAT_HEADERS` で届いたfinal responseにも同じく適用する。
 4. final response確定後のheader blockは `TRAILING` とし、custom metadataとgRPC statusをtrailing側で処理する。
 
-phaseは各fieldをmetadata / validation / status stateへ反映する前に確定します。`INFORMATIONAL` blockはmetadata entry/byte count、`http_status`、`content-type`、`grpc-status`、`grpc-message`、`grpc-encoding`を更新しません。`on_frame_recv_callback()` は `FINAL_INITIAL` だけをinitial responseとして検証し、`TRAILING` はEND_STREAM付きの場合だけterminal trailersとして記録してからphaseを `NONE` へ戻します。block終了後にphaseを推測して先行更新を修復する設計ではありません。trailers-only responseにおける `grpc-status` とcustom metadataの扱いは、既存のstatus metadata規則を維持します。
+phaseは各fieldをmetadata / validation / status stateへ反映する前に確定します。`INFORMATIONAL` blockはPHP-visible metadata、`http_status`、`content-type`、`grpc-status`、`grpc-message`、`grpc-encoding`を更新しませんが、pseudo-headerを含む全fieldは `wire_response_header_*` budgetに計上します。`grpc_response_header_phase_allows_status_fields()` はFINAL_INITIAL / TRAILINGのEND_STREAM付きblockだけstatus commitを認め、`grpc_response_header_phase_metadata_is_trailing()` はstatus parse成否ではなくblock roleでownershipを揃えます。nghttp2のinvalid-frame / protocol-RST callbackで拒否を観測した場合は `response_header_protocol_error` が先行statusやHTTP fallbackより優先します。phase遷移、commit/ownership truth table、call resetは `tests/unit/test_response_header_phase.c`、wire semanticsはPHPTで固定します。
 
 ## 7. persistent connection
 
@@ -287,4 +287,4 @@ docker compose run --rm dev sh -lc 'make -j$(nproc)'
 docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist
 ```
 
-`check-c-unit.sh` は pure protocol helperとstatus taxonomyだけを直接検証します。`check-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw lifecycle fixture `:50055`〜`:50065` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-c-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/c-lcov/` にtraceとHTMLを出力します。
+`check-c-unit.sh` は pure protocol helperとstatus taxonomyだけを直接検証します。`check-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw HTTP/2 fixture `:50055`〜`:50071` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-c-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/c-lcov/` にtraceとHTMLを出力します。

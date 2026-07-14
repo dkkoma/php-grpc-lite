@@ -2,6 +2,7 @@
 #define PHP_GRPC_LITE_GRPC_EXCHANGE_STATE_H
 
 #include "common.h"
+#include "response_header_phase.h"
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 #include "diagnostic/bench_call.h"
 #endif
@@ -23,14 +24,6 @@ typedef struct metadata_entry {
 } metadata_entry;
 
 typedef struct _grpc_call grpc_call;
-
-typedef enum {
-    GRPC_RESPONSE_HEADER_BLOCK_NONE = 0,
-    GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS,
-    GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL,
-    GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL,
-    GRPC_RESPONSE_HEADER_BLOCK_TRAILING,
-} grpc_response_header_block_phase;
 
 struct _grpc_call {
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
@@ -62,6 +55,7 @@ struct _grpc_call {
     bool compressed_response_seen;
     bool response_message_too_large;
     bool malformed_response_frame;
+    bool response_header_protocol_error;
     bool metadata_too_large;
     bool content_type_seen;
     bool invalid_content_type;
@@ -75,8 +69,9 @@ struct _grpc_call {
     bool initial_grpc_status_seen;
     bool initial_headers_end_stream;
     bool trailing_headers_seen;
-    grpc_response_header_block_phase response_header_block_phase;
-    bool final_response_headers_seen;
+    grpc_response_header_phase_state response_header_phase;
+    bool response_header_block_end_stream;
+    bool response_header_block_protocol_valid;
     size_t response_message_count;
     size_t max_response_messages;
     size_t max_receive_message_bytes;
@@ -112,6 +107,8 @@ struct _grpc_call {
     metadata_entry *metadata_tail;
     size_t metadata_entry_count;
     size_t metadata_bytes;
+    size_t wire_response_header_entry_count;
+    size_t wire_response_header_bytes;
     size_t max_response_metadata_bytes;
     size_t response_parse_offset;
     uint8_t response_header_buf[5];

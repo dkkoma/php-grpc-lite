@@ -11,7 +11,16 @@ int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
 {
     if (call->timed_out) return GRPC_STATUS_DEADLINE_EXCEEDED;
     if (cancelled) return GRPC_STATUS_CANCELLED;
+    /* HTTP response messaging rejection is authoritative even if nghttp2
+     * exposed grpc-status or before a final :status was observed. */
+    if (call->response_header_protocol_error) return GRPC_STATUS_INTERNAL;
     if (call->invalid_grpc_status) return GRPC_STATUS_UNKNOWN;
+    /* Informational blocks count toward the same call-local wire header
+     * budget, so this limit can fire before the final HTTP status exists.
+     * DATA/queue limits remain below HTTP fallback: a non-gRPC HTTP error
+     * body must not be reclassified by interpreting its bytes as a gRPC
+     * Length-Prefixed-Message. */
+    if (call->metadata_too_large) return GRPC_STATUS_RESOURCE_EXHAUSTED;
     if (call->grpc_status < 0 && call->http_status != 200) {
         switch (call->http_status) {
             case 400: return GRPC_STATUS_INTERNAL;
@@ -28,7 +37,7 @@ int grpc_lite_status_code_from_call(grpc_call *call, bool cancelled)
         }
     }
     if (call->invalid_content_type) return GRPC_STATUS_UNKNOWN;
-    if (call->response_message_too_large || call->metadata_too_large || call->response_queue_limit_exceeded) return GRPC_STATUS_RESOURCE_EXHAUSTED;
+    if (call->response_message_too_large || call->response_queue_limit_exceeded) return GRPC_STATUS_RESOURCE_EXHAUSTED;
     if (call->malformed_response_frame) return GRPC_STATUS_INTERNAL;
     /* Client-side inability to process a server message is INTERNAL per
      * compression.md; UNIMPLEMENTED is reserved for the server-side case. */
@@ -89,7 +98,8 @@ bool grpc_lite_call_response_started(grpc_call *call)
      * prove the server started responding on this stream. */
     if (call->metadata_too_large || call->content_type_seen || call->invalid_content_type
         || call->unsupported_response_encoding || call->invalid_grpc_status
-        || call->response_queue_limit_exceeded || call->grpc_message != NULL) {
+        || call->response_queue_limit_exceeded || call->response_header_protocol_error
+        || call->grpc_message != NULL) {
         return true;
     }
     if (call->response_message_count > 0 || call->response_queue_head != NULL) {

@@ -425,19 +425,27 @@ func envInt(key string) (int, bool) {
 func serveNonGrpcH2C() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("x-bench-early-hints") == "1" {
-			if r.Header.Get("x-bench-early-hints-pollution") == "1" {
-				w.Header().Set("content-type", "text/plain")
-				w.Header().Set("grpc-status", "13")
-				w.Header().Set("grpc-message", "informational pollution")
-				w.Header().Set("grpc-encoding", "gzip")
-				w.Header().Set("x-bench-informational-only", "must-not-leak")
+			earlyHintsCount := 1
+			if raw := r.Header.Get("x-bench-early-hints-count"); raw != "" {
+				if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 16 {
+					earlyHintsCount = parsed
+				}
 			}
-			w.WriteHeader(http.StatusEarlyHints)
-			w.Header().Del("content-type")
-			w.Header().Del("grpc-status")
-			w.Header().Del("grpc-message")
-			w.Header().Del("grpc-encoding")
-			w.Header().Del("x-bench-informational-only")
+			for i := 0; i < earlyHintsCount; i++ {
+				if r.Header.Get("x-bench-early-hints-pollution") == "1" {
+					w.Header().Set("content-type", "text/plain")
+					w.Header().Set("grpc-status", "13")
+					w.Header().Set("grpc-message", "informational pollution")
+					w.Header().Set("grpc-encoding", "gzip")
+					w.Header().Set("x-bench-informational-only", "must-not-leak")
+				}
+				w.WriteHeader(http.StatusEarlyHints)
+				w.Header().Del("content-type")
+				w.Header().Del("grpc-status")
+				w.Header().Del("grpc-message")
+				w.Header().Del("grpc-encoding")
+				w.Header().Del("x-bench-informational-only")
+			}
 		}
 		if r.Header.Get("x-bench-observe-authority") == "1" {
 			w.Header().Set("content-type", "application/grpc")
@@ -602,6 +610,168 @@ func serveLifecycleH2C() {
 	go serveGoAwayMaxKeepStreamOpenH2C(":50067")
 	go serveBacklogFloodH2C(":50068", ":50069")
 	go serveSmallWindowGoAwayDrainingH2C(":50070")
+	go serveInformationalAdversarialH2C(":50071")
+}
+
+// serveInformationalAdversarialH2C is a raw HTTP/2 fixture for response
+// sequences that net/http deliberately refuses to write. Request metadata
+// selects a sequence, while the connection remains open after stream-local
+// protocol failures so tests can verify that the next RPC reuses it.
+func serveInformationalAdversarialH2C(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen %s: %v", addr, err)
+	}
+	log.Printf("listening on %s (raw h2c informational adversarial fixture)", addr)
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Printf("accept %s error: %v", addr, err)
+			continue
+		}
+		go handleInformationalAdversarialH2C(conn)
+	}
+}
+
+func handleInformationalAdversarialH2C(conn net.Conn) {
+	defer conn.Close()
+	if !readClientPreface(conn) {
+		return
+	}
+	framer := http2.NewFramer(conn, conn)
+	framer.ReadMetaHeaders = hpack.NewDecoder(4096, nil)
+	if err := framer.WriteSettings(); err != nil {
+		return
+	}
+
+	requests := make(map[uint32]map[string]string)
+	resourceProbeSent := false
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch f := frame.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.MetaHeadersFrame:
+			streamID := f.Header().StreamID
+			request := make(map[string]string)
+			for _, field := range f.Fields {
+				request[field.Name] = field.Value
+			}
+			requests[streamID] = request
+			if f.StreamEnded() {
+				resourceProbeSent = writeInformationalAdversarialResponse(framer, streamID, request, resourceProbeSent)
+				delete(requests, streamID)
+			}
+		case *http2.DataFrame:
+			streamID := f.Header().StreamID
+			if f.StreamEnded() {
+				request := requests[streamID]
+				resourceProbeSent = writeInformationalAdversarialResponse(framer, streamID, request, resourceProbeSent)
+				delete(requests, streamID)
+			}
+		case *http2.RSTStreamFrame:
+			delete(requests, f.Header().StreamID)
+		}
+	}
+}
+
+func writeInformationalAdversarialResponse(framer *http2.Framer, streamID uint32, request map[string]string, resourceProbeSent bool) bool {
+	control := request["x-bench-raw-response"]
+	switch control {
+	case "trailer-without-end-stream":
+		writeRawGrpcInitial(framer, streamID, "application/grpc")
+		_ = framer.WriteData(streamID, false, grpcFrame(0, nil))
+		writeRawHeaders(framer, streamID, false, []hpack.HeaderField{
+			{Name: "grpc-status", Value: "0"},
+		})
+	case "informational-end-stream":
+		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+			{Name: ":status", Value: "103"},
+		})
+	case "informational-then-missing-status":
+		writeRawInformational(framer, streamID, nil)
+		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+			{Name: "x-after", Value: "missing-status"},
+		})
+	case "informational-then-data":
+		writeRawInformational(framer, streamID, nil)
+		_ = framer.WriteData(streamID, true, grpcFrame(0, nil))
+	case "informational-entry-budget":
+		for i := 0; i < 129; i++ {
+			writeRawInformational(framer, streamID, []hpack.HeaderField{
+				{Name: "x-info", Value: "a"},
+			})
+		}
+		writeRawGrpcOK(framer, streamID, false)
+		return true
+	case "informational-byte-budget":
+		value := makeMetadataValue(300)
+		for i := 0; i < 4; i++ {
+			writeRawInformational(framer, streamID, []hpack.HeaderField{
+				{Name: "x-info", Value: value},
+			})
+		}
+		writeRawGrpcOK(framer, streamID, false)
+		return true
+	case "require-prior-resource-probe":
+		if resourceProbeSent {
+			writeRawGrpcOK(framer, streamID, false)
+			return false
+		} else {
+			writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+				{Name: ":status", Value: "200"},
+				{Name: "content-type", Value: "application/grpc"},
+				{Name: "grpc-status", Value: "13"},
+				{Name: "grpc-message", Value: "resource probe connection was not reused"},
+			})
+		}
+	case "invalid-status-metadata":
+		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+			{Name: ":status", Value: "200"},
+			{Name: "content-type", Value: "application/grpc"},
+			{Name: "x-before", Value: "a"},
+			{Name: "grpc-status", Value: "17"},
+			{Name: "x-after", Value: "b"},
+		})
+	case "post-informational-nonterminal-status":
+		writeRawInformational(framer, streamID, nil)
+		writeRawHeaders(framer, streamID, false, []hpack.HeaderField{
+			{Name: ":status", Value: "200"},
+			{Name: "content-type", Value: "application/grpc"},
+			{Name: "grpc-status", Value: "0"},
+		})
+		_ = framer.WriteData(streamID, true, grpcFrame(0, nil))
+	default:
+		writeRawGrpcOK(framer, streamID, false)
+	}
+	return resourceProbeSent
+}
+
+func writeRawInformational(framer *http2.Framer, streamID uint32, extra []hpack.HeaderField) {
+	fields := []hpack.HeaderField{{Name: ":status", Value: "103"}}
+	fields = append(fields, extra...)
+	writeRawHeaders(framer, streamID, false, fields)
+}
+
+func writeRawGrpcInitial(framer *http2.Framer, streamID uint32, contentType string) {
+	writeRawHeaders(framer, streamID, false, []hpack.HeaderField{
+		{Name: ":status", Value: "200"},
+		{Name: "content-type", Value: contentType},
+	})
+}
+
+func writeRawHeaders(framer *http2.Framer, streamID uint32, endStream bool, fields []hpack.HeaderField) {
+	_ = framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: encodeHeaders(fields),
+		EndHeaders:    true,
+		EndStream:     endStream,
+	})
 }
 
 // serveSmallWindowGoAwayDrainingH2C advertises a tiny INITIAL_WINDOW_SIZE

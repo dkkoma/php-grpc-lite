@@ -2,7 +2,7 @@
 
 この文書は、local test-server と検証用 metadata control protocol の読み方をまとめる。
 
-`poc/test-server/main.go` は、通常のgRPC serverだけでなく、HTTP/2 / gRPC lifecycleの異常系を再現するfixtureも同時に起動する。PHPT runnerは `test-server:50051` から `test-server:50065` までをpreflightする。
+`poc/test-server/main.go` は、通常のgRPC serverだけでなく、HTTP/2 / gRPC lifecycleの異常系を再現するfixtureも同時に起動する。PHPT runnerは `test-server:50051` から `test-server:50071` までをpreflightする。
 
 ## Ports
 
@@ -23,6 +23,11 @@
 | `50063` | raw h2c GOAWAY refused then OK fixture | server streaming用。独立counterで初回接続refused、retry接続OKを返す | `tests/phpt/024-control-semantics.phpt` |
 | `50064` | raw h2c GOAWAY after message fixture | 1 messageを送った後に `GOAWAY(last_stream_id=0)` を送る。userlandへmessage delivery後はtransparent retryしないことを検証する | `tests/phpt/024-control-semantics.phpt` |
 | `50065` | raw h2c GOAWAY refused then delayed OK fixture | 初回接続refused、retry接続はdeadline超過後にOKを返す。server streaming retryでabsolute deadlineが延長されないことを検証する | `tests/phpt/024-control-semantics.phpt` |
+| `50066` | raw h2c shared-connection failure fixture | 1本目のstreamへ1 messageを返してopenのままにし、同じconnection上の2本目request到着時にTCP connectionを閉じる。connection failureが全ownerへterminalになることを検証する | `tests/phpt/034-dead-connection-terminal-for-owners.phpt` |
+| `50067` | raw h2c GOAWAY keep-stream-open fixture | 1 messageと `GOAWAY(last_stream_id=2147483647)` を送りstreamをopenのままにする。draining connection上の明示cancelがRST_STREAMを送ることを検証する | `tests/phpt/036-draining-connection-cancel-sends-rst.phpt` |
+| `50068` / `50069` | raw h2c backlog flood / control fixture | control portで次connectionをarmし、response backlogをclient receive bufferへ置く。preflight drain cap超過時のfallbackを検証する | `tests/phpt/035-preflight-drain-cap-fallback.phpt` |
+| `50070` | raw h2c small-window GOAWAY draining fixture | 小さいstream windowでrequest DATAをdeferし、別streamからdrainingへ移行する。destructor cancel後にdeferred DATAが再開してもcall lifetimeを越えないことを検証する | `tests/phpt/037-draining-destructor-pending-request-data.phpt` |
+| `50071` | raw h2c informational adversarial fixture | malformedな1xx / trailing HEADERS、informational wire-header budget、Trailers-Only metadata ownership、bench diagnostic parityをrequest controlごとに送出する。同一connection上のfollow-up RPCも扱う | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt` |
 
 ## Service methods
 
@@ -69,12 +74,29 @@
 | `x-bench-grpc-response=grpc-message-only-trailers` | `grpc-message` はあるが `grpc-status` を含まないtrailing HEADERSで閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-grpc-encoding` | response `grpc-encoding` を指定する (message自体はflag=0)。`x-bench-grpc-status` 併用でtrailerも返す | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-early-hints=1` | final responseの前に103 Early Hintsを送る。1xx後のfinal response HEADERSをinitial metadataとして扱う経路を固定し、他のcontrolと併用できる | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-early-hints-count=<1..16>` | `x-bench-early-hints=1` と併用し、final response前に送る103 block数を指定する。複数1xxのphase反復を検証する | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-early-hints-pollution=1` | `x-bench-early-hints=1` の103にinvalid `content-type`、`grpc-status`、`grpc-message`、`grpc-encoding`、`x-bench-informational-only` を載せ、informational fieldの完全な隔離を検証する | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-observe-authority=1` | observed authorityを `x-bench-authority` として返す | `tests/phpt/022-error-and-http-validation.phpt`, authority / TLS identity diagnostics |
+
+## Response controls on raw informational fixture
+
+これらは `50071` のraw HTTP/2 fixtureで使う。`net/http` が送出を拒否するmalformed sequenceを含むため、`50054` のcontrolとは分離している。fixtureはrequest HEADERSをdecodeしてstreamごとにcontrolを選び、stream-local failure後もconnectionをopenに保つ。
+
+| `x-bench-raw-response` value | Wire response |
+|---|---|
+| `trailer-without-end-stream` | final 200 initial HEADERS、1 gRPC message、`grpc-status: 0` を持つEND_STREAMなしtrailing HEADERS |
+| `informational-end-stream` | `:status: 103` を持つ `HEADERS(END_STREAM)` |
+| `informational-then-missing-status` | 103の後に`:status`を持たないfinal候補 `HEADERS(END_STREAM)` |
+| `informational-then-data` | 103の直後に `DATA(END_STREAM)` |
+| `informational-entry-budget` | `:status: 103` + `x-info: a` を129 block送った後にvalid gRPC OK response |
+| `informational-byte-budget` | 合計1,200 bytesの`x-info`を4個の103 blockへ分けて送った後にvalid gRPC OK response |
+| `require-prior-resource-probe` | 同じconnectionで直前にentry/byte budget probeを送出済みならgRPC OK、そうでなければstatus 13。resource overflow後のconnection reuse oracle |
+| `invalid-status-metadata` | `x-before`、invalid `grpc-status: 17`、`x-after` をこの順に持つTrailers-Only response |
+| `post-informational-nonterminal-status` | 103、`grpc-status: 0`を同居させたEND_STREAMなしfinal initial HEADERS、`DATA(END_STREAM)`。bench diagnosticがsuccess countへ含めないことを検証する |
 
 ## Fixture ownership
 
 - `poc/test-server/main.go` がfixture behaviorの一次ソース。
 - `tests/phpt/helpers.inc` はPHPTからtest-server到達性を確認する。
-- `tools/test/check-phpt.sh` と `tools/test/check-c-coverage.sh` は `50051`-`50065` を必須preflightとして扱う。
+- `tools/test/check-phpt.sh` と `tools/test/check-c-coverage.sh` は `50051`-`50071` を必須preflightとして扱う。
 - fixture behaviorを変える場合は、該当PHPT/PHPUnitだけでなく `docs/verification/verification-matrix.md` も更新する。

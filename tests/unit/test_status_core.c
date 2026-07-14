@@ -47,10 +47,14 @@ static void test_priority_order(void)
 {
     ASSERT_STATUS(GRPC_STATUS_DEADLINE_EXCEEDED, call.timed_out = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_CANCELLED, call.grpc_status = GRPC_STATUS_OK, true);
+    ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.response_header_protocol_error = true; call.grpc_status = GRPC_STATUS_OK, false);
+    ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.response_header_protocol_error = true; call.http_status = -1, false);
+    ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.response_header_protocol_error = true; call.invalid_grpc_status = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.invalid_grpc_status = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_UNKNOWN, call.invalid_content_type = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_RESOURCE_EXHAUSTED, call.response_message_too_large = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_RESOURCE_EXHAUSTED, call.metadata_too_large = true; call.grpc_status = GRPC_STATUS_OK, false);
+    ASSERT_STATUS(GRPC_STATUS_RESOURCE_EXHAUSTED, call.metadata_too_large = true; call.http_status = -1, false);
     ASSERT_STATUS(GRPC_STATUS_RESOURCE_EXHAUSTED, call.response_queue_limit_exceeded = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.malformed_response_frame = true; call.grpc_status = GRPC_STATUS_OK, false);
     ASSERT_STATUS(GRPC_STATUS_INTERNAL, call.compressed_response_seen = true; call.grpc_status = GRPC_STATUS_OK, false);
@@ -148,6 +152,7 @@ static void test_transparent_retryable_unprocessed_predicate(void)
     ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.invalid_content_type = true, false);
     ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.unsupported_response_encoding = true, false);
     ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.invalid_grpc_status = true, false);
+    ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_GOAWAY, true, call.stream_refused_seen = true; call.response_header_protocol_error = true, false);
     ASSERT_OUTCOME(false, GRPC_LITE_REFUSED_RST_STREAM, true, call.stream_reset_seen = true; call.stream_error_code = NGHTTP2_REFUSED_STREAM; call.response_queue_limit_exceeded = true, false);
 }
 

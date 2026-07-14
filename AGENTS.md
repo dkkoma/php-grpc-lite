@@ -41,7 +41,7 @@
 
 - ホストの PHP ではなく Docker compose 内で実行する。
 - `gcloud` CLI はホストinstallではなく公式 `gcr.io/google.com/cloudsdktool/google-cloud-cli` containerで実行する。SSHが必要な場合はcontainer内で `openssh-client` を一時installし、必要な `~/.config/gcloud` と `~/.ssh` をmountする。
-- C拡張PHPT: `./tools/test/check-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051`〜`50054`、raw lifecycle fixture ports `50055`〜`50060` をpreflightで必須にする。
+- C拡張PHPT: `./tools/test/check-phpt.sh`。`vendor/autoload.php` と Go test-server ports `50051`〜`50054`、raw HTTP/2 fixture ports `50055`〜`50071` をpreflightで必須にする。
 - C拡張C unit: `./tools/test/check-c-unit.sh`。I/Oに依存しないprotocol helperとstatus taxonomyを対象にする。
 - C拡張C coverage: `./tools/test/check-c-coverage.sh`。C unitとPHPTを実行し、`var/coverage/c-lcov/` にlcov traceとHTMLを出力する。
 - 統合テスト(PHPUnit): `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist`
