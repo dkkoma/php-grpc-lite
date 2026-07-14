@@ -1,6 +1,6 @@
 # GOAWAY / REFUSED_STREAM で拒否されたコールの透過リトライ
 
-- Status: Open
+- Status: Closed
 - Created: 2026-07-08
 - Branch: codex/issue-goaway-transparent-retry
 - Owner: Claude
@@ -82,6 +82,7 @@ Google のフロントエンドは max connection age により定期的に GOAW
 - 2026-07-08: `tests/phpt/024-control-semantics.phpt` を新挙動に更新し、RST/GOAWAY transparent retry成功、always refused後のUNAVAILABLE、delivery後非retry、deadline非延長、二段階GOAWAYを固定した。C unitにはretryable predicate境界条件を追加した。
 - 2026-07-08: fixture catalog、code-reading guide、transport design、protocol classification boundary、SPEC、preflight runnerのport listを現行挙動へ更新した。
 - 2026-07-08: HTTP/2 / gRPC domain model reviewを実施し、High 1件 / Low 1件を修正後、再レビューで Blocker / High / Medium / Low がすべて none になった。記録: `docs/reviews/issues/2026-07-08-goaway-transparent-retry-domain-review.md`。
+- 2026-07-15: PR #26 マージ（merge commit 57e5f93）を確認して Closed。
 
 ## Verification
 

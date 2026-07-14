@@ -1,6 +1,6 @@
 # grpc-encoding 宣言のみでレスポンスを拒否しない（flag=0 message の成功）
 
-- Status: Open
+- Status: Closed
 - Created: 2026-07-10
 - Branch: codex/issue-status-taxonomy-official-alignment（PR #28 に同梱で実装済み）
 - Owner: Claude
@@ -28,6 +28,7 @@
   - `src/transport.c`: header callback の即時拒否を除去、`grpc_protocol_flag_compressed_message()` を追加して flag=1 検出時に振り分け。direct decode loop の停止条件に `unsupported_response_encoding` を追加。
   - fixture: `x-bench-grpc-encoding` + `x-bench-grpc-status` 併用、`compressed-flag` + `x-bench-grpc-encoding` 併用、`headers-only`（trailers-only 応答）。
   - PHPT 022: gzip + flag=0 + status0 → OK / gzip + trailers-only non-OK → wire status / gzip + flag=1 → INTERNAL を unary / streaming で固定。
+- 2026-07-15: PR #28 マージ（merge commit e49d4be、本修正を同梱）を確認して Closed。
 
 ## Verification
 

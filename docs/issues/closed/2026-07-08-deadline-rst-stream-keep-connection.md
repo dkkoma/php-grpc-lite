@@ -1,6 +1,6 @@
 # deadline 超過時に RST_STREAM(CANCEL) を送って接続を温存する
 
-- Status: Open
+- Status: Closed
 - Created: 2026-07-08
 - Branch: codex/issue-deadline-rst-stream-keep-connection
 - Owner: Claude
@@ -54,6 +54,7 @@ persistent connection が前提の FrankenPHP worker 用途では、1 回の DEA
 - 2026-07-11: トレースの `wire.frame_out` に RST_STREAM の `error_code` を追加(inbound側と対称)。
 - 2026-07-11: PHPT `tests/phpt/033-deadline-rst-stream-connection-reuse.phpt` を追加。unary / server streaming それぞれの deadline 超過後に、ワイヤ上の RST_STREAM(error_code=8、timeoutしたcallのstreamに帰属) と、後続 unary コールの `persistent_reused=true` + STATUS_OK をトレースで固定。
 - 2026-07-11: ドメインモデルレビュー([2026-07-11-deadline-rst-keep-connection-domain-review](../../reviews/issues/2026-07-11-deadline-rst-keep-connection-domain-review.md)、High 1 / Medium 1 / Low 3 / Design Decision 1)の指摘を全件修正。`setup_deadline_abs_us` のsetup完了時クリア(001)、RST送出成功時のconnection-scoped error残骸クリア(002)、grace deadlineの意味の明文化(003)、`locally_cancelled` flagによるtruncated-body誤判定の除外(004)、PHPT 033のタイミングマージン拡大とRST帰属assertion追加(005)、SPEC §4.2のreuse安全性根拠の書き分け(006)。
+- 2026-07-15: PR #29 マージ（merge commit 255a3cb）。10パスの敵対的レビュー収束を確認して Closed。
 
 ## Verification
 
