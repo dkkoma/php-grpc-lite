@@ -424,6 +424,21 @@ func envInt(key string) (int, bool) {
 
 func serveNonGrpcH2C() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-bench-early-hints") == "1" {
+			if r.Header.Get("x-bench-early-hints-pollution") == "1" {
+				w.Header().Set("content-type", "text/plain")
+				w.Header().Set("grpc-status", "13")
+				w.Header().Set("grpc-message", "informational pollution")
+				w.Header().Set("grpc-encoding", "gzip")
+				w.Header().Set("x-bench-informational-only", "must-not-leak")
+			}
+			w.WriteHeader(http.StatusEarlyHints)
+			w.Header().Del("content-type")
+			w.Header().Del("grpc-status")
+			w.Header().Del("grpc-message")
+			w.Header().Del("grpc-encoding")
+			w.Header().Del("x-bench-informational-only")
+		}
 		if r.Header.Get("x-bench-observe-authority") == "1" {
 			w.Header().Set("content-type", "application/grpc")
 			w.Header().Set("x-bench-authority", r.Host)

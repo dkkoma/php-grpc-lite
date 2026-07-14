@@ -12,6 +12,7 @@
 | HTTP/2 connectionとの紐づき | `connection`, `next_active_stream`, `stream_id`, `stream_registered`, `connection_owned` | active HTTP/2 streamとしてconnectionに登録されている間。unaryはstack-owned `grpc_call`、server streamingはresource-owned `grpc_call` | hot |
 | transparent retry attempt | `retry_attempt` | wrapper adapterがattemptごとにsetする。`status_core.c` がattempt outcomeへ写し、wrapper adapterが1回限りの再送判断に使う | hot on failure |
 | stream lifecycle / reset状態 | `stream_closed`, `stream_error_code`, `stream_reset_seen`, `stream_refused_seen` | nghttp2 callbackとread loopが更新し、status resolutionが読む | hot |
+| response header-block semantic phase | `response_header_block_phase`, `final_response_headers_seen` | 1 RPC内でnghttp2 header callbackが更新する。block開始時にfinal response未観測なら `AWAITING_STATUS`、観測済みなら `TRAILING` とし、前者は先頭の`:status`で `INFORMATIONAL` / `FINAL_INITIAL` を確定する | header hot path |
 | gRPC statusとvalidation flag | `grpc_status`, `grpc_message`, `http_status`, `compressed_response_seen`, `response_message_too_large`, `malformed_response_frame`, `metadata_too_large`, `content_type_seen`, `invalid_content_type`, `unsupported_response_encoding`, `response_queue_limit_exceeded`, `discard_response_body`, `invalid_grpc_status`, `grpc_status_seen`, `initial_grpc_status_seen`, `initial_headers_end_stream`, `trailing_headers_seen` | response header/data processingが更新し、`grpc_lite_status_code_from_call()` とresult buildingが読む。`trailing_headers_seen` はEND_STREAM付きtrailing HEADERSをnghttp2 frame callbackが記録し、status resolutionがterminal DATA / HEADERSを区別するために読む | hot |
 | response header値 | `content_type`, `grpc_encoding` | response metadata callbackでsetし、cleanupでreleaseする | medium |
 | message / metadata limit | `response_message_count`, `max_response_messages`, `max_receive_message_bytes`, `metadata_entry_count`, `metadata_bytes`, `max_response_metadata_bytes` | call setupでlimitをsetし、response processingがincrement/checkする | hot |
@@ -23,6 +24,24 @@
 | unary body accumulator | `body` | unary direct body accumulation。cleanupでfreeする | unary hot path |
 | request writer | `grpc_header`, `grpc_header_len`, `request`, `request_len`, `request_offset`, `pending_data_len`, `pending_write_iov`, `pending_write_iovcnt`, `pending_write_remaining`, `pending_write_payload_len` | nghttp2 data source callbackとsend pathが使う | hot |
 | method identity | `method_path` | setupでsetし、trace/debug/status contextで読む | cold to medium |
+
+## Response header-block phase
+
+response header-blockの意味はrawなnghttp2 categoryではなく、`grpc_call.response_header_block_phase` で決める。型は `grpc_response_header_block_phase` で、初期値 `GRPC_RESPONSE_HEADER_BLOCK_NONE` のほか `AWAITING_STATUS` / `INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING` を持つ。nghttp2は最初のresponse HEADERSだけを `NGHTTP2_HCAT_RESPONSE` とし、最初のblockが1xxの場合は後続のinformational blockとfinal response HEADERSをいずれも `NGHTTP2_HCAT_HEADERS` として通知する。このため `HCAT_HEADERS` を一律にtrailingと分類しない。
+
+phase transitionは次の通り。
+
+```text
+NONE
+  -> begin HEADERS, final未観測 -> AWAITING_STATUS
+       -> :status 100-199  -> INFORMATIONAL -> final未観測
+       -> :status non-1xx -> FINAL_INITIAL -> final観測済み
+  -> begin HEADERS, final観測済み -> TRAILING
+```
+
+`on_begin_headers_callback()` は `final_response_headers_seen` を参照してblock開始phaseを設定する。`:status` はblock先頭で届くため、同じblockの残りのfieldを処理する前にphaseを確定できる。`INFORMATIONAL` phaseではmetadata listとそのsize/count、`http_status`、content-type validation、gRPC status/message/encodingを含むsemantic call stateを更新しない。1xx blockを抜けても `final_response_headers_seen` はfalseのままなので、次に `HCAT_HEADERS` で届く非1xx blockは `FINAL_INITIAL` となり、custom metadataはinitial ownership、content-typeはinitial response validationの対象になる。final response自体がtrailers-only responseの場合は、同じblockのstatus metadataをtrailing ownershipへ移す既存規則を維持する。
+
+header-block phaseはfield callback時点の処理境界を所有する。`on_frame_recv_callback()` は `FINAL_INITIAL` blockにinitial response validationを行い、`TRAILING` blockはEND_STREAM付きの場合だけ `trailing_headers_seen` に記録した後、HEADERS block完了時にphaseを `NONE` へ戻す。`initial_headers_end_stream` / `trailing_headers_seen` のterminal frame観測とは別概念であり、frame完了時のvalidationやmissing-trailers分類からphaseを逆算しない。1xxに対する能動動作は持たず、`INFORMATIONAL` blockを隔離してfinal responseを待つ。
 
 ## Ownership model by call kind
 

@@ -11,7 +11,7 @@
 | `50051` | h2c gRPC | 通常のunary / server streaming、metadata、deadline、resource limit、interceptor、Spanner以外の主経路 | `tests/phpt/010-unary.phpt`, `tests/phpt/011-server-streaming.phpt`, `tests/phpt/020-request-metadata-control.phpt`, `tests/Integration/MetadataCompatibilityTest.php` |
 | `50052` | h2 over TLS | TLS channel credentials、ALPN h2、bad root rejection | `tests/phpt/030-tls.phpt`, `tests/Integration/TlsTest.php` |
 | `50053` | h2 over mTLS | client certificate必須のmTLS、missing client cert rejection | `tests/phpt/030-tls.phpt`, `tests/Integration/MtlsTest.php` |
-| `50054` | h2c HTTP server, non-gRPC by default | invalid content-type、HTTP status fallback、compressed flag、unsupported encoding、partial frameなどのprotocol validation | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php`, `tests/Integration/HttpValidationTest.php` |
+| `50054` | h2c HTTP server, non-gRPC by default | informational 1xx、invalid content-type、HTTP status fallback、compressed flag、unsupported encoding、partial frameなどのprotocol validation | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php`, `tests/Integration/HttpValidationTest.php` |
 | `50055` | raw h2c lifecycle fixture | successful gRPC response中にGOAWAYを送る。既存streamは成功し、connectionはdraining扱いになることを見る | `tests/phpt/024-control-semantics.phpt` |
 | `50056` | raw h2c lifecycle fixture | 奇数回の接続で即EOF、偶数回で正常応答。connection failure後に再接続できることを見る | `tests/phpt/024-control-semantics.phpt` |
 | `50057` | raw h2c mid-stream failure fixture | gRPC response frameを途中まで送ってcloseする。malformed frame / unavailable系の扱いを見る | `tests/phpt/024-control-semantics.phpt` |
@@ -68,7 +68,9 @@
 | `x-bench-grpc-response=custom-trailers-no-status` | `grpc-status` を含まないtrailing HEADERS (`x-bench-trailer` のみ) で閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-grpc-response=grpc-message-only-trailers` | `grpc-message` はあるが `grpc-status` を含まないtrailing HEADERSで閉じる | `tests/phpt/022-error-and-http-validation.phpt` |
 | `x-bench-grpc-encoding` | response `grpc-encoding` を指定する (message自体はflag=0)。`x-bench-grpc-status` 併用でtrailerも返す | `tests/phpt/022-error-and-http-validation.phpt` |
-| `x-bench-observe-authority=1` | observed authorityを `x-bench-authority` として返す | authority / TLS identity diagnostics |
+| `x-bench-early-hints=1` | final responseの前に103 Early Hintsを送る。1xx後のfinal response HEADERSをinitial metadataとして扱う経路を固定し、他のcontrolと併用できる | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-early-hints-pollution=1` | `x-bench-early-hints=1` の103にinvalid `content-type`、`grpc-status`、`grpc-message`、`grpc-encoding`、`x-bench-informational-only` を載せ、informational fieldの完全な隔離を検証する | `tests/phpt/022-error-and-http-validation.phpt` |
+| `x-bench-observe-authority=1` | observed authorityを `x-bench-authority` として返す | `tests/phpt/022-error-and-http-validation.phpt`, authority / TLS identity diagnostics |
 
 ## Fixture ownership
 

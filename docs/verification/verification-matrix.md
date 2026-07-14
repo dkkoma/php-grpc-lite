@@ -26,6 +26,7 @@ Legend:
 | HTTP status fallback without grpc-status | covered | covered | `tests/phpt/022-error-and-http-validation.phpt` |
 | Invalid / non-gRPC content-type | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php` |
 | Invalid grpc-status value | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php`, `tests/unit/test_protocol_core.c` |
+| Informational 1xx response isolation / post-1xx initial metadata ownership | covered | covered | `tests/phpt/022-error-and-http-validation.phpt` |
 | Compressed response flag / unsupported encoding (flag=1のみ失敗、encoding宣言+flag=0は成功) | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |
 | Missing trailers (DATA END_STREAM → INTERNAL / HEADERS END_STREAM → UNKNOWN) | covered | covered | `tests/phpt/022-error-and-http-validation.phpt`, `tests/unit/test_status_core.c` |
 | Malformed / partial gRPC frame | covered | thin | `tests/phpt/022-error-and-http-validation.phpt`, `tests/phpt/024-control-semantics.phpt` |

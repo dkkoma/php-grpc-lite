@@ -93,6 +93,54 @@ $assertUnaryStatus(
     'server closed the stream without sending trailers',
 );
 $assertUnaryStatus(
+    ['x-bench-grpc-response' => ['no-trailers'], 'x-bench-early-hints' => ['1']],
+    Grpc\STATUS_INTERNAL,
+    'server closed the stream without sending trailers',
+);
+[$earlyHintsResponse, $earlyHintsStatus] = $client->BenchUnary(new BenchRequest(), [
+    'x-bench-early-hints' => ['1'],
+    'x-bench-grpc-status' => ['0'],
+])->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $earlyHintsStatus->code, 'early hints unary status');
+grpc_lite_phpt_assert_true($earlyHintsResponse instanceof \Helloworld\BenchReply, 'early hints unary response type');
+
+$earlyHintsMetadataCall = $client->BenchUnary(new BenchRequest(), [
+    'x-bench-early-hints' => ['1'],
+    'x-bench-observe-authority' => ['1'],
+]);
+[$earlyHintsMetadataResponse, $earlyHintsMetadataStatus] = $earlyHintsMetadataCall->wait();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $earlyHintsMetadataStatus->code, 'early hints metadata unary status');
+grpc_lite_phpt_assert_true($earlyHintsMetadataResponse instanceof \Helloworld\BenchReply, 'early hints metadata unary response type');
+grpc_lite_phpt_assert_same(['test-server:50054'], $earlyHintsMetadataCall->getMetadata()['x-bench-authority'] ?? null, 'early hints unary authority initial metadata');
+grpc_lite_phpt_assert_true(!array_key_exists('x-bench-authority', $earlyHintsMetadataCall->getTrailingMetadata()), 'early hints unary authority not trailing metadata');
+
+$pollutedEarlyHintsCall = $client->BenchUnary(new BenchRequest(), [
+    'x-bench-early-hints' => ['1'],
+    'x-bench-early-hints-pollution' => ['1'],
+    'x-bench-observe-authority' => ['1'],
+]);
+[$pollutedEarlyHintsResponse, $pollutedEarlyHintsStatus] = $pollutedEarlyHintsCall->wait();
+$pollutedEarlyHintsInitialMetadata = $pollutedEarlyHintsCall->getMetadata();
+$pollutedEarlyHintsTrailingMetadata = $pollutedEarlyHintsCall->getTrailingMetadata();
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $pollutedEarlyHintsStatus->code, 'polluted early hints unary status');
+grpc_lite_phpt_assert_same('', $pollutedEarlyHintsStatus->details, 'polluted early hints unary details');
+grpc_lite_phpt_assert_true($pollutedEarlyHintsResponse instanceof \Helloworld\BenchReply, 'polluted early hints unary response type');
+grpc_lite_phpt_assert_same(['application/grpc'], $pollutedEarlyHintsInitialMetadata['content-type'] ?? null, 'polluted early hints unary final content-type');
+grpc_lite_phpt_assert_same(['test-server:50054'], $pollutedEarlyHintsInitialMetadata['x-bench-authority'] ?? null, 'polluted early hints unary final metadata ownership');
+foreach (['x-bench-informational-only', 'grpc-encoding'] as $name) {
+    grpc_lite_phpt_assert_true(!array_key_exists($name, $pollutedEarlyHintsInitialMetadata), "polluted early hints unary $name not initial metadata");
+    grpc_lite_phpt_assert_true(!array_key_exists($name, $pollutedEarlyHintsTrailingMetadata), "polluted early hints unary $name not trailing metadata");
+}
+$assertUnaryStatus(
+    [
+        'x-bench-grpc-response' => ['compressed-flag'],
+        'x-bench-early-hints' => ['1'],
+        'x-bench-early-hints-pollution' => ['1'],
+    ],
+    Grpc\STATUS_INTERNAL,
+    'compressed gRPC messages are not supported',
+);
+$assertUnaryStatus(
     ['x-bench-grpc-response' => ['partial-frame']],
     Grpc\STATUS_INTERNAL,
     'malformed gRPC response frame',
@@ -199,6 +247,66 @@ $assertStreamStatus(
     Grpc\STATUS_INTERNAL,
     'server closed the stream without sending trailers',
     1,
+);
+$assertStreamStatus(
+    ['x-bench-grpc-response' => ['no-trailers'], 'x-bench-early-hints' => ['1']],
+    Grpc\STATUS_INTERNAL,
+    'server closed the stream without sending trailers',
+    1,
+);
+$assertStreamStatus(
+    ['x-bench-early-hints' => ['1'], 'x-bench-grpc-status' => ['0']],
+    Grpc\STATUS_OK,
+    '',
+    1,
+);
+
+$earlyHintsStreamRequest = new BenchRequest();
+$earlyHintsStreamRequest->setMessageCount(10);
+$earlyHintsStreamCall = $client->BenchServerStream($earlyHintsStreamRequest, [
+    'x-bench-early-hints' => ['1'],
+    'x-bench-observe-authority' => ['1'],
+]);
+$earlyHintsStreamCount = 0;
+foreach ($earlyHintsStreamCall->responses() as $_reply) {
+    $earlyHintsStreamCount++;
+}
+grpc_lite_phpt_assert_same(1, $earlyHintsStreamCount, 'early hints metadata stream yield count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $earlyHintsStreamCall->getStatus()->code, 'early hints metadata stream status');
+grpc_lite_phpt_assert_same(['test-server:50054'], $earlyHintsStreamCall->getMetadata()['x-bench-authority'] ?? null, 'early hints stream authority initial metadata');
+grpc_lite_phpt_assert_true(!array_key_exists('x-bench-authority', $earlyHintsStreamCall->getTrailingMetadata()), 'early hints stream authority not trailing metadata');
+
+$pollutedEarlyHintsStreamRequest = new BenchRequest();
+$pollutedEarlyHintsStreamRequest->setMessageCount(10);
+$pollutedEarlyHintsStreamCall = $client->BenchServerStream($pollutedEarlyHintsStreamRequest, [
+    'x-bench-early-hints' => ['1'],
+    'x-bench-early-hints-pollution' => ['1'],
+    'x-bench-observe-authority' => ['1'],
+]);
+$pollutedEarlyHintsStreamCount = 0;
+foreach ($pollutedEarlyHintsStreamCall->responses() as $_reply) {
+    $pollutedEarlyHintsStreamCount++;
+}
+$pollutedEarlyHintsStreamStatus = $pollutedEarlyHintsStreamCall->getStatus();
+$pollutedEarlyHintsStreamInitialMetadata = $pollutedEarlyHintsStreamCall->getMetadata();
+$pollutedEarlyHintsStreamTrailingMetadata = $pollutedEarlyHintsStreamCall->getTrailingMetadata();
+grpc_lite_phpt_assert_same(1, $pollutedEarlyHintsStreamCount, 'polluted early hints stream yield count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $pollutedEarlyHintsStreamStatus->code, 'polluted early hints stream status');
+grpc_lite_phpt_assert_same('', $pollutedEarlyHintsStreamStatus->details, 'polluted early hints stream details');
+grpc_lite_phpt_assert_same(['application/grpc'], $pollutedEarlyHintsStreamInitialMetadata['content-type'] ?? null, 'polluted early hints stream final content-type');
+grpc_lite_phpt_assert_same(['test-server:50054'], $pollutedEarlyHintsStreamInitialMetadata['x-bench-authority'] ?? null, 'polluted early hints stream final metadata ownership');
+foreach (['x-bench-informational-only', 'grpc-encoding'] as $name) {
+    grpc_lite_phpt_assert_true(!array_key_exists($name, $pollutedEarlyHintsStreamInitialMetadata), "polluted early hints stream $name not initial metadata");
+    grpc_lite_phpt_assert_true(!array_key_exists($name, $pollutedEarlyHintsStreamTrailingMetadata), "polluted early hints stream $name not trailing metadata");
+}
+$assertStreamStatus(
+    [
+        'x-bench-grpc-response' => ['compressed-flag'],
+        'x-bench-early-hints' => ['1'],
+        'x-bench-early-hints-pollution' => ['1'],
+    ],
+    Grpc\STATUS_INTERNAL,
+    'compressed gRPC messages are not supported',
 );
 $assertStreamStatus(
     ['x-bench-http-status' => ['503'], 'x-bench-content-type' => ['application/grpc']],

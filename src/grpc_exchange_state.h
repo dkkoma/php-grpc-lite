@@ -24,6 +24,14 @@ typedef struct metadata_entry {
 
 typedef struct _grpc_call grpc_call;
 
+typedef enum {
+    GRPC_RESPONSE_HEADER_BLOCK_NONE = 0,
+    GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS,
+    GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL,
+    GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL,
+    GRPC_RESPONSE_HEADER_BLOCK_TRAILING,
+} grpc_response_header_block_phase;
+
 struct _grpc_call {
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     int fd;
@@ -67,6 +75,8 @@ struct _grpc_call {
     bool initial_grpc_status_seen;
     bool initial_headers_end_stream;
     bool trailing_headers_seen;
+    grpc_response_header_block_phase response_header_block_phase;
+    bool final_response_headers_seen;
     size_t response_message_count;
     size_t max_response_messages;
     size_t max_receive_message_bytes;

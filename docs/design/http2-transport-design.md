@@ -43,6 +43,10 @@ Design requirements:
 
 ## Response Path
 
+### Response HEADERS
+
+response HEADERSは `grpc_call` のcall-local phase(`INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING`)で処理する。nghttp2は最初のresponse HEADERSだけを `NGHTTP2_HCAT_RESPONSE` とし、1xx後のfinal responseも `NGHTTP2_HCAT_HEADERS` で通知するため、raw categoryをinitial / trailing ownershipとして使わない。final response未観測のblockは先頭の`:status`でphaseを確定し、1xx fieldはmetadata、content-type validation、gRPC status/message/encodingを含むcall stateへ反映せず受動的にfinal responseを待つ。1xx後の非1xx blockはinitial metadataとして保存し、initial response validationを適用する。
+
 ### Frame parser
 
 DATA chunkを受けたらC側でgRPC frameをparseする。
@@ -104,6 +108,7 @@ Requirements:
 - request buffer/slices
 - upload offset / pending write iovec
 - response parse state
+- response header-block phase / final response観測状態
 - response buffer or direct payload state
 - initial metadata
 - trailing metadata
@@ -183,6 +188,7 @@ HTTP/2 transportで通す必要があるもの:
 
 - unary / server streaming OK
 - trailers-only error
+- informational 1xx field isolationとpost-1xx final responseのinitial metadata ownership
 - HTTP status to gRPC status mapping
 - content-type validation
 - `grpc-message` percent decode

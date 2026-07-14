@@ -2,14 +2,14 @@
 
 - Status: Open
 - Created: 2026-07-10
-- Branch: (未着手。PR #28 に一時同梱後、revert して本 issue へ切り出し)
+- Branch: codex/issue-informational-1xx-response-handling
 - Owner: Claude
 
 ## Background
 
 [2026-07-08-status-taxonomy-official-alignment](2026-07-08-status-taxonomy-official-alignment.md)（PR #28）の敵対的再レビュー [Medium] 指摘（`NGHTTP2_HCAT_HEADERS` ≠ terminal trailers）への対応中に一度実装したが、第三パスレビュー（protocol-adversary `REVIEW-20260710-004`）で「frame-end 判定だけの不完全な 1xx 成功経路」と指摘され、PR #28 からは revert して本 issue の別 PR スコープとした。
 
-nghttp2 の category 契約では、最初の response HEADERS だけが `NGHTTP2_HCAT_RESPONSE` で、1xx (informational) の場合は後続の non-final block と final response HEADERS がすべて `NGHTTP2_HCAT_HEADERS` で届く。現状の実装は:
+nghttp2 の category 契約では、最初の response HEADERS だけが `NGHTTP2_HCAT_RESPONSE` で、1xx (informational) の場合は後続の non-final block と final response HEADERS がすべて `NGHTTP2_HCAT_HEADERS` で届く。着手前の実装は:
 
 1. `HCAT_RESPONSE`（= 1xx block）に対して content-type validation を実行するため、content-type を持たない 1xx で `invalid_content_type` が誤発火し、1xx を挟む応答は失敗する（既知の制限として許容中）。
 2. `on_header_callback()` は raw category だけで trailing / initial を決めて即時に call state へ反映するため、frame 完了後にしか分からない「この block は 1xx / final / trailing のどれか」という semantic phase を知らない。
@@ -42,8 +42,20 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 ## Progress
 
 - 2026-07-10: PR #28 内で `expect_final_response` による frame-end 判定を一度実装（`375c3dd`）→ 第三パスレビュー `REVIEW-20260710-004` の指摘（上記「却下された初回実装」）を受けて PR #28 から revert。terminal frame 判別（`trailing_headers_seen` の END_STREAM ゲート）のみ PR #28 に残した。
+- 2026-07-15: `grpc_call` に response header-block semantic phase（`AWAITING_STATUS` / `INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING`）と final response 観測stateを追加した。`on_begin_headers_callback()` でblock開始phaseを決め、先頭の`:status` callbackで informational / final initial を確定する。1xx fieldはmetadata count/bytesを含むcall stateへ反映せず、1xx後に `HCAT_HEADERS` で届くfinal responseへinitial metadata ownershipとinitial content-type validationを適用する。
+- 2026-07-15: `x-bench-early-hints=1` fixtureを復活し、103だけにinvalid `content-type`、`grpc-status`、`grpc-message`、`grpc-encoding`、custom metadataを載せる `x-bench-early-hints-pollution=1` を追加した。PHPT 022でunary / server streaming双方のmissing trailers、status 0、metadata ownership、informational field isolationを固定した。
+- 2026-07-15: bench-enabled diagnostic nghttp2 callbackにも同じphase transitionと反復callごとのstate resetを適用し、production / diagnosticのどちらでもinformational fieldがmetadata / status観測へ混ざらないようにした。
+- 2026-07-15: `docs/SPEC.md`、response exchange / transport / protocol classification設計、code-reading guide、fixture / verification資料をsemantic phase modelへ更新した。
+- 2026-07-15: HTTP/2 / gRPC domain model reviewを実施し、Blocker / High / Medium / Low / Design Decisionの指摘はいずれもnone。記録は `docs/reviews/issues/2026-07-15-informational-1xx-response-domain-model-review.md`。
 
 ## Verification
+
+- 2026-07-15: `docker compose build test-server` / `docker compose up -d --force-recreate test-server` PASS。wire probeでpollution fieldを持つ103の後に、cleanなfinal 200 initial HEADERSと `grpc-status: 0` trailerが届くことを確認。
+- 2026-07-15: `./tools/test/check-phpt.sh` PASS（26/26 tests、failed 0、skipped 0、warned 0）。PHPT 022のunary / server streaming 1xx status、metadata ownership、field isolationを含む。
+- 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / status_core / transport_core、3/3 suites）。
+- 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0、skipped 0）。
+- 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。
 
 ## Decision Log
 

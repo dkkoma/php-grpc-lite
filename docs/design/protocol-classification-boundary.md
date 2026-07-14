@@ -28,6 +28,7 @@
 
 | Classification | Fields | Set by | Status mapping |
 |---|---|---|---|
+| Response header-block phase | `response_header_block_phase`, `final_response_headers_seen` | `on_begin_headers_callback()`, `on_header_callback()`, `on_frame_recv_callback()` | statusへ直接写像しない。informational / final initial / trailingのfield反映境界を決める |
 | Deadline exceeded | `timed_out` | send/recv deadline path | `DEADLINE_EXCEEDED` |
 | Invalid `grpc-status` | `invalid_grpc_status`, `grpc_status_seen`, `initial_grpc_status_seen`, `initial_headers_end_stream` | `on_header_callback()`, `on_frame_recv_callback()` | `UNKNOWN` |
 | HTTP status fallback | `http_status`, `grpc_status` absent | `on_header_callback()` | HTTP status mapping in `status_core.c` |
@@ -63,7 +64,8 @@ stream-local failureはconnection failureではない。message size、metadata 
 
 | Function | Classification responsibility | Transport action in same path |
 |---|---|---|
-| `on_header_callback()` | `grpc-status`、`grpc-message`、`:status`、`content-type`、`grpc-encoding`、metadata sizeの分類 | metadata size超過時に `RST_STREAM(CANCEL)` |
+| `on_begin_headers_callback()` | final response観測済みかを基にheader blockを `AWAITING_STATUS` / `TRAILING` へ分類 | なし |
+| `on_header_callback()` | 先頭の`:status`でinformational / final initialを確定し、確定phaseに従って `grpc-status`、`grpc-message`、`content-type`、`grpc-encoding`、metadata sizeを分類。informational fieldはcall stateへ反映しない | metadata size超過時に `RST_STREAM(CANCEL)` |
 | `on_frame_recv_callback()` | GOAWAY refusal、RST_STREAM、missing content-type、trailers-only misuse、PUSH_PROMISE拒否の分類 | GOAWAYでdraining化、PUSH_PROMISEで `RST_STREAM(PROTOCOL_ERROR)` |
 | `grpc_protocol_validate_response_message_lengths()` | unary/body aggregation pathのgRPC frame、message count、compressed flag、message size分類 | stream-local failureで `RST_STREAM(CANCEL)` |
 | `grpc_protocol_process_response_data_direct()` | server streaming direct parserのgRPC frame、message size、compressed flag、queue delivery分類 | stream-local failureで `RST_STREAM(CANCEL)` |
@@ -99,6 +101,7 @@ stream-local failureはconnection failureではない。message size、metadata 
 
 | Scenario | Classification | Transport action | Connection reuse | Verification |
 |---|---|---|---|---|
+| 1xx informational response | blockを `INFORMATIONAL` としてfieldを隔離し、後続final responseを `FINAL_INITIAL` として処理 | なし。受動的にfinal responseを待つ | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt` |
 | `grpc-status`がinvalid | `invalid_grpc_status` | bodyが来たらstream cancel | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/unit/test_protocol_core.c`, `tests/unit/test_status_core.c` |
 | `content-type` missing / invalid | `invalid_content_type` | body discard。DATAが来た場合はstream-local cancel候補 | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/HttpValidationTest.php` |
 | `grpc-encoding` unsupported | `unsupported_response_encoding` | body discard / stream cancel | reusable if connection usable | `tests/phpt/022-error-and-http-validation.phpt`, `tests/Integration/CompressionTest.php` |

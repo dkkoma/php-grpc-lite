@@ -227,6 +227,7 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 - request header validation/filtering
 - `*-bin` request metadataのbase64 wire encoding
 - response `*-bin` metadataのbase64 decode
+- response header blockのsemantic phase分類と1xx informational fieldの隔離
 - gRPC 5B frame parse/build
 - deadlineをconnect、TLS handshake、read/write poll loopへ適用
 - client receive stream / connection windowを8MiBに広げ、large responseでWINDOW_UPDATE待ちを減らす
@@ -238,6 +239,19 @@ protocol failure、compression unsupported、invalid content-type、invalid grpc
 1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/design/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
 
 `src/transport.h` は現時点ではHTTP/2 transportのprivate aggregate headerです。connection、persistent cache、nghttp2 callback、request header builder、response parser、server streaming resource stateなどのboundaryと将来の分割順は `docs/design/transport-header-boundaries.md` に整理しています。
+
+### Response HEADERS blockの読み方
+
+nghttp2の `NGHTTP2_HCAT_RESPONSE` / `NGHTTP2_HCAT_HEADERS` は、そのままgRPCのinitial / trailing metadata ownershipを表しません。最初のresponse HEADERSが1xxの場合、後続の1xxとfinal response HEADERSはいずれも `HCAT_HEADERS` で届きます。
+
+transportは1 RPCごとのheader-block phaseを次の順序で確定します。
+
+1. `on_begin_headers_callback()` は、final response未観測なら `GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS`、観測済みなら `GRPC_RESPONSE_HEADER_BLOCK_TRAILING` を `response_header_block_phase` に設定する。
+2. `AWAITING_STATUS` blockの先頭の`:status`が100–199なら `GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL` とし、block内の全fieldを無視してfinal responseを待つ。
+3. 非1xxの`:status`なら `GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL` とし、`final_response_headers_seen` を設定する。同じblockのcustom metadataをinitial metadataへ保存してinitial response validationを適用する。これは1xx後に `HCAT_HEADERS` で届いたfinal responseにも同じく適用する。
+4. final response確定後のheader blockは `TRAILING` とし、custom metadataとgRPC statusをtrailing側で処理する。
+
+phaseは各fieldをmetadata / validation / status stateへ反映する前に確定します。`INFORMATIONAL` blockはmetadata entry/byte count、`http_status`、`content-type`、`grpc-status`、`grpc-message`、`grpc-encoding`を更新しません。`on_frame_recv_callback()` は `FINAL_INITIAL` だけをinitial responseとして検証し、`TRAILING` はEND_STREAM付きの場合だけterminal trailersとして記録してからphaseを `NONE` へ戻します。block終了後にphaseを推測して先行更新を修復する設計ではありません。trailers-only responseにおける `grpc-status` とcustom metadataの扱いは、既存のstatus metadata規則を維持します。
 
 ## 7. persistent connection
 

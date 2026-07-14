@@ -145,7 +145,7 @@ HTTP/2 transportとして最低限以下を確認する。
 
 - clientが各RPCでHTTP/2 streamを作り、HEADERS + DATA + END_STREAMを送る。
 - unary / server streamingでもclient request sideは単一messageで基本的に早期half-closeする。
-- server response HEADERS / DATA / trailers HEADERSを正しく区別する。
+- server response HEADERSをinformational / final initial / trailingのsemantic phaseで区別し、DATA / trailers HEADERSとのlifecycleを正しく扱う。nghttp2 raw categoryだけをinitial / trailing判定に使わない。
 - `RST_STREAM` はstream-localとして扱う。RSTにRSTで応答しない。
 - `GOAWAY` はconnection drainingとして扱い、新規RPCには使わない。
 - `SETTINGS_INITIAL_WINDOW_SIZE` はstream receive windowである。
@@ -163,6 +163,7 @@ gRPC over HTTP/2として最低限以下を確認する。
 - `grpc-timeout` はcall deadlineから生成され、user metadataからは上書きさせない。
 - `user-agent`、`grpc-status`、`grpc-message`、`grpc-status-details-bin` などlibrary-owned metadataをuser metadataから送らない。
 - response `content-type` を検証する。
+- 1xx informational fieldはmetadata、content-type validation、gRPC status/message/encodingへ反映せず、1xx後のfinal response metadataをinitial ownershipとする。
 - `grpc-status` / `grpc-message` / `grpc-status-details-bin` はtrailers semanticsで扱う。
 - trailers-only errorを扱う。
 - compression未対応時は明示statusに変換する。
