@@ -853,6 +853,23 @@ void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers,
     grpc_lite_trace_unlock_and_close(fp);
 }
 
+static void grpc_lite_trace_response_invalid_header(grpc_call *call)
+{
+    FILE *fp;
+
+    grpc_lite_trace_open_and_lock(&fp);
+    if (fp == NULL) {
+        return;
+    }
+    fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.response_invalid_header\",\"stream_id\":%d", monotonic_us(), (long) getpid(), call->stream_id);
+    if (call->method_path != NULL) {
+        fprintf(fp, ",\"rpc_method\":");
+        grpc_lite_trace_json_string(fp, ZSTR_VAL(call->method_path), ZSTR_LEN(call->method_path));
+    }
+    fputs("}\n", fp);
+    grpc_lite_trace_unlock_and_close(fp);
+}
+
 void mark_connection_dead(h2_connection *connection, int error_code)
 {
     if (connection == NULL) {
@@ -2241,6 +2258,25 @@ int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_c
     return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
 }
 
+int grpc_protocol_enforce_terminal_initial_status_fields(nghttp2_session *session, grpc_call *call, grpc_response_header_block_phase ended_header_phase, bool end_stream)
+{
+    if (call == NULL || ended_header_phase != GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
+        return 0;
+    }
+
+    call->initial_headers_end_stream = end_stream;
+    if (!call->initial_grpc_status_seen || end_stream) {
+        return 0;
+    }
+
+    /* A status field in non-terminal initial response HEADERS can never be
+     * committed as gRPC status.  Classify it once the valid block completes,
+     * then end only this stream so a silent peer cannot retain the call. */
+    call->invalid_grpc_status = true;
+    call->discard_response_body = true;
+    return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
+}
+
 int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
@@ -2376,6 +2412,10 @@ int on_invalid_header_callback(nghttp2_session *session, const nghttp2_frame *fr
         || frame->hd.stream_id != call->stream_id) {
         return 0;
     }
+    if (grpc_lite_trace_file_path() != NULL) {
+        /* Value-free callback observation for the wire-budget cutoff oracle. */
+        grpc_lite_trace_response_invalid_header(call);
+    }
     /* Invalid regular fields are intentionally ignored semantically, but the
      * HPACK decode work still belongs to this call's wire header budget. */
     return grpc_protocol_account_response_header_field(session, call, namelen, valuelen);
@@ -2494,13 +2534,16 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
     if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
         && ended_header_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-        call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
+        int rv = grpc_protocol_enforce_terminal_initial_status_fields(
+            session,
+            call,
+            ended_header_phase,
+            (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0);
+        if (rv != 0) {
+            return rv;
+        }
         if (!call->content_type_seen && !(call->grpc_status_seen && call->initial_headers_end_stream)) {
             call->invalid_content_type = true;
-            call->discard_response_body = true;
-        }
-        if (call->initial_grpc_status_seen && !call->initial_headers_end_stream) {
-            call->invalid_grpc_status = true;
             call->discard_response_body = true;
         }
     } else if (frame->hd.type == NGHTTP2_HEADERS
@@ -2588,6 +2631,9 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
     }
     if (call->response_header_protocol_error) {
         return zend_string_init("malformed HTTP/2 response header sequence", sizeof("malformed HTTP/2 response header sequence") - 1, 0);
+    }
+    if (code == GRPC_STATUS_RESOURCE_EXHAUSTED && call->metadata_too_large) {
+        return zend_string_init("response header/metadata budget exceeded", sizeof("response header/metadata budget exceeded") - 1, 0);
     }
     if (call->grpc_message != NULL && ZSTR_LEN(call->grpc_message) > 0) {
         return zend_string_copy(call->grpc_message);

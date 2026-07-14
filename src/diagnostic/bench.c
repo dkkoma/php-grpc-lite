@@ -483,6 +483,7 @@ static int bench_on_invalid_header_callback(nghttp2_session *session, const nght
     if (frame->hd.type != NGHTTP2_HEADERS || frame->hd.stream_id != call->stream_id) {
         return 0;
     }
+    call->bench.invalid_header_callback_count++;
     return grpc_protocol_account_response_header_field(session, call, namelen, valuelen);
 }
 
@@ -604,10 +605,13 @@ static int bench_on_frame_recv_callback(nghttp2_session *session, const nghttp2_
     if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
         && ended_header_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-        call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-        if (call->initial_grpc_status_seen && !call->initial_headers_end_stream) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
+        int rv = grpc_protocol_enforce_terminal_initial_status_fields(
+            session,
+            call,
+            ended_header_phase,
+            (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0);
+        if (rv != 0) {
+            return rv;
         }
     } else if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
@@ -1513,6 +1517,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     for (zend_long i = 0; i < iterations; i++) {
         uint64_t started = monotonic_us();
         call.bench.call_started_us = started;
+        call.bench.invalid_header_callback_count = 0;
         call.deadline_abs_us = timeout_us > 0 ? started + (uint64_t) timeout_us : 0;
         call.stream_closed = false;
         call.grpc_status = -1;
@@ -1798,6 +1803,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     add_assoc_long(return_value, "grpc_status", call.grpc_status);
     add_assoc_long(return_value, "http_status", call.http_status);
     add_assoc_long(return_value, "stream_error_code", call.stream_error_code);
+    add_assoc_long(return_value, "invalid_header_callback_count", (zend_long) call.bench.invalid_header_callback_count);
     add_assoc_long(return_value, "body_bytes", call.body.s ? ZSTR_LEN(call.body.s) : 0);
     add_assoc_bool(return_value, "discard_response_body", discard_response_body);
     add_assoc_bool(return_value, "split_grpc_frame", split_grpc_frame);

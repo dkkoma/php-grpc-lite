@@ -8,6 +8,7 @@
 
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 typedef struct {
+    size_t invalid_header_callback_count;
     size_t data_read_length_calls;
     size_t data_frames_sent;
     size_t data_bytes_sent;

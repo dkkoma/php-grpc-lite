@@ -33,14 +33,15 @@ unary / server streaming の client-side enforcement、`STATUS_DEADLINE_EXCEEDED
 | 項目 | 期待 | テスト観点 |
 |---|---|---|
 | trailers-only response | body なしで `grpc-status` が header block に来ても status として扱う | unary immediate error、server streaming immediate error |
-| informational 1xx response | 1xx fieldをmetadata / validation / status stateから隔離し、後続final responseをinitial HEADERSとして処理する。wire resource budgetには累積する | unary / server streamingで複数103、Trailers-Only、invalid final content-type、entry/byte budget |
+| informational 1xx response | 1xx fieldをmetadata / validation / status stateから隔離し、後続final responseをinitial HEADERSとして処理する。wire resource budgetには累積する | unary / server streamingで複数103、Trailers-Only、invalid final content-type、pre-final entry/byte budget |
 | malformed response header sequence | END_STREAMなしTrailers、END_STREAM付き1xx、final response前DATA / missing `:status` は `INTERNAL`。block内statusは成功としてcommitしない | raw h2cのexact sequenceをunary / server streamingで確認 |
+| non-terminal initial status field | END_STREAMなしfinal initial HEADERSの `grpc-status` / `grpc-message` / `grpc-status-details-bin` は `UNKNOWN` とし、silent peerを待たず対象streamへ `RST_STREAM(CANCEL)` を送る | 3 fieldそれぞれをunary / server streamingのfinite guard、exact CANCEL、same-connection follow-upで確認。diagnosticはfailed-not-timedoutとerror code 8を確認 |
 | `grpc-message` percent decode | percent-encoded UTF-8 を decode し、不正 encoding でも壊れない | `%20`、UTF-8、壊れた `%` |
 | missing trailers (DATA END_STREAM) | :status 200 で stream が DATA frame の END_STREAM で終わり `grpc-status` が無い場合は INTERNAL | `STATUS_INTERNAL` + details "server closed the stream without sending trailers"(grpc-go `handleData` 準拠、2026-07-10 に `STATUS_UNKNOWN` から変更) |
 | missing grpc-status (HEADERS END_STREAM) | headers-only 応答や `grpc-status` を含まない trailing HEADERS で終わる場合は UNKNOWN のまま | `STATUS_UNKNOWN`(grpc-go `operateHeaders` 準拠)。headers-only / custom trailers / `grpc-message` のみ |
 | HTTP non-200 | gRPC status が無い HTTP error を gRPC status に合成する | 404/503/502 等 |
 | content-type mismatch | `application/grpc` でない応答を成功扱いしない | proxy/html/json response |
-| `grpc-status-details-bin` | status details がある場合に矛盾を検出し、他のstatus fieldと同じterminal block gateを通す | status code mismatchに加え、END_STREAMなしfinal initial blockのdetailsをproduction / diagnosticともエラー扱い |
+| `grpc-status-details-bin` | status details がある場合に矛盾を検出し、他のstatus fieldと同じterminal block gate / stream-local actionを通す | status code mismatchに加え、END_STREAMなしfinal initial blockのdetailsをproduction / diagnosticともエラー扱いし、silent peerへCANCELを送る |
 
 ## 5. Metadata Compatibility
 
@@ -54,7 +55,8 @@ reserved / fixed headers と key/value validation の観測結果は `docs/resea
 | duplicate metadata | 同一 key 複数 values を gRPC 仕様準拠で保持する | request echo、initial metadata、trailing metadata、ext-grpc PHP API との差分明示 |
 | reserved `grpc-*` / fixed headers | application metadata として不正な reserved key を混ぜない | `grpc-status`、`grpc-message`、`grpc-timeout`、`grpc-encoding`、`te`、`content-type`、`user-agent` |
 | initial/trailing split | body 前後とresponse header-block roleでmetadataを正しく分離する | normal response、trailers-only、1xx fieldは非公開、1xx後のfinal `HCAT_HEADERS` はinitial、invalid `grpc-status` の前後fieldも同じtrailing role |
-| metadata size | semantic metadata ownershipとwire header work budgetを分離する | pseudo-header / informational regular field / silent-ignoreされるinvalid regular field / 複数1xxを含むheader countとbytes。超過時のexact `RST_STREAM(CANCEL)` と同一connection reuse |
+| metadata size | semantic metadata ownershipとwire header work budgetを分離する。pre-final超過はHTTP status欠落ではなく専用resource failureとして説明する | pseudo-header / informational regular field / silent-ignoreされるinvalid regular field / 複数1xxを含むheader countとbytes。超過後peerがsilentでも2秒guard内に `RESOURCE_EXHAUSTED` + `response header/metadata budget exceeded`、exact `RST_STREAM(CANCEL)`、同一connection reuseを確認 |
+| invalid-header callback cutoff | invalid regular fieldも共通wire budgetへ計上し、超過fieldのTEMPORALをconsumerが伝播してsame-block callback workを停止する | `:status` + invalid field 129個でcallback 128が超過、129個目は未処理。production traceとdiagnostic countがともに128であることを確認 |
 | authority / gax headers | 実用 metadata と transport header が衝突しない | `:authority`、`grpc.primary_user_agent`、`x-goog-api-client`、`x-goog-request-params` |
 
 2026-04-28 時点で、単一 raw binary value の `*-bin` request / initial / trailing metadata round-trip は php-grpc-lite と ext-grpc で一致確認済み。

@@ -39,15 +39,36 @@ $nonterminalDetails = $runBatch('post-informational-nonterminal-status-details')
 grpc_lite_phpt_assert_same(0, $nonterminalDetails['ok'], 'nonterminal grpc-status-details-bin batch ok count');
 grpc_lite_phpt_assert_same(1, $nonterminalDetails['failed'], 'nonterminal grpc-status-details-bin batch failed count');
 
-$entryBudget = $runBatch('informational-entry-budget');
+foreach ([
+    'post-informational-silent-grpc-status' => 'silent nonterminal grpc-status',
+    'post-informational-silent-grpc-message' => 'silent nonterminal grpc-message',
+    'post-informational-silent-status-details' => 'silent nonterminal grpc-status-details-bin',
+] as $control => $label) {
+    $silentStatus = $runBatch($control, timeoutUs: 2_000_000);
+    grpc_lite_phpt_assert_same(0, $silentStatus['ok'], "$label batch ok count");
+    grpc_lite_phpt_assert_same(1, $silentStatus['failed'], "$label batch failed count");
+    grpc_lite_phpt_assert_same(false, $silentStatus['timed_out'], "$label batch is not timeout");
+    grpc_lite_phpt_assert_same(8, $silentStatus['stream_error_code'], "$label RST_STREAM code");
+}
+
+$entryBudget = $runBatch('informational-entry-budget', timeoutUs: 2_000_000);
 grpc_lite_phpt_assert_same(0, $entryBudget['ok'], 'informational entry budget batch ok count');
 grpc_lite_phpt_assert_same(1, $entryBudget['failed'], 'informational entry budget batch failed count');
+grpc_lite_phpt_assert_same(false, $entryBudget['timed_out'], 'informational entry budget is not timeout');
 grpc_lite_phpt_assert_same(8, $entryBudget['stream_error_code'], 'informational entry budget RST_STREAM code');
 
-$byteBudget = $runBatch('informational-default-byte-budget');
+$byteBudget = $runBatch('informational-default-byte-budget', timeoutUs: 2_000_000);
 grpc_lite_phpt_assert_same(0, $byteBudget['ok'], 'informational byte budget batch ok count');
 grpc_lite_phpt_assert_same(1, $byteBudget['failed'], 'informational byte budget batch failed count');
+grpc_lite_phpt_assert_same(false, $byteBudget['timed_out'], 'informational byte budget is not timeout');
 grpc_lite_phpt_assert_same(8, $byteBudget['stream_error_code'], 'informational byte budget RST_STREAM code');
+
+$invalidEntryBudget = $runBatch('informational-invalid-entry-budget', timeoutUs: 2_000_000);
+grpc_lite_phpt_assert_same(0, $invalidEntryBudget['ok'], 'invalid regular entry budget batch ok count');
+grpc_lite_phpt_assert_same(1, $invalidEntryBudget['failed'], 'invalid regular entry budget batch failed count');
+grpc_lite_phpt_assert_same(false, $invalidEntryBudget['timed_out'], 'invalid regular entry budget is not timeout');
+grpc_lite_phpt_assert_same(8, $invalidEntryBudget['stream_error_code'], 'invalid regular entry budget RST_STREAM code');
+grpc_lite_phpt_assert_same(128, $invalidEntryBudget['invalid_header_callback_count'], 'diagnostic invalid-header callback TEMPORAL cutoff');
 
 $foreignPushedReset = $runBatch('foreign-pushed-stream-protocol-rst', timeoutUs: 2_000_000);
 grpc_lite_phpt_assert_same(1, $foreignPushedReset['ok'], 'foreign pushed-stream RST batch ok count');

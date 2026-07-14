@@ -54,6 +54,8 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: raw fixtureのresource oracleを対象streamのexact `RST_STREAM(CANCEL)`受信でgateし、pseudo / regular field classを片側実装では通せない65-block / 237-byte境界へ変更した。silent-ignoreされるNUL-bearing invalid regular field、diagnostic default 64KiB、non-terminal status-details、2-iteration reset、foreign pushed-streamのcontrolsを追加した。
 - 2026-07-15: PHPT 043のvalid positive controlにより、raw benchが`call.connection == NULL`のままproduction `connection_send()`を呼び、全batchを送信前に失敗させていた既存不整合を検出した。raw diagnosticのsocket ownershipに合わせてbench-local fd sendへ修正し、positive 2 iterationsとnegative controlsの双方を通した。
 - 2026-07-15: pass-4 domain model gateで、invalid-header budget超過後のTEMPORAL callback stopを0へ変換していたMedium 1件を検出した。production / diagnostic双方でTEMPORALを伝播し、invalid-frame observerは既確定の`metadata_too_large`をprotocol errorで上書きしないよう修正した。再レビュー後のBlocker / High / Medium / Low / Design Decisionはすべてnone。
+- 2026-07-15: consolidated pass-5のMedium 1件を受け、END_STREAMなし`FINAL_INITIAL`でstatus fieldを観測したvalid blockのframe-endに、production / diagnostic共有helperからmain streamへ`RST_STREAM(CANCEL)`をsubmitするようにした。`grpc-status` / `grpc-message` / `grpc-status-details-bin`のいずれでも`UNKNOWN` taxonomyを維持したままsilent peerを待たずcallを終了し、同一connectionを再利用する。
+- 2026-07-15: pass-5のLow 2件に対し、pre-final wire-header budget超過のdetailsを`response header/metadata budget exceeded`へ揃えた。invalid regular fieldを129個送るcontrolと、productionのvalue-free trace / diagnosticのiteration-local callback countを追加し、128回目のoverflowでTEMPORALが伝播して129個目を処理しないruntime oracleを固定した。
 
 ## Verification
 
@@ -75,6 +77,13 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4 suites）。wire header budgetの128-entry境界、exact byte上限、加算overflowを含む。
 - 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-5 fix後に`docker compose build test-server`と`docker compose up -d --force-recreate test-server`を実行し、silent status-field / resource controlsとinvalid-header 129-field controlを含むraw fixture imageのrebuild / restart PASS。
+- 2026-07-15: `./tools/test/check-phpt.sh` PASS（28/28 tests、failed 0、skipped 0、warned 0）。PHPT 042で3 status fieldのsilent-peer finite guard、UNKNOWN details、exact CANCEL / same-connection follow-up、pre-final resource details、production callback cutoff 128を、PHPT 043でfailed-not-timedout / CANCELとdiagnostic callback cutoff 128を確認した。
+- 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4 suites）。
+- 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
+- 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: invalid-header callback cutoffをmutation検証した。productionでTEMPORALを0へ変換するとPHPT 042が128対129で失敗し、diagnostic callbackをno-opにするとsilent fixtureへCANCELを送れず外側10秒guardがexit 124となった。restore後のfocused PHPT 042 / 043は2/2 PASS。
+- 2026-07-15: pass-6 HTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass5-fix-domain-model-pass6.md`。
 
 ## Decision Log
 

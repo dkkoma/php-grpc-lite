@@ -27,7 +27,7 @@
 | `50067` | raw h2c GOAWAY keep-stream-open fixture | 1 messageと `GOAWAY(last_stream_id=2147483647)` を送りstreamをopenのままにする。draining connection上の明示cancelがRST_STREAMを送ることを検証する | `tests/phpt/036-draining-connection-cancel-sends-rst.phpt` |
 | `50068` / `50069` | raw h2c backlog flood / control fixture | control portで次connectionをarmし、response backlogをclient receive bufferへ置く。preflight drain cap超過時のfallbackを検証する | `tests/phpt/035-preflight-drain-cap-fallback.phpt` |
 | `50070` | raw h2c small-window GOAWAY draining fixture | 小さいstream windowでrequest DATAをdeferし、別streamからdrainingへ移行する。destructor cancel後にdeferred DATAが再開してもcall lifetimeを越えないことを検証する | `tests/phpt/037-draining-destructor-pending-request-data.phpt` |
-| `50071` | raw h2c informational adversarial fixture | malformedな1xx / trailing HEADERS、valid / invalid regular fieldを含むwire-header budget、Trailers-Only metadata ownership、bench diagnostic parity、foreign pushed-stream eventをrequest controlごとに送出する。同一connection上のRST観測とfollow-up RPCも扱う | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt` |
+| `50071` | raw h2c informational adversarial fixture | malformedな1xx / trailing HEADERS、silent peer下のstatus-field / wire-header budget failure、Trailers-Only metadata ownership、bench diagnostic parity、foreign pushed-stream eventをrequest controlごとに送出する。同一connection上のexact RST観測とfollow-up RPCも扱う | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt` |
 
 ## Service methods
 
@@ -80,7 +80,7 @@
 
 ## Response controls on raw informational fixture
 
-これらは `50071` のraw HTTP/2 fixtureで使う。`net/http` が送出を拒否するmalformed sequenceを含むため、`50054` のcontrolとは分離している。fixtureはrequest HEADERSをdecodeしてstreamごとにcontrolを選び、stream-local failure後もconnectionをopenに保つ。
+これらは `50071` のraw HTTP/2 fixtureで使う。`net/http` が送出を拒否するmalformed sequenceを含むため、`50054` のcontrolとは分離している。fixtureはrequest HEADERSをdecodeしてstreamごとにcontrolを選び、stream-local failure後もconnectionをopenに保つ。silent controlはfailureを決定するHEADERSの後にDATA / trailer / final responseを送らず、clientのstream-local actionだけでcallが終了することを検証する。
 
 | `x-bench-raw-response` value | Wire response |
 |---|---|
@@ -88,12 +88,16 @@
 | `informational-end-stream` | `:status: 103` を持つ `HEADERS(END_STREAM)` |
 | `informational-then-missing-status` | 103の後に`:status`を持たないfinal候補 `HEADERS(END_STREAM)` |
 | `informational-then-data` | 103の直後に `DATA(END_STREAM)` |
-| `informational-entry-budget` | `:status: 103` + `x-info: a` を65 block送る。合計130 entriesのため上限を超えるが、pseudo / regularの片方とfinal 3 fieldsだけなら68 entriesに留まり、両field classのaccountingを区別する |
-| `informational-byte-budget` | 237 bytesの`x-info`を4個の103 blockへ分ける。1024-byte上限ではcustom fields 972 bytes + final fields 50 bytesだけなら1022 bytesだが、informational `:status` 40 bytesも含めると超過し、両field classのaccountingを区別する |
-| `informational-invalid-entry-budget` | 1個の103 blockへNULを含むinvalid regular fieldを128 entries載せる。normal callbackの`:status`と合わせた129 entriesをinvalid-header callbackでもbudgetへ入れることを検証する |
-| `informational-invalid-byte-budget` | 1個の103 blockへNULを含む2049-byte invalid regular valueを載せる。1024-byte上限をinvalid-header callbackでも適用することを検証する |
-| `informational-default-byte-budget` | 8192-byteの`x-info`を8個の103 blockへ分け、diagnostic default 64KiB wire-header budgetをentry上限とは独立に超える |
-| `require-prior-resource-probe` | 同じconnectionの直前のresource probe streamについてclientから `RST_STREAM(CANCEL)` を受信済みの場合だけgRPC OK。status分類、exact cancel action、connection reuseを分離して検証する |
+| `informational-entry-budget` | `:status: 103` + `x-info: a` を65 block（合計130 fields）送って以後silentになる。pseudo / regularの片方だけなら65 entriesで上限内、両方の累積で128-entry上限をpre-finalに超える |
+| `informational-byte-budget` | 241 bytesの`x-info`を4個の103 blockへ分けて以後silentになる。1024-byte上限に対し、custom fieldsは `4 * (6 + 241) = 988` bytes、informational `:status` は `4 * (7 + 3) = 40` bytes、合計1028 bytesとなりpre-finalに超過する |
+| `informational-invalid-entry-budget` | 1個の103 blockへNULを含むinvalid regular fieldを129個載せて以後silentになる。normal callbackの`:status`で1 entry、invalid callback 1〜127で上限128に達し、callback 128の超過が返すTEMPORALで129個目のcallback前に停止する。productionは `wire.response_invalid_header` trace 128件、diagnosticは `invalid_header_callback_count=128` でcutoffを固定する |
+| `informational-invalid-byte-budget` | 1個の103 blockへNULを含む2049-byte invalid regular valueを載せて以後silentになる。1024-byte上限をinvalid-header callbackでも適用することを検証する |
+| `informational-default-byte-budget` | 8192-byteの`x-info`を8個の103 blockへ分けて以後silentになり、diagnostic default 64KiB wire-header budgetをentry上限とは独立に超える |
+| `require-prior-resource-probe` | 同じconnectionの直前のresource probe streamについてclientからexact `RST_STREAM(CANCEL)` を受信済みの場合だけgRPC OK。PHPTは2秒のguard内に `RESOURCE_EXHAUSTED` + `response header/metadata budget exceeded` が返ることと、status分類、cancel action、connection reuseを分離して検証する |
+| `post-informational-silent-grpc-status` | 103の後に `grpc-status` を持つEND_STREAMなしfinal initial HEADERSを送り、以後silentになる |
+| `post-informational-silent-grpc-message` | 103の後に `grpc-message` を持つEND_STREAMなしfinal initial HEADERSを送り、以後silentになる |
+| `post-informational-silent-status-details` | 103の後に `grpc-status-details-bin` を持つEND_STREAMなしfinal initial HEADERSを送り、以後silentになる |
+| `require-prior-status-probe` | 同じconnectionの直前のsilent status-field probeについてclientからexact `RST_STREAM(CANCEL)` を受信済みの場合だけgRPC OK。PHPTは3種すべてを2秒のguard内に `UNKNOWN` + `invalid grpc-status trailer` で終了させ、same-connection follow-up成功を確認する。diagnosticは `failed=1`、`timed_out=false`、`stream_error_code=8` を確認する |
 | `invalid-status-metadata` | `x-before`、invalid `grpc-status: 17`、`x-after` をこの順に持つTrailers-Only response |
 | `post-informational-nonterminal-status` | 103、`grpc-status: 0`を同居させたEND_STREAMなしfinal initial HEADERS、`DATA(END_STREAM)`。bench diagnosticがsuccess countへ含めないことを検証する |
 | `post-informational-nonterminal-status-details` | 103、`grpc-status-details-bin`を同居させたEND_STREAMなしfinal initial HEADERS、DATA、valid `grpc-status: 0` trailers。details field単独でもterminal status gateを迂回できないことを検証する |

@@ -8,6 +8,8 @@ if (!extension_loaded('grpc')) {
 require __DIR__ . '/helpers.inc';
 grpc_lite_phpt_skip_if_integration_unavailable([50071]);
 ?>
+--ENV--
+GRPC_LITE_TRACE_FILE=/tmp/grpc-lite-trace-042.jsonl
 --FILE--
 <?php
 declare(strict_types=1);
@@ -18,6 +20,9 @@ grpc_lite_phpt_require_autoload();
 use Grpc\ChannelCredentials;
 use Helloworld\BenchRequest;
 use PhpGrpcLite\Tests\Integration\Fixtures\GreeterClient;
+
+$traceFile = (string) getenv('GRPC_LITE_TRACE_FILE');
+file_put_contents($traceFile, '');
 
 $clientSequence = 0;
 $client = static function (array $options = []) use (&$clientSequence): GreeterClient {
@@ -66,10 +71,16 @@ foreach ([
 $assertNonterminalStatusFieldUnary = static function (GreeterClient $client, string $control, string $label): void {
     [$response, $status] = $client->BenchUnary(new BenchRequest(), [
         'x-bench-raw-response' => [$control],
-    ])->wait();
+    ], ['timeout' => 2_000_000])->wait();
     grpc_lite_phpt_assert_same(null, $response, "$label unary response");
     grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $status->code, "$label unary status");
     grpc_lite_phpt_assert_same('invalid grpc-status trailer', $status->details, "$label unary details");
+
+    [$followUpResponse, $followUpStatus] = $client->BenchUnary(new BenchRequest(), [
+        'x-bench-raw-response' => ['require-prior-status-probe'],
+    ])->wait();
+    grpc_lite_phpt_assert_true($followUpResponse instanceof \Helloworld\BenchReply, "$label unary follow-up response");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followUpStatus->code, "$label unary follow-up status");
 };
 
 $assertNonterminalStatusFieldStream = static function (GreeterClient $client, string $control, string $label): void {
@@ -77,7 +88,7 @@ $assertNonterminalStatusFieldStream = static function (GreeterClient $client, st
     $request->setMessageCount(1);
     $call = $client->BenchServerStream($request, [
         'x-bench-raw-response' => [$control],
-    ]);
+    ], ['timeout' => 2_000_000]);
     $count = 0;
     foreach ($call->responses() as $_reply) {
         $count++;
@@ -85,25 +96,36 @@ $assertNonterminalStatusFieldStream = static function (GreeterClient $client, st
     grpc_lite_phpt_assert_same(0, $count, "$label stream count");
     grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $call->getStatus()->code, "$label stream status");
     grpc_lite_phpt_assert_same('invalid grpc-status trailer', $call->getStatus()->details, "$label stream details");
+
+    $followUpRequest = new BenchRequest();
+    $followUpRequest->setMessageCount(1);
+    $followUp = $client->BenchServerStream($followUpRequest, [
+        'x-bench-raw-response' => ['require-prior-status-probe'],
+    ]);
+    $followUpCount = 0;
+    foreach ($followUp->responses() as $_reply) {
+        $followUpCount++;
+    }
+    grpc_lite_phpt_assert_same(1, $followUpCount, "$label stream follow-up count");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followUp->getStatus()->code, "$label stream follow-up status");
 };
 
-$assertNonterminalStatusFieldUnary(
-    $client(),
-    'post-informational-nonterminal-status-details',
-    'nonterminal grpc-status-details-bin',
-);
-$assertNonterminalStatusFieldStream(
-    $client(),
-    'post-informational-nonterminal-status-details',
-    'nonterminal grpc-status-details-bin',
-);
+foreach ([
+    'post-informational-silent-grpc-status' => 'silent nonterminal grpc-status',
+    'post-informational-silent-grpc-message' => 'silent nonterminal grpc-message',
+    'post-informational-silent-status-details' => 'silent nonterminal grpc-status-details-bin',
+] as $control => $label) {
+    $assertNonterminalStatusFieldUnary($client(), $control, $label);
+    $assertNonterminalStatusFieldStream($client(), $control, $label);
+}
 
 $assertResourceUnary = static function (GreeterClient $client, string $control, string $label): void {
     [$response, $status] = $client->BenchUnary(new BenchRequest(), [
         'x-bench-raw-response' => [$control],
-    ])->wait();
+    ], ['timeout' => 2_000_000])->wait();
     grpc_lite_phpt_assert_same(null, $response, "$label unary response");
     grpc_lite_phpt_assert_same(Grpc\STATUS_RESOURCE_EXHAUSTED, $status->code, "$label unary status");
+    grpc_lite_phpt_assert_same('response header/metadata budget exceeded', $status->details, "$label unary details");
 
     [$followUpResponse, $followUpStatus] = $client->BenchUnary(new BenchRequest(), [
         'x-bench-raw-response' => ['require-prior-resource-probe'],
@@ -117,13 +139,14 @@ $assertResourceStream = static function (GreeterClient $client, string $control,
     $request->setMessageCount(1);
     $call = $client->BenchServerStream($request, [
         'x-bench-raw-response' => [$control],
-    ]);
+    ], ['timeout' => 2_000_000]);
     $count = 0;
     foreach ($call->responses() as $_reply) {
         $count++;
     }
     grpc_lite_phpt_assert_same(0, $count, "$label stream count");
     grpc_lite_phpt_assert_same(Grpc\STATUS_RESOURCE_EXHAUSTED, $call->getStatus()->code, "$label stream status");
+    grpc_lite_phpt_assert_same('response header/metadata budget exceeded', $call->getStatus()->details, "$label stream details");
 
     $followUpRequest = new BenchRequest();
     $followUpRequest->setMessageCount(1);
@@ -143,7 +166,21 @@ $assertResourceStream($client(), 'informational-entry-budget', 'informational en
 $metadataOptions = ['grpc.absolute_max_metadata_size' => 1024];
 $assertResourceUnary($client($metadataOptions), 'informational-byte-budget', 'informational byte budget');
 $assertResourceStream($client($metadataOptions), 'informational-byte-budget', 'informational byte budget');
+
+// The invalid-header callback trace is a same-block cutoff oracle. With
+// :status accounting first, callbacks 1..127 fill the 128-entry budget and
+// callback 128 overflows it. Propagating TEMPORAL stops before field 129.
+file_put_contents($traceFile, '');
 $assertResourceUnary($client(), 'informational-invalid-entry-budget', 'invalid regular entry budget');
+$invalidHeaderCallbackCount = 0;
+foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    $record = json_decode($line, true);
+    grpc_lite_phpt_assert_true(is_array($record), 'invalid-header trace line must be JSON object');
+    if (($record['event'] ?? null) === 'wire.response_invalid_header') {
+        $invalidHeaderCallbackCount++;
+    }
+}
+grpc_lite_phpt_assert_same(128, $invalidHeaderCallbackCount, 'production invalid-header callback TEMPORAL cutoff');
 $assertResourceStream($client(), 'informational-invalid-entry-budget', 'invalid regular entry budget');
 $assertResourceUnary($client($metadataOptions), 'informational-invalid-byte-budget', 'invalid regular byte budget');
 $assertResourceStream($client($metadataOptions), 'informational-invalid-byte-budget', 'invalid regular byte budget');
@@ -177,6 +214,7 @@ grpc_lite_phpt_assert_true(!array_key_exists('x-after', $invalidStreamCall->getM
 grpc_lite_phpt_assert_same(['a'], $invalidStreamCall->getTrailingMetadata()['x-before'] ?? null, 'x-before stream trailing metadata');
 grpc_lite_phpt_assert_same(['b'], $invalidStreamCall->getTrailingMetadata()['x-after'] ?? null, 'x-after stream trailing metadata');
 
+unlink($traceFile);
 echo "OK\n";
 ?>
 --EXPECT--
