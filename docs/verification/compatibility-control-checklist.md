@@ -40,7 +40,7 @@ unary / server streaming の client-side enforcement、`STATUS_DEADLINE_EXCEEDED
 | missing grpc-status (HEADERS END_STREAM) | headers-only 応答や `grpc-status` を含まない trailing HEADERS で終わる場合は UNKNOWN のまま | `STATUS_UNKNOWN`(grpc-go `operateHeaders` 準拠)。headers-only / custom trailers / `grpc-message` のみ |
 | HTTP non-200 | gRPC status が無い HTTP error を gRPC status に合成する | 404/503/502 等 |
 | content-type mismatch | `application/grpc` でない応答を成功扱いしない | proxy/html/json response |
-| `grpc-status-details-bin` | status details がある場合に矛盾を検出する | status code mismatch はエラー扱い |
+| `grpc-status-details-bin` | status details がある場合に矛盾を検出し、他のstatus fieldと同じterminal block gateを通す | status code mismatchに加え、END_STREAMなしfinal initial blockのdetailsをproduction / diagnosticともエラー扱い |
 
 ## 5. Metadata Compatibility
 
@@ -54,7 +54,7 @@ reserved / fixed headers と key/value validation の観測結果は `docs/resea
 | duplicate metadata | 同一 key 複数 values を gRPC 仕様準拠で保持する | request echo、initial metadata、trailing metadata、ext-grpc PHP API との差分明示 |
 | reserved `grpc-*` / fixed headers | application metadata として不正な reserved key を混ぜない | `grpc-status`、`grpc-message`、`grpc-timeout`、`grpc-encoding`、`te`、`content-type`、`user-agent` |
 | initial/trailing split | body 前後とresponse header-block roleでmetadataを正しく分離する | normal response、trailers-only、1xx fieldは非公開、1xx後のfinal `HCAT_HEADERS` はinitial、invalid `grpc-status` の前後fieldも同じtrailing role |
-| metadata size | semantic metadata ownershipとwire header work budgetを分離する | pseudo-header / informational field / 複数1xxを含むheader countとbytes、超過後のconnection reuse |
+| metadata size | semantic metadata ownershipとwire header work budgetを分離する | pseudo-header / informational regular field / silent-ignoreされるinvalid regular field / 複数1xxを含むheader countとbytes。超過時のexact `RST_STREAM(CANCEL)` と同一connection reuse |
 | authority / gax headers | 実用 metadata と transport header が衝突しない | `:authority`、`grpc.primary_user_agent`、`x-goog-api-client`、`x-goog-request-params` |
 
 2026-04-28 時点で、単一 raw binary value の `*-bin` request / initial / trailing metadata round-trip は php-grpc-lite と ext-grpc で一致確認済み。

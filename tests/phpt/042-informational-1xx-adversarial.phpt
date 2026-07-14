@@ -63,6 +63,41 @@ foreach ([
     $assertMalformedStream($client(), $control, $label, 0);
 }
 
+$assertNonterminalStatusFieldUnary = static function (GreeterClient $client, string $control, string $label): void {
+    [$response, $status] = $client->BenchUnary(new BenchRequest(), [
+        'x-bench-raw-response' => [$control],
+    ])->wait();
+    grpc_lite_phpt_assert_same(null, $response, "$label unary response");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $status->code, "$label unary status");
+    grpc_lite_phpt_assert_same('invalid grpc-status trailer', $status->details, "$label unary details");
+};
+
+$assertNonterminalStatusFieldStream = static function (GreeterClient $client, string $control, string $label): void {
+    $request = new BenchRequest();
+    $request->setMessageCount(1);
+    $call = $client->BenchServerStream($request, [
+        'x-bench-raw-response' => [$control],
+    ]);
+    $count = 0;
+    foreach ($call->responses() as $_reply) {
+        $count++;
+    }
+    grpc_lite_phpt_assert_same(0, $count, "$label stream count");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $call->getStatus()->code, "$label stream status");
+    grpc_lite_phpt_assert_same('invalid grpc-status trailer', $call->getStatus()->details, "$label stream details");
+};
+
+$assertNonterminalStatusFieldUnary(
+    $client(),
+    'post-informational-nonterminal-status-details',
+    'nonterminal grpc-status-details-bin',
+);
+$assertNonterminalStatusFieldStream(
+    $client(),
+    'post-informational-nonterminal-status-details',
+    'nonterminal grpc-status-details-bin',
+);
+
 $assertResourceUnary = static function (GreeterClient $client, string $control, string $label): void {
     [$response, $status] = $client->BenchUnary(new BenchRequest(), [
         'x-bench-raw-response' => [$control],
@@ -108,6 +143,10 @@ $assertResourceStream($client(), 'informational-entry-budget', 'informational en
 $metadataOptions = ['grpc.absolute_max_metadata_size' => 1024];
 $assertResourceUnary($client($metadataOptions), 'informational-byte-budget', 'informational byte budget');
 $assertResourceStream($client($metadataOptions), 'informational-byte-budget', 'informational byte budget');
+$assertResourceUnary($client(), 'informational-invalid-entry-budget', 'invalid regular entry budget');
+$assertResourceStream($client(), 'informational-invalid-entry-budget', 'invalid regular entry budget');
+$assertResourceUnary($client($metadataOptions), 'informational-invalid-byte-budget', 'invalid regular byte budget');
+$assertResourceStream($client($metadataOptions), 'informational-invalid-byte-budget', 'invalid regular byte budget');
 
 $invalidUnaryCall = $client()->BenchUnary(new BenchRequest(), [
     'x-bench-raw-response' => ['invalid-status-metadata'],

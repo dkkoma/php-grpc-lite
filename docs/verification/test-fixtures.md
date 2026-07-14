@@ -27,7 +27,7 @@
 | `50067` | raw h2c GOAWAY keep-stream-open fixture | 1 messageと `GOAWAY(last_stream_id=2147483647)` を送りstreamをopenのままにする。draining connection上の明示cancelがRST_STREAMを送ることを検証する | `tests/phpt/036-draining-connection-cancel-sends-rst.phpt` |
 | `50068` / `50069` | raw h2c backlog flood / control fixture | control portで次connectionをarmし、response backlogをclient receive bufferへ置く。preflight drain cap超過時のfallbackを検証する | `tests/phpt/035-preflight-drain-cap-fallback.phpt` |
 | `50070` | raw h2c small-window GOAWAY draining fixture | 小さいstream windowでrequest DATAをdeferし、別streamからdrainingへ移行する。destructor cancel後にdeferred DATAが再開してもcall lifetimeを越えないことを検証する | `tests/phpt/037-draining-destructor-pending-request-data.phpt` |
-| `50071` | raw h2c informational adversarial fixture | malformedな1xx / trailing HEADERS、informational wire-header budget、Trailers-Only metadata ownership、bench diagnostic parityをrequest controlごとに送出する。同一connection上のfollow-up RPCも扱う | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt` |
+| `50071` | raw h2c informational adversarial fixture | malformedな1xx / trailing HEADERS、valid / invalid regular fieldを含むwire-header budget、Trailers-Only metadata ownership、bench diagnostic parity、foreign pushed-stream eventをrequest controlごとに送出する。同一connection上のRST観測とfollow-up RPCも扱う | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt` |
 
 ## Service methods
 
@@ -88,11 +88,17 @@
 | `informational-end-stream` | `:status: 103` を持つ `HEADERS(END_STREAM)` |
 | `informational-then-missing-status` | 103の後に`:status`を持たないfinal候補 `HEADERS(END_STREAM)` |
 | `informational-then-data` | 103の直後に `DATA(END_STREAM)` |
-| `informational-entry-budget` | `:status: 103` + `x-info: a` を129 block送った後にvalid gRPC OK response |
-| `informational-byte-budget` | 合計1,200 bytesの`x-info`を4個の103 blockへ分けて送った後にvalid gRPC OK response |
-| `require-prior-resource-probe` | 同じconnectionで直前にentry/byte budget probeを送出済みならgRPC OK、そうでなければstatus 13。resource overflow後のconnection reuse oracle |
+| `informational-entry-budget` | `:status: 103` + `x-info: a` を65 block送る。合計130 entriesのため上限を超えるが、pseudo / regularの片方とfinal 3 fieldsだけなら68 entriesに留まり、両field classのaccountingを区別する |
+| `informational-byte-budget` | 237 bytesの`x-info`を4個の103 blockへ分ける。1024-byte上限ではcustom fields 972 bytes + final fields 50 bytesだけなら1022 bytesだが、informational `:status` 40 bytesも含めると超過し、両field classのaccountingを区別する |
+| `informational-invalid-entry-budget` | 1個の103 blockへNULを含むinvalid regular fieldを128 entries載せる。normal callbackの`:status`と合わせた129 entriesをinvalid-header callbackでもbudgetへ入れることを検証する |
+| `informational-invalid-byte-budget` | 1個の103 blockへNULを含む2049-byte invalid regular valueを載せる。1024-byte上限をinvalid-header callbackでも適用することを検証する |
+| `informational-default-byte-budget` | 8192-byteの`x-info`を8個の103 blockへ分け、diagnostic default 64KiB wire-header budgetをentry上限とは独立に超える |
+| `require-prior-resource-probe` | 同じconnectionの直前のresource probe streamについてclientから `RST_STREAM(CANCEL)` を受信済みの場合だけgRPC OK。status分類、exact cancel action、connection reuseを分離して検証する |
 | `invalid-status-metadata` | `x-before`、invalid `grpc-status: 17`、`x-after` をこの順に持つTrailers-Only response |
 | `post-informational-nonterminal-status` | 103、`grpc-status: 0`を同居させたEND_STREAMなしfinal initial HEADERS、`DATA(END_STREAM)`。bench diagnosticがsuccess countへ含めないことを検証する |
+| `post-informational-nonterminal-status-details` | 103、`grpc-status-details-bin`を同居させたEND_STREAMなしfinal initial HEADERS、DATA、valid `grpc-status: 0` trailers。details field単独でもterminal status gateを迂回できないことを検証する |
+| `valid-informational-iteration-reset` | 60個のstatus-only 103と、status/content-type/message/encoding/custom metadataでpolluteした103の後にvalid gRPC OKを返す。1 iterationは69 wire fieldsで上限内、2 iterations累積では128を超えるため、benchのsemantic stateとwire counterのiteration resetを同時に検証する |
+| `foreign-pushed-stream-protocol-rst` | main request streamにPUSH_PROMISEを送り、promised streamの `103 HEADERS(END_STREAM)` に対するclientの `RST_STREAM(PROTOCOL_ERROR)` を受信してからmain streamへgRPC OKを返す。foreign stream eventをcurrent RPCへ誤帰属しないことを検証する |
 
 ## Fixture ownership
 

@@ -645,7 +645,29 @@ func handleInformationalAdversarialH2C(conn net.Conn) {
 	}
 
 	requests := make(map[uint32]map[string]string)
-	resourceProbeSent := false
+	resourceProbeStreamID := uint32(0)
+	resourceProbeCancelObserved := false
+	pendingPushedResponses := make(map[uint32]uint32)
+	nextPromisedStreamID := uint32(2)
+	writeResponse := func(streamID uint32, request map[string]string) {
+		if request["x-bench-raw-response"] == "foreign-pushed-stream-protocol-rst" {
+			promisedStreamID := nextPromisedStreamID
+			nextPromisedStreamID += 2
+			if err := writeRawForeignPushedStreamProtocolError(framer, streamID, promisedStreamID, request[":authority"]); err != nil {
+				writeRawGrpcFixtureError(framer, streamID, "failed to send pushed-stream protocol probe")
+				return
+			}
+			pendingPushedResponses[promisedStreamID] = streamID
+			return
+		}
+		writeInformationalAdversarialResponse(
+			framer,
+			streamID,
+			request,
+			&resourceProbeStreamID,
+			&resourceProbeCancelObserved,
+		)
+	}
 	for {
 		frame, err := framer.ReadFrame()
 		if err != nil {
@@ -664,23 +686,41 @@ func handleInformationalAdversarialH2C(conn net.Conn) {
 			}
 			requests[streamID] = request
 			if f.StreamEnded() {
-				resourceProbeSent = writeInformationalAdversarialResponse(framer, streamID, request, resourceProbeSent)
+				writeResponse(streamID, request)
 				delete(requests, streamID)
 			}
 		case *http2.DataFrame:
 			streamID := f.Header().StreamID
 			if f.StreamEnded() {
 				request := requests[streamID]
-				resourceProbeSent = writeInformationalAdversarialResponse(framer, streamID, request, resourceProbeSent)
+				writeResponse(streamID, request)
 				delete(requests, streamID)
 			}
 		case *http2.RSTStreamFrame:
-			delete(requests, f.Header().StreamID)
+			streamID := f.Header().StreamID
+			if streamID == resourceProbeStreamID && f.ErrCode == http2.ErrCodeCancel {
+				resourceProbeCancelObserved = true
+			}
+			if mainStreamID, ok := pendingPushedResponses[streamID]; ok {
+				if f.ErrCode == http2.ErrCodeProtocol {
+					writeRawGrpcOK(framer, mainStreamID, false)
+				} else {
+					writeRawGrpcFixtureError(framer, mainStreamID, "pushed stream was not reset with PROTOCOL_ERROR")
+				}
+				delete(pendingPushedResponses, streamID)
+			}
+			delete(requests, streamID)
 		}
 	}
 }
 
-func writeInformationalAdversarialResponse(framer *http2.Framer, streamID uint32, request map[string]string, resourceProbeSent bool) bool {
+func writeInformationalAdversarialResponse(
+	framer *http2.Framer,
+	streamID uint32,
+	request map[string]string,
+	resourceProbeStreamID *uint32,
+	resourceProbeCancelObserved *bool,
+) {
 	control := request["x-bench-raw-response"]
 	switch control {
 	case "trailer-without-end-stream":
@@ -702,34 +742,58 @@ func writeInformationalAdversarialResponse(framer *http2.Framer, streamID uint32
 		writeRawInformational(framer, streamID, nil)
 		_ = framer.WriteData(streamID, true, grpcFrame(0, nil))
 	case "informational-entry-budget":
-		for i := 0; i < 129; i++ {
+		*resourceProbeStreamID = streamID
+		*resourceProbeCancelObserved = false
+		for i := 0; i < 65; i++ {
 			writeRawInformational(framer, streamID, []hpack.HeaderField{
 				{Name: "x-info", Value: "a"},
 			})
 		}
 		writeRawGrpcOK(framer, streamID, false)
-		return true
 	case "informational-byte-budget":
-		value := makeMetadataValue(300)
+		*resourceProbeStreamID = streamID
+		*resourceProbeCancelObserved = false
+		value := makeMetadataValue(237)
 		for i := 0; i < 4; i++ {
 			writeRawInformational(framer, streamID, []hpack.HeaderField{
 				{Name: "x-info", Value: value},
 			})
 		}
 		writeRawGrpcOK(framer, streamID, false)
-		return true
-	case "require-prior-resource-probe":
-		if resourceProbeSent {
-			writeRawGrpcOK(framer, streamID, false)
-			return false
-		} else {
-			writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
-				{Name: ":status", Value: "200"},
-				{Name: "content-type", Value: "application/grpc"},
-				{Name: "grpc-status", Value: "13"},
-				{Name: "grpc-message", Value: "resource probe connection was not reused"},
+	case "informational-invalid-entry-budget":
+		*resourceProbeStreamID = streamID
+		*resourceProbeCancelObserved = false
+		fields := []hpack.HeaderField{{Name: ":status", Value: "103"}}
+		for i := 0; i < 128; i++ {
+			fields = append(fields, hpack.HeaderField{Name: "x-ignored", Value: "a\x00b"})
+		}
+		writeRawHeaders(framer, streamID, false, fields)
+		writeRawGrpcOK(framer, streamID, false)
+	case "informational-invalid-byte-budget":
+		*resourceProbeStreamID = streamID
+		*resourceProbeCancelObserved = false
+		writeRawInformational(framer, streamID, []hpack.HeaderField{
+			{Name: "x-ignored", Value: makeMetadataValue(2048) + "\x00"},
+		})
+		writeRawGrpcOK(framer, streamID, false)
+	case "informational-default-byte-budget":
+		*resourceProbeStreamID = streamID
+		*resourceProbeCancelObserved = false
+		value := makeMetadataValue(8192)
+		for i := 0; i < 8; i++ {
+			writeRawInformational(framer, streamID, []hpack.HeaderField{
+				{Name: "x-info", Value: value},
 			})
 		}
+		writeRawGrpcOK(framer, streamID, false)
+	case "require-prior-resource-probe":
+		if *resourceProbeCancelObserved {
+			writeRawGrpcOK(framer, streamID, false)
+		} else {
+			writeRawGrpcFixtureError(framer, streamID, "resource probe CANCEL was not observed on this connection")
+		}
+		*resourceProbeStreamID = 0
+		*resourceProbeCancelObserved = false
 	case "invalid-status-metadata":
 		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
 			{Name: ":status", Value: "200"},
@@ -746,10 +810,66 @@ func writeInformationalAdversarialResponse(framer *http2.Framer, streamID uint32
 			{Name: "grpc-status", Value: "0"},
 		})
 		_ = framer.WriteData(streamID, true, grpcFrame(0, nil))
+	case "post-informational-nonterminal-status-details":
+		writeRawInformational(framer, streamID, nil)
+		writeRawHeaders(framer, streamID, false, []hpack.HeaderField{
+			{Name: ":status", Value: "200"},
+			{Name: "content-type", Value: "application/grpc"},
+			{Name: "grpc-status-details-bin", Value: "AA=="},
+		})
+		_ = framer.WriteData(streamID, false, grpcFrame(0, nil))
+		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+			{Name: "grpc-status", Value: "0"},
+		})
+	case "valid-informational-iteration-reset":
+		for i := 0; i < 60; i++ {
+			writeRawInformational(framer, streamID, nil)
+		}
+		writeRawInformational(framer, streamID, []hpack.HeaderField{
+			{Name: "content-type", Value: "text/plain"},
+			{Name: "grpc-status", Value: "13"},
+			{Name: "grpc-message", Value: "informational pollution"},
+			{Name: "grpc-encoding", Value: "gzip"},
+			{Name: "x-bench-informational-only", Value: "must-not-leak"},
+		})
+		writeRawGrpcOK(framer, streamID, false)
 	default:
 		writeRawGrpcOK(framer, streamID, false)
 	}
-	return resourceProbeSent
+}
+
+func writeRawForeignPushedStreamProtocolError(framer *http2.Framer, mainStreamID uint32, promisedStreamID uint32, authority string) error {
+	if authority == "" {
+		authority = "test-server:50071"
+	}
+	if err := framer.WritePushPromise(http2.PushPromiseParam{
+		StreamID:   mainStreamID,
+		PromiseID:  promisedStreamID,
+		EndHeaders: true,
+		BlockFragment: encodeHeaders([]hpack.HeaderField{
+			{Name: ":method", Value: "GET"},
+			{Name: ":scheme", Value: "http"},
+			{Name: ":authority", Value: authority},
+			{Name: ":path", Value: "/pushed-informational-probe"},
+		}),
+	}); err != nil {
+		return err
+	}
+	return framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      promisedStreamID,
+		BlockFragment: encodeHeaders([]hpack.HeaderField{{Name: ":status", Value: "103"}}),
+		EndHeaders:    true,
+		EndStream:     true,
+	})
+}
+
+func writeRawGrpcFixtureError(framer *http2.Framer, streamID uint32, message string) {
+	writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+		{Name: ":status", Value: "200"},
+		{Name: "content-type", Value: "application/grpc"},
+		{Name: "grpc-status", Value: "13"},
+		{Name: "grpc-message", Value: message},
+	})
 }
 
 func writeRawInformational(framer *http2.Framer, streamID uint32, extra []hpack.HeaderField) {

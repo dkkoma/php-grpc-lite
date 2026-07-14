@@ -68,7 +68,9 @@ ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, u
 void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
+int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, size_t namelen, size_t valuelen);
 int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
+int on_invalid_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);
 int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
 int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
@@ -428,6 +430,7 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(*callbacks, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_begin_headers_callback(*callbacks, on_begin_headers_callback);
     nghttp2_session_callbacks_set_on_header_callback(*callbacks, on_header_callback);
+    nghttp2_session_callbacks_set_on_invalid_header_callback(*callbacks, on_invalid_header_callback);
     nghttp2_session_callbacks_set_on_invalid_frame_recv_callback(*callbacks, on_invalid_frame_recv_callback);
     nghttp2_session_callbacks_set_on_stream_close_callback(*callbacks, on_stream_close_callback);
     nghttp2_session_callbacks_set_on_frame_send_callback(*callbacks, on_frame_send_callback);
@@ -2210,31 +2213,32 @@ int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *fra
     return 0;
 }
 
-static int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, size_t namelen, size_t valuelen)
+int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, size_t namelen, size_t valuelen)
 {
-    size_t field_bytes;
+    int rv;
 
-    if (call->metadata_too_large) {
+    if (call == NULL || call->metadata_too_large) {
         return 0;
     }
-    if (namelen > SIZE_MAX - valuelen) {
-        call->metadata_too_large = true;
-    } else {
-        field_bytes = namelen + valuelen;
-        if (call->wire_response_header_entry_count >= GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES
-            || field_bytes > call->max_response_metadata_bytes
-            || call->wire_response_header_bytes > call->max_response_metadata_bytes - field_bytes) {
-            call->metadata_too_large = true;
-        } else {
-            call->wire_response_header_entry_count++;
-            call->wire_response_header_bytes += field_bytes;
-        }
-    }
-    if (!call->metadata_too_large) {
+    if (grpc_response_header_budget_account_field(
+            &call->wire_response_header_entry_count,
+            &call->wire_response_header_bytes,
+            call->max_response_metadata_bytes,
+            namelen,
+            valuelen)) {
         return 0;
     }
+
+    call->metadata_too_large = true;
     call->discard_response_body = true;
-    return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
+    rv = grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
+    if (rv != 0) {
+        return rv;
+    }
+    /* Stop decoding the remainder of this header block without failing the
+     * connection.  The explicit submit above selects CANCEL instead of
+     * nghttp2's default callback-failure reset code. */
+    return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
 }
 
 int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
@@ -2251,8 +2255,9 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         return 0;
     }
     if (frame->hd.type == NGHTTP2_HEADERS) {
-        if (grpc_protocol_account_response_header_field(session, call, namelen, valuelen) != 0) {
-            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        int rv = grpc_protocol_account_response_header_field(session, call, namelen, valuelen);
+        if (rv != 0) {
+            return rv;
         }
         if (call->metadata_too_large) {
             return 0;
@@ -2358,6 +2363,24 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
     return 0;
 }
 
+int on_invalid_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    (void) name;
+    (void) value;
+    (void) flags;
+
+    if (call == NULL
+        || frame->hd.type != NGHTTP2_HEADERS
+        || frame->hd.stream_id != call->stream_id) {
+        return 0;
+    }
+    /* Invalid regular fields are intentionally ignored semantically, but the
+     * HPACK decode work still belongs to this call's wire header budget. */
+    return grpc_protocol_account_response_header_field(session, call, namelen, valuelen);
+}
+
 int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
@@ -2368,6 +2391,13 @@ int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame
     if (call == NULL
         || frame->hd.stream_id != call->stream_id
         || frame->hd.type != NGHTTP2_HEADERS) {
+        return 0;
+    }
+    if (call->metadata_too_large) {
+        /* The header callback already classified this stream and queued
+         * RST_STREAM(CANCEL).  TEMPORAL callback failure also reaches this
+         * observer; do not overwrite RESOURCE_EXHAUSTED with a protocol
+         * error for the locally enforced work-budget stop. */
         return 0;
     }
     /* nghttp2 has already submitted the appropriate RST_STREAM/GOAWAY.  Keep

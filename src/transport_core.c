@@ -109,6 +109,25 @@ size_t effective_max_response_metadata_bytes(int64_t soft_limit, int64_t hard_li
     return GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES;
 }
 
+bool grpc_response_header_budget_account_field(size_t *entry_count, size_t *bytes, size_t max_bytes, size_t namelen, size_t valuelen)
+{
+    size_t field_bytes;
+
+    if (namelen > SIZE_MAX - valuelen) {
+        return false;
+    }
+    field_bytes = namelen + valuelen;
+    if (*entry_count >= GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES
+        || field_bytes > max_bytes
+        || *bytes > max_bytes - field_bytes) {
+        return false;
+    }
+
+    (*entry_count)++;
+    *bytes += field_bytes;
+    return true;
+}
+
 bool contains_nul_or_control(const char *value, size_t value_len)
 {
     size_t index;

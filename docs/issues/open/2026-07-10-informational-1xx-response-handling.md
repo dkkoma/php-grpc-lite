@@ -50,6 +50,10 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-1 adversarial review 8件を受け、response phaseとstatus commit validityのproduction / diagnostic共有pure helper、`response_header_protocol_error` taxonomy、END_STREAMなしtrailing blockのquarantine、nghttp2 invalid-frame / outbound protocol-RST観測を追加した。HTTP messaging rejectionは先行 `grpc-status: 0` とHTTP status未観測fallbackより優先し `INTERNAL` とする。
 - 2026-07-15: semantic metadata ownershipとwire header work budgetを分離し、pseudo-headerとinformational field、複数1xx blockをoverflow-safeなcall-local entry/byte counterへ累積するようにした。budget超過は `RESOURCE_EXHAUSTED` + stream-local cancelとし、同一connectionの後続RPC成功もfixtureで固定した。
 - 2026-07-15: raw h2c fixture `:50071` とPHPT 042/043を追加。END_STREAMなしtrailer、103+END_STREAM、103→missing-status HEADERS、103→DATA、informational entry/byte budget、invalid status前後のmetadata ownership、bench false-successをunary / server streamingまたはbench entrypointで固定した。PHPT 022には複数103、post-1xx Trailers-Only / invalid content-type、two-message streamingを追加し、request cardinalityを1に揃えた。
+- 2026-07-15: pass-3 adversarial reviewの重複12指摘を6テーマへ整理し、invalid regular header callbackを含むwire header budget、diagnostic default limit / iteration reset / success gate、`grpc-status-details-bin` terminal gate、foreign pushed-stream RST ownershipを修正した。wire budget算術は`transport_core`のpure helper、call classificationと`RST_STREAM(CANCEL)`はproduction / diagnostic共有ownerへ置き、semantic phase責務と分離した。
+- 2026-07-15: raw fixtureのresource oracleを対象streamのexact `RST_STREAM(CANCEL)`受信でgateし、pseudo / regular field classを片側実装では通せない65-block / 237-byte境界へ変更した。silent-ignoreされるNUL-bearing invalid regular field、diagnostic default 64KiB、non-terminal status-details、2-iteration reset、foreign pushed-streamのcontrolsを追加した。
+- 2026-07-15: PHPT 043のvalid positive controlにより、raw benchが`call.connection == NULL`のままproduction `connection_send()`を呼び、全batchを送信前に失敗させていた既存不整合を検出した。raw diagnosticのsocket ownershipに合わせてbench-local fd sendへ修正し、positive 2 iterationsとnegative controlsの双方を通した。
+- 2026-07-15: pass-4 domain model gateで、invalid-header budget超過後のTEMPORAL callback stopを0へ変換していたMedium 1件を検出した。production / diagnostic双方でTEMPORALを伝播し、invalid-frame observerは既確定の`metadata_too_large`をprotocol errorで上書きしないよう修正した。再レビュー後のBlocker / High / Medium / Low / Design Decisionはすべてnone。
 
 ## Verification
 
@@ -58,6 +62,7 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / status_core / transport_core、3/3 suites）。
 - 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0、skipped 0）。
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-4 HTTP/2 / gRPC domain model review PASS（初回Medium 1件を修正後、Blocker / High / Medium / Low / Design Decision: none）。記録は `docs/reviews/issues/2026-07-15-1xx-pass3-fix-domain-model-pass4.md`。
 - 2026-07-15: domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。
 - 2026-07-15: pass-1 adversarial fix後にtest-server imageをrebuildし `docker compose up -d --force-recreate test-server` PASS。raw `:50071` のexact malformed/resource/ownership/bench sequenceと、`:50054` のvalid repeated-103 / post-1xx edgeを送出した。
 - 2026-07-15: `./tools/test/check-phpt.sh` PASS（28/28 tests、failed 0、skipped 0、warned 0）。PHPT 042がunary / server streamingのmalformed sequence、wire header budgetとsame-connection follow-up、invalid-status metadata ownership、PHPT 043がbench `ok=0` / `failed=1` を含む。
@@ -65,6 +70,11 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: pass-2 HTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は `docs/reviews/issues/2026-07-15-1xx-fix-domain-model-pass2.md`。
+- 2026-07-15: pass-3 fix後に `docker compose build test-server` と `docker compose up -d --force-recreate test-server` を実行し、raw fixture imageのrebuild / restart PASS。
+- 2026-07-15: `./tools/test/check-phpt.sh` PASS（28/28 tests、failed 0、skipped 0、warned 0）。PHPT 042でvalid / invalid regular fieldのentry・byte budget、field-class境界、exact CANCEL、same-connection reuse、status-details gateを、PHPT 043でvalid 2-iteration reset、entry / default-byte budget、status-details、foreign pushed-stream ownershipを確認した。
+- 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4 suites）。wire header budgetの128-entry境界、exact byte上限、加算overflowを含む。
+- 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
+- 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 
 ## Decision Log
 

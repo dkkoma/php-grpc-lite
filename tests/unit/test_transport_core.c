@@ -96,6 +96,42 @@ static void test_effective_limits(void)
     ASSERT_SIZE(GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY, h2_write_coalesce_capacity_for_max_frame_size(GRPC_LITE_HTTP2_MAX_FRAME_SIZE));
 }
 
+static void test_response_header_budget(void)
+{
+    size_t entry_count = 0;
+    size_t bytes = 0;
+
+    for (size_t i = 0; i < GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES; i++) {
+        ASSERT_BOOL(true, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, 1, 1));
+    }
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES, entry_count);
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES * 2, bytes);
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, 1, 1));
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES, entry_count);
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES * 2, bytes);
+
+    entry_count = 0;
+    bytes = 0;
+    ASSERT_BOOL(true, grpc_response_header_budget_account_field(&entry_count, &bytes, 8, 3, 5));
+    ASSERT_SIZE(1, entry_count);
+    ASSERT_SIZE(8, bytes);
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, 8, 1, 0));
+    ASSERT_SIZE(1, entry_count);
+    ASSERT_SIZE(8, bytes);
+
+    entry_count = 0;
+    bytes = 0;
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, SIZE_MAX, 1));
+    ASSERT_SIZE(0, entry_count);
+    ASSERT_SIZE(0, bytes);
+
+    entry_count = 1;
+    bytes = SIZE_MAX;
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, 1, 0));
+    ASSERT_SIZE(1, entry_count);
+    ASSERT_SIZE(SIZE_MAX, bytes);
+}
+
 static void test_authority_identity(void)
 {
     char authority[32];
@@ -166,6 +202,7 @@ static void test_control_character_detection(void)
 int main(void)
 {
     test_effective_limits();
+    test_response_header_budget();
     test_authority_identity();
     test_grpc_path_validation();
     test_channel_input_validation();
