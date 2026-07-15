@@ -617,30 +617,123 @@ func serveLifecycleH2C() {
 // sequences that net/http deliberately refuses to write. Request metadata
 // selects a sequence, while the connection remains open after stream-local
 // protocol failures so tests can verify that the next RPC reuses it.
+type informationalCancelProbe struct {
+	mu                      sync.Mutex
+	finished                chan struct{}
+	finishOnce              sync.Once
+	cancelObserved          bool
+	siblingStreamID         uint32
+	siblingDataAfterTrigger bool
+}
+
+func newInformationalCancelProbe(siblingStreamID uint32) *informationalCancelProbe {
+	return &informationalCancelProbe{
+		finished:        make(chan struct{}),
+		siblingStreamID: siblingStreamID,
+	}
+}
+
+func (p *informationalCancelProbe) observeCancel() {
+	p.mu.Lock()
+	p.cancelObserved = true
+	p.mu.Unlock()
+	if p.siblingStreamID == 0 {
+		p.finish()
+	}
+}
+
+func (p *informationalCancelProbe) observeData(streamID uint32) {
+	if p.siblingStreamID == 0 || p.siblingStreamID != streamID {
+		return
+	}
+	p.mu.Lock()
+	p.siblingDataAfterTrigger = true
+	p.mu.Unlock()
+}
+
+func (p *informationalCancelProbe) cancelWasObserved() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cancelObserved
+}
+
+func (p *informationalCancelProbe) finish() {
+	p.finishOnce.Do(func() {
+		close(p.finished)
+	})
+}
+
+func (p *informationalCancelProbe) passed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cancelObserved && !p.siblingDataAfterTrigger
+}
+
+type informationalCancelProbeStore struct {
+	mu          sync.Mutex
+	byAuthority map[string]*informationalCancelProbe
+}
+
+func newInformationalCancelProbeStore() *informationalCancelProbeStore {
+	return &informationalCancelProbeStore{
+		byAuthority: make(map[string]*informationalCancelProbe),
+	}
+}
+
+func (s *informationalCancelProbeStore) begin(authority string, siblingStreamID uint32) *informationalCancelProbe {
+	probe := newInformationalCancelProbe(siblingStreamID)
+	s.mu.Lock()
+	s.byAuthority[authority] = probe
+	s.mu.Unlock()
+	return probe
+}
+
+func (s *informationalCancelProbeStore) waitAndConsume(authority string) bool {
+	s.mu.Lock()
+	probe := s.byAuthority[authority]
+	s.mu.Unlock()
+	if probe == nil {
+		return false
+	}
+
+	select {
+	case <-probe.finished:
+	case <-time.After(3 * time.Second):
+	}
+
+	s.mu.Lock()
+	if s.byAuthority[authority] == probe {
+		delete(s.byAuthority, authority)
+	}
+	s.mu.Unlock()
+	return probe.passed()
+}
+
 func serveInformationalAdversarialH2C(addr string) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen %s: %v", addr, err)
 	}
 	log.Printf("listening on %s (raw h2c informational adversarial fixture)", addr)
+	cancelProbes := newInformationalCancelProbeStore()
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
 			log.Printf("accept %s error: %v", addr, err)
 			continue
 		}
-		go handleInformationalAdversarialH2C(conn)
+		go handleInformationalAdversarialH2C(conn, cancelProbes)
 	}
 }
 
-func handleInformationalAdversarialH2C(conn net.Conn) {
+func handleInformationalAdversarialH2C(conn net.Conn, cancelProbes *informationalCancelProbeStore) {
 	defer conn.Close()
 	if !readClientPreface(conn) {
 		return
 	}
 	framer := http2.NewFramer(conn, conn)
 	framer.ReadMetaHeaders = hpack.NewDecoder(4096, nil)
-	if err := framer.WriteSettings(); err != nil {
+	if err := framer.WriteSettings(http2.Setting{ID: http2.SettingInitialWindowSize, Val: 1024}); err != nil {
 		return
 	}
 
@@ -650,16 +743,32 @@ func handleInformationalAdversarialH2C(conn net.Conn) {
 	statusProbeStreamID := uint32(0)
 	statusProbeCancelObserved := false
 	heldSiblingStreamID := uint32(0)
+	incompleteCancelProbes := make(map[uint32]*informationalCancelProbe)
+	defer func() {
+		for _, probe := range incompleteCancelProbes {
+			probe.finish()
+		}
+	}()
 	pendingPushedResponses := make(map[uint32]uint32)
 	nextPromisedStreamID := uint32(2)
 	writeResponse := func(streamID uint32, request map[string]string) {
-		if rawResponseLeavesHeaderBlockIncomplete(request["x-bench-raw-response"]) {
+		control := request["x-bench-raw-response"]
+		if control == "require-prior-incomplete-status-cancel" {
+			if cancelProbes.waitAndConsume(request[":authority"]) {
+				writeRawGrpcOK(framer, streamID, false)
+			} else {
+				writeRawGrpcFixtureError(framer, streamID, "incomplete status CANCEL was not observed by peer or sibling DATA crossed quarantine")
+			}
+			return
+		}
+		if rawResponseLeavesHeaderBlockIncomplete(control) {
+			incompleteCancelProbes[streamID] = cancelProbes.begin(request[":authority"], heldSiblingStreamID)
 			// Keep the peer silent long enough to prove that a deadline-less
 			// client terminates itself, while bounding a regression in the test
 			// suite instead of retaining the fixture connection indefinitely.
 			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		}
-		if request["x-bench-raw-response"] == "foreign-pushed-stream-protocol-rst" {
+		if control == "foreign-pushed-stream-protocol-rst" {
 			promisedStreamID := nextPromisedStreamID
 			nextPromisedStreamID += 2
 			if err := writeRawForeignPushedStreamProtocolError(framer, streamID, promisedStreamID, request[":authority"]); err != nil {
@@ -679,6 +788,12 @@ func handleInformationalAdversarialH2C(conn net.Conn) {
 			&statusProbeCancelObserved,
 			&heldSiblingStreamID,
 		)
+		if control == "multiplex-incomplete-grpc-status" {
+			// Leave the peer unread beyond the transport's fixed terminal-flush
+			// grace. A generic session flush would fill the socket with the held
+			// sibling's newly unblocked request DATA before returning.
+			time.Sleep(750 * time.Millisecond)
+		}
 	}
 	for {
 		frame, err := framer.ReadFrame()
@@ -697,19 +812,48 @@ func handleInformationalAdversarialH2C(conn net.Conn) {
 				request[field.Name] = field.Value
 			}
 			requests[streamID] = request
-			if f.StreamEnded() {
+			if request["x-bench-raw-response"] == "multiplex-hold-sibling" {
+				// Respond before consuming the large request body. The advertised
+				// tiny stream window leaves its DATA provider deferred in nghttp2.
+				writeResponse(streamID, request)
+				delete(requests, streamID)
+			} else if f.StreamEnded() {
 				writeResponse(streamID, request)
 				delete(requests, streamID)
 			}
 		case *http2.DataFrame:
 			streamID := f.Header().StreamID
+			if streamID == heldSiblingStreamID && len(incompleteCancelProbes) == 0 {
+				// Replenish only the connection window before the malformed target
+				// response. The reduced sibling stream window stays exhausted, while
+				// the small target request can still reach END_STREAM and trigger the
+				// quarantine probe.
+				if err := framer.WriteWindowUpdate(0, uint32(len(f.Data()))); err != nil {
+					return
+				}
+			}
+			for _, probe := range incompleteCancelProbes {
+				probe.observeData(streamID)
+				if probe.cancelWasObserved() {
+					_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				}
+			}
 			if f.StreamEnded() {
-				request := requests[streamID]
-				writeResponse(streamID, request)
-				delete(requests, streamID)
+				if request, ok := requests[streamID]; ok {
+					writeResponse(streamID, request)
+					delete(requests, streamID)
+				}
 			}
 		case *http2.RSTStreamFrame:
 			streamID := f.Header().StreamID
+			if probe := incompleteCancelProbes[streamID]; probe != nil && f.ErrCode == http2.ErrCodeCancel {
+				probe.observeCancel()
+				if probe.siblingStreamID != 0 {
+					// Drain any bytes already queued after the RST until the socket is
+					// idle; only then publish the no-sibling-DATA result cross-connection.
+					_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				}
+			}
 			if streamID == resourceProbeStreamID && f.ErrCode == http2.ErrCodeCancel {
 				resourceProbeCancelObserved = true
 			}
@@ -850,6 +994,11 @@ func writeInformationalAdversarialResponse(
 			writeRawGrpcFixtureError(framer, streamID, "incomplete status target did not reuse the held sibling connection")
 			return
 		}
+		// Make the held request's multi-megabyte DATA sendable immediately
+		// before the malformed target response. Terminal quarantine must defer
+		// that application DATA and flush only the target CANCEL/control work.
+		_ = framer.WriteWindowUpdate(0, 32*1024*1024)
+		_ = framer.WriteWindowUpdate(*heldSiblingStreamID, 32*1024*1024)
 		writeRawPostInformationalIncompleteStatusField(framer, streamID, hpack.HeaderField{
 			Name: "grpc-status", Value: "0",
 		})
@@ -917,6 +1066,14 @@ func writeInformationalAdversarialResponse(
 			{Name: "grpc-encoding", Value: "gzip"},
 			{Name: "x-bench-informational-only", Value: "must-not-leak"},
 		})
+		writeRawGrpcOK(framer, streamID, false)
+	case "valid-informational-byte-iteration-reset":
+		infoValue := string(bytes.Repeat([]byte{'a'}, 8192))
+		for i := 0; i < 4; i++ {
+			writeRawInformational(framer, streamID, []hpack.HeaderField{
+				{Name: "x-info", Value: infoValue},
+			})
+		}
 		writeRawGrpcOK(framer, streamID, false)
 	default:
 		writeRawGrpcOK(framer, streamID, false)

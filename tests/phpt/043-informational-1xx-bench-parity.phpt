@@ -28,9 +28,13 @@ $runBatch = static function (string $control, int $iterations = 1, int $timeoutU
     );
 };
 
-$valid = $runBatch('valid-informational-iteration-reset', 2);
-grpc_lite_phpt_assert_same(2, $valid['ok'], 'valid repeated-1xx batch ok count');
-grpc_lite_phpt_assert_same(0, $valid['failed'], 'valid repeated-1xx batch failed count');
+$entryReset = $runBatch('valid-informational-iteration-reset', 2);
+grpc_lite_phpt_assert_same(2, $entryReset['ok'], 'entry-counter reset batch ok count');
+grpc_lite_phpt_assert_same(0, $entryReset['failed'], 'entry-counter reset batch failed count');
+
+$byteReset = $runBatch('valid-informational-byte-iteration-reset', 2);
+grpc_lite_phpt_assert_same(2, $byteReset['ok'], 'byte-counter reset batch ok count');
+grpc_lite_phpt_assert_same(0, $byteReset['failed'], 'byte-counter reset batch failed count');
 
 $nonterminalStatus = $runBatch('post-informational-nonterminal-status');
 grpc_lite_phpt_assert_same(0, $nonterminalStatus['ok'], 'nonterminal grpc-status batch ok count');

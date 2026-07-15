@@ -72,6 +72,7 @@ struct _grpc_call {
     grpc_response_header_phase_state response_header_phase;
     bool response_header_block_end_stream;
     bool response_header_block_protocol_valid;
+    bool response_header_block_incomplete;
     size_t response_message_count;
     size_t max_response_messages;
     size_t max_receive_message_bytes;

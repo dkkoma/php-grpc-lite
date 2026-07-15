@@ -46,6 +46,7 @@ ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
 static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out);
 ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
 int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
+int flush_terminal_quarantine(h2_connection *connection, grpc_call *call);
 h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
 h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
 void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
@@ -2005,7 +2006,7 @@ ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t leng
     return (ssize_t) length;
 }
 
-int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us)
+static int send_pending_h2_frames_until(h2_connection *connection, grpc_call *call, uint64_t deadline_abs_us, bool propagate_timeout)
 {
     int rv;
 
@@ -2019,7 +2020,7 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
         return NGHTTP2_ERR_INVALID_ARGUMENT;
     }
     connection->current_io_call = call;
-    connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : fallback_deadline_abs_us;
+    connection->current_write_deadline_abs_us = deadline_abs_us;
     connection->current_write_timed_out = false;
     /* Coalesce for plaintext too: nghttp2 emits frames (or frame header and
      * payload) as separate chunks, and with TCP_NODELAY each direct send()
@@ -2065,7 +2066,7 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
         mark_connection_dead(connection, 0);
     }
     if (rv != 0 && call != NULL) {
-        if (connection->current_write_timed_out) {
+        if (propagate_timeout && connection->current_write_timed_out) {
             call->timed_out = true;
         }
         call->last_io_errno = connection->last_io_errno;
@@ -2078,6 +2079,33 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
     connection->write_coalescing = false;
     connection->write_buffer_len = 0;
     return rv;
+}
+
+int flush_terminal_quarantine(h2_connection *connection, grpc_call *call)
+{
+    /* The peer has left the inbound HPACK decoder incomplete.  Only give the
+     * queued target CANCEL/control frames a short best-effort write window;
+     * this transport-action grace is independent of the call deadline and
+     * must not reclassify the target as DEADLINE_EXCEEDED if it expires. */
+    return send_pending_h2_frames_until(
+        connection,
+        call,
+        monotonic_us() + GRPC_LITE_CANCEL_RST_WRITE_GRACE_US,
+        false
+    );
+}
+
+int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us)
+{
+    if (connection != NULL && connection->close_after_pending_flush) {
+        return flush_terminal_quarantine(connection, call);
+    }
+    return send_pending_h2_frames_until(
+        connection,
+        call,
+        call != NULL ? call->deadline_abs_us : fallback_deadline_abs_us,
+        true
+    );
 }
 
 int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
@@ -2101,17 +2129,24 @@ size_t remaining_request_bytes(grpc_call *call)
 ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
     grpc_call *call = source != NULL ? (grpc_call *) source->ptr : NULL;
+    h2_connection *connection = (h2_connection *) user_data;
     size_t remaining;
     size_t to_send;
     (void) session;
     (void) stream_id;
     (void) buf;
-    (void) user_data;
 
     *data_flags = 0;
     if (call == NULL) {
         *data_flags = NGHTTP2_DATA_FLAG_EOF;
         return 0;
+    }
+    if (connection != NULL && connection->close_after_pending_flush) {
+        /* Do not newly drive application DATA after an incomplete inbound
+         * HPACK block made the connection terminal.  Deferring every DATA
+         * provider lets nghttp2 advance to the queued target RST_STREAM and
+         * other control frames without widening the quarantine blast radius. */
+        return NGHTTP2_ERR_DEFERRED;
     }
     remaining = remaining_request_bytes(call);
     to_send = remaining < length ? remaining : length;
@@ -2319,6 +2354,7 @@ int grpc_protocol_observe_response_status_field(nghttp2_session *session, grpc_c
     call->invalid_grpc_status = true;
     call->discard_response_body = true;
     if ((frame_flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+        call->response_header_block_incomplete = true;
         /* An RST closes the target stream but cannot complete the peer's
          * connection-global inbound HPACK block. Flush CANCEL, then make the
          * connection terminal for every existing owner. */

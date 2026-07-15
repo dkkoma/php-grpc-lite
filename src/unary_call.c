@@ -243,7 +243,14 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
-        if (connection->close_after_pending_flush || nghttp2_session_want_write(connection->session)) {
+        if (connection->close_after_pending_flush) {
+            rv = flush_terminal_quarantine(connection, &call);
+            if (rv != 0) {
+                mark_connection_dead(connection, rv);
+                grpc_call_note_connection_broken(&call);
+                break;
+            }
+        } else if (nghttp2_session_want_write(connection->session)) {
             rv = send_pending_h2_frames(connection, &call);
             if (rv != 0) {
                 mark_connection_dead(connection, rv);

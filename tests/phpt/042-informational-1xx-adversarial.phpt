@@ -129,7 +129,7 @@ $assertIncompleteStatusFieldUnary = static function (GreeterClient $client, stri
     grpc_lite_phpt_assert_same('invalid grpc-status trailer', $status->details, "$label unary details");
 
     [$followUpResponse, $followUpStatus] = $client->BenchUnary(new BenchRequest(), [
-        'x-bench-raw-response' => ['valid-after-incomplete-status'],
+        'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
     ])->wait();
     grpc_lite_phpt_assert_true($followUpResponse instanceof \Helloworld\BenchReply, "$label unary fresh follow-up response");
     grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followUpStatus->code, "$label unary fresh follow-up status");
@@ -152,7 +152,7 @@ $assertIncompleteStatusFieldStream = static function (GreeterClient $client, str
     $followUpRequest = new BenchRequest();
     $followUpRequest->setMessageCount(1);
     $followUp = $client->BenchServerStream($followUpRequest, [
-        'x-bench-raw-response' => ['valid-after-incomplete-status'],
+        'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
     ]);
     $followUpCount = 0;
     foreach ($followUp->responses() as $_reply) {
@@ -183,7 +183,7 @@ foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] a
         $incompleteConnectionPrefaces++;
     }
 }
-grpc_lite_phpt_assert_same(6, count($incompleteRstFrames), 'incomplete blocks emit one RST_STREAM each');
+grpc_lite_phpt_assert_same(6, count($incompleteRstFrames), 'incomplete block traces contain one RST_STREAM each');
 foreach ($incompleteRstFrames as $index => $frame) {
     grpc_lite_phpt_assert_same(8, $frame['error_code'] ?? null, "incomplete block RST_STREAM #$index is CANCEL");
 }
@@ -193,12 +193,14 @@ file_put_contents($traceFile, '');
 $multiplexClient = $client();
 $siblingRequest = new BenchRequest();
 $siblingRequest->setMessageCount(1);
+$siblingRequest->setRequestPayload(str_repeat("\0", 16 * 1024 * 1024));
 $siblingCall = $multiplexClient->BenchServerStream($siblingRequest, [
     'x-bench-raw-response' => ['multiplex-hold-sibling'],
 ]);
 $siblingResponses = $siblingCall->responses();
 grpc_lite_phpt_assert_true($siblingResponses->current() instanceof \Helloworld\BenchReply, 'terminal quarantine sibling first message');
 
+$quarantineStartedNs = hrtime(true);
 [$targetResponse, $targetStatus] = $multiplexClient->BenchUnary(new BenchRequest(), [
     'x-bench-raw-response' => ['multiplex-incomplete-grpc-status'],
 ])->wait();
@@ -210,6 +212,10 @@ $siblingResponses->next();
 grpc_lite_phpt_assert_same(false, $siblingResponses->valid(), 'terminal quarantine sibling has no further message');
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $siblingCall->getStatus()->code, 'terminal quarantine sibling status');
 grpc_lite_phpt_assert_same('incomplete HTTP/2 response header block', $siblingCall->getStatus()->details, 'terminal quarantine sibling details');
+grpc_lite_phpt_assert_true(
+    hrtime(true) - $quarantineStartedNs < 500_000_000,
+    'deadline-less terminal quarantine is bounded independently of peer read progress',
+);
 
 $multiplexRecords = [];
 foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
@@ -266,10 +272,10 @@ foreach ($multiplexRecords as $index => $record) {
 
 file_put_contents($traceFile, '');
 [$quarantineFollowUpResponse, $quarantineFollowUpStatus] = $multiplexClient->BenchUnary(new BenchRequest(), [
-    'x-bench-raw-response' => ['valid-after-terminal-quarantine'],
+    'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
 ])->wait();
-grpc_lite_phpt_assert_true($quarantineFollowUpResponse instanceof \Helloworld\BenchReply, 'terminal quarantine fresh follow-up response');
-grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $quarantineFollowUpStatus->code, 'terminal quarantine fresh follow-up status');
+grpc_lite_phpt_assert_true($quarantineFollowUpResponse instanceof \Helloworld\BenchReply, 'peer observed terminal quarantine CANCEL without sibling DATA');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $quarantineFollowUpStatus->code, 'peer-observed terminal quarantine follow-up status');
 $quarantineFollowUpPrefaces = 0;
 $quarantineFollowUpEnd = null;
 foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {

@@ -108,7 +108,8 @@
 | `post-informational-terminal-status-details-only-metadata` | 103の後、`x-before` / `grpc-status-details-bin` / `x-after` を持つEND_STREAM final block（`grpc-status`なし）。block全体とdetails-binのtrailing ownership、UNKNOWNを検証する |
 | `post-informational-nonterminal-status` | 103、`grpc-status: 0`を同居させたEND_STREAMなしfinal initial HEADERS、`DATA(END_STREAM)`。bench diagnosticがsuccess countへ含めないことを検証する |
 | `post-informational-nonterminal-status-details` | 103、`grpc-status-details-bin`を同居させたEND_STREAMなしfinal initial HEADERS、DATA、valid `grpc-status: 0` trailers。details field単独でもterminal status gateを迂回できないことを検証する |
-| `valid-informational-iteration-reset` | 60個のstatus-only 103と、status/content-type/message/encoding/custom metadataでpolluteした103の後にvalid gRPC OKを返す。1 iterationは69 wire fieldsで上限内、2 iterations累積では128を超えるため、benchのsemantic stateとwire counterのiteration resetを同時に検証する |
+| `valid-informational-iteration-reset` | 60個のstatus-only 103と、status/content-type/message/encoding/custom metadataでpolluteした103の後にvalid gRPC OKを返す。1 iterationは69 wire fieldsで上限内、2 iterations累積では128を超えるため、benchのsemantic stateとwire entry counterのiteration resetを検証する |
+| `valid-informational-byte-iteration-reset` | 8192-byteの`x-info`を4個の103 blockへ分けた後にvalid gRPC OKを返す。1 iterationは約32.8KiB / 11 wire fieldsで64KiB / 128-entry上限内だが、2 iterationsのbyteだけを累積すると64KiBを超えるため、entry counterとは独立にbenchのwire byte counter resetを検証する |
 | `foreign-pushed-stream-protocol-rst` | main request streamにPUSH_PROMISEを送り、promised streamの `103 HEADERS(END_STREAM)` に対するclientの `RST_STREAM(PROTOCOL_ERROR)` を受信してからmain streamへgRPC OKを返す。foreign stream eventをcurrent RPCへ誤帰属しないことを検証する |
 
 ## Fixture ownership

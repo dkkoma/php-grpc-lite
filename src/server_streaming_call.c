@@ -321,8 +321,15 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             state->completed = true;
             break;
         }
-        if (state->call.connection->close_after_pending_flush
-            || nghttp2_session_want_write(state->call.connection->session)) {
+        if (state->call.connection->close_after_pending_flush) {
+            rv = flush_terminal_quarantine(state->call.connection, call);
+            if (rv != 0) {
+                mark_connection_dead(state->call.connection, rv);
+                grpc_call_note_connection_broken(call);
+                state->completed = true;
+                break;
+            }
+        } else if (nghttp2_session_want_write(state->call.connection->session)) {
             rv = send_pending_h2_frames(state->call.connection, call);
             if (rv != 0) {
                 mark_connection_dead(state->call.connection, rv);

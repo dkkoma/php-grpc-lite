@@ -61,6 +61,8 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: consolidated pass-9のMedium 1件を受け、END_STREAMなし`FINAL_INITIAL`のstatus fieldをframe-endではなくfield callback時点で`UNKNOWN` + `RST_STREAM(CANCEL)`へ確定した。END_HEADERS未完了blockはconnectionをdrainingとしてquarantineし、production / diagnosticの3 status field、unary / server streaming、fresh follow-upをraw fixtureで固定した。
 - 2026-07-15: pass-9 fixのdomain-model pass-10で、END_HEADERS未完了のinbound HPACK blockをdrainingに留めると同一connection上の既存siblingがI/Oを継続して停止し得るMedium 1件を確認した。connection-localなclose-after-pending-flush stateを追加し、対象streamのCANCELをflushした後にconnectionをdead化する。unary / server streamingのdrive loopはdead後にsession / socketを再駆動せず、対象callは`UNKNOWN`、既存siblingは`UNAVAILABLE`へ有限に収束する。raw fixture / PHPT 042へactive server-streaming sibling、別streamのincomplete status block、exact CANCEL、siblingの追加wire I/Oなし、fresh follow-upを識別するmultiplex probeを追加した。
 - 2026-07-15: pass-9のLow 1件に対し、END_STREAM付き`FINAL_INITIAL`で`grpc-status` / `grpc-message` / `grpc-status-details-bin`のいずれかを観測した時にblock-local Trailers-Only candidateへ遷移し、先行metadataをtrailingへ移して後続も同じownershipへ揃えた。message-only / details-only blockのbefore-after metadataをunary / server streamingで固定した。
+- 2026-07-15: consolidated pass-11のMedium 1件に対し、terminal quarantine専用flushをcall deadlineと独立した固定50ms graceへ分離し、quarantine開始後のDATA providerをdeferしてsibling application DATAを新たにdriveしないようにした。1024-byte stream window、16MiB sibling、target直前のWINDOW_UPDATE、750ms peer read stallを組み合わせ、deadlineなしtargetの有限`UNKNOWN`、siblingの`UNAVAILABLE`、追加DATA不在をPHPT 042で固定した。
+- 2026-07-15: pass-11のLow 2件に対し、END_HEADERS未完了targetの`RST_STREAM(CANCEL)`をfixtureのpeer受信markerでgateし、traceをattribution補助へ限定した。bench diagnosticにはentry resetと独立した約32.8KiB/iterationのwire byte-counter reset controlを追加した。初回PHPTでfixture setupがconnection flow-controlの循環待ちになることを検出したため、trigger前だけheld siblingの受信DATAをconnection-levelへ返却し、sibling stream windowを枯渇させたままtarget requestを完了可能にした。
 
 ## Verification
 
@@ -101,6 +103,12 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: pass-10 HTTP/2 / gRPC domain model review PASS（初回Medium 1件をterminal quarantineとmultiplex回帰probeで修正後、Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass9-fix-domain-model-pass10.md`。
+- 2026-07-15: pass-11 fix後に`docker compose build test-server`と`docker compose up -d --force-recreate test-server`を実行し、small-window / large-sibling / peer-read-stall、peer-side CANCEL marker、wire byte-counter reset controlsを含むraw fixture imageのrebuild / restart PASS。
+- 2026-07-15: `./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）。PHPT 042でdeadlineなしtargetの500ms以内の`UNKNOWN`、既存siblingの`UNAVAILABLE`、peer受信target CANCEL、quarantine後のsibling DATA不在、fresh connection follow-upを確認した。PHPT 043でentry / byte counter各controlが2 iterationsとも`ok=2 / failed=0`となることを確認した。
+- 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4 suites）。
+- 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
+- 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-11 fixのHTTP/2 / gRPC domain-model再確認はBlocker / High / Medium / Low / Design Decisionすべてnone。terminal quarantineのconnection scope、target/sibling lifecycle、peer-side wire oracle、diagnostic iteration resetの責務境界を静的照合した。
 
 ## Decision Log
 

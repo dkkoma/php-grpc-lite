@@ -344,6 +344,24 @@ static int bench_on_begin_headers_callback(nghttp2_session *session, const nghtt
     return 0;
 }
 
+static int bench_observe_response_status_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags)
+{
+    int rv = grpc_protocol_observe_response_status_field(session, call, frame_flags);
+
+    if (rv != 0) {
+        return rv;
+    }
+    /* The raw diagnostic owns a one-shot h2c socket rather than a shared
+     * h2_connection. Preserve the shared incomplete-block classification,
+     * but make its best-effort CANCEL send nonblocking so this disposable
+     * session cannot inherit the production path's old unbounded stall. */
+    if (call->response_header_block_incomplete
+        && set_fd_nonblocking_mode(call->fd, true) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return 0;
+}
+
 static int bench_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;
@@ -390,7 +408,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
     }
     trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
-        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        int rv = bench_observe_response_status_field(session, call, frame->hd.flags);
         if (rv != 0) {
             return rv;
         }
@@ -407,7 +425,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         }
         trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
-        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        int rv = bench_observe_response_status_field(session, call, frame->hd.flags);
         if (rv != 0) {
             return rv;
         }
@@ -420,7 +438,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         call->grpc_message = grpc_protocol_decode_message(value, valuelen);
         trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
-        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        int rv = bench_observe_response_status_field(session, call, frame->hd.flags);
         if (rv != 0) {
             return rv;
         }
@@ -1512,6 +1530,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         grpc_response_header_phase_reset(&call.response_header_phase);
         call.response_header_block_end_stream = false;
         call.response_header_block_protocol_valid = false;
+        call.response_header_block_incomplete = false;
         call.response_header_protocol_error = false;
         call.metadata_too_large = false;
         call.metadata_entry_count = 0;
