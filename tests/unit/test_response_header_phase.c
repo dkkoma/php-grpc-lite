@@ -203,6 +203,29 @@ static void test_terminal_status_field_role_transition(void)
     ASSERT_BOOL(false, state.trailers_only_candidate);
 }
 
+static void test_abandoned_open_block_requires_connection_terminal(void)
+{
+    grpc_response_header_phase_state state;
+
+    ASSERT_BOOL(false, grpc_response_header_phase_requires_connection_terminal_on_abandonment(NULL));
+    for (int phase = GRPC_RESPONSE_HEADER_BLOCK_NONE; phase <= GRPC_RESPONSE_HEADER_BLOCK_TRAILING; phase++) {
+        state.block_phase = (grpc_response_header_block_phase) phase;
+        ASSERT_BOOL(
+            phase != GRPC_RESPONSE_HEADER_BLOCK_NONE,
+            grpc_response_header_phase_requires_connection_terminal_on_abandonment(&state)
+        );
+    }
+
+    grpc_response_header_phase_reset(&state);
+    ASSERT_BOOL(false, grpc_response_header_phase_requires_connection_terminal_on_abandonment(&state));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS, grpc_response_header_phase_begin(&state));
+    ASSERT_BOOL(true, grpc_response_header_phase_requires_connection_terminal_on_abandonment(&state));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL, grpc_response_header_phase_on_status(&state, 103));
+    ASSERT_BOOL(true, grpc_response_header_phase_requires_connection_terminal_on_abandonment(&state));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL, grpc_response_header_phase_end(&state));
+    ASSERT_BOOL(false, grpc_response_header_phase_requires_connection_terminal_on_abandonment(&state));
+}
+
 static void test_field_classification(void)
 {
     ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_REJECTED, grpc_response_header_classify_reported_field(NULL, 0, false));
@@ -301,6 +324,7 @@ int main(void)
     }
     test_block_role_predicates();
     test_terminal_status_field_role_transition();
+    test_abandoned_open_block_requires_connection_terminal();
     test_field_classification();
     test_field_class_phase_routes();
 

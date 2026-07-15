@@ -785,6 +785,18 @@ func handleInformationalAdversarialH2C(conn net.Conn, incompleteRstProbes *incom
 			// suite instead of retaining the fixture connection indefinitely.
 			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		}
+		if control == "live-incomplete-informational-deadline" {
+			if err := writeRawIncompleteInformational(conn, streamID); err != nil {
+				log.Printf("live incomplete informational fixture write failed: %v", err)
+			}
+			return
+		}
+		if control == "live-incomplete-trailing-explicit-cancel" {
+			if err := writeRawGrpcMessageThenIncompleteTrailingHeaders(conn, streamID); err != nil {
+				log.Printf("live incomplete trailing fixture write failed: %v", err)
+			}
+			return
+		}
 		if control == "foreign-pushed-stream-protocol-rst" {
 			promisedStreamID := nextPromisedStreamID
 			nextPromisedStreamID += 2
@@ -1165,6 +1177,60 @@ func writeRawGrpcOKThenLateIncompleteHeaders(conn net.Conn, streamID uint32) err
 	return nil
 }
 
+func writeRawIncompleteInformational(conn net.Conn, streamID uint32) error {
+	framer := http2.NewFramer(conn, nil)
+	// Start a valid informational response block while the stream still has a
+	// live call owner, then leave the connection-global decoder waiting for
+	// CONTINUATION until the client's deadline abandons the call.
+	return framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID: streamID,
+		BlockFragment: encodeHeaders([]hpack.HeaderField{
+			{Name: ":status", Value: "103"},
+		}),
+		EndHeaders: false,
+		EndStream:  false,
+	})
+}
+
+func writeRawGrpcMessageThenIncompleteTrailingHeaders(conn net.Conn, streamID uint32) error {
+	var wire bytes.Buffer
+	framer := http2.NewFramer(&wire, nil)
+
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID: streamID,
+		BlockFragment: encodeHeaders([]hpack.HeaderField{
+			{Name: ":status", Value: "200"},
+			{Name: "content-type", Value: "application/grpc"},
+		}),
+		EndHeaders: true,
+	}); err != nil {
+		return err
+	}
+	if err := framer.WriteData(streamID, false, grpcFrame(0, nil)); err != nil {
+		return err
+	}
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID: streamID,
+		BlockFragment: encodeHeaders([]hpack.HeaderField{
+			{Name: "x-trailing-before-cancel", Value: "observed"},
+		}),
+		EndHeaders: false,
+		EndStream:  true,
+	}); err != nil {
+		return err
+	}
+
+	payload := wire.Bytes()
+	written, err := conn.Write(payload)
+	if err != nil {
+		return err
+	}
+	if written != len(payload) {
+		return fmt.Errorf("short same-write live response: wrote %d of %d bytes", written, len(payload))
+	}
+	return nil
+}
+
 func rawResponseIncompleteExpectedRst(control string) (http2.ErrCode, bool) {
 	switch control {
 	case "incomplete-informational-end-stream",
@@ -1177,6 +1243,8 @@ func rawResponseIncompleteExpectedRst(control string) (http2.ErrCode, bool) {
 		return http2.ErrCodeProtocol, true
 	case "informational-incomplete-entry-budget",
 		"informational-incomplete-invalid-entry-budget",
+		"live-incomplete-informational-deadline",
+		"live-incomplete-trailing-explicit-cancel",
 		"post-informational-incomplete-grpc-status",
 		"post-informational-incomplete-grpc-message",
 		"post-informational-incomplete-status-details",

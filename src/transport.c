@@ -71,6 +71,8 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t
 int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data);
 int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 void grpc_protocol_mark_response_header_terminal_action(grpc_call *call, uint8_t frame_flags);
+void grpc_protocol_mark_abandoned_response_header_block(grpc_call *call);
+void grpc_protocol_finish_rejected_response_header_block(grpc_call *call, uint8_t frame_flags);
 int grpc_protocol_apply_response_header_terminal_action(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, uint32_t error_code);
 int grpc_protocol_handle_response_header_field_route(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, grpc_response_header_field_class field_class, bool rejection_owned_by_nghttp2);
 int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, size_t namelen, size_t valuelen);
@@ -334,9 +336,11 @@ void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
     call->connection_owned = false;
 }
 
-/* Close one stream with RST_STREAM so the connection itself stays reusable
- * (deadline expiry and user cancellation are stream-scoped per
- * PROTOCOL-HTTP2.md; only connection-level failures kill the connection).
+/* Close one stream with RST_STREAM so the connection itself normally stays
+ * reusable (deadline expiry and user cancellation are stream-scoped per
+ * PROTOCOL-HTTP2.md). An open inbound response HEADERS block is the exception:
+ * abandoning its live call owner also makes the connection terminal because
+ * a stream RST cannot complete the connection-global HPACK block.
  * The call's own deadline has typically already expired when this runs, so
  * the flush gets its own short grace deadline instead of the call deadline.
  * The grace bounds the flush of ALL pending session frames (the RST plus any
@@ -366,6 +370,11 @@ void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
     if (connection == NULL || !connection_io_allowed(connection) || call->stream_id <= 0 || call->stream_closed) {
         return;
     }
+    /* A local deadline, explicit cancel, destructor, or semantic-error
+     * teardown abandons the live call. If its response HEADERS block has not
+     * completed, hand the connection-global HPACK lifecycle to the same
+     * terminal action used by header callbacks before queueing this RST. */
+    grpc_protocol_mark_abandoned_response_header_block(call);
     call->locally_cancelled = true;
     if (grpc_lite_test_fault_enabled("rst-submit-fatal")) {
         rv = NGHTTP2_ERR_NOMEM;
@@ -377,7 +386,7 @@ void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
         return;
     }
     rv = send_pending_h2_frames_with_deadline(connection, NULL, monotonic_us() + GRPC_LITE_CANCEL_RST_WRITE_GRACE_US);
-    if (rv == 0) {
+    if (rv == 0 && !connection->dead) {
         /* The stream failure (e.g. deadline expiry) was already recorded on
          * the call; wipe the connection-scoped copy so a later call on this
          * kept connection cannot inherit "HTTP/2 transport deadline exceeded"
@@ -2334,18 +2343,47 @@ int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *fra
     return 0;
 }
 
-void grpc_protocol_mark_response_header_terminal_action(grpc_call *call, uint8_t frame_flags)
+static void grpc_protocol_mark_incomplete_response_header_block(grpc_call *call)
 {
     if (call == NULL) {
         return;
     }
-    if ((frame_flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
-        call->response_header_block_incomplete = true;
-        /* A stream RST cannot complete the connection-global inbound HPACK
-         * block. Stop admission and make the connection terminal after any
-         * already-owned control frame has had a bounded flush opportunity. */
+    call->response_header_block_incomplete = true;
+    /* A stream RST cannot complete the connection-global inbound HPACK block.
+     * Stop admission and make an otherwise live connection terminal after any
+     * already-owned control frame has had a bounded flush opportunity. */
+    if (connection_io_allowed(call->connection)) {
         mark_connection_close_after_pending_flush(call->connection);
     }
+}
+
+void grpc_protocol_mark_response_header_terminal_action(grpc_call *call, uint8_t frame_flags)
+{
+    if ((frame_flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+        grpc_protocol_mark_incomplete_response_header_block(call);
+    }
+}
+
+void grpc_protocol_mark_abandoned_response_header_block(grpc_call *call)
+{
+    if (call != NULL
+        && grpc_response_header_phase_requires_connection_terminal_on_abandonment(&call->response_header_phase)) {
+        grpc_protocol_mark_incomplete_response_header_block(call);
+    }
+}
+
+void grpc_protocol_finish_rejected_response_header_block(grpc_call *call, uint8_t frame_flags)
+{
+    if (call == NULL || (frame_flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+        return;
+    }
+    /* nghttp2 omits on_frame_recv for rejected HEADERS. A complete rejected
+     * block still leaves the HPACK decoder synchronized, so close its semantic
+     * phase here and keep abandonment detection reserved for genuinely open
+     * blocks waiting on CONTINUATION. */
+    (void) grpc_response_header_phase_end(&call->response_header_phase);
+    call->response_header_block_end_stream = false;
+    call->response_header_block_protocol_valid = false;
 }
 
 int grpc_protocol_apply_response_header_terminal_action(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, uint32_t error_code)
@@ -2647,6 +2685,7 @@ int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    int rv;
 
     if (call == NULL
         || frame->hd.stream_id != call->stream_id
@@ -2661,19 +2700,22 @@ int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame
          * reported here as HTTP_HEADER by nghttp2) and only re-apply the
          * shared incomplete-block lifecycle. */
         grpc_protocol_mark_response_header_terminal_action(call, frame->hd.flags);
+        grpc_protocol_finish_rejected_response_header_block(call, frame->hd.flags);
         return 0;
     }
     /* Strict-invalid pseudo/header-name and semantic HTTP messaging failures
      * bypass both application field callbacks. nghttp2 owns the queued RST;
      * the shared default route owns call classification and incomplete HPACK
      * connection terminalization without submitting a duplicate RST. */
-    return grpc_protocol_handle_response_header_field_route(
+    rv = grpc_protocol_handle_response_header_field_route(
         session,
         call,
         frame->hd.flags,
         GRPC_RESPONSE_HEADER_FIELD_REJECTED,
         true
     );
+    grpc_protocol_finish_rejected_response_header_block(call, frame->hd.flags);
+    return rv;
 }
 
 int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)

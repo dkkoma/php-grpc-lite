@@ -123,6 +123,8 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t
 int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data);
 int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 void grpc_protocol_mark_response_header_terminal_action(grpc_call *call, uint8_t frame_flags);
+void grpc_protocol_mark_abandoned_response_header_block(grpc_call *call);
+void grpc_protocol_finish_rejected_response_header_block(grpc_call *call, uint8_t frame_flags);
 int grpc_protocol_apply_response_header_terminal_action(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, uint32_t error_code);
 int grpc_protocol_handle_response_header_field_route(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, grpc_response_header_field_class field_class, bool rejection_owned_by_nghttp2);
 int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, size_t namelen, size_t valuelen);

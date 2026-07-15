@@ -341,6 +341,36 @@ static int bench_finish_response_header_terminal_action(grpc_call *call, int cal
     return callback_result;
 }
 
+static void bench_finish_abandoned_response_header_block(nghttp2_session *session, grpc_call *call)
+{
+    bool terminal_action_already_owned;
+    int rv = 0;
+
+    if (session == NULL
+        || call == NULL
+        || call->stream_closed
+        || !grpc_response_header_phase_requires_connection_terminal_on_abandonment(&call->response_header_phase)) {
+        return;
+    }
+
+    terminal_action_already_owned = call->response_header_block_incomplete;
+    if (!terminal_action_already_owned) {
+        grpc_protocol_mark_abandoned_response_header_block(call);
+    }
+    if (!terminal_action_already_owned && call->timed_out && call->stream_id > 0) {
+        rv = nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
+    }
+    if (bench_finish_response_header_terminal_action(call, rv) != 0) {
+        return;
+    }
+    if (call->timed_out) {
+        /* The fd is nonblocking before this best-effort flush, so the raw
+         * diagnostic preserves production's target CANCEL without inheriting
+         * an unbounded write at its disposable-session teardown seam. */
+        call->last_session_error = nghttp2_session_send(session);
+    }
+}
+
 static int bench_on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;
@@ -596,14 +626,17 @@ static int bench_on_invalid_header_callback(nghttp2_session *session, const nght
 static int bench_on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;
+    int rv;
 
     if (frame->hd.stream_id == call->stream_id && frame->hd.type == NGHTTP2_HEADERS) {
         if (call->metadata_too_large
             || lib_error_code == NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE) {
             grpc_protocol_mark_response_header_terminal_action(call, frame->hd.flags);
-            return bench_finish_response_header_terminal_action(call, 0);
+            rv = bench_finish_response_header_terminal_action(call, 0);
+            grpc_protocol_finish_rejected_response_header_block(call, frame->hd.flags);
+            return rv;
         }
-        return bench_finish_response_header_terminal_action(
+        rv = bench_finish_response_header_terminal_action(
             call,
             grpc_protocol_handle_response_header_field_route(
                 session,
@@ -613,6 +646,8 @@ static int bench_on_invalid_frame_recv_callback(nghttp2_session *session, const 
                 true
             )
         );
+        grpc_protocol_finish_rejected_response_header_block(call, frame->hd.flags);
+        return rv;
     }
     return 0;
 }
@@ -1759,6 +1794,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         if (poll_loop) {
             rv = drive_stream_poll(session, &call, recv_buf, recv_buf_len);
             if (rv != 0) {
+                bench_finish_abandoned_response_header_block(session, &call);
                 failed++;
                 break;
             }

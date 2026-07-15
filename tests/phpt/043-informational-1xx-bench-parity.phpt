@@ -46,6 +46,16 @@ grpc_lite_phpt_assert_same(true, $lateClosedStream['incomplete_header_fd_nonbloc
 grpc_lite_phpt_assert_same(1, count($lateClosedStream['latencies_us']), 'late closed-stream batch records one completed iteration');
 grpc_lite_phpt_assert_true($lateClosedStream['total_us'] < 500_000, 'late closed-stream batch is finite without timeout');
 
+$liveAbandonment = $runBatch('live-incomplete-informational-deadline', timeoutUs: 300_000);
+grpc_lite_phpt_assert_same(0, $liveAbandonment['ok'], 'live incomplete block deadline batch ok count');
+grpc_lite_phpt_assert_same(1, $liveAbandonment['failed'], 'live incomplete block deadline batch failed count');
+grpc_lite_phpt_assert_same(1, $liveAbandonment['submitted'], 'live incomplete block deadline batch submitted count');
+grpc_lite_phpt_assert_same(true, $liveAbandonment['timed_out'], 'live incomplete block diagnostic records deadline');
+grpc_lite_phpt_assert_same(8, $liveAbandonment['stream_error_code'], 'live incomplete block diagnostic sends CANCEL');
+grpc_lite_phpt_assert_same(true, $liveAbandonment['connection_header_block_incomplete'], 'live incomplete block diagnostic marks session terminal');
+grpc_lite_phpt_assert_same(true, $liveAbandonment['incomplete_header_fd_nonblocking'], 'live incomplete block diagnostic enables finite terminal finish');
+grpc_lite_phpt_assert_true($liveAbandonment['total_us'] < 1_000_000, 'live incomplete block deadline batch is finite');
+
 $nonterminalStatus = $runBatch('post-informational-nonterminal-status');
 grpc_lite_phpt_assert_same(0, $nonterminalStatus['ok'], 'nonterminal grpc-status batch ok count');
 grpc_lite_phpt_assert_same(1, $nonterminalStatus['failed'], 'nonterminal grpc-status batch failed count');

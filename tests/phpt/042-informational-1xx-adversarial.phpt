@@ -298,6 +298,122 @@ grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $lateStreamFollowUpStatus->code, 'lat
 $assertLateTrace($readLateTrace('late closed-stream streaming-client follow-up'), 'late closed-stream streaming-client follow-up', true, false);
 
 file_put_contents($traceFile, '');
+$abandonedClient = $client();
+[$abandonedResponse, $abandonedStatus] = $abandonedClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['live-incomplete-informational-deadline'],
+], ['timeout' => 300_000])->wait();
+grpc_lite_phpt_assert_same(null, $abandonedResponse, 'live incomplete block deadline response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $abandonedStatus->code, 'live incomplete block deadline status');
+grpc_lite_phpt_assert_same('HTTP/2 transport deadline exceeded', $abandonedStatus->details, 'live incomplete block deadline details');
+
+$abandonedRecords = $readLateTrace('live incomplete block deadline');
+$abandonedPrefaces = 0;
+$abandonedRstFrames = [];
+$abandonedEnd = null;
+$abandonedConnectionDestroys = [];
+foreach ($abandonedRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $abandonedPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $abandonedRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $abandonedEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $abandonedConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $abandonedPrefaces, 'live incomplete block target opens one connection');
+grpc_lite_phpt_assert_same(1, count($abandonedRstFrames), 'live incomplete block deadline emits one RST_STREAM');
+grpc_lite_phpt_assert_same(8, $abandonedRstFrames[0]['error_code'] ?? null, 'live incomplete block deadline RST_STREAM is CANCEL');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $abandonedRstFrames[0]['rpc_method'] ?? null, 'live incomplete block deadline RST_STREAM belongs to target');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $abandonedEnd['status_code'] ?? null, 'live incomplete block rpc.end keeps deadline status');
+grpc_lite_phpt_assert_same(false, $abandonedEnd['persistent_reused'] ?? null, 'live incomplete block target opened the connection');
+grpc_lite_phpt_assert_same(1, count($abandonedConnectionDestroys), 'live incomplete block destroys abandoned connection');
+grpc_lite_phpt_assert_same(true, $abandonedConnectionDestroys[0]['dead'] ?? null, 'live incomplete block destroys a dead connection');
+
+file_put_contents($traceFile, '');
+[$abandonedFollowUpResponse, $abandonedFollowUpStatus] = $abandonedClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
+])->wait();
+grpc_lite_phpt_assert_true($abandonedFollowUpResponse instanceof \Helloworld\BenchReply, 'live incomplete block fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $abandonedFollowUpStatus->code, 'live incomplete block fresh follow-up status');
+$abandonedFollowUpRecords = $readLateTrace('live incomplete block follow-up');
+$abandonedFollowUpPrefaces = 0;
+$abandonedFollowUpEnd = null;
+foreach ($abandonedFollowUpRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $abandonedFollowUpPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $abandonedFollowUpEnd = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $abandonedFollowUpPrefaces, 'live incomplete block follow-up opens fresh connection');
+grpc_lite_phpt_assert_same(false, $abandonedFollowUpEnd['persistent_reused'] ?? null, 'live incomplete block follow-up does not reuse poisoned connection');
+
+file_put_contents($traceFile, '');
+$cancelClient = $client();
+$cancelRequest = new BenchRequest();
+$cancelRequest->setMessageCount(1);
+$cancelCall = $cancelClient->BenchServerStream($cancelRequest, [
+    'x-bench-raw-response' => ['live-incomplete-trailing-explicit-cancel'],
+]);
+$cancelResponses = $cancelCall->responses();
+grpc_lite_phpt_assert_true($cancelResponses->current() instanceof \Helloworld\BenchReply, 'live incomplete trailing block yields target message before cancel');
+$cancelCall->cancel();
+grpc_lite_phpt_assert_same(Grpc\STATUS_CANCELLED, $cancelCall->getStatus()->code, 'live incomplete trailing block explicit cancel status');
+
+$cancelRecords = $readLateTrace('live incomplete trailing block explicit cancel');
+$cancelPrefaces = 0;
+$cancelRstFrames = [];
+$cancelConnectionDestroys = [];
+foreach ($cancelRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $cancelPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $cancelRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $cancelConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $cancelPrefaces, 'live incomplete trailing block target opens one connection');
+grpc_lite_phpt_assert_same(1, count($cancelRstFrames), 'live incomplete trailing block explicit cancel emits one RST_STREAM');
+grpc_lite_phpt_assert_same(8, $cancelRstFrames[0]['error_code'] ?? null, 'live incomplete trailing block explicit cancel RST_STREAM is CANCEL');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchServerStream', $cancelRstFrames[0]['rpc_method'] ?? null, 'live incomplete trailing block RST_STREAM belongs to target');
+grpc_lite_phpt_assert_same(1, count($cancelConnectionDestroys), 'live incomplete trailing block destroys abandoned connection');
+grpc_lite_phpt_assert_same(true, $cancelConnectionDestroys[0]['dead'] ?? null, 'live incomplete trailing block destroys a dead connection');
+
+file_put_contents($traceFile, '');
+[$cancelFollowUpResponse, $cancelFollowUpStatus] = $cancelClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
+])->wait();
+grpc_lite_phpt_assert_true($cancelFollowUpResponse instanceof \Helloworld\BenchReply, 'live incomplete trailing block fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $cancelFollowUpStatus->code, 'live incomplete trailing block fresh follow-up status');
+$cancelFollowUpRecords = $readLateTrace('live incomplete trailing block follow-up');
+$cancelFollowUpPrefaces = 0;
+$cancelFollowUpEnd = null;
+foreach ($cancelFollowUpRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $cancelFollowUpPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $cancelFollowUpEnd = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $cancelFollowUpPrefaces, 'live incomplete trailing block follow-up opens fresh connection');
+grpc_lite_phpt_assert_same(false, $cancelFollowUpEnd['persistent_reused'] ?? null, 'live incomplete trailing block follow-up does not reuse poisoned connection');
+
+file_put_contents($traceFile, '');
 $multiplexClient = $client();
 $siblingRequest = new BenchRequest();
 $siblingRequest->setMessageCount(1);
