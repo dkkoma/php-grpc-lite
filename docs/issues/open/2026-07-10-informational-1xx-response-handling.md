@@ -63,6 +63,8 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-9のLow 1件に対し、END_STREAM付き`FINAL_INITIAL`で`grpc-status` / `grpc-message` / `grpc-status-details-bin`のいずれかを観測した時にblock-local Trailers-Only candidateへ遷移し、先行metadataをtrailingへ移して後続も同じownershipへ揃えた。message-only / details-only blockのbefore-after metadataをunary / server streamingで固定した。
 - 2026-07-15: consolidated pass-11のMedium 1件に対し、terminal quarantine専用flushをcall deadlineと独立した固定50ms graceへ分離し、quarantine開始後のDATA providerをdeferしてsibling application DATAを新たにdriveしないようにした。1024-byte stream window、16MiB sibling、target直前のWINDOW_UPDATE、750ms peer read stallを組み合わせ、deadlineなしtargetの有限`UNKNOWN`、siblingの`UNAVAILABLE`、追加DATA不在をPHPT 042で固定した。
 - 2026-07-15: pass-11のLow 2件に対し、END_HEADERS未完了targetの`RST_STREAM(CANCEL)`をfixtureのpeer受信markerでgateし、traceをattribution補助へ限定した。bench diagnosticにはentry resetと独立した約32.8KiB/iterationのwire byte-counter reset controlを追加した。初回PHPTでfixture setupがconnection flow-controlの循環待ちになることを検出したため、trigger前だけheld siblingの受信DATAをconnection-levelへ返却し、sibling stream windowを枯渇させたままtarget requestを完了可能にした。
+- 2026-07-15: consolidated pass-13のMedium 1件に対し、END_HEADERS未完了blockのterminal quarantineをstatus field専用経路から共有incomplete-block actionへ拡張した。informational END_STREAM、END_STREAMなしtrailing、normal / invalid header callbackのwire budget超過もprimary taxonomyとcaller-selected target RST codeを維持したままconnection terminal化し、production / raw diagnosticが`response_header_block_incomplete` classificationを共有する。3種のfragmented controlとunary / server streaming / diagnostic probeを追加した。
+- 2026-07-15: pass-13のLow 2件に対し、multiplex fixtureのsibling DATA違反境界をpeerがtarget CANCELを受信した後へ移した。32MiB WINDOW_UPDATEとbudget overflow HEADERSを50ms分割し、pre-target-RST DATAをpositive setupとして必須にしつつ、client trace / peer markerの双方でpost-target-RST DATAを拒否する。terminal graceは合法なpre-quarantine backpressureを含むend-to-end wall timeではなく、client traceのtarget RSTから`rpc.end`まで500ms未満で固定した。ownership map、raw fixture catalog、verification matrixにはcall-local incomplete stateのproducer / consumer / resetと、authority-keyed follow-up markerの最大3秒wait / consume semanticsを反映した。
 
 ## Verification
 
@@ -109,6 +111,11 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: pass-11 fixのHTTP/2 / gRPC domain-model再確認はBlocker / High / Medium / Low / Design Decisionすべてnone。terminal quarantineのconnection scope、target/sibling lifecycle、peer-side wire oracle、diagnostic iteration resetの責務境界を静的照合した。
+- 2026-07-15: pass-13 bookkeepingの静的照合で、`response_header_block_incomplete`のshared producer / production・diagnostic consumer / reset lifetime、3種のEND_HEADERS未完了control、budget-trigger multiplex、authority-keyed follow-upのcaller-selected target RST / post-target-RST DATA境界を設計・fixture・verification資料へ反映した。failure-driven PHPT修正後はpre-target-RST DATA必須条件、client trace / peer marker双方のpost-target-RST DATA不在、target RSTから`rpc.end`までのfinite boundもcurrent docsへ揃えた。
+- 2026-07-15: pass-13最終`./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）。初回はmultiplexのend-to-end 500ms assertionが合法なpre-quarantine backpressureを含んで失敗し、target RST以後を測るclient trace oracleへ修正後にfocused PHPT 042と全PHPTがPASSした。
+- 2026-07-15: pass-13最終`./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4群）。
+- 2026-07-15: pass-13最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
+- 2026-07-15: pass-13最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 
 ## Decision Log
 

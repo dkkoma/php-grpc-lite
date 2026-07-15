@@ -325,6 +325,19 @@ static int bench_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t f
     return 0;
 }
 
+static int bench_finish_response_header_terminal_action(grpc_call *call, int callback_result)
+{
+    /* The raw diagnostic owns a one-shot h2c socket rather than a shared
+     * h2_connection. Preserve the shared incomplete-block classification,
+     * but make its best-effort target RST send nonblocking so this disposable
+     * session cannot inherit the production path's old unbounded stall. */
+    if (call->response_header_block_incomplete
+        && set_fd_nonblocking_mode(call->fd, true) != 0) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return callback_result;
+}
+
 static int bench_on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;
@@ -340,26 +353,27 @@ static int bench_on_begin_headers_callback(nghttp2_session *session, const nghtt
     if (!call->response_header_block_protocol_valid) {
         call->response_header_protocol_error = true;
         call->discard_response_body = true;
+        if ((frame->hd.flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+            return bench_finish_response_header_terminal_action(
+                call,
+                grpc_protocol_apply_response_header_terminal_action(
+                    session,
+                    call,
+                    frame->hd.flags,
+                    NGHTTP2_PROTOCOL_ERROR
+                )
+            );
+        }
     }
     return 0;
 }
 
 static int bench_observe_response_status_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags)
 {
-    int rv = grpc_protocol_observe_response_status_field(session, call, frame_flags);
-
-    if (rv != 0) {
-        return rv;
-    }
-    /* The raw diagnostic owns a one-shot h2c socket rather than a shared
-     * h2_connection. Preserve the shared incomplete-block classification,
-     * but make its best-effort CANCEL send nonblocking so this disposable
-     * session cannot inherit the production path's old unbounded stall. */
-    if (call->response_header_block_incomplete
-        && set_fd_nonblocking_mode(call->fd, true) != 0) {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-    }
-    return 0;
+    return bench_finish_response_header_terminal_action(
+        call,
+        grpc_protocol_observe_response_status_field(session, call, frame_flags)
+    );
 }
 
 static int bench_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
@@ -372,7 +386,8 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         return 0;
     }
     if (frame->hd.type == NGHTTP2_HEADERS) {
-        int rv = grpc_protocol_account_response_header_field(session, call, namelen, valuelen);
+        int rv = grpc_protocol_account_response_header_field(session, call, frame->hd.flags, namelen, valuelen);
+        rv = bench_finish_response_header_terminal_action(call, rv);
         if (rv != 0) {
             return rv;
         }
@@ -395,6 +410,17 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
             call->response_header_block_protocol_valid = false;
             call->response_header_protocol_error = true;
             call->discard_response_body = true;
+            if ((frame->hd.flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+                return bench_finish_response_header_terminal_action(
+                    call,
+                    grpc_protocol_apply_response_header_terminal_action(
+                        session,
+                        call,
+                        frame->hd.flags,
+                        NGHTTP2_PROTOCOL_ERROR
+                    )
+                );
+            }
         } else if (phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
             call->http_status = http_status;
         }
@@ -496,7 +522,16 @@ static int bench_on_invalid_header_callback(nghttp2_session *session, const nght
         return 0;
     }
     call->bench.invalid_header_callback_count++;
-    return grpc_protocol_account_response_header_field(session, call, namelen, valuelen);
+    return bench_finish_response_header_terminal_action(
+        call,
+        grpc_protocol_account_response_header_field(
+            session,
+            call,
+            frame->hd.flags,
+            namelen,
+            valuelen
+        )
+    );
 }
 
 static int bench_on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)

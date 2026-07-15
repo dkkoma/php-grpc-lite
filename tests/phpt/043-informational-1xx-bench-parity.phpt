@@ -68,6 +68,19 @@ foreach ([
     grpc_lite_phpt_assert_same(8, $incompleteStatus['stream_error_code'], "$label RST_STREAM code");
 }
 
+foreach ([
+    ['incomplete-informational-end-stream', 'incomplete 103 END_STREAM block', 1],
+    ['incomplete-trailer-without-end-stream', 'incomplete nonterminal trailer block', 1],
+    ['informational-incomplete-entry-budget', 'incomplete informational entry budget block', 8],
+] as [$control, $label, $expectedRstCode]) {
+    $incomplete = $runBatch($control);
+    grpc_lite_phpt_assert_same(0, $incomplete['ok'], "$label batch ok count");
+    grpc_lite_phpt_assert_same(1, $incomplete['failed'], "$label batch failed count");
+    grpc_lite_phpt_assert_same(false, $incomplete['timed_out'], "$label batch is not timeout");
+    grpc_lite_phpt_assert_same($expectedRstCode, $incomplete['stream_error_code'], "$label RST_STREAM code");
+    grpc_lite_phpt_assert_true($incomplete['total_us'] < 500_000, "$label batch is finite without poll timeout");
+}
+
 $entryBudget = $runBatch('informational-entry-budget', timeoutUs: 2_000_000);
 grpc_lite_phpt_assert_same(0, $entryBudget['ok'], 'informational entry budget batch ok count');
 grpc_lite_phpt_assert_same(1, $entryBudget['failed'], 'informational entry budget batch failed count');

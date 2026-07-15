@@ -120,13 +120,21 @@ foreach ([
 }
 
 file_put_contents($traceFile, '');
-$assertIncompleteStatusFieldUnary = static function (GreeterClient $client, string $control, string $label): void {
+$assertIncompleteUnary = static function (
+    GreeterClient $client,
+    string $control,
+    string $label,
+    int $expectedStatus,
+    string $expectedDetails,
+): void {
+    $startedNs = hrtime(true);
     [$response, $status] = $client->BenchUnary(new BenchRequest(), [
         'x-bench-raw-response' => [$control],
     ])->wait();
     grpc_lite_phpt_assert_same(null, $response, "$label unary response");
-    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $status->code, "$label unary status");
-    grpc_lite_phpt_assert_same('invalid grpc-status trailer', $status->details, "$label unary details");
+    grpc_lite_phpt_assert_same($expectedStatus, $status->code, "$label unary status");
+    grpc_lite_phpt_assert_same($expectedDetails, $status->details, "$label unary details");
+    grpc_lite_phpt_assert_true(hrtime(true) - $startedNs < 500_000_000, "$label unary is finite without a deadline");
 
     [$followUpResponse, $followUpStatus] = $client->BenchUnary(new BenchRequest(), [
         'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
@@ -135,9 +143,17 @@ $assertIncompleteStatusFieldUnary = static function (GreeterClient $client, stri
     grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followUpStatus->code, "$label unary fresh follow-up status");
 };
 
-$assertIncompleteStatusFieldStream = static function (GreeterClient $client, string $control, string $label): void {
+$assertIncompleteStream = static function (
+    GreeterClient $client,
+    string $control,
+    string $label,
+    int $expectedCount,
+    int $expectedStatus,
+    string $expectedDetails,
+): void {
     $request = new BenchRequest();
     $request->setMessageCount(1);
+    $startedNs = hrtime(true);
     $call = $client->BenchServerStream($request, [
         'x-bench-raw-response' => [$control],
     ]);
@@ -145,9 +161,10 @@ $assertIncompleteStatusFieldStream = static function (GreeterClient $client, str
     foreach ($call->responses() as $_reply) {
         $count++;
     }
-    grpc_lite_phpt_assert_same(0, $count, "$label stream count");
-    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $call->getStatus()->code, "$label stream status");
-    grpc_lite_phpt_assert_same('invalid grpc-status trailer', $call->getStatus()->details, "$label stream details");
+    grpc_lite_phpt_assert_same($expectedCount, $count, "$label stream count");
+    grpc_lite_phpt_assert_same($expectedStatus, $call->getStatus()->code, "$label stream status");
+    grpc_lite_phpt_assert_same($expectedDetails, $call->getStatus()->details, "$label stream details");
+    grpc_lite_phpt_assert_true(hrtime(true) - $startedNs < 500_000_000, "$label stream is finite without a deadline");
 
     $followUpRequest = new BenchRequest();
     $followUpRequest->setMessageCount(1);
@@ -163,12 +180,15 @@ $assertIncompleteStatusFieldStream = static function (GreeterClient $client, str
 };
 
 foreach ([
-    'post-informational-incomplete-grpc-status' => 'incomplete grpc-status block',
-    'post-informational-incomplete-grpc-message' => 'incomplete grpc-message block',
-    'post-informational-incomplete-status-details' => 'incomplete grpc-status-details-bin block',
-] as $control => $label) {
-    $assertIncompleteStatusFieldUnary($client(), $control, $label);
-    $assertIncompleteStatusFieldStream($client(), $control, $label);
+    ['post-informational-incomplete-grpc-status', 'incomplete grpc-status block', 0, Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'],
+    ['post-informational-incomplete-grpc-message', 'incomplete grpc-message block', 0, Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'],
+    ['post-informational-incomplete-status-details', 'incomplete grpc-status-details-bin block', 0, Grpc\STATUS_UNKNOWN, 'invalid grpc-status trailer'],
+    ['incomplete-informational-end-stream', 'incomplete 103 END_STREAM block', 0, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
+    ['incomplete-trailer-without-end-stream', 'incomplete nonterminal trailer block', 1, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
+    ['informational-incomplete-entry-budget', 'incomplete informational entry budget block', 0, Grpc\STATUS_RESOURCE_EXHAUSTED, 'response header/metadata budget exceeded'],
+] as [$control, $label, $expectedCount, $expectedStatus, $expectedDetails]) {
+    $assertIncompleteUnary($client(), $control, $label, $expectedStatus, $expectedDetails);
+    $assertIncompleteStream($client(), $control, $label, $expectedCount, $expectedStatus, $expectedDetails);
 }
 
 $incompleteRstFrames = [];
@@ -183,11 +203,14 @@ foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] a
         $incompleteConnectionPrefaces++;
     }
 }
-grpc_lite_phpt_assert_same(6, count($incompleteRstFrames), 'incomplete block traces contain one RST_STREAM each');
-foreach ($incompleteRstFrames as $index => $frame) {
-    grpc_lite_phpt_assert_same(8, $frame['error_code'] ?? null, "incomplete block RST_STREAM #$index is CANCEL");
-}
-grpc_lite_phpt_assert_same(12, $incompleteConnectionPrefaces, 'incomplete blocks quarantine six connections before follow-up');
+grpc_lite_phpt_assert_same(12, count($incompleteRstFrames), 'incomplete block traces contain one RST_STREAM each');
+$incompleteRstCodes = array_count_values(array_map(
+    static fn (array $frame): mixed => $frame['error_code'] ?? null,
+    $incompleteRstFrames,
+));
+grpc_lite_phpt_assert_same(4, $incompleteRstCodes[1] ?? 0, 'incomplete malformed blocks emit PROTOCOL_ERROR');
+grpc_lite_phpt_assert_same(8, $incompleteRstCodes[8] ?? 0, 'incomplete status and budget blocks emit CANCEL');
+grpc_lite_phpt_assert_same(24, $incompleteConnectionPrefaces, 'incomplete blocks quarantine twelve connections before follow-up');
 
 file_put_contents($traceFile, '');
 $multiplexClient = $client();
@@ -200,23 +223,17 @@ $siblingCall = $multiplexClient->BenchServerStream($siblingRequest, [
 $siblingResponses = $siblingCall->responses();
 grpc_lite_phpt_assert_true($siblingResponses->current() instanceof \Helloworld\BenchReply, 'terminal quarantine sibling first message');
 
-$quarantineStartedNs = hrtime(true);
 [$targetResponse, $targetStatus] = $multiplexClient->BenchUnary(new BenchRequest(), [
-    'x-bench-raw-response' => ['multiplex-incomplete-grpc-status'],
+    'x-bench-raw-response' => ['multiplex-incomplete-entry-budget'],
 ])->wait();
 grpc_lite_phpt_assert_same(null, $targetResponse, 'terminal quarantine target response');
-grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $targetStatus->code, 'terminal quarantine target status');
-grpc_lite_phpt_assert_same('invalid grpc-status trailer', $targetStatus->details, 'terminal quarantine target details');
+grpc_lite_phpt_assert_same(Grpc\STATUS_RESOURCE_EXHAUSTED, $targetStatus->code, 'terminal quarantine target status');
+grpc_lite_phpt_assert_same('response header/metadata budget exceeded', $targetStatus->details, 'terminal quarantine target details');
 
 $siblingResponses->next();
 grpc_lite_phpt_assert_same(false, $siblingResponses->valid(), 'terminal quarantine sibling has no further message');
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $siblingCall->getStatus()->code, 'terminal quarantine sibling status');
 grpc_lite_phpt_assert_same('incomplete HTTP/2 response header block', $siblingCall->getStatus()->details, 'terminal quarantine sibling details');
-grpc_lite_phpt_assert_true(
-    hrtime(true) - $quarantineStartedNs < 500_000_000,
-    'deadline-less terminal quarantine is bounded independently of peer read progress',
-);
-
 $multiplexRecords = [];
 foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
     $record = json_decode($line, true);
@@ -224,33 +241,64 @@ foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] a
     $multiplexRecords[] = $record;
 }
 $targetEndIndex = null;
+$targetEndUs = null;
 $targetStreamId = null;
+$targetRstIndex = null;
+$targetRstUs = null;
+$siblingStreamId = null;
 $multiplexRstFrames = [];
 $multiplexConnectionPrefaces = 0;
 foreach ($multiplexRecords as $index => $record) {
+    if (($record['event'] ?? null) === 'wire.request_header'
+        && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/BenchServerStream') {
+        $siblingStreamId = $record['stream_id'] ?? null;
+    }
     if (($record['event'] ?? null) === 'wire.request_header'
         && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/BenchUnary') {
         $targetStreamId = $record['stream_id'] ?? null;
     }
     if (($record['event'] ?? null) === 'rpc.end'
         && ($record['rpc_kind'] ?? null) === 'unary'
-        && ($record['status_code'] ?? null) === Grpc\STATUS_UNKNOWN) {
+        && ($record['status_code'] ?? null) === Grpc\STATUS_RESOURCE_EXHAUSTED) {
         $targetEndIndex = $index;
+        $targetEndUs = $record['monotonic_us'] ?? null;
         grpc_lite_phpt_assert_same(true, $record['persistent_reused'] ?? null, 'terminal quarantine target reused sibling connection');
     }
     if (($record['event'] ?? null) === 'wire.frame_out' && ($record['frame_type'] ?? null) === 'RST_STREAM') {
         $multiplexRstFrames[] = $record;
+        if (($record['stream_id'] ?? null) === $targetStreamId) {
+            $targetRstIndex = $index;
+            $targetRstUs = $record['monotonic_us'] ?? null;
+        }
     }
     if (($record['event'] ?? null) === 'wire.connection_preface') {
         $multiplexConnectionPrefaces++;
     }
 }
 grpc_lite_phpt_assert_true($targetEndIndex !== null, 'terminal quarantine target rpc.end exists');
+grpc_lite_phpt_assert_true(is_int($targetEndUs), 'terminal quarantine target rpc.end timestamp exists');
 grpc_lite_phpt_assert_true(is_int($targetStreamId), 'terminal quarantine target stream id exists');
+grpc_lite_phpt_assert_true(is_int($targetRstIndex), 'terminal quarantine target RST_STREAM index exists');
+grpc_lite_phpt_assert_true(is_int($targetRstUs), 'terminal quarantine target RST_STREAM timestamp exists');
+grpc_lite_phpt_assert_true(is_int($siblingStreamId), 'terminal quarantine sibling stream id exists');
 grpc_lite_phpt_assert_same(1, count($multiplexRstFrames), 'terminal quarantine emits one target RST_STREAM');
 grpc_lite_phpt_assert_same($targetStreamId, $multiplexRstFrames[0]['stream_id'] ?? null, 'terminal quarantine RST_STREAM belongs to target');
 grpc_lite_phpt_assert_same(8, $multiplexRstFrames[0]['error_code'] ?? null, 'terminal quarantine target RST_STREAM is CANCEL');
 grpc_lite_phpt_assert_same(1, $multiplexConnectionPrefaces, 'terminal quarantine target shares sibling connection');
+grpc_lite_phpt_assert_true($targetEndUs >= $targetRstUs, 'terminal quarantine target ends after RST classification');
+grpc_lite_phpt_assert_true(
+    $targetEndUs - $targetRstUs < 500_000,
+    'deadline-less terminal quarantine completes within the fixed grace after target RST classification',
+);
+
+foreach ($multiplexRecords as $index => $record) {
+    if ($index > $targetRstIndex
+        && ($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'DATA'
+        && ($record['stream_id'] ?? null) === $siblingStreamId) {
+        throw new RuntimeException('sibling DATA generated after terminal quarantine target RST');
+    }
+}
 
 $wireEvents = [
     'wire.socket_write',
