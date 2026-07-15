@@ -65,6 +65,9 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-11のLow 2件に対し、END_HEADERS未完了targetの`RST_STREAM(CANCEL)`をfixtureのpeer受信markerでgateし、traceをattribution補助へ限定した。bench diagnosticにはentry resetと独立した約32.8KiB/iterationのwire byte-counter reset controlを追加した。初回PHPTでfixture setupがconnection flow-controlの循環待ちになることを検出したため、trigger前だけheld siblingの受信DATAをconnection-levelへ返却し、sibling stream windowを枯渇させたままtarget requestを完了可能にした。
 - 2026-07-15: consolidated pass-13のMedium 1件に対し、END_HEADERS未完了blockのterminal quarantineをstatus field専用経路から共有incomplete-block actionへ拡張した。informational END_STREAM、END_STREAMなしtrailing、normal / invalid header callbackのwire budget超過もprimary taxonomyとcaller-selected target RST codeを維持したままconnection terminal化し、production / raw diagnosticが`response_header_block_incomplete` classificationを共有する。3種のfragmented controlとunary / server streaming / diagnostic probeを追加した。
 - 2026-07-15: pass-13のLow 2件に対し、multiplex fixtureのsibling DATA違反境界をpeerがtarget CANCELを受信した後へ移した。32MiB WINDOW_UPDATEとbudget overflow HEADERSを50ms分割し、pre-target-RST DATAをpositive setupとして必須にしつつ、client trace / peer markerの双方でpost-target-RST DATAを拒否する。terminal graceは合法なpre-quarantine backpressureを含むend-to-end wall timeではなく、client traceのtarget RSTから`rpc.end`まで500ms未満で固定した。ownership map、raw fixture catalog、verification matrixにはcall-local incomplete stateのproducer / consumer / resetと、authority-keyed follow-up markerの最大3秒wait / consume semanticsを反映した。
+- 2026-07-15: consolidated pass-15のMedium 1件に対し、wire budget計上後の`AWAITING_STATUS`でnormal / invalid regular fieldを観測した時点をshared protocol classificationへ追加した。後続`:status`を合法に置けないため`response_header_protocol_error`を確定し、END_HEADERS未完了時は既存incomplete-header terminal actionへ`PROTOCOL_ERROR`を渡してproduction connection quarantineとdiagnostic finite finishを共有する。valid / NUL-bearing invalid regular fieldのfragmented controlsをunary / server streaming / diagnosticで固定した。
+- 2026-07-15: consolidated pass-15のLow 1件に対し、NUL-bearing invalid field 129個でEND_HEADERS未完了のentry budgetを超えるcontrolを追加した。productionは`RESOURCE_EXHAUSTED`、exact CANCEL、terminal connection、fresh follow-upを、diagnosticはcallback cutoff 128とdefault-blocking batch後の実fd `O_NONBLOCK` stateを確認し、invalid producerとnonblocking consumerを別々のmutationで識別した。
+- 2026-07-15: pass-15対応に合わせ、SPEC、exchange-state / protocol-classification design、code-reading guide、fixture catalog、verification matrix、compatibility checklistをcurrent modelへ更新した。HTTP/2 / gRPC domain model reviewはBlocker / High / Medium / Low / Design Decisionすべてnone。
 
 ## Verification
 
@@ -116,6 +119,13 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-13最終`./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4群）。
 - 2026-07-15: pass-13最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
 - 2026-07-15: pass-13最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-15 fix後に`docker compose up -d --build --force-recreate test-server`を実行し、regular-before-status normal / invalidとinvalid incomplete-budget controlsを含むraw fixture imageのrebuild / restart PASS。
+- 2026-07-15: invalid callbackのEND_HEADERS mutationではfocused PHPT 042 / 043がproduction fresh-follow-up / diagnostic fd-state assertionでFAILし、diagnostic normal callbackのterminal-action consumer削除mutationではPHPT 043がfd-state assertionでFAILした。各mutationを復元後、focused PHPT 042 / 043は2/2 PASS。
+- 2026-07-15: pass-15最終`./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）。
+- 2026-07-15: pass-15最終`./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4群）。
+- 2026-07-15: pass-15最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0、skipped 0）。
+- 2026-07-15: pass-15最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-15 fixのHTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass15-fix-domain-model.md`。
 
 ## Decision Log
 
@@ -127,6 +137,7 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: terminal semantic failureはheader block完了を待たずfield callbackでtransport actionへ移す。END_HEADERS未完了のinbound HPACK blockはRST_STREAMだけでは同期を回復できないためconnectionをdrainingとし、新規RPCへ再利用しない。
 - 2026-07-15: Trailers-Only ownershipは`grpc-status`専用flagではなく、3種類のterminal status fieldが共有するblock-local candidateで決める。missing `grpc-status`の`UNKNOWN` taxonomyとは独立に、同じblockのmetadata roleを一つに保つ。
 - 2026-07-15: END_HEADERS未完了のinbound HPACK blockはconnection-globalなdecoder同期を失うため、上記draining判断をterminal quarantineへ更新する。GOAWAY drainingはadmit済みstreamの完走を許すが、このcaseは対象CANCELのpending frameをflushした後にdead化し、全ownerの追加I/Oを止める。cache entryの破棄はactive ownerのcleanupへ委ね、send helper内で即時解放しない。
+- 2026-07-15: valid responseで`:status`より前にregular fieldは置けないため、`AWAITING_STATUS`でnormal / invalid regular fieldを観測した時点をresponse-header protocol failureの確定点とする。wire budgetを先に適用してresource taxonomyを優先し、END_HEADERS付きblockはnghttp2の既存block-end rejection、未完了blockはcaller-selected `PROTOCOL_ERROR`を共有terminal actionへ渡す。
 
 ## Close Criteria
 

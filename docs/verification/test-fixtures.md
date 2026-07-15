@@ -87,6 +87,8 @@
 | `trailer-without-end-stream` | final 200 initial HEADERS、1 gRPC message、`grpc-status: 0` を持つEND_STREAMなしtrailing HEADERS |
 | `informational-end-stream` | `:status: 103` を持つ `HEADERS(END_STREAM)` |
 | `informational-then-missing-status` | 103の後に`:status`を持たないfinal候補 `HEADERS(END_STREAM)` |
+| `post-informational-incomplete-regular-before-status` | 完了した103の後、valid regular field `x-after`だけを持つEND_STREAM / END_HEADERSなしHEADERSを送り、CONTINUATIONを送らない。`:status`を合法に追加できない時点での `INTERNAL` + exact `RST_STREAM(PROTOCOL_ERROR)`、connection terminal化、fresh follow-upを検証する |
+| `post-informational-incomplete-invalid-before-status` | 上記regular-before-statusをNUL-bearing invalid valueで送り、invalid-header callbackでも同じ早期protocol classification / terminal actionを通ることを検証する |
 | `informational-then-data` | 103の直後に `DATA(END_STREAM)` |
 | `informational-entry-budget` | `:status: 103` + `x-info: a` を65 block（合計130 fields）送って以後silentになる。pseudo / regularの片方だけなら65 entriesで上限内、両方の累積で128-entry上限をpre-finalに超える |
 | `informational-byte-budget` | 241 bytesの`x-info`を4個の103 blockへ分けて以後silentになる。1024-byte上限に対し、custom fieldsは `4 * (6 + 241) = 988` bytes、informational `:status` は `4 * (7 + 3) = 40` bytes、合計1028 bytesとなりpre-finalに超過する |
@@ -103,6 +105,7 @@
 | `incomplete-informational-end-stream` | `:status: 103` を持つEND_STREAM / END_HEADERSなしHEADERSを送り、CONTINUATIONを送らない。`INTERNAL`を維持したterminal quarantine、peer受信RST、fresh follow-upを検証する |
 | `incomplete-trailer-without-end-stream` | valid final initial responseの後、END_STREAMなし / END_HEADERSなしtrailing HEADERSを送り、CONTINUATIONを送らない。`INTERNAL`を維持したterminal quarantine、peer受信RST、fresh follow-upを検証する |
 | `informational-incomplete-entry-budget` | `:status: 103` と多数のregular fieldを持つEND_STREAMなし / END_HEADERSなしHEADERSでwire entry budgetを超え、CONTINUATIONを送らない。`RESOURCE_EXHAUSTED` + `RST_STREAM(CANCEL)`、connection terminal化、fresh follow-upを検証する |
+| `informational-incomplete-invalid-entry-budget` | `:status: 103` とNUL-bearing invalid regular field 129個を持つEND_STREAMなし / END_HEADERSなしHEADERSで、invalid callback 128回目にentry budgetを超え、129個目を処理しない。`RESOURCE_EXHAUSTED` + exact `RST_STREAM(CANCEL)`、connection terminal化、fresh follow-up、diagnostic count 128とdefault-blocking batchのterminal action後に実fdが `O_NONBLOCK` であることを検証する |
 | `multiplex-hold-sibling` | 同一connection上の先行server-streaming streamへinitial HEADERSと1 messageを送り、END_STREAMなしでactiveのまま保持する。後続のincomplete block probeに対するsibling lifecycleのbarrierとして使う |
 | `multiplex-incomplete-entry-budget` | 保持中siblingと同一connection上の別streamへ、32MiBのsibling / connection WINDOW_UPDATEを送り、50ms分割後に`informational-incomplete-entry-budget`相当のHEADERSを送る。target RST前の合法なsibling DATA受信をsetup discriminatorとして必須にし、peer側はtarget RST受信後のDATAを違反として記録する。client trace側もtarget RST後のsibling DATA `frame_out`不在とtarget RSTから`rpc.end`まで500ms未満を確認し、合法なpre-quarantine backpressureをterminal graceの計測へ混ぜない。connection terminal化後のsibling `UNAVAILABLE`とfresh follow-upも検証する |
 | `require-prior-incomplete-status-cancel` | authorityをkeyにconnectionを跨いで保存した直前のincomplete-block probe結果を最大3秒待つ。peerが対象streamの期待RSTを受信し、かつそのtarget RST受信後にsibling DATAを受信していない場合だけgRPC OKを返し、判定後はmarkerをconsumeする。fresh follow-upはterminal connectionとは別connectionでこのcontrolを使う |

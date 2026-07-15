@@ -921,6 +921,14 @@ func writeInformationalAdversarialResponse(
 		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
 			{Name: "x-after", Value: "missing-status"},
 		})
+	case "post-informational-incomplete-regular-before-status":
+		writeRawPostInformationalIncompleteFieldBeforeStatus(framer, streamID, hpack.HeaderField{
+			Name: "x-after", Value: "before-status",
+		})
+	case "post-informational-incomplete-invalid-before-status":
+		writeRawPostInformationalIncompleteFieldBeforeStatus(framer, streamID, hpack.HeaderField{
+			Name: "x-after", Value: "a\x00b",
+		})
 	case "informational-then-data":
 		writeRawInformational(framer, streamID, nil)
 		_ = framer.WriteData(streamID, true, grpcFrame(0, nil))
@@ -934,6 +942,8 @@ func writeInformationalAdversarialResponse(
 		}
 	case "informational-incomplete-entry-budget":
 		writeRawIncompleteInformationalEntryBudget(framer, streamID)
+	case "informational-incomplete-invalid-entry-budget":
+		writeRawIncompleteInformationalInvalidEntryBudget(framer, streamID)
 	case "informational-byte-budget":
 		*resourceProbeStreamID = streamID
 		*resourceProbeCancelObserved = false
@@ -1115,9 +1125,12 @@ func writeRawPostInformationalNonterminalStatusField(framer *http2.Framer, strea
 func rawResponseIncompleteExpectedRst(control string) (http2.ErrCode, bool) {
 	switch control {
 	case "incomplete-informational-end-stream",
-		"incomplete-trailer-without-end-stream":
+		"incomplete-trailer-without-end-stream",
+		"post-informational-incomplete-regular-before-status",
+		"post-informational-incomplete-invalid-before-status":
 		return http2.ErrCodeProtocol, true
 	case "informational-incomplete-entry-budget",
+		"informational-incomplete-invalid-entry-budget",
 		"post-informational-incomplete-grpc-status",
 		"post-informational-incomplete-grpc-message",
 		"post-informational-incomplete-status-details",
@@ -1134,6 +1147,19 @@ func writeRawIncompleteInformationalEntryBudget(framer *http2.Framer, streamID u
 		fields = append(fields, hpack.HeaderField{Name: "x-info", Value: "a"})
 	}
 	writeRawHeadersWithEndHeaders(framer, streamID, false, false, fields)
+}
+
+func writeRawIncompleteInformationalInvalidEntryBudget(framer *http2.Framer, streamID uint32) {
+	fields := []hpack.HeaderField{{Name: ":status", Value: "103"}}
+	for i := 0; i < 129; i++ {
+		fields = append(fields, hpack.HeaderField{Name: "x-ignored", Value: "a\x00b"})
+	}
+	writeRawHeadersWithEndHeaders(framer, streamID, false, false, fields)
+}
+
+func writeRawPostInformationalIncompleteFieldBeforeStatus(framer *http2.Framer, streamID uint32, field hpack.HeaderField) {
+	writeRawInformational(framer, streamID, nil)
+	writeRawHeadersWithEndHeaders(framer, streamID, true, false, []hpack.HeaderField{field})
 }
 
 func writeRawPostInformationalIncompleteStatusField(framer *http2.Framer, streamID uint32, field hpack.HeaderField) {

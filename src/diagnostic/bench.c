@@ -426,9 +426,20 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         }
         return 0;
     }
+    if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS) {
+        return bench_finish_response_header_terminal_action(
+            call,
+            grpc_protocol_reject_response_regular_header_before_status(
+                session,
+                call,
+                frame->hd.flags,
+                name,
+                namelen
+            )
+        );
+    }
     if (!call->response_header_block_protocol_valid
         || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_NONE
-        || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS
         || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL) {
         return 0;
     }
@@ -514,7 +525,7 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
 static int bench_on_invalid_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;
-    (void) name;
+    int rv;
     (void) value;
     (void) flags;
 
@@ -522,7 +533,7 @@ static int bench_on_invalid_header_callback(nghttp2_session *session, const nght
         return 0;
     }
     call->bench.invalid_header_callback_count++;
-    return bench_finish_response_header_terminal_action(
+    rv = bench_finish_response_header_terminal_action(
         call,
         grpc_protocol_account_response_header_field(
             session,
@@ -530,6 +541,19 @@ static int bench_on_invalid_header_callback(nghttp2_session *session, const nght
             frame->hd.flags,
             namelen,
             valuelen
+        )
+    );
+    if (rv != 0 || call->metadata_too_large) {
+        return rv;
+    }
+    return bench_finish_response_header_terminal_action(
+        call,
+        grpc_protocol_reject_response_regular_header_before_status(
+            session,
+            call,
+            frame->hd.flags,
+            name,
+            namelen
         )
     );
 }
@@ -1216,6 +1240,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     zend_long response_compact_threshold = 0;
     zval *response_callback_zv = NULL;
     bool response_callback_enabled = false;
+    bool incomplete_header_fd_nonblocking = false;
     zend_fcall_info response_fci;
     zend_fcall_info_cache response_fcc;
     grpc_call call;
@@ -1831,6 +1856,11 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
 
     total_elapsed = monotonic_us() - total_started;
 
+    if (call.response_header_block_incomplete) {
+        int fd_flags = fcntl(call.fd, F_GETFL, 0);
+        incomplete_header_fd_nonblocking = fd_flags >= 0 && (fd_flags & O_NONBLOCK) != 0;
+    }
+
     close(call.fd);
     nghttp2_session_del(session);
     nghttp2_session_callbacks_del(callbacks);
@@ -1845,6 +1875,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     add_assoc_long(return_value, "http_status", call.http_status);
     add_assoc_long(return_value, "stream_error_code", call.stream_error_code);
     add_assoc_long(return_value, "invalid_header_callback_count", (zend_long) call.bench.invalid_header_callback_count);
+    add_assoc_bool(return_value, "incomplete_header_fd_nonblocking", incomplete_header_fd_nonblocking);
     add_assoc_long(return_value, "body_bytes", call.body.s ? ZSTR_LEN(call.body.s) : 0);
     add_assoc_bool(return_value, "discard_response_body", discard_response_body);
     add_assoc_bool(return_value, "split_grpc_frame", split_grpc_frame);
