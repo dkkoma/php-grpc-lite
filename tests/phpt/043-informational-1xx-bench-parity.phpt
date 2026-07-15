@@ -73,6 +73,7 @@ foreach ([
     ['incomplete-trailer-without-end-stream', 'incomplete nonterminal trailer block', 1],
     ['post-informational-incomplete-regular-before-status', 'incomplete regular-before-status block', 1],
     ['post-informational-incomplete-invalid-before-status', 'incomplete invalid-regular-before-status block', 1],
+    ['post-informational-incomplete-empty-name-before-status', 'incomplete empty-name-before-status block', 1],
     ['informational-incomplete-entry-budget', 'incomplete informational entry budget block', 8],
     ['informational-incomplete-invalid-entry-budget', 'incomplete invalid informational entry budget block', 8],
 ] as [$control, $label, $expectedRstCode]) {
@@ -83,7 +84,8 @@ foreach ([
     grpc_lite_phpt_assert_same($expectedRstCode, $incomplete['stream_error_code'], "$label RST_STREAM code");
     grpc_lite_phpt_assert_same(true, $incomplete['incomplete_header_fd_nonblocking'], "$label enables nonblocking terminal finish");
     grpc_lite_phpt_assert_true($incomplete['total_us'] < 500_000, "$label batch is finite without poll timeout");
-    if ($control === 'post-informational-incomplete-invalid-before-status') {
+    if ($control === 'post-informational-incomplete-invalid-before-status'
+        || $control === 'post-informational-incomplete-empty-name-before-status') {
         grpc_lite_phpt_assert_same(1, $incomplete['invalid_header_callback_count'], "$label invalid-header callback count");
     }
     if ($control === 'informational-incomplete-invalid-entry-budget') {

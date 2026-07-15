@@ -68,6 +68,8 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: consolidated pass-15のMedium 1件に対し、wire budget計上後の`AWAITING_STATUS`でnormal / invalid regular fieldを観測した時点をshared protocol classificationへ追加した。後続`:status`を合法に置けないため`response_header_protocol_error`を確定し、END_HEADERS未完了時は既存incomplete-header terminal actionへ`PROTOCOL_ERROR`を渡してproduction connection quarantineとdiagnostic finite finishを共有する。valid / NUL-bearing invalid regular fieldのfragmented controlsをunary / server streaming / diagnosticで固定した。
 - 2026-07-15: consolidated pass-15のLow 1件に対し、NUL-bearing invalid field 129個でEND_HEADERS未完了のentry budgetを超えるcontrolを追加した。productionは`RESOURCE_EXHAUSTED`、exact CANCEL、terminal connection、fresh follow-upを、diagnosticはcallback cutoff 128とdefault-blocking batch後の実fd `O_NONBLOCK` stateを確認し、invalid producerとnonblocking consumerを別々のmutationで識別した。
 - 2026-07-15: pass-15対応に合わせ、SPEC、exchange-state / protocol-classification design、code-reading guide、fixture catalog、verification matrix、compatibility checklistをcurrent modelへ更新した。HTTP/2 / gRPC domain model reviewはBlocker / High / Medium / Low / Design Decisionすべてnone。
+- 2026-07-15: consolidated pass-17のMedium 1件に対し、invalid-header callbackのempty nameをregular fieldとして扱うpure predicateを`transport_core`へ追加した。wire budget先行順序を維持したまま既存のregular-before-`:status` rejectionとshared incomplete-header terminal actionへ接続し、productionは`INTERNAL` + `RST_STREAM(PROTOCOL_ERROR)` + terminal connectionへ、diagnosticはfailed-not-timedout + exact RST + nonblocking finite finishへ収束させる。
+- 2026-07-15: 完了した103の後にexact HPACK field `00 00 01 76`を持つEND_STREAM / END_HEADERSなしHEADERSを送り、CONTINUATIONを省くraw controlを追加した。PHPT 042でunary / server streamingのstatus・details・exact RST・fresh follow-upを、PHPT 043でfailed-not-timedout・invalid callback 1回・実fd `O_NONBLOCK`を固定し、pure name predicateをC unitへ追加した。
 
 ## Verification
 
@@ -126,6 +128,12 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-15最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0、skipped 0）。
 - 2026-07-15: pass-15最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: pass-15 fixのHTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass15-fix-domain-model.md`。
+- 2026-07-15: pass-17 fix後に`docker compose up -d --build --force-recreate test-server`を実行し、empty-name exact HPACK controlを含むtest-server imageのrebuild / restart PASS。containerはrunning、RestartCount 0。
+- 2026-07-15: pass-17最終`./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）。PHPT 042 / 043でempty-name invalid regular-before-`:status`のproduction / diagnostic finite terminal pathを確認した。
+- 2026-07-15: pass-17最終`./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4群）。empty name / pseudo-header / regular nameのpure predicate分類を含む。
+- 2026-07-15: pass-17最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0）。
+- 2026-07-15: pass-17最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-17 fixのHTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass17-fix-domain-model.md`。
 
 ## Decision Log
 

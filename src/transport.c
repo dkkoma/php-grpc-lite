@@ -2328,9 +2328,7 @@ int grpc_protocol_reject_response_regular_header_before_status(nghttp2_session *
     int rv;
 
     if (call == NULL
-        || name == NULL
-        || namelen == 0
-        || name[0] == ':'
+        || !grpc_response_header_name_is_regular(name, namelen)
         || !call->response_header_block_protocol_valid
         || call->response_header_phase.block_phase != GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS) {
         return 0;

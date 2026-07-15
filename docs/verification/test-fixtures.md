@@ -89,6 +89,7 @@
 | `informational-then-missing-status` | 103の後に`:status`を持たないfinal候補 `HEADERS(END_STREAM)` |
 | `post-informational-incomplete-regular-before-status` | 完了した103の後、valid regular field `x-after`だけを持つEND_STREAM / END_HEADERSなしHEADERSを送り、CONTINUATIONを送らない。`:status`を合法に追加できない時点での `INTERNAL` + exact `RST_STREAM(PROTOCOL_ERROR)`、connection terminal化、fresh follow-upを検証する |
 | `post-informational-incomplete-invalid-before-status` | 上記regular-before-statusをNUL-bearing invalid valueで送り、invalid-header callbackでも同じ早期protocol classification / terminal actionを通ることを検証する |
+| `post-informational-incomplete-empty-name-before-status` | 上記invalid regular-before-statusをempty nameのexact HPACK field（`00 00 01 76`）で送り、wire budget計上後に同じprotocol classification / terminal actionを通ることを検証する |
 | `informational-then-data` | 103の直後に `DATA(END_STREAM)` |
 | `informational-entry-budget` | `:status: 103` + `x-info: a` を65 block（合計130 fields）送って以後silentになる。pseudo / regularの片方だけなら65 entriesで上限内、両方の累積で128-entry上限をpre-finalに超える |
 | `informational-byte-budget` | 241 bytesの`x-info`を4個の103 blockへ分けて以後silentになる。1024-byte上限に対し、custom fieldsは `4 * (6 + 241) = 988` bytes、informational `:status` は `4 * (7 + 3) = 40` bytes、合計1028 bytesとなりpre-finalに超過する |

@@ -128,6 +128,11 @@ bool grpc_response_header_budget_account_field(size_t *entry_count, size_t *byte
     return true;
 }
 
+bool grpc_response_header_name_is_regular(const uint8_t *name, size_t namelen)
+{
+    return name != NULL && (namelen == 0 || name[0] != ':');
+}
+
 bool contains_nul_or_control(const char *value, size_t value_len)
 {
     size_t index;
