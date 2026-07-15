@@ -27,7 +27,7 @@
 | `50067` | raw h2c GOAWAY keep-stream-open fixture | 1 messageと `GOAWAY(last_stream_id=2147483647)` を送りstreamをopenのままにする。draining connection上の明示cancelがRST_STREAMを送ることを検証する | `tests/phpt/036-draining-connection-cancel-sends-rst.phpt` |
 | `50068` / `50069` | raw h2c backlog flood / control fixture | control portで次connectionをarmし、response backlogをclient receive bufferへ置く。preflight drain cap超過時のfallbackを検証する | `tests/phpt/035-preflight-drain-cap-fallback.phpt` |
 | `50070` | raw h2c small-window GOAWAY draining fixture | 小さいstream windowでrequest DATAをdeferし、別streamからdrainingへ移行する。destructor cancel後にdeferred DATAが再開してもcall lifetimeを越えないことを検証する | `tests/phpt/037-draining-destructor-pending-request-data.phpt` |
-| `50071` | raw h2c informational adversarial fixture | malformedな1xx / trailing HEADERS、silent peer下のstatus-field / wire-header budget failure、Trailers-Only metadata ownership、bench diagnostic parity、foreign pushed-stream eventをrequest controlごとに送出する。同一connection上のexact RST観測とfollow-up RPCも扱う | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt` |
+| `50071` | raw h2c informational adversarial fixture | malformedな1xx / trailing HEADERS、silent peer下のstatus-field / wire-header budget failure、Trailers-Only metadata ownership、bench diagnostic parity、foreign pushed-stream eventをrequest controlごとに送出する。同一connection上のexact RST観測とfollow-up RPCも扱う | `tests/phpt/042-informational-1xx-adversarial.phpt`, `tests/phpt/043-informational-1xx-bench-parity.phpt`, `tests/phpt/044-terminal-status-rst-flush-failure.phpt` |
 
 ## Service methods
 
@@ -97,8 +97,15 @@
 | `post-informational-silent-grpc-status` | 103の後に `grpc-status` を持つEND_STREAMなしfinal initial HEADERSを送り、以後silentになる |
 | `post-informational-silent-grpc-message` | 103の後に `grpc-message` を持つEND_STREAMなしfinal initial HEADERSを送り、以後silentになる |
 | `post-informational-silent-status-details` | 103の後に `grpc-status-details-bin` を持つEND_STREAMなしfinal initial HEADERSを送り、以後silentになる |
+| `post-informational-incomplete-grpc-status` | 103の後、`grpc-status` を含むEND_STREAMなし / END_HEADERSなしfinal initial HEADERSを送り、CONTINUATIONを送らない。clientの即時CANCEL、flush後のconnection terminal化、fresh follow-upを検証する |
+| `post-informational-incomplete-grpc-message` | 103の後、`grpc-message` を含むEND_STREAMなし / END_HEADERSなしfinal initial HEADERSを送り、CONTINUATIONを送らない。clientの即時CANCEL、flush後のconnection terminal化、fresh follow-upを検証する |
+| `post-informational-incomplete-status-details` | 103の後、`grpc-status-details-bin` を含むEND_STREAMなし / END_HEADERSなしfinal initial HEADERSを送り、CONTINUATIONを送らない。clientの即時CANCEL、flush後のconnection terminal化、fresh follow-upを検証する |
+| `multiplex-hold-sibling` | 同一connection上の先行server-streaming streamへinitial HEADERSと1 messageを送り、END_STREAMなしでactiveのまま保持する。後続のincomplete block probeに対するsibling lifecycleのbarrierとして使う |
+| `multiplex-incomplete-grpc-status` | 保持中siblingと同一connection上の別streamへ、103の後に`grpc-status`を含むEND_HEADERSなしfinal initial HEADERSを送る。対象streamのexact CANCEL、connection terminal化後のsibling `UNAVAILABLE`、追加wire I/Oなし、fresh follow-upを検証する |
 | `require-prior-status-probe` | 同じconnectionの直前のsilent status-field probeについてclientからexact `RST_STREAM(CANCEL)` を受信済みの場合だけgRPC OK。PHPTは3種すべてを2秒のguard内に `UNKNOWN` + `invalid grpc-status trailer` で終了させ、same-connection follow-up成功を確認する。diagnosticは `failed=1`、`timed_out=false`、`stream_error_code=8` を確認する |
 | `invalid-status-metadata` | `x-before`、invalid `grpc-status: 17`、`x-after` をこの順に持つTrailers-Only response |
+| `post-informational-terminal-message-only-metadata` | 103の後、`x-before` / `grpc-message` / `x-after` を持つEND_STREAM final block（`grpc-status`なし）。block全体のtrailing ownershipとUNKNOWN/detailsを検証する |
+| `post-informational-terminal-status-details-only-metadata` | 103の後、`x-before` / `grpc-status-details-bin` / `x-after` を持つEND_STREAM final block（`grpc-status`なし）。block全体とdetails-binのtrailing ownership、UNKNOWNを検証する |
 | `post-informational-nonterminal-status` | 103、`grpc-status: 0`を同居させたEND_STREAMなしfinal initial HEADERS、`DATA(END_STREAM)`。bench diagnosticがsuccess countへ含めないことを検証する |
 | `post-informational-nonterminal-status-details` | 103、`grpc-status-details-bin`を同居させたEND_STREAMなしfinal initial HEADERS、DATA、valid `grpc-status: 0` trailers。details field単独でもterminal status gateを迂回できないことを検証する |
 | `valid-informational-iteration-reset` | 60個のstatus-only 103と、status/content-type/message/encoding/custom metadataでpolluteした103の後にvalid gRPC OKを返す。1 iterationは69 wire fieldsで上限内、2 iterations累積では128を超えるため、benchのsemantic stateとwire counterのiteration resetを同時に検証する |

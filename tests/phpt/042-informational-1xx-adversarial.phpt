@@ -119,6 +119,172 @@ foreach ([
     $assertNonterminalStatusFieldStream($client(), $control, $label);
 }
 
+file_put_contents($traceFile, '');
+$assertIncompleteStatusFieldUnary = static function (GreeterClient $client, string $control, string $label): void {
+    [$response, $status] = $client->BenchUnary(new BenchRequest(), [
+        'x-bench-raw-response' => [$control],
+    ])->wait();
+    grpc_lite_phpt_assert_same(null, $response, "$label unary response");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $status->code, "$label unary status");
+    grpc_lite_phpt_assert_same('invalid grpc-status trailer', $status->details, "$label unary details");
+
+    [$followUpResponse, $followUpStatus] = $client->BenchUnary(new BenchRequest(), [
+        'x-bench-raw-response' => ['valid-after-incomplete-status'],
+    ])->wait();
+    grpc_lite_phpt_assert_true($followUpResponse instanceof \Helloworld\BenchReply, "$label unary fresh follow-up response");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followUpStatus->code, "$label unary fresh follow-up status");
+};
+
+$assertIncompleteStatusFieldStream = static function (GreeterClient $client, string $control, string $label): void {
+    $request = new BenchRequest();
+    $request->setMessageCount(1);
+    $call = $client->BenchServerStream($request, [
+        'x-bench-raw-response' => [$control],
+    ]);
+    $count = 0;
+    foreach ($call->responses() as $_reply) {
+        $count++;
+    }
+    grpc_lite_phpt_assert_same(0, $count, "$label stream count");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $call->getStatus()->code, "$label stream status");
+    grpc_lite_phpt_assert_same('invalid grpc-status trailer', $call->getStatus()->details, "$label stream details");
+
+    $followUpRequest = new BenchRequest();
+    $followUpRequest->setMessageCount(1);
+    $followUp = $client->BenchServerStream($followUpRequest, [
+        'x-bench-raw-response' => ['valid-after-incomplete-status'],
+    ]);
+    $followUpCount = 0;
+    foreach ($followUp->responses() as $_reply) {
+        $followUpCount++;
+    }
+    grpc_lite_phpt_assert_same(1, $followUpCount, "$label stream fresh follow-up count");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $followUp->getStatus()->code, "$label stream fresh follow-up status");
+};
+
+foreach ([
+    'post-informational-incomplete-grpc-status' => 'incomplete grpc-status block',
+    'post-informational-incomplete-grpc-message' => 'incomplete grpc-message block',
+    'post-informational-incomplete-status-details' => 'incomplete grpc-status-details-bin block',
+] as $control => $label) {
+    $assertIncompleteStatusFieldUnary($client(), $control, $label);
+    $assertIncompleteStatusFieldStream($client(), $control, $label);
+}
+
+$incompleteRstFrames = [];
+$incompleteConnectionPrefaces = 0;
+foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    $record = json_decode($line, true);
+    grpc_lite_phpt_assert_true(is_array($record), 'incomplete block trace line must be JSON object');
+    if (($record['event'] ?? null) === 'wire.frame_out' && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $incompleteRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $incompleteConnectionPrefaces++;
+    }
+}
+grpc_lite_phpt_assert_same(6, count($incompleteRstFrames), 'incomplete blocks emit one RST_STREAM each');
+foreach ($incompleteRstFrames as $index => $frame) {
+    grpc_lite_phpt_assert_same(8, $frame['error_code'] ?? null, "incomplete block RST_STREAM #$index is CANCEL");
+}
+grpc_lite_phpt_assert_same(12, $incompleteConnectionPrefaces, 'incomplete blocks quarantine six connections before follow-up');
+
+file_put_contents($traceFile, '');
+$multiplexClient = $client();
+$siblingRequest = new BenchRequest();
+$siblingRequest->setMessageCount(1);
+$siblingCall = $multiplexClient->BenchServerStream($siblingRequest, [
+    'x-bench-raw-response' => ['multiplex-hold-sibling'],
+]);
+$siblingResponses = $siblingCall->responses();
+grpc_lite_phpt_assert_true($siblingResponses->current() instanceof \Helloworld\BenchReply, 'terminal quarantine sibling first message');
+
+[$targetResponse, $targetStatus] = $multiplexClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['multiplex-incomplete-grpc-status'],
+])->wait();
+grpc_lite_phpt_assert_same(null, $targetResponse, 'terminal quarantine target response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $targetStatus->code, 'terminal quarantine target status');
+grpc_lite_phpt_assert_same('invalid grpc-status trailer', $targetStatus->details, 'terminal quarantine target details');
+
+$siblingResponses->next();
+grpc_lite_phpt_assert_same(false, $siblingResponses->valid(), 'terminal quarantine sibling has no further message');
+grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $siblingCall->getStatus()->code, 'terminal quarantine sibling status');
+grpc_lite_phpt_assert_same('incomplete HTTP/2 response header block', $siblingCall->getStatus()->details, 'terminal quarantine sibling details');
+
+$multiplexRecords = [];
+foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    $record = json_decode($line, true);
+    grpc_lite_phpt_assert_true(is_array($record), 'terminal quarantine trace line must be JSON object');
+    $multiplexRecords[] = $record;
+}
+$targetEndIndex = null;
+$targetStreamId = null;
+$multiplexRstFrames = [];
+$multiplexConnectionPrefaces = 0;
+foreach ($multiplexRecords as $index => $record) {
+    if (($record['event'] ?? null) === 'wire.request_header'
+        && ($record['rpc_method'] ?? null) === '/helloworld.Greeter/BenchUnary') {
+        $targetStreamId = $record['stream_id'] ?? null;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary'
+        && ($record['status_code'] ?? null) === Grpc\STATUS_UNKNOWN) {
+        $targetEndIndex = $index;
+        grpc_lite_phpt_assert_same(true, $record['persistent_reused'] ?? null, 'terminal quarantine target reused sibling connection');
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out' && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $multiplexRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $multiplexConnectionPrefaces++;
+    }
+}
+grpc_lite_phpt_assert_true($targetEndIndex !== null, 'terminal quarantine target rpc.end exists');
+grpc_lite_phpt_assert_true(is_int($targetStreamId), 'terminal quarantine target stream id exists');
+grpc_lite_phpt_assert_same(1, count($multiplexRstFrames), 'terminal quarantine emits one target RST_STREAM');
+grpc_lite_phpt_assert_same($targetStreamId, $multiplexRstFrames[0]['stream_id'] ?? null, 'terminal quarantine RST_STREAM belongs to target');
+grpc_lite_phpt_assert_same(8, $multiplexRstFrames[0]['error_code'] ?? null, 'terminal quarantine target RST_STREAM is CANCEL');
+grpc_lite_phpt_assert_same(1, $multiplexConnectionPrefaces, 'terminal quarantine target shares sibling connection');
+
+$wireEvents = [
+    'wire.socket_write',
+    'wire.tls_write',
+    'wire.tls_write_retry',
+    'wire.socket_read',
+    'wire.tls_read',
+    'wire.tls_read_retry',
+    'wire.socket_preflight_read',
+    'wire.tls_preflight_read',
+    'wire.tls_preflight_read_retry',
+    'wire.frame_out',
+];
+foreach ($multiplexRecords as $index => $record) {
+    if ($index > $targetEndIndex && in_array($record['event'] ?? null, $wireEvents, true)) {
+        throw new RuntimeException('unexpected I/O after terminal quarantine: ' . json_encode($record));
+    }
+}
+
+file_put_contents($traceFile, '');
+[$quarantineFollowUpResponse, $quarantineFollowUpStatus] = $multiplexClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['valid-after-terminal-quarantine'],
+])->wait();
+grpc_lite_phpt_assert_true($quarantineFollowUpResponse instanceof \Helloworld\BenchReply, 'terminal quarantine fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $quarantineFollowUpStatus->code, 'terminal quarantine fresh follow-up status');
+$quarantineFollowUpPrefaces = 0;
+$quarantineFollowUpEnd = null;
+foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    $record = json_decode($line, true);
+    grpc_lite_phpt_assert_true(is_array($record), 'terminal quarantine follow-up trace line must be JSON object');
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $quarantineFollowUpPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'rpc.end' && ($record['rpc_kind'] ?? null) === 'unary') {
+        $quarantineFollowUpEnd = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $quarantineFollowUpPrefaces, 'terminal quarantine follow-up opens fresh connection');
+grpc_lite_phpt_assert_same(false, $quarantineFollowUpEnd['persistent_reused'] ?? null, 'terminal quarantine follow-up does not reuse terminal connection');
+
 $assertResourceUnary = static function (GreeterClient $client, string $control, string $label): void {
     [$response, $status] = $client->BenchUnary(new BenchRequest(), [
         'x-bench-raw-response' => [$control],
@@ -213,6 +379,65 @@ grpc_lite_phpt_assert_true(!array_key_exists('x-before', $invalidStreamCall->get
 grpc_lite_phpt_assert_true(!array_key_exists('x-after', $invalidStreamCall->getMetadata()), 'x-after not stream initial metadata');
 grpc_lite_phpt_assert_same(['a'], $invalidStreamCall->getTrailingMetadata()['x-before'] ?? null, 'x-before stream trailing metadata');
 grpc_lite_phpt_assert_same(['b'], $invalidStreamCall->getTrailingMetadata()['x-after'] ?? null, 'x-after stream trailing metadata');
+
+$assertTerminalStatusFieldMetadataUnary = static function (
+    GreeterClient $client,
+    string $control,
+    string $label,
+    string $expectedDetails,
+    bool $expectStatusDetails,
+): void {
+    $call = $client->BenchUnary(new BenchRequest(), [
+        'x-bench-raw-response' => [$control],
+    ]);
+    [$response, $status] = $call->wait();
+    grpc_lite_phpt_assert_same(null, $response, "$label unary response");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $status->code, "$label unary status");
+    grpc_lite_phpt_assert_same($expectedDetails, $status->details, "$label unary details");
+    grpc_lite_phpt_assert_true(!array_key_exists('x-before', $call->getMetadata()), "$label x-before not unary initial metadata");
+    grpc_lite_phpt_assert_true(!array_key_exists('x-after', $call->getMetadata()), "$label x-after not unary initial metadata");
+    grpc_lite_phpt_assert_same(['a'], $call->getTrailingMetadata()['x-before'] ?? null, "$label x-before unary trailing metadata");
+    grpc_lite_phpt_assert_same(['b'], $call->getTrailingMetadata()['x-after'] ?? null, "$label x-after unary trailing metadata");
+    if ($expectStatusDetails) {
+        grpc_lite_phpt_assert_same(["\0"], $call->getTrailingMetadata()['grpc-status-details-bin'] ?? null, "$label unary status details trailing metadata");
+    }
+};
+
+$assertTerminalStatusFieldMetadataStream = static function (
+    GreeterClient $client,
+    string $control,
+    string $label,
+    string $expectedDetails,
+    bool $expectStatusDetails,
+): void {
+    $request = new BenchRequest();
+    $request->setMessageCount(1);
+    $call = $client->BenchServerStream($request, [
+        'x-bench-raw-response' => [$control],
+    ]);
+    $count = 0;
+    foreach ($call->responses() as $_reply) {
+        $count++;
+    }
+    grpc_lite_phpt_assert_same(0, $count, "$label stream count");
+    grpc_lite_phpt_assert_same(Grpc\STATUS_UNKNOWN, $call->getStatus()->code, "$label stream status");
+    grpc_lite_phpt_assert_same($expectedDetails, $call->getStatus()->details, "$label stream details");
+    grpc_lite_phpt_assert_true(!array_key_exists('x-before', $call->getMetadata()), "$label x-before not stream initial metadata");
+    grpc_lite_phpt_assert_true(!array_key_exists('x-after', $call->getMetadata()), "$label x-after not stream initial metadata");
+    grpc_lite_phpt_assert_same(['a'], $call->getTrailingMetadata()['x-before'] ?? null, "$label x-before stream trailing metadata");
+    grpc_lite_phpt_assert_same(['b'], $call->getTrailingMetadata()['x-after'] ?? null, "$label x-after stream trailing metadata");
+    if ($expectStatusDetails) {
+        grpc_lite_phpt_assert_same(["\0"], $call->getTrailingMetadata()['grpc-status-details-bin'] ?? null, "$label stream status details trailing metadata");
+    }
+};
+
+foreach ([
+    ['post-informational-terminal-message-only-metadata', 'terminal grpc-message-only block', 'detail', false],
+    ['post-informational-terminal-status-details-only-metadata', 'terminal grpc-status-details-bin-only block', '', true],
+] as [$control, $label, $expectedDetails, $expectStatusDetails]) {
+    $assertTerminalStatusFieldMetadataUnary($client(), $control, $label, $expectedDetails, $expectStatusDetails);
+    $assertTerminalStatusFieldMetadataStream($client(), $control, $label, $expectedDetails, $expectStatusDetails);
+}
 
 unlink($traceFile);
 echo "OK\n";

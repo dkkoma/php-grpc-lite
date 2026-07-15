@@ -649,9 +649,16 @@ func handleInformationalAdversarialH2C(conn net.Conn) {
 	resourceProbeCancelObserved := false
 	statusProbeStreamID := uint32(0)
 	statusProbeCancelObserved := false
+	heldSiblingStreamID := uint32(0)
 	pendingPushedResponses := make(map[uint32]uint32)
 	nextPromisedStreamID := uint32(2)
 	writeResponse := func(streamID uint32, request map[string]string) {
+		if rawResponseLeavesHeaderBlockIncomplete(request["x-bench-raw-response"]) {
+			// Keep the peer silent long enough to prove that a deadline-less
+			// client terminates itself, while bounding a regression in the test
+			// suite instead of retaining the fixture connection indefinitely.
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		}
 		if request["x-bench-raw-response"] == "foreign-pushed-stream-protocol-rst" {
 			promisedStreamID := nextPromisedStreamID
 			nextPromisedStreamID += 2
@@ -670,6 +677,7 @@ func handleInformationalAdversarialH2C(conn net.Conn) {
 			&resourceProbeCancelObserved,
 			&statusProbeStreamID,
 			&statusProbeCancelObserved,
+			&heldSiblingStreamID,
 		)
 	}
 	for {
@@ -729,6 +737,7 @@ func writeInformationalAdversarialResponse(
 	resourceProbeCancelObserved *bool,
 	statusProbeStreamID *uint32,
 	statusProbeCancelObserved *bool,
+	heldSiblingStreamID *uint32,
 ) {
 	control := request["x-bench-raw-response"]
 	switch control {
@@ -816,6 +825,34 @@ func writeInformationalAdversarialResponse(
 		writeRawPostInformationalNonterminalStatusField(framer, streamID, hpack.HeaderField{
 			Name: "grpc-status-details-bin", Value: "AA==",
 		})
+	case "post-informational-incomplete-grpc-status":
+		writeRawPostInformationalIncompleteStatusField(framer, streamID, hpack.HeaderField{
+			Name: "grpc-status", Value: "0",
+		})
+	case "post-informational-incomplete-grpc-message":
+		writeRawPostInformationalIncompleteStatusField(framer, streamID, hpack.HeaderField{
+			Name: "grpc-message", Value: "premature status message",
+		})
+	case "post-informational-incomplete-status-details":
+		writeRawPostInformationalIncompleteStatusField(framer, streamID, hpack.HeaderField{
+			Name: "grpc-status-details-bin", Value: "AA==",
+		})
+	case "multiplex-hold-sibling":
+		if *heldSiblingStreamID != 0 {
+			writeRawGrpcFixtureError(framer, streamID, "a sibling stream is already held on this connection")
+			return
+		}
+		*heldSiblingStreamID = streamID
+		writeRawGrpcInitial(framer, streamID, "application/grpc")
+		_ = framer.WriteData(streamID, false, grpcFrame(0, nil))
+	case "multiplex-incomplete-grpc-status":
+		if *heldSiblingStreamID == 0 || *heldSiblingStreamID == streamID {
+			writeRawGrpcFixtureError(framer, streamID, "incomplete status target did not reuse the held sibling connection")
+			return
+		}
+		writeRawPostInformationalIncompleteStatusField(framer, streamID, hpack.HeaderField{
+			Name: "grpc-status", Value: "0",
+		})
 	case "require-prior-status-probe":
 		if *statusProbeCancelObserved {
 			writeRawGrpcOK(framer, streamID, false)
@@ -830,6 +867,24 @@ func writeInformationalAdversarialResponse(
 			{Name: "content-type", Value: "application/grpc"},
 			{Name: "x-before", Value: "a"},
 			{Name: "grpc-status", Value: "17"},
+			{Name: "x-after", Value: "b"},
+		})
+	case "post-informational-terminal-message-only-metadata":
+		writeRawInformational(framer, streamID, nil)
+		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+			{Name: ":status", Value: "200"},
+			{Name: "content-type", Value: "application/grpc"},
+			{Name: "x-before", Value: "a"},
+			{Name: "grpc-message", Value: "detail"},
+			{Name: "x-after", Value: "b"},
+		})
+	case "post-informational-terminal-status-details-only-metadata":
+		writeRawInformational(framer, streamID, nil)
+		writeRawHeaders(framer, streamID, true, []hpack.HeaderField{
+			{Name: ":status", Value: "200"},
+			{Name: "content-type", Value: "application/grpc"},
+			{Name: "x-before", Value: "a"},
+			{Name: "grpc-status-details-bin", Value: "AA=="},
 			{Name: "x-after", Value: "b"},
 		})
 	case "post-informational-nonterminal-status":
@@ -871,6 +926,27 @@ func writeInformationalAdversarialResponse(
 func writeRawPostInformationalNonterminalStatusField(framer *http2.Framer, streamID uint32, field hpack.HeaderField) {
 	writeRawInformational(framer, streamID, nil)
 	writeRawHeaders(framer, streamID, false, []hpack.HeaderField{
+		{Name: ":status", Value: "200"},
+		{Name: "content-type", Value: "application/grpc"},
+		field,
+	})
+}
+
+func rawResponseLeavesHeaderBlockIncomplete(control string) bool {
+	switch control {
+	case "post-informational-incomplete-grpc-status",
+		"post-informational-incomplete-grpc-message",
+		"post-informational-incomplete-status-details",
+		"multiplex-incomplete-grpc-status":
+		return true
+	default:
+		return false
+	}
+}
+
+func writeRawPostInformationalIncompleteStatusField(framer *http2.Framer, streamID uint32, field hpack.HeaderField) {
+	writeRawInformational(framer, streamID, nil)
+	writeRawHeadersWithEndHeaders(framer, streamID, false, false, []hpack.HeaderField{
 		{Name: ":status", Value: "200"},
 		{Name: "content-type", Value: "application/grpc"},
 		field,
@@ -925,10 +1001,14 @@ func writeRawGrpcInitial(framer *http2.Framer, streamID uint32, contentType stri
 }
 
 func writeRawHeaders(framer *http2.Framer, streamID uint32, endStream bool, fields []hpack.HeaderField) {
+	writeRawHeadersWithEndHeaders(framer, streamID, endStream, true, fields)
+}
+
+func writeRawHeadersWithEndHeaders(framer *http2.Framer, streamID uint32, endStream bool, endHeaders bool, fields []hpack.HeaderField) {
 	_ = framer.WriteHeaders(http2.HeadersFrameParam{
 		StreamID:      streamID,
 		BlockFragment: encodeHeaders(fields),
-		EndHeaders:    true,
+		EndHeaders:    endHeaders,
 		EndStream:     endStream,
 	})
 }

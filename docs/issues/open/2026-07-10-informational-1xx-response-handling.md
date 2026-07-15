@@ -58,6 +58,9 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-5のLow 2件に対し、pre-final wire-header budget超過のdetailsを`response header/metadata budget exceeded`へ揃えた。invalid regular fieldを129個送るcontrolと、productionのvalue-free trace / diagnosticのiteration-local callback countを追加し、128回目のoverflowでTEMPORALが伝播して129個目を処理しないruntime oracleを固定した。
 - 2026-07-15: consolidated pass-7のLow 1件を受け、terminal status-field gateのCANCEL flushが失敗しても、public status code / detailsのprimary ownerを`invalid_grpc_status`へ揃えた。secondaryなI/O failureはcall / connection diagnosticに保持し、test-onlyのpost-nghttp2 / pre-socket-flush EPIPE seamとPHPT 044で3 status fieldのunary / server streaming、dead connection eviction、fresh follow-upを固定した。
 - 2026-07-15: pass-7のPHPT liveness Low 1件に対し、PHPT 043で`timeout_us > 0`のbatchだけ`poll_loop=true`とした。silent status-field / wire-header budgetの回帰時はdeadline-aware poll経路が約2秒で`timed_out=true`を返し、runner全体のtimeoutではなく既存assertionで失敗する。timeoutなしのbench baselineはblocking経路のままとし、blocking branch自体のdeadline挙動は変更していない。
+- 2026-07-15: consolidated pass-9のMedium 1件を受け、END_STREAMなし`FINAL_INITIAL`のstatus fieldをframe-endではなくfield callback時点で`UNKNOWN` + `RST_STREAM(CANCEL)`へ確定した。END_HEADERS未完了blockはconnectionをdrainingとしてquarantineし、production / diagnosticの3 status field、unary / server streaming、fresh follow-upをraw fixtureで固定した。
+- 2026-07-15: pass-9 fixのdomain-model pass-10で、END_HEADERS未完了のinbound HPACK blockをdrainingに留めると同一connection上の既存siblingがI/Oを継続して停止し得るMedium 1件を確認した。connection-localなclose-after-pending-flush stateを追加し、対象streamのCANCELをflushした後にconnectionをdead化する。unary / server streamingのdrive loopはdead後にsession / socketを再駆動せず、対象callは`UNKNOWN`、既存siblingは`UNAVAILABLE`へ有限に収束する。raw fixture / PHPT 042へactive server-streaming sibling、別streamのincomplete status block、exact CANCEL、siblingの追加wire I/Oなし、fresh follow-upを識別するmultiplex probeを追加した。
+- 2026-07-15: pass-9のLow 1件に対し、END_STREAM付き`FINAL_INITIAL`で`grpc-status` / `grpc-message` / `grpc-status-details-bin`のいずれかを観測した時にblock-local Trailers-Only candidateへ遷移し、先行metadataをtrailingへ移して後続も同じownershipへ揃えた。message-only / details-only blockのbefore-after metadataをunary / server streamingで固定した。
 
 ## Verification
 
@@ -92,6 +95,12 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
 - 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: pass-8 HTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass7-fix-domain-model-pass8.md`。
+- 2026-07-15: pass-9 / pass-10 fix後に`docker compose build test-server`と`docker compose up -d --force-recreate test-server`を実行し、CONTINUATION欠落、multiplex sibling、terminal message-only / details-only controlsを含むraw fixture imageのrebuild / restart PASS。
+- 2026-07-15: `./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）。PHPT 042で3 status fieldのEND_HEADERS未完了unary / server streaming、target streamのexact CANCEL、connection terminal化、既存siblingの追加wire I/Oなし`UNAVAILABLE`、fresh follow-up、message-only / details-only blockのmetadata ownershipを、PHPT 043でproduction / diagnostic共有actionのfailed-not-timedout / CANCELを確認した。
+- 2026-07-15: `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4 suites）。Trailers-Only candidateのone-shot transition、block end / call reset、metadata role predicateを含む。
+- 2026-07-15: `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions）。
+- 2026-07-15: `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-10 HTTP/2 / gRPC domain model review PASS（初回Medium 1件をterminal quarantineとmultiplex回帰probeで修正後、Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass9-fix-domain-model-pass10.md`。
 
 ## Decision Log
 
@@ -100,6 +109,9 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: final-response後のTrailing HEADERSはbegin callback時点でEND_STREAM flagを読めるため、END_STREAMなしblockのstatus/metadataはその場でquarantineする。nghttp2のblock全体validation後に別の違反が分かった場合はprotocol-error markerが先行statusより優先するため、header field全体のstaging allocationは追加しない。
 - 2026-07-15: semantic metadata map用counterをinformational fieldで増やすとownershipが混ざるため、独立したwire header entry/byte counterを導入。configured metadata hard limitと128-entry limitを全decoded response fieldのwork budgetとしても使う。
 - 2026-07-15: phase begin / `:status` / end / resetとstatusのEND_STREAM commit predicateをnghttp2 / Zend非依存のpure helperに置き、production / bench diagnosticの構造的parityをC unit transition / truth tableで守る。
+- 2026-07-15: terminal semantic failureはheader block完了を待たずfield callbackでtransport actionへ移す。END_HEADERS未完了のinbound HPACK blockはRST_STREAMだけでは同期を回復できないためconnectionをdrainingとし、新規RPCへ再利用しない。
+- 2026-07-15: Trailers-Only ownershipは`grpc-status`専用flagではなく、3種類のterminal status fieldが共有するblock-local candidateで決める。missing `grpc-status`の`UNKNOWN` taxonomyとは独立に、同じblockのmetadata roleを一つに保つ。
+- 2026-07-15: END_HEADERS未完了のinbound HPACK blockはconnection-globalなdecoder同期を失うため、上記draining判断をterminal quarantineへ更新する。GOAWAY drainingはadmit済みstreamの完走を許すが、このcaseは対象CANCELのpending frameをflushした後にdead化し、全ownerの追加I/Oを止める。cache entryの破棄はactive ownerのcleanupへ委ね、send helper内で即時解放しない。
 
 ## Close Criteria
 

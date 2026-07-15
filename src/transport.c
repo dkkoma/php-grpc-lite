@@ -909,6 +909,19 @@ void mark_connection_draining(h2_connection *connection, int32_t last_stream_id,
     connection->last_goaway_error_code = error_code;
 }
 
+static void mark_connection_close_after_pending_flush(h2_connection *connection)
+{
+    if (connection == NULL) {
+        return;
+    }
+    /* An incomplete inbound HPACK block is connection-terminal, unlike a
+     * GOAWAY that lets already-admitted streams finish. Stop new admission
+     * immediately, but keep I/O alive until the target CANCEL is flushed. */
+    connection->draining = true;
+    connection->close_after_pending_flush = true;
+    set_connection_error_detail(connection, "incomplete HTTP/2 response header block");
+}
+
 bool connection_usable(h2_connection *connection)
 {
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
@@ -2042,7 +2055,14 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
          * or discard coalesced bytes nghttp2 already accounted as sent; either
          * way the session state no longer matches the wire, so the connection
          * must never be reused. */
+        connection->close_after_pending_flush = false;
         mark_connection_dead(connection, rv);
+    } else if (connection->close_after_pending_flush) {
+        /* The target stream's CANCEL is now on the wire. The peer's missing
+         * CONTINUATION still leaves the inbound HPACK decoder incomplete, so
+         * no existing sibling may drive this session again. */
+        connection->close_after_pending_flush = false;
+        mark_connection_dead(connection, 0);
     }
     if (rv != 0 && call != NULL) {
         if (connection->current_write_timed_out) {
@@ -2269,22 +2289,41 @@ int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_c
     return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
 }
 
-int grpc_protocol_enforce_terminal_initial_status_fields(nghttp2_session *session, grpc_call *call, grpc_response_header_block_phase ended_header_phase, bool end_stream)
+int grpc_protocol_observe_response_status_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags)
 {
-    if (call == NULL || ended_header_phase != GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
+    bool first_initial_status_field;
+
+    if (call == NULL
+        || call->response_header_phase.block_phase != GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
         return 0;
     }
 
-    call->initial_headers_end_stream = end_stream;
-    if (!call->initial_grpc_status_seen || end_stream) {
+    first_initial_status_field = !call->initial_grpc_status_seen;
+    call->initial_grpc_status_seen = true;
+    call->initial_headers_end_stream = call->response_header_block_end_stream;
+    if (grpc_response_header_phase_on_trailers_only_status_field(
+            &call->response_header_phase,
+            call->response_header_block_end_stream)) {
+        /* grpc-status, grpc-message, and grpc-status-details-bin all select
+         * one Trailers-Only role for the completed block. */
+        grpc_protocol_mark_response_metadata_as_trailing(call);
+    }
+    if (call->response_header_block_end_stream || !first_initial_status_field) {
         return 0;
     }
 
     /* A status field in non-terminal initial response HEADERS can never be
-     * committed as gRPC status.  Classify it once the valid block completes,
-     * then end only this stream so a silent peer cannot retain the call. */
+     * committed as gRPC status. Queue the stream-local failure as soon as the
+     * field is decoded; waiting for frame completion would let a peer omit the
+     * required CONTINUATION and retain a deadline-less call indefinitely. */
     call->invalid_grpc_status = true;
     call->discard_response_body = true;
+    if ((frame_flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+        /* An RST closes the target stream but cannot complete the peer's
+         * connection-global inbound HPACK block. Flush CANCEL, then make the
+         * connection terminal for every existing owner. */
+        mark_connection_close_after_pending_flush(call->connection);
+    }
     return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_CANCEL);
 }
 
@@ -2333,14 +2372,13 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL) {
         return 0;
     }
-    trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase, call->grpc_status_seen);
+    trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
         }
         if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
             return 0;
         }
         if (call->grpc_status_seen) {
@@ -2351,19 +2389,15 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         if (call->grpc_status < 0) {
             call->invalid_grpc_status = true;
         }
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            grpc_protocol_mark_response_metadata_as_trailing(call);
-        }
         /* Status is not Custom-Metadata. It is consumed into call state and
          * intentionally not re-exposed through PHP metadata maps. */
         return 0;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
         }
         if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
             return 0;
         }
         if (call->grpc_message != NULL) {
@@ -2374,15 +2408,14 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
          * surfaced as status details, not as PHP metadata. */
         return 0;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
         }
         if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
             return 0;
         }
-        trailing = true;
+        trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     } else if (namelen == sizeof("content-type") - 1 && memcmp(name, "content-type", namelen) == 0) {
         call->content_type_seen = true;
         if (call->content_type != NULL) {
@@ -2545,14 +2578,7 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
     if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
         && ended_header_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-        int rv = grpc_protocol_enforce_terminal_initial_status_fields(
-            session,
-            call,
-            ended_header_phase,
-            (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0);
-        if (rv != 0) {
-            return rv;
-        }
+        call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
         if (!call->content_type_seen && !(call->grpc_status_seen && call->initial_headers_end_stream)) {
             call->invalid_content_type = true;
             call->discard_response_body = true;

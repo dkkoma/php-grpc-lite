@@ -234,7 +234,7 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 - response size / metadata size上限
 - GOAWAY / EOF / RST_STREAM / protocol failure時のHTTP/2 connection lifecycle管理
 
-protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。特にEND_STREAMなし `FINAL_INITIAL` のstatus fieldはframe-endで `UNKNOWN` と `RST_STREAM(CANCEL)` を確定し、silent peerの追加frameを待ちません。connection自体がdead/drainingでなければpersistent cacheには残します。
+protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。特にEND_STREAMなし `FINAL_INITIAL` のstatus fieldはfield callback時点で `UNKNOWN` と `RST_STREAM(CANCEL)` へ確定し、header block完了を待ちません。END_HEADERS完了済みでconnectionがusableなら再利用できますが、CONTINUATION欠落でheader blockが未完了ならHPACK stateを継続できません。この場合はCANCELのpending frameをflushしてからconnectionをdeadへ移し、既存siblingは追加I/Oなしで `UNAVAILABLE`、follow-upはfresh connectionを使います。
 
 1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/design/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
 

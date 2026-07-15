@@ -15,6 +15,7 @@ typedef enum {
 typedef struct {
     grpc_response_header_block_phase block_phase;
     bool final_response_headers_seen;
+    bool trailers_only_candidate;
 } grpc_response_header_phase_state;
 
 void grpc_response_header_phase_reset(grpc_response_header_phase_state *state);
@@ -22,6 +23,7 @@ grpc_response_header_block_phase grpc_response_header_phase_begin(grpc_response_
 grpc_response_header_block_phase grpc_response_header_phase_on_status(grpc_response_header_phase_state *state, int http_status);
 grpc_response_header_block_phase grpc_response_header_phase_end(grpc_response_header_phase_state *state);
 bool grpc_response_header_phase_allows_status_fields(const grpc_response_header_phase_state *state, bool end_stream);
-bool grpc_response_header_phase_metadata_is_trailing(const grpc_response_header_phase_state *state, bool grpc_status_seen);
+bool grpc_response_header_phase_on_trailers_only_status_field(grpc_response_header_phase_state *state, bool end_stream);
+bool grpc_response_header_phase_metadata_is_trailing(const grpc_response_header_phase_state *state);
 
 #endif

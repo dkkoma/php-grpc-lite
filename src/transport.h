@@ -18,6 +18,7 @@ struct _h2_connection {
     char authority[GRPC_LITE_AUTHORITY_BUFFER_SIZE];
     bool dead;
     bool draining;
+    bool close_after_pending_flush;
     bool detached_from_cache;
     size_t active_stream_count;
     size_t stream_owner_count;
@@ -120,7 +121,7 @@ void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
 int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, size_t namelen, size_t valuelen);
-int grpc_protocol_enforce_terminal_initial_status_fields(nghttp2_session *session, grpc_call *call, grpc_response_header_block_phase ended_header_phase, bool end_stream);
+int grpc_protocol_observe_response_status_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags);
 int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 int on_invalid_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
 int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);

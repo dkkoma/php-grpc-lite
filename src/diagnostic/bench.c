@@ -388,14 +388,13 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL) {
         return 0;
     }
-    trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase, call->grpc_status_seen);
+    trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
         }
         if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
             return 0;
         }
         if (call->grpc_status_seen) {
@@ -406,34 +405,29 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         if (call->grpc_status < 0) {
             call->invalid_grpc_status = true;
         }
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            grpc_protocol_mark_response_metadata_as_trailing(call);
-        }
-        trailing = true;
+        trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
         }
         if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
             return 0;
         }
         if (call->grpc_message != NULL) {
             zend_string_release(call->grpc_message);
         }
         call->grpc_message = grpc_protocol_decode_message(value, valuelen);
-        trailing = true;
+        trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
-        if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
         }
         if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
             return 0;
         }
-        trailing = true;
+        trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
     } else if (namelen == sizeof("x-bench-server-handler-ns") - 1 && memcmp(name, "x-bench-server-handler-ns", namelen) == 0) {
         call->bench.server_handler_ns = header_value_to_long(value, valuelen);
@@ -605,14 +599,7 @@ static int bench_on_frame_recv_callback(nghttp2_session *session, const nghttp2_
     if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
         && ended_header_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
-        int rv = grpc_protocol_enforce_terminal_initial_status_fields(
-            session,
-            call,
-            ended_header_phase,
-            (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0);
-        if (rv != 0) {
-            return rv;
-        }
+        call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
     } else if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
         && ended_header_phase == GRPC_RESPONSE_HEADER_BLOCK_TRAILING) {

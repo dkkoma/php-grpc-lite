@@ -102,8 +102,9 @@ static const phase_transition ignored_status_transitions[] = {
 static void run_transition_case(const phase_transition_case *test_case)
 {
     grpc_response_header_phase_state state = {
-        GRPC_RESPONSE_HEADER_BLOCK_TRAILING,
-        true,
+        .block_phase = GRPC_RESPONSE_HEADER_BLOCK_TRAILING,
+        .final_response_headers_seen = true,
+        .trailers_only_candidate = false,
     };
 
     for (size_t i = 0; i < test_case->transition_count; i++) {
@@ -147,8 +148,8 @@ static void test_block_role_predicates(void)
         grpc_response_header_block_phase phase;
         bool allows_without_end_stream;
         bool allows_with_end_stream;
-        bool trailing_without_status;
-        bool trailing_after_status;
+        bool trailing_without_terminal_status;
+        bool trailing_after_terminal_status;
     } cases[] = {
         {GRPC_RESPONSE_HEADER_BLOCK_NONE, false, false, false, false},
         {GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS, false, false, false, false},
@@ -156,17 +157,50 @@ static void test_block_role_predicates(void)
         {GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL, false, true, false, true},
         {GRPC_RESPONSE_HEADER_BLOCK_TRAILING, false, true, true, true},
     };
-    grpc_response_header_phase_state state = {GRPC_RESPONSE_HEADER_BLOCK_NONE, false};
+    grpc_response_header_phase_state state = {GRPC_RESPONSE_HEADER_BLOCK_NONE, false, false};
 
     for (size_t i = 0; i < TRANSITION_COUNT(cases); i++) {
         state.block_phase = cases[i].phase;
+        state.trailers_only_candidate = false;
         ASSERT_BOOL(cases[i].allows_without_end_stream, grpc_response_header_phase_allows_status_fields(&state, false));
         ASSERT_BOOL(cases[i].allows_with_end_stream, grpc_response_header_phase_allows_status_fields(&state, true));
-        ASSERT_BOOL(cases[i].trailing_without_status, grpc_response_header_phase_metadata_is_trailing(&state, false));
-        ASSERT_BOOL(cases[i].trailing_after_status, grpc_response_header_phase_metadata_is_trailing(&state, true));
+        ASSERT_BOOL(cases[i].trailing_without_terminal_status, grpc_response_header_phase_metadata_is_trailing(&state));
+        state.trailers_only_candidate = true;
+        ASSERT_BOOL(cases[i].trailing_after_terminal_status, grpc_response_header_phase_metadata_is_trailing(&state));
     }
     ASSERT_BOOL(false, grpc_response_header_phase_allows_status_fields(NULL, true));
-    ASSERT_BOOL(false, grpc_response_header_phase_metadata_is_trailing(NULL, true));
+    ASSERT_BOOL(false, grpc_response_header_phase_on_trailers_only_status_field(NULL, true));
+    ASSERT_BOOL(false, grpc_response_header_phase_metadata_is_trailing(NULL));
+}
+
+static void test_terminal_status_field_role_transition(void)
+{
+    grpc_response_header_phase_state state;
+
+    grpc_response_header_phase_reset(&state);
+    grpc_response_header_phase_begin(&state);
+    grpc_response_header_phase_on_status(&state, 103);
+    ASSERT_BOOL(false, grpc_response_header_phase_on_trailers_only_status_field(&state, true));
+    ASSERT_BOOL(false, grpc_response_header_phase_metadata_is_trailing(&state));
+    grpc_response_header_phase_end(&state);
+
+    grpc_response_header_phase_begin(&state);
+    grpc_response_header_phase_on_status(&state, 200);
+    ASSERT_BOOL(false, grpc_response_header_phase_on_trailers_only_status_field(&state, false));
+    ASSERT_BOOL(false, grpc_response_header_phase_metadata_is_trailing(&state));
+    ASSERT_BOOL(true, grpc_response_header_phase_on_trailers_only_status_field(&state, true));
+    ASSERT_BOOL(true, grpc_response_header_phase_metadata_is_trailing(&state));
+    ASSERT_BOOL(false, grpc_response_header_phase_on_trailers_only_status_field(&state, true));
+    ASSERT_BOOL(true, grpc_response_header_phase_metadata_is_trailing(&state));
+    grpc_response_header_phase_end(&state);
+    ASSERT_BOOL(false, state.trailers_only_candidate);
+
+    grpc_response_header_phase_begin(&state);
+    ASSERT_INT(GRPC_RESPONSE_HEADER_BLOCK_TRAILING, state.block_phase);
+    ASSERT_BOOL(false, grpc_response_header_phase_on_trailers_only_status_field(&state, true));
+    ASSERT_BOOL(true, grpc_response_header_phase_metadata_is_trailing(&state));
+    grpc_response_header_phase_reset(&state);
+    ASSERT_BOOL(false, state.trailers_only_candidate);
 }
 
 int main(void)
@@ -183,6 +217,7 @@ int main(void)
         run_transition_case(&cases[i]);
     }
     test_block_role_predicates();
+    test_terminal_status_field_role_transition();
 
     if (failures != 0) {
         fprintf(stderr, "%d response header phase unit assertions failed\n", failures);

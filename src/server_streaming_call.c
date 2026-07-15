@@ -321,7 +321,8 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             state->completed = true;
             break;
         }
-        if (nghttp2_session_want_write(state->call.connection->session)) {
+        if (state->call.connection->close_after_pending_flush
+            || nghttp2_session_want_write(state->call.connection->session)) {
             rv = send_pending_h2_frames(state->call.connection, call);
             if (rv != 0) {
                 mark_connection_dead(state->call.connection, rv);
