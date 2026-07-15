@@ -5,6 +5,8 @@
 
 #include "response_header_phase.h"
 
+#include <string.h>
+
 void grpc_response_header_phase_reset(grpc_response_header_phase_state *state)
 {
     state->block_phase = GRPC_RESPONSE_HEADER_BLOCK_NONE;
@@ -69,6 +71,67 @@ bool grpc_response_header_phase_metadata_is_trailing(const grpc_response_header_
         && (state->block_phase == GRPC_RESPONSE_HEADER_BLOCK_TRAILING
             || (state->block_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL
                 && state->trailers_only_candidate));
+}
+
+grpc_response_header_field_class grpc_response_header_classify_reported_field(const uint8_t *name, size_t namelen, bool invalid_regular)
+{
+    if (name == NULL) {
+        return GRPC_RESPONSE_HEADER_FIELD_REJECTED;
+    }
+    if (namelen == 0) {
+        return invalid_regular
+            ? GRPC_RESPONSE_HEADER_FIELD_INVALID_REGULAR
+            : GRPC_RESPONSE_HEADER_FIELD_REJECTED;
+    }
+    if (name[0] == ':') {
+        if (!invalid_regular
+            && namelen == sizeof(":status") - 1
+            && memcmp(name, ":status", namelen) == 0) {
+            return GRPC_RESPONSE_HEADER_FIELD_STATUS;
+        }
+        return GRPC_RESPONSE_HEADER_FIELD_REJECTED;
+    }
+    return invalid_regular
+        ? GRPC_RESPONSE_HEADER_FIELD_INVALID_REGULAR
+        : GRPC_RESPONSE_HEADER_FIELD_REGULAR;
+}
+
+grpc_response_header_field_route grpc_response_header_route_field(grpc_response_header_block_phase phase, grpc_response_header_field_class field_class)
+{
+    switch (field_class) {
+        case GRPC_RESPONSE_HEADER_FIELD_STATUS:
+            return phase == GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS
+                ? GRPC_RESPONSE_HEADER_FIELD_ROUTE_STATUS
+                : GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR;
+        case GRPC_RESPONSE_HEADER_FIELD_REGULAR:
+            switch (phase) {
+                case GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL:
+                    return GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE;
+                case GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL:
+                case GRPC_RESPONSE_HEADER_BLOCK_TRAILING:
+                    return GRPC_RESPONSE_HEADER_FIELD_ROUTE_PROCESS;
+                case GRPC_RESPONSE_HEADER_BLOCK_NONE:
+                case GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS:
+                default:
+                    return GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR;
+            }
+        case GRPC_RESPONSE_HEADER_FIELD_INVALID_REGULAR:
+            switch (phase) {
+                case GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL:
+                case GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL:
+                case GRPC_RESPONSE_HEADER_BLOCK_TRAILING:
+                    return GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE;
+                case GRPC_RESPONSE_HEADER_BLOCK_NONE:
+                case GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS:
+                default:
+                    return GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR;
+            }
+        case GRPC_RESPONSE_HEADER_FIELD_REJECTED:
+        default:
+            /* Rejections which bypass both application field callbacks, and
+             * any field class added without an explicit route, fail closed. */
+            return GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR;
+    }
 }
 
 #endif

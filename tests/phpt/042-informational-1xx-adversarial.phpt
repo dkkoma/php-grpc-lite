@@ -188,6 +188,8 @@ foreach ([
     ['post-informational-incomplete-regular-before-status', 'incomplete regular-before-status block', 0, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
     ['post-informational-incomplete-invalid-before-status', 'incomplete invalid-regular-before-status block', 0, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
     ['post-informational-incomplete-empty-name-before-status', 'incomplete empty-name-before-status block', 0, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
+    ['post-informational-incomplete-strict-invalid-pseudo-before-status', 'incomplete strict-invalid-pseudo-before-status block', 0, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
+    ['post-informational-incomplete-uppercase-regular-before-status', 'incomplete uppercase-regular-before-status block', 0, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
     ['informational-incomplete-entry-budget', 'incomplete informational entry budget block', 0, Grpc\STATUS_RESOURCE_EXHAUSTED, 'response header/metadata budget exceeded'],
     ['informational-incomplete-invalid-entry-budget', 'incomplete invalid informational entry budget block', 0, Grpc\STATUS_RESOURCE_EXHAUSTED, 'response header/metadata budget exceeded'],
 ] as [$control, $label, $expectedCount, $expectedStatus, $expectedDetails]) {
@@ -207,14 +209,14 @@ foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] a
         $incompleteConnectionPrefaces++;
     }
 }
-grpc_lite_phpt_assert_same(20, count($incompleteRstFrames), 'incomplete block traces contain one RST_STREAM each');
+grpc_lite_phpt_assert_same(24, count($incompleteRstFrames), 'incomplete block traces contain one RST_STREAM each');
 $incompleteRstCodes = array_count_values(array_map(
     static fn (array $frame): mixed => $frame['error_code'] ?? null,
     $incompleteRstFrames,
 ));
-grpc_lite_phpt_assert_same(10, $incompleteRstCodes[1] ?? 0, 'incomplete malformed blocks emit PROTOCOL_ERROR');
+grpc_lite_phpt_assert_same(14, $incompleteRstCodes[1] ?? 0, 'incomplete malformed blocks emit PROTOCOL_ERROR');
 grpc_lite_phpt_assert_same(10, $incompleteRstCodes[8] ?? 0, 'incomplete status and budget blocks emit CANCEL');
-grpc_lite_phpt_assert_same(40, $incompleteConnectionPrefaces, 'incomplete blocks quarantine twenty connections before follow-up');
+grpc_lite_phpt_assert_same(48, $incompleteConnectionPrefaces, 'incomplete blocks quarantine twenty-four connections before follow-up');
 
 file_put_contents($traceFile, '');
 $multiplexClient = $client();

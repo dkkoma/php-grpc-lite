@@ -132,16 +132,6 @@ static void test_response_header_budget(void)
     ASSERT_SIZE(SIZE_MAX, bytes);
 }
 
-static void test_response_header_name_classification(void)
-{
-    ASSERT_BOOL(false, grpc_response_header_name_is_regular(NULL, 0));
-    ASSERT_BOOL(false, grpc_response_header_name_is_regular(NULL, 1));
-    ASSERT_BOOL(true, grpc_response_header_name_is_regular((const uint8_t *) "", 0));
-    ASSERT_BOOL(false, grpc_response_header_name_is_regular((const uint8_t *) ":", 1));
-    ASSERT_BOOL(false, grpc_response_header_name_is_regular((const uint8_t *) ":status", strlen(":status")));
-    ASSERT_BOOL(true, grpc_response_header_name_is_regular((const uint8_t *) "x-after", strlen("x-after")));
-}
-
 static void test_authority_identity(void)
 {
     char authority[32];
@@ -213,7 +203,6 @@ int main(void)
 {
     test_effective_limits();
     test_response_header_budget();
-    test_response_header_name_classification();
     test_authority_identity();
     test_grpc_path_validation();
     test_channel_input_validation();

@@ -70,6 +70,9 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-15対応に合わせ、SPEC、exchange-state / protocol-classification design、code-reading guide、fixture catalog、verification matrix、compatibility checklistをcurrent modelへ更新した。HTTP/2 / gRPC domain model reviewはBlocker / High / Medium / Low / Design Decisionすべてnone。
 - 2026-07-15: consolidated pass-17のMedium 1件に対し、invalid-header callbackのempty nameをregular fieldとして扱うpure predicateを`transport_core`へ追加した。wire budget先行順序を維持したまま既存のregular-before-`:status` rejectionとshared incomplete-header terminal actionへ接続し、productionは`INTERNAL` + `RST_STREAM(PROTOCOL_ERROR)` + terminal connectionへ、diagnosticはfailed-not-timedout + exact RST + nonblocking finite finishへ収束させる。
 - 2026-07-15: 完了した103の後にexact HPACK field `00 00 01 76`を持つEND_STREAM / END_HEADERSなしHEADERSを送り、CONTINUATIONを省くraw controlを追加した。PHPT 042でunary / server streamingのstatus・details・exact RST・fresh follow-upを、PHPT 043でfailed-not-timedout・invalid callback 1回・実fd `O_NONBLOCK`を固定し、pure name predicateをC unitへ追加した。
+- 2026-07-15: consolidated pass-19のMedium 1件に対し、response field producerを`STATUS` / `REGULAR` / `INVALID_REGULAR` / `REJECTED`へ分類し、`NONE` / `AWAITING_STATUS` / `INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING`とのclosed route tableへ接続した。normal / invalid callbackはshared wire budgetを先に通し、callbackを迂回するstrict rejectionとblock-end rejectionは`REJECTED` default routeからshared incomplete-header terminal actionへ入る。RST submit ownershipとconnection lifecycle markを分離し、nghttp2-owned `PROTOCOL_ERROR`を重複submitしない。
+- 2026-07-15: production / diagnosticへ同じfield classifier / route / incomplete lifecycle markを適用し、strict-invalid pseudo-header `:foo: v`とuppercase regular name `X-Bad: v`のexact HPACK controlsを追加した。C unitはdeclared / unknown field class × 全5 phaseをtable-driveし、PHPT 042は両controlのunary / server streaming、PHPT 043はstrict callback bypassと実fd nonblocking finite finishを固定した。owning design docにはbudget visibility、全route、primary taxonomy、RST ownerを含むexhaustive tableを追加した。
+- 2026-07-15: 初回の全PHPTでinvalid regular fieldのincomplete budget caseが`RESOURCE_EXHAUSTED`から`INTERNAL`へ退行することを検出した。nghttp2はこのinvalid-header stopをinvalid-frame observerへ`HTTP_HEADER`として通知するため、producer-owned分岐は`metadata_too_large`またはlocal TEMPORALの双方を条件とし、budget priorityとgeneral field-route priorityを両立させた。
 
 ## Verification
 
@@ -134,6 +137,12 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-17最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0）。
 - 2026-07-15: pass-17最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: pass-17 fixのHTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-1xx-pass17-fix-domain-model.md`。
+- 2026-07-15: pass-19 fix後に`docker compose up -d --build --force-recreate test-server`を実行し、strict-invalid pseudo / uppercase regularのexact HPACK controlsを含むtest-server imageのrebuild / restart PASS。containerはrunning。
+- 2026-07-15: pass-19初回`./tools/test/check-phpt.sh`は28/29 PASSで、PHPT 042がinvalid informational entry budgetのprimary taxonomy退行（expected `RESOURCE_EXHAUSTED`, got `INTERNAL`）を検出した。invalid-frame producer-owned分岐を`metadata_too_large || NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE`へ修正後、再実行は29/29 PASS（failed 0、skipped 0、warned 0）。strict-invalid pseudo / uppercase regularのunary / server streaming finite `INTERNAL`、exact `PROTOCOL_ERROR`、terminal connection、fresh follow-upとdiagnostic parityを含む。
+- 2026-07-15: pass-19最終`./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4群）。declared / unknown field class × `NONE` / `AWAITING_STATUS` / `INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING`のclosed route tableを含む。
+- 2026-07-15: pass-19最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0）。
+- 2026-07-15: pass-19最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-19 fixのHTTP/2 / gRPC domain model review PASS（初回Low 1件のCANCEL専用commentをpending control frame全般へ修正後、Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-pass19-class-closure-domain-review.md`。
 
 ## Decision Log
 
@@ -146,6 +155,7 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: Trailers-Only ownershipは`grpc-status`専用flagではなく、3種類のterminal status fieldが共有するblock-local candidateで決める。missing `grpc-status`の`UNKNOWN` taxonomyとは独立に、同じblockのmetadata roleを一つに保つ。
 - 2026-07-15: END_HEADERS未完了のinbound HPACK blockはconnection-globalなdecoder同期を失うため、上記draining判断をterminal quarantineへ更新する。GOAWAY drainingはadmit済みstreamの完走を許すが、このcaseは対象CANCELのpending frameをflushした後にdead化し、全ownerの追加I/Oを止める。cache entryの破棄はactive ownerのcleanupへ委ね、send helper内で即時解放しない。
 - 2026-07-15: valid responseで`:status`より前にregular fieldは置けないため、`AWAITING_STATUS`でnormal / invalid regular fieldを観測した時点をresponse-header protocol failureの確定点とする。wire budgetを先に適用してresource taxonomyを優先し、END_HEADERS付きblockはnghttp2の既存block-end rejection、未完了blockはcaller-selected `PROTOCOL_ERROR`を共有terminal actionへ渡す。
+- 2026-07-15: response header notificationのclass closureは、applicationへ公開されたnormal / recoverably-invalid fieldをshared budget ownerの後にclosed field-class × phase tableへ写像し、非公開のstrict field rejectionとblock-end rejectionを`REJECTED` defaultへ写像する構造で守る。unknown classはfail closedする。incomplete HPACK lifecycle markはcall taxonomy / RST code / submit ownerから分離し、client-owned RSTはmark + submit、nghttp2-owned RSTはmarkのみとする。production / diagnosticはclassificationを共有し、connection quarantineとone-shot fd nonblockingというscope別consumerだけを分ける。
 
 ## Close Criteria
 

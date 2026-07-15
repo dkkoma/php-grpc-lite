@@ -203,6 +203,89 @@ static void test_terminal_status_field_role_transition(void)
     ASSERT_BOOL(false, state.trailers_only_candidate);
 }
 
+static void test_field_classification(void)
+{
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_REJECTED, grpc_response_header_classify_reported_field(NULL, 0, false));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_REJECTED, grpc_response_header_classify_reported_field((const uint8_t *) "", 0, false));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_INVALID_REGULAR, grpc_response_header_classify_reported_field((const uint8_t *) "", 0, true));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_STATUS, grpc_response_header_classify_reported_field((const uint8_t *) ":status", sizeof(":status") - 1, false));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_REJECTED, grpc_response_header_classify_reported_field((const uint8_t *) ":status", sizeof(":status") - 1, true));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_REJECTED, grpc_response_header_classify_reported_field((const uint8_t *) ":foo", sizeof(":foo") - 1, false));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_REGULAR, grpc_response_header_classify_reported_field((const uint8_t *) "x-field", sizeof("x-field") - 1, false));
+    ASSERT_INT(GRPC_RESPONSE_HEADER_FIELD_INVALID_REGULAR, grpc_response_header_classify_reported_field((const uint8_t *) "x-field", sizeof("x-field") - 1, true));
+}
+
+static void test_field_class_phase_routes(void)
+{
+    static const struct {
+        grpc_response_header_field_class field_class;
+        grpc_response_header_field_route expected[5];
+    } cases[] = {
+        {
+            GRPC_RESPONSE_HEADER_FIELD_STATUS,
+            {
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_STATUS,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+            },
+        },
+        {
+            GRPC_RESPONSE_HEADER_FIELD_REGULAR,
+            {
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_PROCESS,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_PROCESS,
+            },
+        },
+        {
+            GRPC_RESPONSE_HEADER_FIELD_INVALID_REGULAR,
+            {
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE,
+            },
+        },
+        {
+            GRPC_RESPONSE_HEADER_FIELD_REJECTED,
+            {
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+            },
+        },
+        {
+            (grpc_response_header_field_class) 99,
+            {
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+                GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR,
+            },
+        },
+    };
+
+    for (size_t field_index = 0; field_index < TRANSITION_COUNT(cases); field_index++) {
+        for (int phase = GRPC_RESPONSE_HEADER_BLOCK_NONE; phase <= GRPC_RESPONSE_HEADER_BLOCK_TRAILING; phase++) {
+            ASSERT_INT(
+                cases[field_index].expected[phase],
+                grpc_response_header_route_field(
+                    (grpc_response_header_block_phase) phase,
+                    cases[field_index].field_class
+                )
+            );
+        }
+    }
+}
+
 int main(void)
 {
     static const phase_transition_case cases[] = {
@@ -218,6 +301,8 @@ int main(void)
     }
     test_block_role_predicates();
     test_terminal_status_field_role_transition();
+    test_field_classification();
+    test_field_class_phase_routes();
 
     if (failures != 0) {
         fprintf(stderr, "%d response header phase unit assertions failed\n", failures);

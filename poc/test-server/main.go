@@ -930,7 +930,14 @@ func writeInformationalAdversarialResponse(
 			Name: "x-after", Value: "a\x00b",
 		})
 	case "post-informational-incomplete-empty-name-before-status":
-		writeRawPostInformationalIncompleteEmptyNameBeforeStatus(framer, streamID)
+		// Literal without indexing: empty name, value "v".
+		writeRawPostInformationalIncompleteExactField(framer, streamID, []byte{0x00, 0x00, 0x01, 'v'})
+	case "post-informational-incomplete-strict-invalid-pseudo-before-status":
+		// Literal without indexing: unknown pseudo-header ":foo", value "v".
+		writeRawPostInformationalIncompleteExactField(framer, streamID, []byte{0x00, 0x04, ':', 'f', 'o', 'o', 0x01, 'v'})
+	case "post-informational-incomplete-uppercase-regular-before-status":
+		// Literal without indexing: uppercase regular name "X-Bad", value "v".
+		writeRawPostInformationalIncompleteExactField(framer, streamID, []byte{0x00, 0x05, 'X', '-', 'B', 'a', 'd', 0x01, 'v'})
 	case "informational-then-data":
 		writeRawInformational(framer, streamID, nil)
 		_ = framer.WriteData(streamID, true, grpcFrame(0, nil))
@@ -1130,7 +1137,9 @@ func rawResponseIncompleteExpectedRst(control string) (http2.ErrCode, bool) {
 		"incomplete-trailer-without-end-stream",
 		"post-informational-incomplete-regular-before-status",
 		"post-informational-incomplete-invalid-before-status",
-		"post-informational-incomplete-empty-name-before-status":
+		"post-informational-incomplete-empty-name-before-status",
+		"post-informational-incomplete-strict-invalid-pseudo-before-status",
+		"post-informational-incomplete-uppercase-regular-before-status":
 		return http2.ErrCodeProtocol, true
 	case "informational-incomplete-entry-budget",
 		"informational-incomplete-invalid-entry-budget",
@@ -1165,12 +1174,11 @@ func writeRawPostInformationalIncompleteFieldBeforeStatus(framer *http2.Framer, 
 	writeRawHeadersWithEndHeaders(framer, streamID, true, false, []hpack.HeaderField{field})
 }
 
-func writeRawPostInformationalIncompleteEmptyNameBeforeStatus(framer *http2.Framer, streamID uint32) {
+func writeRawPostInformationalIncompleteExactField(framer *http2.Framer, streamID uint32, blockFragment []byte) {
 	writeRawInformational(framer, streamID, nil)
-	// Literal without indexing: empty name, value "v".
 	_ = framer.WriteHeaders(http2.HeadersFrameParam{
 		StreamID:      streamID,
-		BlockFragment: []byte{0x00, 0x00, 0x01, 'v'},
+		BlockFragment: blockFragment,
 		EndHeaders:    false,
 		EndStream:     true,
 	})

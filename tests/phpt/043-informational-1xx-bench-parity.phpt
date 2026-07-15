@@ -74,6 +74,8 @@ foreach ([
     ['post-informational-incomplete-regular-before-status', 'incomplete regular-before-status block', 1],
     ['post-informational-incomplete-invalid-before-status', 'incomplete invalid-regular-before-status block', 1],
     ['post-informational-incomplete-empty-name-before-status', 'incomplete empty-name-before-status block', 1],
+    ['post-informational-incomplete-strict-invalid-pseudo-before-status', 'incomplete strict-invalid-pseudo-before-status block', 1],
+    ['post-informational-incomplete-uppercase-regular-before-status', 'incomplete uppercase-regular-before-status block', 1],
     ['informational-incomplete-entry-budget', 'incomplete informational entry budget block', 8],
     ['informational-incomplete-invalid-entry-budget', 'incomplete invalid informational entry budget block', 8],
 ] as [$control, $label, $expectedRstCode]) {
@@ -87,6 +89,10 @@ foreach ([
     if ($control === 'post-informational-incomplete-invalid-before-status'
         || $control === 'post-informational-incomplete-empty-name-before-status') {
         grpc_lite_phpt_assert_same(1, $incomplete['invalid_header_callback_count'], "$label invalid-header callback count");
+    }
+    if ($control === 'post-informational-incomplete-strict-invalid-pseudo-before-status'
+        || $control === 'post-informational-incomplete-uppercase-regular-before-status') {
+        grpc_lite_phpt_assert_same(0, $incomplete['invalid_header_callback_count'], "$label bypasses invalid-header callback");
     }
     if ($control === 'informational-incomplete-invalid-entry-budget') {
         grpc_lite_phpt_assert_same(128, $incomplete['invalid_header_callback_count'], "$label invalid-header callback TEMPORAL cutoff");

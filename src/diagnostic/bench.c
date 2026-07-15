@@ -379,13 +379,18 @@ static int bench_observe_response_status_field(nghttp2_session *session, grpc_ca
 static int bench_on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;
+    grpc_response_header_field_class field_class;
+    grpc_response_header_field_route field_route;
     bool trailing;
     (void) session;
     (void) flags;
     if (frame->hd.stream_id != call->stream_id) {
         return 0;
     }
-    if (frame->hd.type == NGHTTP2_HEADERS) {
+    if (frame->hd.type != NGHTTP2_HEADERS) {
+        return 0;
+    }
+    {
         int rv = grpc_protocol_account_response_header_field(session, call, frame->hd.flags, namelen, valuelen);
         rv = bench_finish_response_header_terminal_action(call, rv);
         if (rv != 0) {
@@ -395,7 +400,24 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
             return 0;
         }
     }
-    if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
+    field_class = grpc_response_header_classify_reported_field(name, namelen, false);
+    field_route = grpc_response_header_route_field(call->response_header_phase.block_phase, field_class);
+    if (field_route == GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR) {
+        return bench_finish_response_header_terminal_action(
+            call,
+            grpc_protocol_handle_response_header_field_route(
+                session,
+                call,
+                frame->hd.flags,
+                field_class,
+                false
+            )
+        );
+    }
+    if (field_route == GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE) {
+        return 0;
+    }
+    if (field_route == GRPC_RESPONSE_HEADER_FIELD_ROUTE_STATUS) {
         char status_buf[16];
         int http_status;
         size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
@@ -426,21 +448,9 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
         }
         return 0;
     }
-    if (call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS) {
-        return bench_finish_response_header_terminal_action(
-            call,
-            grpc_protocol_reject_response_regular_header_before_status(
-                session,
-                call,
-                frame->hd.flags,
-                name,
-                namelen
-            )
-        );
-    }
     if (!call->response_header_block_protocol_valid
         || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_NONE
-        || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL) {
+        || field_route != GRPC_RESPONSE_HEADER_FIELD_ROUTE_PROCESS) {
         return 0;
     }
     trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
@@ -548,12 +558,12 @@ static int bench_on_invalid_header_callback(nghttp2_session *session, const nght
     }
     return bench_finish_response_header_terminal_action(
         call,
-        grpc_protocol_reject_response_regular_header_before_status(
+        grpc_protocol_handle_response_header_field_route(
             session,
             call,
             frame->hd.flags,
-            name,
-            namelen
+            grpc_response_header_classify_reported_field(name, namelen, true),
+            false
         )
     );
 }
@@ -561,15 +571,23 @@ static int bench_on_invalid_header_callback(nghttp2_session *session, const nght
 static int bench_on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
 {
     grpc_call *call = (grpc_call *) user_data;
-    (void) session;
-    (void) lib_error_code;
 
     if (frame->hd.stream_id == call->stream_id && frame->hd.type == NGHTTP2_HEADERS) {
-        if (call->metadata_too_large) {
-            return 0;
+        if (call->metadata_too_large
+            || lib_error_code == NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE) {
+            grpc_protocol_mark_response_header_terminal_action(call, frame->hd.flags);
+            return bench_finish_response_header_terminal_action(call, 0);
         }
-        call->response_header_protocol_error = true;
-        call->discard_response_body = true;
+        return bench_finish_response_header_terminal_action(
+            call,
+            grpc_protocol_handle_response_header_field_route(
+                session,
+                call,
+                frame->hd.flags,
+                GRPC_RESPONSE_HEADER_FIELD_REJECTED,
+                true
+            )
+        );
     }
     return 0;
 }
