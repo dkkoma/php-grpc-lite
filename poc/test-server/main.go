@@ -764,6 +764,12 @@ func handleInformationalAdversarialH2C(conn net.Conn, incompleteRstProbes *incom
 	nextPromisedStreamID := uint32(2)
 	writeResponse := func(streamID uint32, request map[string]string) {
 		control := request["x-bench-raw-response"]
+		if control == "late-incomplete-headers-after-close" {
+			if err := writeRawGrpcOKThenLateIncompleteHeaders(conn, streamID); err != nil {
+				log.Printf("late incomplete HEADERS fixture write failed: %v", err)
+			}
+			return
+		}
 		if control == "require-prior-incomplete-status-cancel" {
 			if incompleteRstProbes.waitAndConsume(request[":authority"]) {
 				writeRawGrpcOK(framer, streamID, false)
@@ -1129,6 +1135,34 @@ func writeRawPostInformationalNonterminalStatusField(framer *http2.Framer, strea
 		{Name: "content-type", Value: "application/grpc"},
 		field,
 	})
+}
+
+func writeRawGrpcOKThenLateIncompleteHeaders(conn net.Conn, streamID uint32) error {
+	var wire bytes.Buffer
+	framer := http2.NewFramer(&wire, nil)
+
+	writeRawInformational(framer, streamID, nil)
+	writeRawGrpcOK(framer, streamID, false)
+	// Literal without indexing: unknown pseudo-header ":foo", value "v".
+	// This HEADERS arrives only after grpc-status: 0 closed the stream, and it
+	// deliberately omits END_HEADERS and the required CONTINUATION.
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: []byte{0x00, 0x04, ':', 'f', 'o', 'o', 0x01, 'v'},
+		EndHeaders:    false,
+		EndStream:     true,
+	}); err != nil {
+		return err
+	}
+	payload := wire.Bytes()
+	written, err := conn.Write(payload)
+	if err != nil {
+		return err
+	}
+	if written != len(payload) {
+		return fmt.Errorf("short same-write response: wrote %d of %d bytes", written, len(payload))
+	}
+	return nil
 }
 
 func rawResponseIncompleteExpectedRst(control string) (http2.ErrCode, bool) {

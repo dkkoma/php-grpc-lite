@@ -68,6 +68,7 @@ size_t remaining_request_bytes(grpc_call *call);
 ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
 void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data);
 int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 void grpc_protocol_mark_response_header_terminal_action(grpc_call *call, uint8_t frame_flags);
 int grpc_protocol_apply_response_header_terminal_action(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, uint32_t error_code);
@@ -432,6 +433,7 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
     nghttp2_session_callbacks_set_send_callback(*callbacks, send_callback);
     nghttp2_session_callbacks_set_send_data_callback(*callbacks, h2_send_data_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(*callbacks, on_data_chunk_recv_callback);
+    nghttp2_session_callbacks_set_on_begin_frame_callback(*callbacks, on_begin_frame_callback);
     nghttp2_session_callbacks_set_on_begin_headers_callback(*callbacks, on_begin_headers_callback);
     nghttp2_session_callbacks_set_on_header_callback(*callbacks, on_header_callback);
     nghttp2_session_callbacks_set_on_invalid_header_callback(*callbacks, on_invalid_header_callback);
@@ -924,6 +926,31 @@ static void mark_connection_close_after_pending_flush(h2_connection *connection)
     connection->draining = true;
     connection->close_after_pending_flush = true;
     set_connection_error_detail(connection, "incomplete HTTP/2 response header block");
+}
+
+int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call;
+    bool has_live_call;
+    (void) session;
+
+    if (connection == NULL || hd == NULL) {
+        return 0;
+    }
+    call = grpc_call_from_stream_id(connection, hd->stream_id);
+    has_live_call = call != NULL && call->stream_registered && !call->stream_closed;
+    if (grpc_inbound_header_frame_requires_connection_terminal(
+            hd->type == NGHTTP2_HEADERS,
+            (hd->flags & NGHTTP2_FLAG_END_HEADERS) != 0,
+            has_live_call)) {
+        /* nghttp2 still exposes the frame header before it suppresses field
+         * callbacks for a closed/foreign stream.  Do not attribute this late
+         * block to current_read_call or submit a stream RST: only connection
+         * lifecycle can recover from its missing CONTINUATION. */
+        mark_connection_close_after_pending_flush(connection);
+    }
+    return 0;
 }
 
 bool connection_usable(h2_connection *connection)

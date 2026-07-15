@@ -29,6 +29,7 @@
 | Classification | Fields | Set by | Status mapping |
 |---|---|---|---|
 | Response header-block phase / field route | `response_header_phase`, `response_header_block_end_stream`, `response_header_block_protocol_valid`, `response_header_block_incomplete` | shared phase / field-class helper、header callbacks、invalid-frame callback | statusへ直接写像しない。informational / final initial / trailingのfield反映境界、unknown-class fail-closed、block-local commit / incomplete lifecycle gateを決める |
+| Unowned incomplete HEADERS | call-local fieldなし。connectionの`close_after_pending_flush`、diagnostic sessionのsticky terminal marker | shared connection-scope frame-start predicate、production / diagnostic `on_begin_frame` | 完了済みcallのstatusへ写像しない。closed / foreign streamの未完了HPACK blockとしてconnectionをterminal化する |
 | Response header protocol error | `response_header_protocol_error` | `grpc_protocol_handle_response_header_field_route()`、invalid-frame callback、final前DATAに対するoutbound protocol-RST observer、stream close fallback | `INTERNAL`。`grpc-status` / HTTP status fallbackより優先 |
 | Deadline exceeded | `timed_out` | send/recv deadline path | `DEADLINE_EXCEEDED` |
 | Invalid gRPC status field | `invalid_grpc_status`, `grpc_status_seen`, `initial_grpc_status_seen`, `initial_headers_end_stream` | `on_header_callback()`, shared response-status-field observer | `UNKNOWN` |
@@ -66,6 +67,7 @@ stream-local failureはconnection failureではない。message size、metadata 
 | Function | Classification responsibility | Transport action in same path |
 |---|---|---|
 | `on_begin_headers_callback()` | shared helperでphaseを開始し、END_STREAMからblock-local validityを決める | なし |
+| `on_begin_frame_callback()` | live callを持たないHEADERS frameのEND_HEADERS completenessをshared pure predicateで判定 | incompleteならcallへ帰属させずconnection close-after-pending-flush actionを設定。active fragmented HEADERSは対象外 |
 | `on_header_callback()` / `on_invalid_header_callback()` | applicationへ公開された全fieldのwire budget計上、shared field-class × phase route、`:status`でのphase確定、valid blockのstatus/metadata/content-type分類 | routeがprotocol rejectionなら `RST_STREAM(PROTOCOL_ERROR)`、wire budget超過またはEND_STREAMなしFINAL_INITIAL status fieldは `RST_STREAM(CANCEL)`。terminal classificationがEND_HEADERS未完了なら共通close-after-pending-flush actionを設定 |
 | invalid-frame / frame-send callback | field callbackを迂回するstrict field rejection、missing `:status` / non-terminal trailersなどのblock-end HTTP messaging rejection、local TEMPORAL stop、final response前DATAに対するlibrary-generated `RST_STREAM(PROTOCOL_ERROR)` をshared classificationへ接続 | HTTP messaging rejectionのRSTはnghttp2 ownershipとして重複submitしない。TEMPORALでは既存taxonomy / selected RSTを維持し、END_HEADERS未完了のlifecycle markだけをidempotentに適用する |
 | `on_frame_recv_callback()` | GOAWAY refusal、RST_STREAM、missing content-type、Trailers-Only misuse、PUSH_PROMISE拒否、phase endの分類 | GOAWAYでdraining化、PUSH_PROMISEで `RST_STREAM(PROTOCOL_ERROR)` |

@@ -331,11 +331,36 @@ static int bench_finish_response_header_terminal_action(grpc_call *call, int cal
      * h2_connection. Preserve the shared incomplete-block classification,
      * but make its best-effort target RST send nonblocking so this disposable
      * session cannot inherit the production path's old unbounded stall. */
-    if (call->response_header_block_incomplete
+    if (call->response_header_block_incomplete) {
+        call->bench.connection_header_block_incomplete = true;
+    }
+    if (call->bench.connection_header_block_incomplete
         && set_fd_nonblocking_mode(call->fd, true) != 0) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     return callback_result;
+}
+
+static int bench_on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data)
+{
+    grpc_call *call = (grpc_call *) user_data;
+    bool has_live_call;
+    (void) session;
+
+    if (call == NULL || hd == NULL) {
+        return 0;
+    }
+    has_live_call = hd->stream_id == call->stream_id && !call->stream_closed;
+    if (grpc_inbound_header_frame_requires_connection_terminal(
+            hd->type == NGHTTP2_HEADERS,
+            (hd->flags & NGHTTP2_FLAG_END_HEADERS) != 0,
+            has_live_call)) {
+        /* The completed call keeps its status. This sticky session marker
+         * prevents a later iteration from entering the poisoned decoder. */
+        call->bench.connection_header_block_incomplete = true;
+        (void) set_fd_nonblocking_mode(call->fd, true);
+    }
+    return 0;
 }
 
 static int bench_on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
@@ -1272,6 +1297,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     size_t recv_buf_len = 16384;
     zend_long ok = 0;
     zend_long failed = 0;
+    zend_long submitted = 0;
     uint64_t total_started;
     uint64_t total_elapsed;
     zval latencies;
@@ -1466,6 +1492,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     }
     nghttp2_session_callbacks_set_send_callback(callbacks, bench_send_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, bench_on_data_chunk_recv_callback);
+    nghttp2_session_callbacks_set_on_begin_frame_callback(callbacks, bench_on_begin_frame_callback);
     nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks, bench_on_begin_headers_callback);
     nghttp2_session_callbacks_set_on_header_callback(callbacks, bench_on_header_callback);
     nghttp2_session_callbacks_set_on_invalid_header_callback(callbacks, bench_on_invalid_header_callback);
@@ -1598,6 +1625,10 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
     total_started = monotonic_us();
 
     for (zend_long i = 0; i < iterations; i++) {
+        if (call.bench.connection_header_block_incomplete) {
+            failed++;
+            break;
+        }
         uint64_t started = monotonic_us();
         call.bench.call_started_us = started;
         call.bench.invalid_header_callback_count = 0;
@@ -1723,6 +1754,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
             failed++;
             break;
         }
+        submitted++;
 
         if (poll_loop) {
             rv = drive_stream_poll(session, &call, recv_buf, recv_buf_len);
@@ -1874,7 +1906,8 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
 
     total_elapsed = monotonic_us() - total_started;
 
-    if (call.response_header_block_incomplete) {
+    if (call.response_header_block_incomplete
+        || call.bench.connection_header_block_incomplete) {
         int fd_flags = fcntl(call.fd, F_GETFL, 0);
         incomplete_header_fd_nonblocking = fd_flags >= 0 && (fd_flags & O_NONBLOCK) != 0;
     }
@@ -1886,8 +1919,10 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
 
     array_init(return_value);
     add_assoc_long(return_value, "iterations", iterations);
+    add_assoc_long(return_value, "submitted", submitted);
     add_assoc_long(return_value, "ok", ok);
     add_assoc_long(return_value, "failed", failed);
+    add_assoc_bool(return_value, "connection_header_block_incomplete", call.bench.connection_header_block_incomplete);
     add_assoc_long(return_value, "total_us", (zend_long) total_elapsed);
     add_assoc_long(return_value, "grpc_status", call.grpc_status);
     add_assoc_long(return_value, "http_status", call.http_status);

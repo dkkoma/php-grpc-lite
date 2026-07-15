@@ -132,6 +132,36 @@ static void test_response_header_budget(void)
     ASSERT_SIZE(SIZE_MAX, bytes);
 }
 
+static void test_unowned_incomplete_headers_connection_terminal(void)
+{
+    static const struct {
+        bool is_headers;
+        bool end_headers;
+        bool has_live_call;
+        bool expected;
+    } cases[] = {
+        {false, false, false, false},
+        {false, false, true, false},
+        {false, true, false, false},
+        {false, true, true, false},
+        {true, false, false, true},
+        {true, false, true, false},
+        {true, true, false, false},
+        {true, true, true, false},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ASSERT_BOOL(
+            cases[i].expected,
+            grpc_inbound_header_frame_requires_connection_terminal(
+                cases[i].is_headers,
+                cases[i].end_headers,
+                cases[i].has_live_call
+            )
+        );
+    }
+}
+
 static void test_authority_identity(void)
 {
     char authority[32];
@@ -203,6 +233,7 @@ int main(void)
 {
     test_effective_limits();
     test_response_header_budget();
+    test_unowned_incomplete_headers_connection_terminal();
     test_authority_identity();
     test_grpc_path_validation();
     test_channel_input_validation();

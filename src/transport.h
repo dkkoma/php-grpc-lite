@@ -120,6 +120,7 @@ ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, u
 int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data);
 void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data);
 int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 void grpc_protocol_mark_response_header_terminal_action(grpc_call *call, uint8_t frame_flags);
 int grpc_protocol_apply_response_header_terminal_action(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, uint32_t error_code);

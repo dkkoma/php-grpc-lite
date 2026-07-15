@@ -48,6 +48,9 @@ typedef struct {
     bool no_copy;
     bool poll_loop;
     bool discard_response_body;
+    /* Connection/session lifecycle marker. Unlike call-local header state,
+     * this remains sticky across iterations in one diagnostic batch. */
+    bool connection_header_block_incomplete;
     bool last_send_wouldblock;
     uint64_t call_started_us;
     uint64_t first_data_sent_us;

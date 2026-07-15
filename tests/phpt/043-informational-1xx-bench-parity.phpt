@@ -36,6 +36,16 @@ $byteReset = $runBatch('valid-informational-byte-iteration-reset', 2);
 grpc_lite_phpt_assert_same(2, $byteReset['ok'], 'byte-counter reset batch ok count');
 grpc_lite_phpt_assert_same(0, $byteReset['failed'], 'byte-counter reset batch failed count');
 
+$lateClosedStream = $runBatch('late-incomplete-headers-after-close', 2);
+grpc_lite_phpt_assert_same(1, $lateClosedStream['ok'], 'late closed-stream batch preserves first OK');
+grpc_lite_phpt_assert_same(1, $lateClosedStream['failed'], 'late closed-stream batch rejects second iteration');
+grpc_lite_phpt_assert_same(1, $lateClosedStream['submitted'], 'late closed-stream batch does not submit second request');
+grpc_lite_phpt_assert_same(true, $lateClosedStream['connection_header_block_incomplete'], 'late closed-stream batch marks session terminal');
+grpc_lite_phpt_assert_same(false, $lateClosedStream['timed_out'], 'late closed-stream batch is not timeout');
+grpc_lite_phpt_assert_same(true, $lateClosedStream['incomplete_header_fd_nonblocking'], 'late closed-stream batch enables finite terminal finish');
+grpc_lite_phpt_assert_same(1, count($lateClosedStream['latencies_us']), 'late closed-stream batch records one completed iteration');
+grpc_lite_phpt_assert_true($lateClosedStream['total_us'] < 500_000, 'late closed-stream batch is finite without timeout');
+
 $nonterminalStatus = $runBatch('post-informational-nonterminal-status');
 grpc_lite_phpt_assert_same(0, $nonterminalStatus['ok'], 'nonterminal grpc-status batch ok count');
 grpc_lite_phpt_assert_same(1, $nonterminalStatus['failed'], 'nonterminal grpc-status batch failed count');

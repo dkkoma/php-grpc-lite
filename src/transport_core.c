@@ -128,6 +128,15 @@ bool grpc_response_header_budget_account_field(size_t *entry_count, size_t *byte
     return true;
 }
 
+bool grpc_inbound_header_frame_requires_connection_terminal(bool is_headers, bool end_headers, bool has_live_call)
+{
+    /* A live call owns its fragmented response block through the semantic
+     * header path.  Without one, nghttp2 may intentionally hide the fields
+     * while still leaving the connection-global HPACK decoder waiting for a
+     * CONTINUATION, so connection lifecycle must fail closed at frame start. */
+    return is_headers && !end_headers && !has_live_call;
+}
+
 bool contains_nul_or_control(const char *value, size_t value_len)
 {
     size_t index;

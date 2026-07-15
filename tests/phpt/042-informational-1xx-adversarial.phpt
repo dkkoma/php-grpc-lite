@@ -218,6 +218,85 @@ grpc_lite_phpt_assert_same(14, $incompleteRstCodes[1] ?? 0, 'incomplete malforme
 grpc_lite_phpt_assert_same(10, $incompleteRstCodes[8] ?? 0, 'incomplete status and budget blocks emit CANCEL');
 grpc_lite_phpt_assert_same(48, $incompleteConnectionPrefaces, 'incomplete blocks quarantine twenty-four connections before follow-up');
 
+$readLateTrace = static function (string $label) use ($traceFile): array {
+    $records = [];
+    foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        $record = json_decode($line, true);
+        grpc_lite_phpt_assert_true(is_array($record), "$label trace line must be JSON object");
+        $records[] = $record;
+    }
+    return $records;
+};
+$assertLateTrace = static function (array $records, string $label, bool $expectUnaryEnd, bool $expectTerminalDestroy): void {
+    $prefaces = 0;
+    $rstFrames = 0;
+    $unaryEnd = null;
+    $connectionDestroys = [];
+    foreach ($records as $record) {
+        if (($record['event'] ?? null) === 'wire.connection_preface') {
+            $prefaces++;
+        }
+        if (($record['event'] ?? null) === 'wire.frame_out'
+            && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+            $rstFrames++;
+        }
+        if (($record['event'] ?? null) === 'rpc.end'
+            && ($record['rpc_kind'] ?? null) === 'unary') {
+            $unaryEnd = $record;
+        }
+        if (($record['event'] ?? null) === 'transport.connection_destroy') {
+            $connectionDestroys[] = $record;
+        }
+    }
+    grpc_lite_phpt_assert_same(1, $prefaces, "$label opens exactly one connection");
+    grpc_lite_phpt_assert_same(0, $rstFrames, "$label does not misattribute a RST_STREAM");
+    if ($expectUnaryEnd) {
+        grpc_lite_phpt_assert_same(false, $unaryEnd['persistent_reused'] ?? null, "$label unary connection is fresh");
+    }
+    if ($expectTerminalDestroy) {
+        grpc_lite_phpt_assert_same(1, count($connectionDestroys), "$label destroys the quarantined connection");
+        grpc_lite_phpt_assert_same(true, $connectionDestroys[0]['dead'] ?? null, "$label destroys a dead connection");
+    } else {
+        grpc_lite_phpt_assert_same(0, count($connectionDestroys), "$label keeps the healthy connection cached");
+    }
+};
+
+$lateUnaryClient = $client();
+file_put_contents($traceFile, '');
+[$lateUnaryResponse, $lateUnaryStatus] = $lateUnaryClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['late-incomplete-headers-after-close'],
+])->wait();
+grpc_lite_phpt_assert_true($lateUnaryResponse instanceof \Helloworld\BenchReply, 'late closed-stream unary target response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $lateUnaryStatus->code, 'late closed-stream unary target keeps OK');
+$assertLateTrace($readLateTrace('late closed-stream unary target'), 'late closed-stream unary target', true, true);
+
+file_put_contents($traceFile, '');
+[$lateUnaryFollowUpResponse, $lateUnaryFollowUpStatus] = $lateUnaryClient->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($lateUnaryFollowUpResponse instanceof \Helloworld\BenchReply, 'late closed-stream unary fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $lateUnaryFollowUpStatus->code, 'late closed-stream unary fresh follow-up status');
+$assertLateTrace($readLateTrace('late closed-stream unary follow-up'), 'late closed-stream unary follow-up', true, false);
+
+$lateStreamClient = $client();
+$lateStreamRequest = new BenchRequest();
+$lateStreamRequest->setMessageCount(1);
+file_put_contents($traceFile, '');
+$lateStreamCall = $lateStreamClient->BenchServerStream($lateStreamRequest, [
+    'x-bench-raw-response' => ['late-incomplete-headers-after-close'],
+]);
+$lateStreamCount = 0;
+foreach ($lateStreamCall->responses() as $_reply) {
+    $lateStreamCount++;
+}
+grpc_lite_phpt_assert_same(1, $lateStreamCount, 'late closed-stream server streaming target message count');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $lateStreamCall->getStatus()->code, 'late closed-stream server streaming target keeps OK');
+$assertLateTrace($readLateTrace('late closed-stream server streaming target'), 'late closed-stream server streaming target', false, true);
+
+file_put_contents($traceFile, '');
+[$lateStreamFollowUpResponse, $lateStreamFollowUpStatus] = $lateStreamClient->BenchUnary(new BenchRequest())->wait();
+grpc_lite_phpt_assert_true($lateStreamFollowUpResponse instanceof \Helloworld\BenchReply, 'late closed-stream streaming-client fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $lateStreamFollowUpStatus->code, 'late closed-stream streaming-client fresh follow-up status');
+$assertLateTrace($readLateTrace('late closed-stream streaming-client follow-up'), 'late closed-stream streaming-client follow-up', true, false);
+
 file_put_contents($traceFile, '');
 $multiplexClient = $client();
 $siblingRequest = new BenchRequest();

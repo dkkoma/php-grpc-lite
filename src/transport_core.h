@@ -33,6 +33,7 @@ size_t h2_write_coalesce_capacity_for_max_frame_size(uint32_t max_frame_size);
 uint32_t effective_http2_max_header_list_size(int64_t configured);
 size_t effective_max_response_metadata_bytes(int64_t soft_limit, int64_t hard_limit);
 bool grpc_response_header_budget_account_field(size_t *entry_count, size_t *bytes, size_t max_bytes, size_t namelen, size_t valuelen);
+bool grpc_inbound_header_frame_requires_connection_terminal(bool is_headers, bool end_headers, bool has_live_call);
 bool contains_nul_or_control(const char *value, size_t value_len);
 bool contains_authority_forbidden_char(const char *value, size_t value_len);
 const char *validate_grpc_path(const char *path, size_t path_len);

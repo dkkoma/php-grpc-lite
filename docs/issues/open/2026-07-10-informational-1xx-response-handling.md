@@ -73,6 +73,9 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: consolidated pass-19のMedium 1件に対し、response field producerを`STATUS` / `REGULAR` / `INVALID_REGULAR` / `REJECTED`へ分類し、`NONE` / `AWAITING_STATUS` / `INFORMATIONAL` / `FINAL_INITIAL` / `TRAILING`とのclosed route tableへ接続した。normal / invalid callbackはshared wire budgetを先に通し、callbackを迂回するstrict rejectionとblock-end rejectionは`REJECTED` default routeからshared incomplete-header terminal actionへ入る。RST submit ownershipとconnection lifecycle markを分離し、nghttp2-owned `PROTOCOL_ERROR`を重複submitしない。
 - 2026-07-15: production / diagnosticへ同じfield classifier / route / incomplete lifecycle markを適用し、strict-invalid pseudo-header `:foo: v`とuppercase regular name `X-Bad: v`のexact HPACK controlsを追加した。C unitはdeclared / unknown field class × 全5 phaseをtable-driveし、PHPT 042は両controlのunary / server streaming、PHPT 043はstrict callback bypassと実fd nonblocking finite finishを固定した。owning design docにはbudget visibility、全route、primary taxonomy、RST ownerを含むexhaustive tableを追加した。
 - 2026-07-15: 初回の全PHPTでinvalid regular fieldのincomplete budget caseが`RESOURCE_EXHAUSTED`から`INTERNAL`へ退行することを検出した。nghttp2はこのinvalid-header stopをinvalid-frame observerへ`HTTP_HEADER`として通知するため、producer-owned分岐は`metadata_too_large`またはlocal TEMPORALの双方を条件とし、budget priorityとgeneral field-route priorityを両立させた。
+- 2026-07-15: pass-21のlate incomplete HEADERS findingを調査し、valid terminal responseでstreamがclose / unregisterされた後はfield callbackとcall-local field-class × phase routeのproducer集合から外れることを確認した。ignored closed / foreign streamのHEADERS frame headerをconnection/session scopeで観測し、END_HEADERS未完了なら完了済みcallのtaxonomyやstream RSTへ触れず、新規admission停止と有限なconnection teardownだけを指示する方針とした。
+- 2026-07-15: pass-21対応としてproduction / diagnosticの`on_begin_frame`をshared pure predicateへ接続した。productionはlive callを持たないincomplete HEADERSをcall pointerなしで既存connection quarantineへ写像し、diagnosticはiteration reset外のsticky session markerから次requestをsubmit前に停止する。same-write raw fixtureとPHPT 042 / 043でunary / server streaming先行callのOK不変、RST誤帰属なし、fresh follow-up、diagnosticの1件目OK / 2件目未submitを固定した。
+- 2026-07-16: pass-21 fixのroutine QA finalizationとしてcurrent working treeをfindingと再照合し、実装、fixture、tests、design / verification資料、review記録に未完了やstaleな記述がないことを確認した。コードの追加修正は行わず、test-server rebuild / recreateと4 suiteの再検証のみ実施した。
 
 ## Verification
 
@@ -143,6 +146,13 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: pass-19最終`docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0）。
 - 2026-07-15: pass-19最終`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
 - 2026-07-15: pass-19 fixのHTTP/2 / gRPC domain model review PASS（初回Low 1件のCANCEL専用commentをpending control frame全般へ修正後、Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-pass19-class-closure-domain-review.md`。
+- 2026-07-15: pass-21 fix後に`docker compose up -d --build --force-recreate test-server`を実行し、same-write late incomplete HEADERS controlを含むtest-server imageのrebuild / restart PASS。
+- 2026-07-15: pass-21 `./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）。PHPT 042でunary / server streamingの先行call exact OK、closed streamへのRST誤帰属なし、同一clientのfresh connection follow-upを、PHPT 043で1件目OK、2件目未submit、timeoutなし有限terminalを確認した。
+- 2026-07-15: pass-21 `./tools/test/check-c-unit.sh` PASS（protocol_core / response_header_phase / status_core / transport_core、4/4群）。unowned incomplete HEADERSのconnection-terminal pure predicate truth tableを含む。
+- 2026-07-15: pass-21 `docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist` PASS（31 tests / 116 assertions、failures 0、errors 0）。
+- 2026-07-15: pass-21 `./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled cppcheck、findings none）。
+- 2026-07-15: pass-21 fixのHTTP/2 / gRPC domain model review PASS（Blocker / High / Medium / Low / Design Decision: none）。記録は`docs/reviews/issues/2026-07-15-pass21-late-closed-stream-domain-review.md`。
+- 2026-07-16: pass-21 finalization再検証として`docker compose up -d --build --force-recreate test-server` PASS、`./tools/test/check-phpt.sh` PASS（29/29 tests、failed 0、skipped 0、warned 0）、`./tools/test/check-c-unit.sh` PASS（4/4群）、PHPUnit PASS（31 tests / 116 assertions）、`./tools/test/check-c-static-analysis.sh` PASS（production / bench-enabled findings none）。既存の2026-07-15検証結果と同じ結果となった。
 
 ## Decision Log
 
@@ -156,6 +166,7 @@ PR #28 の commit `375c3dd` で `expect_final_response` フラグによる frame
 - 2026-07-15: END_HEADERS未完了のinbound HPACK blockはconnection-globalなdecoder同期を失うため、上記draining判断をterminal quarantineへ更新する。GOAWAY drainingはadmit済みstreamの完走を許すが、このcaseは対象CANCELのpending frameをflushした後にdead化し、全ownerの追加I/Oを止める。cache entryの破棄はactive ownerのcleanupへ委ね、send helper内で即時解放しない。
 - 2026-07-15: valid responseで`:status`より前にregular fieldは置けないため、`AWAITING_STATUS`でnormal / invalid regular fieldを観測した時点をresponse-header protocol failureの確定点とする。wire budgetを先に適用してresource taxonomyを優先し、END_HEADERS付きblockはnghttp2の既存block-end rejection、未完了blockはcaller-selected `PROTOCOL_ERROR`を共有terminal actionへ渡す。
 - 2026-07-15: response header notificationのclass closureは、applicationへ公開されたnormal / recoverably-invalid fieldをshared budget ownerの後にclosed field-class × phase tableへ写像し、非公開のstrict field rejectionとblock-end rejectionを`REJECTED` defaultへ写像する構造で守る。unknown classはfail closedする。incomplete HPACK lifecycle markはcall taxonomy / RST code / submit ownerから分離し、client-owned RSTはmark + submit、nghttp2-owned RSTはmarkのみとする。production / diagnosticはclassificationを共有し、connection quarantineとone-shot fd nonblockingというscope別consumerだけを分ける。
+- 2026-07-15: live callを持たないclosed / foreign streamのHEADERSはfield-class × call phase tableへsynthetic rowを追加しない。field notificationより前のHTTP/2 connection/session lifecycleとして`on_begin_frame`で観測し、`HEADERS && !END_HEADERS && !has_live_call`のshared pure predicateからconnection-terminal actionへ写像する。active streamの合法なfragmented HEADERSはcall-local routeをownerとし、late frameを完了済みcall、`current_read_call`、siblingへ帰属させない。
 
 ## Close Criteria
 
