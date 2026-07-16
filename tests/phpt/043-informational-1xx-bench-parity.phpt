@@ -1,0 +1,171 @@
+--TEST--
+bench diagnostic mirrors informational phase, status-field, budget, and stream ownership semantics
+--SKIPIF--
+<?php
+if (!extension_loaded('grpc')) {
+    die('skip grpc extension not loaded');
+}
+require __DIR__ . '/helpers.inc';
+grpc_lite_phpt_skip_if_integration_unavailable([50071]);
+grpc_lite_phpt_skip_if_bench_diagnostics_unavailable();
+?>
+--FILE--
+<?php
+declare(strict_types=1);
+
+require __DIR__ . '/helpers.inc';
+
+$runBatch = static function (string $control, int $iterations = 1, int $timeoutUs = 0): array {
+    return grpc_lite_bench_unary_batch(
+        'test-server',
+        50071,
+        '/helloworld.Greeter/BenchUnary',
+        "\0\0\0\0\0",
+        $iterations,
+        ['x-bench-raw-response' => $control],
+        poll_loop: $timeoutUs > 0,
+        timeout_us: $timeoutUs,
+    );
+};
+
+$entryReset = $runBatch('valid-informational-iteration-reset', 2);
+grpc_lite_phpt_assert_same(2, $entryReset['ok'], 'entry-counter reset batch ok count');
+grpc_lite_phpt_assert_same(0, $entryReset['failed'], 'entry-counter reset batch failed count');
+
+$byteReset = $runBatch('valid-informational-byte-iteration-reset', 2);
+grpc_lite_phpt_assert_same(2, $byteReset['ok'], 'byte-counter reset batch ok count');
+grpc_lite_phpt_assert_same(0, $byteReset['failed'], 'byte-counter reset batch failed count');
+
+$lateClosedStream = $runBatch('late-incomplete-headers-after-close', 2);
+grpc_lite_phpt_assert_same(1, $lateClosedStream['ok'], 'late closed-stream batch preserves first OK');
+grpc_lite_phpt_assert_same(1, $lateClosedStream['failed'], 'late closed-stream batch rejects second iteration');
+grpc_lite_phpt_assert_same(1, $lateClosedStream['submitted'], 'late closed-stream batch does not submit second request');
+grpc_lite_phpt_assert_same(true, $lateClosedStream['connection_header_block_incomplete'], 'late closed-stream batch marks session terminal');
+grpc_lite_phpt_assert_same(false, $lateClosedStream['timed_out'], 'late closed-stream batch is not timeout');
+grpc_lite_phpt_assert_same(true, $lateClosedStream['incomplete_header_fd_nonblocking'], 'late closed-stream batch enables finite terminal finish');
+grpc_lite_phpt_assert_same(1, count($lateClosedStream['latencies_us']), 'late closed-stream batch records one completed iteration');
+grpc_lite_phpt_assert_true($lateClosedStream['total_us'] < 500_000, 'late closed-stream batch is finite without timeout');
+
+$liveAbandonment = $runBatch('live-incomplete-informational-deadline', timeoutUs: 300_000);
+grpc_lite_phpt_assert_same(0, $liveAbandonment['ok'], 'live incomplete block deadline batch ok count');
+grpc_lite_phpt_assert_same(1, $liveAbandonment['failed'], 'live incomplete block deadline batch failed count');
+grpc_lite_phpt_assert_same(1, $liveAbandonment['submitted'], 'live incomplete block deadline batch submitted count');
+grpc_lite_phpt_assert_same(true, $liveAbandonment['timed_out'], 'live incomplete block diagnostic records deadline');
+grpc_lite_phpt_assert_same(8, $liveAbandonment['stream_error_code'], 'live incomplete block diagnostic sends CANCEL');
+grpc_lite_phpt_assert_same(true, $liveAbandonment['connection_header_block_incomplete'], 'live incomplete block diagnostic marks session terminal');
+grpc_lite_phpt_assert_same(true, $liveAbandonment['incomplete_header_fd_nonblocking'], 'live incomplete block diagnostic enables finite terminal finish');
+grpc_lite_phpt_assert_true($liveAbandonment['total_us'] < 1_000_000, 'live incomplete block deadline batch is finite');
+
+$partialFrameAbandonment = $runBatch('partial-headers-payload-deadline', timeoutUs: 300_000);
+grpc_lite_phpt_assert_same(0, $partialFrameAbandonment['ok'], 'partial HEADERS payload deadline batch ok count');
+grpc_lite_phpt_assert_same(1, $partialFrameAbandonment['failed'], 'partial HEADERS payload deadline batch failed count');
+grpc_lite_phpt_assert_same(1, $partialFrameAbandonment['submitted'], 'partial HEADERS payload deadline batch submitted count');
+grpc_lite_phpt_assert_same(true, $partialFrameAbandonment['timed_out'], 'partial HEADERS payload diagnostic records deadline');
+grpc_lite_phpt_assert_same(-1, $partialFrameAbandonment['http_status'], 'partial HEADERS payload diagnostic invokes no status-field callback');
+grpc_lite_phpt_assert_same(8, $partialFrameAbandonment['stream_error_code'], 'partial HEADERS payload diagnostic sends CANCEL');
+grpc_lite_phpt_assert_same(true, $partialFrameAbandonment['connection_header_block_incomplete'], 'partial HEADERS payload diagnostic marks session terminal');
+grpc_lite_phpt_assert_same(true, $partialFrameAbandonment['incomplete_header_fd_nonblocking'], 'partial HEADERS payload diagnostic enables finite terminal finish');
+grpc_lite_phpt_assert_true($partialFrameAbandonment['total_us'] < 1_000_000, 'partial HEADERS payload deadline batch is finite');
+
+$cleanBoundaryAbandonment = $runBatch('clean-headers-boundary-deadline', timeoutUs: 300_000);
+grpc_lite_phpt_assert_same(0, $cleanBoundaryAbandonment['ok'], 'clean HEADERS boundary deadline batch ok count');
+grpc_lite_phpt_assert_same(1, $cleanBoundaryAbandonment['failed'], 'clean HEADERS boundary deadline batch failed count');
+grpc_lite_phpt_assert_same(1, $cleanBoundaryAbandonment['submitted'], 'clean HEADERS boundary deadline batch submitted count');
+grpc_lite_phpt_assert_same(true, $cleanBoundaryAbandonment['timed_out'], 'clean HEADERS boundary diagnostic records deadline');
+grpc_lite_phpt_assert_same(200, $cleanBoundaryAbandonment['http_status'], 'clean HEADERS boundary diagnostic completes response status callback');
+grpc_lite_phpt_assert_same(8, $cleanBoundaryAbandonment['stream_error_code'], 'clean HEADERS boundary diagnostic sends CANCEL');
+grpc_lite_phpt_assert_same(false, $cleanBoundaryAbandonment['connection_header_block_incomplete'], 'clean HEADERS boundary diagnostic keeps session reusable');
+grpc_lite_phpt_assert_same(false, $cleanBoundaryAbandonment['incomplete_header_fd_nonblocking'], 'clean HEADERS boundary diagnostic does not enter incomplete-header terminal finish');
+grpc_lite_phpt_assert_true($cleanBoundaryAbandonment['total_us'] < 1_000_000, 'clean HEADERS boundary deadline batch is finite');
+
+$nonterminalStatus = $runBatch('post-informational-nonterminal-status');
+grpc_lite_phpt_assert_same(0, $nonterminalStatus['ok'], 'nonterminal grpc-status batch ok count');
+grpc_lite_phpt_assert_same(1, $nonterminalStatus['failed'], 'nonterminal grpc-status batch failed count');
+
+$nonterminalDetails = $runBatch('post-informational-nonterminal-status-details');
+grpc_lite_phpt_assert_same(0, $nonterminalDetails['ok'], 'nonterminal grpc-status-details-bin batch ok count');
+grpc_lite_phpt_assert_same(1, $nonterminalDetails['failed'], 'nonterminal grpc-status-details-bin batch failed count');
+
+foreach ([
+    'post-informational-silent-grpc-status' => 'silent nonterminal grpc-status',
+    'post-informational-silent-grpc-message' => 'silent nonterminal grpc-message',
+    'post-informational-silent-status-details' => 'silent nonterminal grpc-status-details-bin',
+] as $control => $label) {
+    $silentStatus = $runBatch($control, timeoutUs: 2_000_000);
+    grpc_lite_phpt_assert_same(0, $silentStatus['ok'], "$label batch ok count");
+    grpc_lite_phpt_assert_same(1, $silentStatus['failed'], "$label batch failed count");
+    grpc_lite_phpt_assert_same(false, $silentStatus['timed_out'], "$label batch is not timeout");
+    grpc_lite_phpt_assert_same(8, $silentStatus['stream_error_code'], "$label RST_STREAM code");
+}
+
+foreach ([
+    'post-informational-incomplete-grpc-status' => 'incomplete grpc-status block',
+    'post-informational-incomplete-grpc-message' => 'incomplete grpc-message block',
+    'post-informational-incomplete-status-details' => 'incomplete grpc-status-details-bin block',
+] as $control => $label) {
+    $incompleteStatus = $runBatch($control);
+    grpc_lite_phpt_assert_same(0, $incompleteStatus['ok'], "$label batch ok count");
+    grpc_lite_phpt_assert_same(1, $incompleteStatus['failed'], "$label batch failed count");
+    grpc_lite_phpt_assert_same(false, $incompleteStatus['timed_out'], "$label batch is not timeout");
+    grpc_lite_phpt_assert_same(8, $incompleteStatus['stream_error_code'], "$label RST_STREAM code");
+}
+
+foreach ([
+    ['incomplete-informational-end-stream', 'incomplete 103 END_STREAM block', 1],
+    ['incomplete-trailer-without-end-stream', 'incomplete nonterminal trailer block', 1],
+    ['post-informational-incomplete-regular-before-status', 'incomplete regular-before-status block', 1],
+    ['post-informational-incomplete-invalid-before-status', 'incomplete invalid-regular-before-status block', 1],
+    ['post-informational-incomplete-empty-name-before-status', 'incomplete empty-name-before-status block', 1],
+    ['post-informational-incomplete-strict-invalid-pseudo-before-status', 'incomplete strict-invalid-pseudo-before-status block', 1],
+    ['post-informational-incomplete-uppercase-regular-before-status', 'incomplete uppercase-regular-before-status block', 1],
+    ['informational-incomplete-entry-budget', 'incomplete informational entry budget block', 8],
+    ['informational-incomplete-invalid-entry-budget', 'incomplete invalid informational entry budget block', 8],
+] as [$control, $label, $expectedRstCode]) {
+    $incomplete = $runBatch($control);
+    grpc_lite_phpt_assert_same(0, $incomplete['ok'], "$label batch ok count");
+    grpc_lite_phpt_assert_same(1, $incomplete['failed'], "$label batch failed count");
+    grpc_lite_phpt_assert_same(false, $incomplete['timed_out'], "$label batch is not timeout");
+    grpc_lite_phpt_assert_same($expectedRstCode, $incomplete['stream_error_code'], "$label RST_STREAM code");
+    grpc_lite_phpt_assert_same(true, $incomplete['incomplete_header_fd_nonblocking'], "$label enables nonblocking terminal finish");
+    grpc_lite_phpt_assert_true($incomplete['total_us'] < 500_000, "$label batch is finite without poll timeout");
+    if ($control === 'post-informational-incomplete-invalid-before-status'
+        || $control === 'post-informational-incomplete-empty-name-before-status') {
+        grpc_lite_phpt_assert_same(1, $incomplete['invalid_header_callback_count'], "$label invalid-header callback count");
+    }
+    if ($control === 'post-informational-incomplete-strict-invalid-pseudo-before-status'
+        || $control === 'post-informational-incomplete-uppercase-regular-before-status') {
+        grpc_lite_phpt_assert_same(0, $incomplete['invalid_header_callback_count'], "$label bypasses invalid-header callback");
+    }
+    if ($control === 'informational-incomplete-invalid-entry-budget') {
+        grpc_lite_phpt_assert_same(128, $incomplete['invalid_header_callback_count'], "$label invalid-header callback TEMPORAL cutoff");
+    }
+}
+
+$entryBudget = $runBatch('informational-entry-budget', timeoutUs: 2_000_000);
+grpc_lite_phpt_assert_same(0, $entryBudget['ok'], 'informational entry budget batch ok count');
+grpc_lite_phpt_assert_same(1, $entryBudget['failed'], 'informational entry budget batch failed count');
+grpc_lite_phpt_assert_same(false, $entryBudget['timed_out'], 'informational entry budget is not timeout');
+grpc_lite_phpt_assert_same(8, $entryBudget['stream_error_code'], 'informational entry budget RST_STREAM code');
+
+$byteBudget = $runBatch('informational-default-byte-budget', timeoutUs: 2_000_000);
+grpc_lite_phpt_assert_same(0, $byteBudget['ok'], 'informational byte budget batch ok count');
+grpc_lite_phpt_assert_same(1, $byteBudget['failed'], 'informational byte budget batch failed count');
+grpc_lite_phpt_assert_same(false, $byteBudget['timed_out'], 'informational byte budget is not timeout');
+grpc_lite_phpt_assert_same(8, $byteBudget['stream_error_code'], 'informational byte budget RST_STREAM code');
+
+$invalidEntryBudget = $runBatch('informational-invalid-entry-budget', timeoutUs: 2_000_000);
+grpc_lite_phpt_assert_same(0, $invalidEntryBudget['ok'], 'invalid regular entry budget batch ok count');
+grpc_lite_phpt_assert_same(1, $invalidEntryBudget['failed'], 'invalid regular entry budget batch failed count');
+grpc_lite_phpt_assert_same(false, $invalidEntryBudget['timed_out'], 'invalid regular entry budget is not timeout');
+grpc_lite_phpt_assert_same(8, $invalidEntryBudget['stream_error_code'], 'invalid regular entry budget RST_STREAM code');
+grpc_lite_phpt_assert_same(128, $invalidEntryBudget['invalid_header_callback_count'], 'diagnostic invalid-header callback TEMPORAL cutoff');
+
+$foreignPushedReset = $runBatch('foreign-pushed-stream-protocol-rst', timeoutUs: 2_000_000);
+grpc_lite_phpt_assert_same(1, $foreignPushedReset['ok'], 'foreign pushed-stream RST batch ok count');
+grpc_lite_phpt_assert_same(0, $foreignPushedReset['failed'], 'foreign pushed-stream RST batch failed count');
+grpc_lite_phpt_assert_same(0, $foreignPushedReset['stream_error_code'], 'foreign pushed-stream RST does not alter main stream code');
+
+echo "OK\n";
+?>
+--EXPECT--
+OK

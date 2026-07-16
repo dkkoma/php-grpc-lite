@@ -227,17 +227,37 @@ unaryは `RECV_STATUS` を含むbatchで `grpc_lite_unary_call_perform_on_connec
 - request header validation/filtering
 - `*-bin` request metadataのbase64 wire encoding
 - response `*-bin` metadataのbase64 decode
+- response header blockのsemantic phase分類と1xx informational fieldの隔離
 - gRPC 5B frame parse/build
 - deadlineをconnect、TLS handshake、read/write poll loopへ適用
 - client receive stream / connection windowを8MiBに広げ、large responseでWINDOW_UPDATE待ちを減らす
 - response size / metadata size上限
 - GOAWAY / EOF / RST_STREAM / protocol failure時のHTTP/2 connection lifecycle管理
 
-protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。connection自体がdead/drainingでなければpersistent cacheには残します。
+protocol failure、compression unsupported、invalid content-type、invalid grpc-status、message size exceedなどはstream-local failureとしてstatusへ変換し、該当streamへ `RST_STREAM` を送ります。特にEND_STREAMなし `FINAL_INITIAL` のstatus fieldはfield callback時点で `UNKNOWN` と `RST_STREAM(CANCEL)` へ確定し、header block完了を待ちません。call abandonment後にconnectionを再利用できるのは、receive sideがclean frame boundaryにあり、HEADERS / CONTINUATION blockも継続していない場合だけです。partial frame header、partial HEADERS payload、CONTINUATION待ちのいずれもconnection/session-scoped byte trackerから同じterminal actionへ入り、CANCELのpending frameをflushしてからconnectionをdeadへ移します。既存siblingは追加I/Oなしで `UNAVAILABLE`、follow-upはfresh connectionを使います。callのstatusとtarget RST codeはそのabandonment pathのまま維持し、fatal I/O / nghttp2 errorではconnectionが先にdeadとなって後続のunregister / owner clearはlocal bookkeepingだけを行います。
 
 1 RPC over 1 HTTP/2 stream の交換状態は `src/grpc_exchange_state.h` の `grpc_call` にまとまっています。fieldの責務、lifetime、hot/cold性は `docs/design/grpc-call-exchange-state.md` に整理しています。wrapper / orchestrationが返す小さな結果DTOは `src/grpc_result.h`、bench build専用の観測field群は `src/diagnostic/bench_call.h` です。
 
 `src/transport.h` は現時点ではHTTP/2 transportのprivate aggregate headerです。connection、persistent cache、nghttp2 callback、request header builder、response parser、server streaming resource stateなどのboundaryと将来の分割順は `docs/design/transport-header-boundaries.md` に整理しています。
+
+### Response HEADERS blockの読み方
+
+nghttp2の `NGHTTP2_HCAT_RESPONSE` / `NGHTTP2_HCAT_HEADERS` は、そのままgRPCのinitial / trailing metadata ownershipを表しません。最初のresponse HEADERSが1xxの場合、後続の1xxとfinal response HEADERSはいずれも `HCAT_HEADERS` で届きます。
+
+transportは1 RPCごとのheader-block phaseを次の順序で確定します。
+
+1. `on_begin_headers_callback()` はshared pure helperで、final response未観測なら `GRPC_RESPONSE_HEADER_BLOCK_AWAITING_STATUS`、観測済みなら `GRPC_RESPONSE_HEADER_BLOCK_TRAILING` を `response_header_phase.block_phase` に設定し、blockのEND_STREAM validityも記録する。
+2. `on_header_callback()` / `on_invalid_header_callback()` へ公開されたfieldをwire budgetへ計上し、shared pure helperで `STATUS` / `REGULAR` / `INVALID_REGULAR` / `REJECTED` に分類してcurrent phaseとのclosed tableからrouteを決める。未知classもdefaultでprotocol rejectionになる。
+3. `AWAITING_STATUS` blockの先頭の`:status`が100–199なら `GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL`、非1xxなら `GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL` とし、後者では `final_response_headers_seen` を設定する。`AWAITING_STATUS` のregular fieldやmisplaced pseudo-headerは後続`:status`を合法に置けないため即時にprotocol errorとする。
+4. `INFORMATIONAL` fieldはsemantic stateへ反映せず、`FINAL_INITIAL` のcustom metadataはinitial metadataへ保存してinitial response validationを適用する。これは1xx後に `HCAT_HEADERS` で届いたfinal responseにも同じく適用する。
+5. final response確定後のheader blockは `TRAILING` とし、custom metadataとgRPC statusをtrailing側で処理する。
+6. nghttp2がstrict field rejectionしてfield callbackを迂回した場合、またはmissing `:status` / non-terminal trailersをblock-endでrejectした場合は、`on_invalid_frame_recv_callback()` が `REJECTED` default routeへ接続する。RSTはnghttp2 ownershipなので再submitせず、END_HEADERS未完了ならshared lifecycle markだけでconnectionをterminal化する。local `NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE` 後に同observerへ戻った場合は、budget failureなどproducerのtaxonomyとselected RSTを維持する。
+
+stream close / unregister後やforeign streamのHEADERSはlive `grpc_call`がないため、この6段階のfield routingには入らない。`on_begin_frame_callback()` がfield decodeより前にshared connection-scope predicateを適用し、END_HEADERS未完了なら完了済みcallやsiblingへ帰属させずconnectionだけをterminal化する。active streamのfield semanticsはcall-local phaseが所有するが、connection reuse可否は下記byte-level stateが所有する。
+
+`grpc_h2_receive_boundary_state` はnghttp2が正常にconsumeしたraw bytesから9-byte frame header、frame payload残量、HEADERS / CONTINUATION block継続をsession lifetimeで追跡します。normal receive、persistent preflight drain、diagnostic poll / blocking receiveの全 `nghttp2_session_mem_recv()` 経路が同じpure trackerを更新します。deadline、明示cancel、resource destructorが収束する `cancel_grpc_call_stream()` と、DATA callback内でstream-local semantic errorのRSTをsubmitする共通helperは、`grpc_h2_receive_allows_reuse_after_abandonment()` をreuse gateとして確認し、falseならconnection lifecycleへhandoffします。さらにinactive persistent preflightはdrain完了後・新規stream admit前に同じpredicateを再確認し、preflight自身がpartial frame header / payloadを残した場合もfresh connectionへfallbackします。これにより `on_begin_headers_callback()` 前のpartial HEADERS payload、phase開始後のfragmented block、partial DATA callback、遅着frame header prefixを同じ構造で覆います。productionはpending target RST/controlの有限flush後にpersistent connectionをdead化し、raw diagnosticはiteration reset外の同じtrackerをsession-terminal markerとfinite nonblocking teardownへ写像します。
+
+phaseは各fieldをmetadata / validation / status stateへ反映する前に確定します。`INFORMATIONAL` blockはPHP-visible metadata、`http_status`、`content-type`、`grpc-status`、`grpc-message`、`grpc-encoding`を更新しませんが、application callbackへ公開されたpseudo-headerを含む全fieldは `wire_response_header_*` budgetに計上します。strict rejectされたfieldはname / valueが公開されないため計上対象外ですが、fail-closed routeから外れません。`grpc_response_header_phase_allows_status_fields()` はFINAL_INITIAL / TRAILINGのEND_STREAM付きblockだけstatus commitを認め、`grpc_response_header_phase_metadata_is_trailing()` はstatus parse成否ではなくblock roleでownershipを揃えます。nghttp2のinvalid-frame / protocol-RST callbackで拒否を観測した場合は `response_header_protocol_error` が先行statusやHTTP fallbackより優先します。phase遷移、field class × phase route、unknown-class default、commit/ownership truth table、call resetは `tests/unit/test_response_header_phase.c`、wire semanticsとproduction / diagnostic parityはPHPTで固定します。
 
 ## 7. persistent connection
 
@@ -245,7 +265,7 @@ connection cacheはprocess-localです。FPMでは同一worker process内のrequ
 
 `Grpc\Channel` はtarget、credentials、channel optionsから再利用keyを作るidentity元です。cache entryはこのidentityと `h2_connection` を束ね、`h2_connection` はsocket/TLS/nghttp2 sessionなどwire transport状態だけを持ちます。
 
-再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。connectionがdead/draining、またはcache entryのidentity mismatchの場合はcacheから外し、次RPCで新規接続します。cache entry数は128(`GRPC_LITE_MAX_PERSISTENT_CONNECTIONS`)が上限で、満杯時に新規接続が必要なRPCはエラーになります。active streamが残っていても、HTTP/2 stream idごとにdispatchできるため同じconnection上へ新しいstreamを作れます。
+再利用keyにはhost、port、authority、TLS verify name、credentials種別と証明書情報が入ります。connectionがdead/draining、またはcache entryのidentity mismatchの場合はcacheから外し、次RPCで新規接続します。call abandonment直後だけでなくinactive preflight drain後も、key一致やsocket usabilityに加えてreceive sideがclean frame boundaryかつheader block非継続であることを確認します。cache entry数は128(`GRPC_LITE_MAX_PERSISTENT_CONNECTIONS`)が上限で、満杯時に新規接続が必要なRPCはエラーになります。active streamが残っていても、HTTP/2 stream idごとにdispatchできるため同じconnection上へ新しいstreamを作れます。
 
 ## 8. 主要テスト
 
@@ -273,4 +293,4 @@ docker compose run --rm dev sh -lc 'make -j$(nproc)'
 docker compose run --rm dev php -d extension=/workspace/modules/grpc.so vendor/bin/phpunit -c tests/phpunit.xml.dist
 ```
 
-`check-c-unit.sh` は pure protocol helperとstatus taxonomyだけを直接検証します。`check-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw lifecycle fixture `:50055`〜`:50065` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-c-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/c-lcov/` にtraceとHTMLを出力します。
+`check-c-unit.sh` は pure protocol helperとstatus taxonomyだけを直接検証します。`check-phpt.sh` は `vendor/autoload.php` と Go test-server `:50051`〜`:50054`、raw HTTP/2 fixture `:50055`〜`:50071` をpreflightで必須にします。PHPT単体にはskip条件を残していますが、標準runnerでは必要serviceが欠ける場合は失敗として扱います。`check-c-coverage.sh` はC unitとPHPT gateをgcov/lcov付きで実行し、`var/coverage/c-lcov/` にtraceとHTMLを出力します。

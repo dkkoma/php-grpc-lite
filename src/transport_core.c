@@ -109,6 +109,109 @@ size_t effective_max_response_metadata_bytes(int64_t soft_limit, int64_t hard_li
     return GRPC_LITE_DEFAULT_RESPONSE_METADATA_BYTES;
 }
 
+bool grpc_response_header_budget_account_field(size_t *entry_count, size_t *bytes, size_t max_bytes, size_t namelen, size_t valuelen)
+{
+    size_t field_bytes;
+
+    if (namelen > SIZE_MAX - valuelen) {
+        return false;
+    }
+    field_bytes = namelen + valuelen;
+    if (*entry_count >= GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES
+        || field_bytes > max_bytes
+        || *bytes > max_bytes - field_bytes) {
+        return false;
+    }
+
+    (*entry_count)++;
+    *bytes += field_bytes;
+    return true;
+}
+
+#define GRPC_LITE_HTTP2_FRAME_TYPE_HEADERS 0x1
+#define GRPC_LITE_HTTP2_FRAME_TYPE_CONTINUATION 0x9
+#define GRPC_LITE_HTTP2_FLAG_END_HEADERS 0x4
+
+static void grpc_h2_receive_boundary_complete_frame(grpc_h2_receive_boundary_state *state)
+{
+    bool end_headers = (state->frame_flags & GRPC_LITE_HTTP2_FLAG_END_HEADERS) != 0;
+
+    if (state->frame_type == GRPC_LITE_HTTP2_FRAME_TYPE_HEADERS) {
+        state->header_block_in_flight = !end_headers;
+    } else if (state->frame_type == GRPC_LITE_HTTP2_FRAME_TYPE_CONTINUATION
+        && state->header_block_in_flight
+        && end_headers) {
+        state->header_block_in_flight = false;
+    }
+
+    state->frame_payload_remaining = 0;
+    state->frame_type = 0;
+    state->frame_flags = 0;
+}
+
+void grpc_h2_receive_boundary_state_reset(grpc_h2_receive_boundary_state *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
+}
+
+void grpc_h2_receive_boundary_state_consume(grpc_h2_receive_boundary_state *state, const uint8_t *data, size_t len)
+{
+    if (state == NULL || data == NULL) {
+        return;
+    }
+
+    while (len > 0) {
+        if (state->frame_payload_remaining > 0) {
+            size_t consumed = len < state->frame_payload_remaining
+                ? len
+                : (size_t) state->frame_payload_remaining;
+            state->frame_payload_remaining -= (uint32_t) consumed;
+            data += consumed;
+            len -= consumed;
+            if (state->frame_payload_remaining == 0) {
+                grpc_h2_receive_boundary_complete_frame(state);
+            }
+            continue;
+        }
+
+        if (state->frame_header_bytes < GRPC_LITE_HTTP2_FRAME_HEADER_SIZE) {
+            size_t needed = GRPC_LITE_HTTP2_FRAME_HEADER_SIZE - state->frame_header_bytes;
+            size_t consumed = len < needed ? len : needed;
+            memcpy(state->frame_header + state->frame_header_bytes, data, consumed);
+            state->frame_header_bytes += consumed;
+            data += consumed;
+            len -= consumed;
+            if (state->frame_header_bytes < GRPC_LITE_HTTP2_FRAME_HEADER_SIZE) {
+                continue;
+            }
+
+            state->frame_payload_remaining = ((uint32_t) state->frame_header[0] << 16)
+                | ((uint32_t) state->frame_header[1] << 8)
+                | (uint32_t) state->frame_header[2];
+            state->frame_type = state->frame_header[3];
+            state->frame_flags = state->frame_header[4];
+            state->frame_header_bytes = 0;
+            if (state->frame_payload_remaining == 0) {
+                grpc_h2_receive_boundary_complete_frame(state);
+            }
+        }
+    }
+}
+
+bool grpc_h2_receive_allows_reuse_after_abandonment(const grpc_h2_receive_boundary_state *state)
+{
+    /* A call may leave its connection reusable only when the receive parser
+     * is between complete frames and is not waiting for continuation of an
+     * inbound response header block. This byte-level invariant also covers
+     * states before nghttp2 can emit any semantic header callback. */
+    return state != NULL
+        && state->frame_header_bytes == 0
+        && state->frame_payload_remaining == 0
+        && !state->header_block_in_flight;
+}
+
 bool contains_nul_or_control(const char *value, size_t value_len)
 {
     size_t index;

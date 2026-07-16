@@ -46,6 +46,7 @@ ssize_t connection_send(grpc_call *call, const uint8_t *data, size_t length);
 static ssize_t h2_connection_send(h2_connection *connection, const uint8_t *data, size_t length, uint64_t deadline_abs_us, bool *timed_out);
 ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length, uint64_t deadline_abs_us);
 int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us);
+int flush_terminal_quarantine(h2_connection *connection, grpc_call *call);
 h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message);
 h2_connection *get_persistent_connection(const char *key, size_t key_len, const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, bool *persistent_reused, const char **error_message);
 void discard_persistent_connection(const char *key, size_t key_len, h2_connection *connection);
@@ -61,14 +62,25 @@ static void grpc_lite_trace_open_and_lock(FILE **fp);
 static void grpc_lite_trace_unlock_and_close(FILE *fp);
 static void grpc_lite_trace_outbound_frame(h2_connection *connection, const uint8_t *data, size_t length);
 static void grpc_lite_trace_inbound_frame(h2_connection *connection, const nghttp2_frame *frame);
+static void mark_connection_close_after_pending_flush(h2_connection *connection);
 ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t length, int flags, void *user_data);
 int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame, const uint8_t *framehd, size_t length, nghttp2_data_source *source, void *user_data);
 size_t remaining_request_bytes(grpc_call *call);
 ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data);
 void grpc_protocol_set_message_header(grpc_call *call, size_t payload_len);
 int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data);
+int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data);
+int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
+void grpc_protocol_mark_response_header_terminal_action(grpc_call *call);
+void grpc_protocol_finish_rejected_response_header_block(grpc_call *call, uint8_t frame_flags);
+int grpc_protocol_apply_response_header_terminal_action(nghttp2_session *session, grpc_call *call, uint32_t error_code);
+int grpc_protocol_handle_response_header_field_route(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, grpc_response_header_field_class field_class, bool rejection_owned_by_nghttp2);
+int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, size_t namelen, size_t valuelen);
 int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
+int on_invalid_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data);
+int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data);
 int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data);
+int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
 uint64_t monotonic_us(void);
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
@@ -324,19 +336,22 @@ void clear_connection_call_owner(h2_connection *connection, grpc_call *call)
     call->connection_owned = false;
 }
 
-/* Close one stream with RST_STREAM so the connection itself stays reusable
- * (deadline expiry and user cancellation are stream-scoped per
- * PROTOCOL-HTTP2.md; only connection-level failures kill the connection).
+/* Close one stream with RST_STREAM so the connection itself normally stays
+ * reusable (deadline expiry and user cancellation are stream-scoped per
+ * PROTOCOL-HTTP2.md). Reuse after abandonment additionally requires the
+ * connection-scoped receive parser to be at a clean frame boundary with no
+ * response header block in flight.
  * The call's own deadline has typically already expired when this runs, so
  * the flush gets its own short grace deadline instead of the call deadline.
  * The grace bounds the flush of ALL pending session frames (the RST plus any
  * queued WINDOW_UPDATE / SETTINGS ack / sendable DATA of other streams), not
  * just the 13-byte RST; exceeding it marks the connection dead inside
  * send_pending_h2_frames_with_deadline, which degrades to the pre-change
- * behaviour (connection teardown). Bytes the server already sent for the
- * cancelled stream stay harmless: nghttp2 ignores frames for reset streams
- * while keeping flow-control accounting and HPACK state in sync, and the
- * persistent preflight drain consumes bytes already pending at adoption. */
+ * behaviour (connection teardown). Complete frames the server already sent
+ * for the cancelled stream stay harmless: nghttp2 ignores them while keeping
+ * flow-control accounting and HPACK state in sync, and the persistent
+ * preflight drain consumes bytes already pending at adoption. A partial frame
+ * boundary remains connection-terminal. */
 void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
 {
     h2_connection *connection;
@@ -356,6 +371,13 @@ void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
     if (connection == NULL || !connection_io_allowed(connection) || call->stream_id <= 0 || call->stream_closed) {
         return;
     }
+    /* This is the common local-abandonment seam for deadline, explicit cancel,
+     * resource destruction, and semantic-error teardown. The byte-level
+     * connection invariant owns reuse; call-local response phase is not an
+     * independent gate. */
+    if (!grpc_h2_receive_allows_reuse_after_abandonment(&connection->receive_boundary)) {
+        mark_connection_close_after_pending_flush(connection);
+    }
     call->locally_cancelled = true;
     if (grpc_lite_test_fault_enabled("rst-submit-fatal")) {
         rv = NGHTTP2_ERR_NOMEM;
@@ -367,7 +389,7 @@ void cancel_grpc_call_stream(grpc_call *call, uint32_t error_code)
         return;
     }
     rv = send_pending_h2_frames_with_deadline(connection, NULL, monotonic_us() + GRPC_LITE_CANCEL_RST_WRITE_GRACE_US);
-    if (rv == 0) {
+    if (rv == 0 && !connection->dead) {
         /* The stream failure (e.g. deadline expiry) was already recorded on
          * the call; wipe the connection-scoped copy so a later call on this
          * kept connection cannot inherit "HTTP/2 transport deadline exceeded"
@@ -423,8 +445,13 @@ int configure_callbacks(nghttp2_session_callbacks **callbacks)
     nghttp2_session_callbacks_set_send_callback(*callbacks, send_callback);
     nghttp2_session_callbacks_set_send_data_callback(*callbacks, h2_send_data_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(*callbacks, on_data_chunk_recv_callback);
+    nghttp2_session_callbacks_set_on_begin_frame_callback(*callbacks, on_begin_frame_callback);
+    nghttp2_session_callbacks_set_on_begin_headers_callback(*callbacks, on_begin_headers_callback);
     nghttp2_session_callbacks_set_on_header_callback(*callbacks, on_header_callback);
+    nghttp2_session_callbacks_set_on_invalid_header_callback(*callbacks, on_invalid_header_callback);
+    nghttp2_session_callbacks_set_on_invalid_frame_recv_callback(*callbacks, on_invalid_frame_recv_callback);
     nghttp2_session_callbacks_set_on_stream_close_callback(*callbacks, on_stream_close_callback);
+    nghttp2_session_callbacks_set_on_frame_send_callback(*callbacks, on_frame_send_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(*callbacks, on_frame_recv_callback);
     return 0;
 }
@@ -844,6 +871,23 @@ void grpc_lite_trace_request_headers(grpc_call *call, const nghttp2_nv *headers,
     grpc_lite_trace_unlock_and_close(fp);
 }
 
+static void grpc_lite_trace_response_invalid_header(grpc_call *call)
+{
+    FILE *fp;
+
+    grpc_lite_trace_open_and_lock(&fp);
+    if (fp == NULL) {
+        return;
+    }
+    fprintf(fp, "{\"monotonic_us\":%" PRIu64 ",\"pid\":%ld,\"event\":\"wire.response_invalid_header\",\"stream_id\":%d", monotonic_us(), (long) getpid(), call->stream_id);
+    if (call->method_path != NULL) {
+        fprintf(fp, ",\"rpc_method\":");
+        grpc_lite_trace_json_string(fp, ZSTR_VAL(call->method_path), ZSTR_LEN(call->method_path));
+    }
+    fputs("}\n", fp);
+    grpc_lite_trace_unlock_and_close(fp);
+}
+
 void mark_connection_dead(h2_connection *connection, int error_code)
 {
     if (connection == NULL) {
@@ -883,6 +927,44 @@ void mark_connection_draining(h2_connection *connection, int32_t last_stream_id,
     connection->last_goaway_error_code = error_code;
 }
 
+static void mark_connection_close_after_pending_flush(h2_connection *connection)
+{
+    if (connection == NULL) {
+        return;
+    }
+    /* An incomplete inbound frame boundary is connection-terminal, unlike a
+     * GOAWAY that lets already-admitted streams finish. Stop new admission
+     * immediately, but keep I/O alive for one bounded pending-control flush. */
+    connection->draining = true;
+    connection->close_after_pending_flush = true;
+    set_connection_error_detail(connection, "incomplete HTTP/2 receive boundary");
+}
+
+int on_begin_frame_callback(nghttp2_session *session, const nghttp2_frame_hd *hd, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call;
+    bool has_live_call;
+    (void) session;
+
+    if (connection == NULL || hd == NULL) {
+        return 0;
+    }
+    call = grpc_call_from_stream_id(connection, hd->stream_id);
+    has_live_call = call != NULL && call->stream_registered && !call->stream_closed;
+    if ((hd->type == NGHTTP2_HEADERS || hd->type == NGHTTP2_CONTINUATION)
+        && !has_live_call
+        && !grpc_h2_receive_allows_reuse_after_abandonment(&connection->receive_boundary)) {
+        /* nghttp2 still exposes the frame header before it suppresses field
+         * callbacks for a closed/foreign stream. Do not attribute this late
+         * receive state to current_read_call or submit a stream RST: only
+         * connection lifecycle can own reuse while the byte-level invariant
+         * is false. */
+        mark_connection_close_after_pending_flush(connection);
+    }
+    return 0;
+}
+
 bool connection_usable(h2_connection *connection)
 {
     return connection != NULL && connection->fd >= 0 && connection->session != NULL && !connection->dead && !connection->draining;
@@ -902,7 +984,8 @@ bool connection_io_allowed(h2_connection *connection)
 #ifdef PHP_GRPC_LITE_ENABLE_TEST_FAULT
 /* Test-only fault injection, compiled in only with --enable-grpc-test-fault.
  * GRPC_LITE_TEST_FAULT holds a comma-separated list of fault names honored
- * by dedicated seams ("rst-submit-fatal", "submit-request-fatal"). The env
+ * by dedicated seams ("rst-submit-fatal", "submit-request-fatal",
+ * "terminal-status-rst-flush-fatal"). The env
  * value is copied once at MINIT into a process-owned buffer: caching the
  * getenv() pointer itself would dangle after userland putenv() frees the
  * backing storage, and the copy is written before any request thread runs
@@ -976,6 +1059,13 @@ static int grpc_protocol_submit_rst_stream_in_callback(nghttp2_session *session,
 
     if (session == NULL || call == NULL || call->stream_id <= 0) {
         return 0;
+    }
+    /* DATA-policy callbacks can abandon a stream before nghttp2 has consumed
+     * the complete inbound frame. The queued RST preserves the call taxonomy,
+     * but that connection cannot admit another stream at a partial boundary. */
+    if (call->connection != NULL
+        && !grpc_h2_receive_allows_reuse_after_abandonment(&call->connection->receive_boundary)) {
+        mark_connection_close_after_pending_flush(call->connection);
     }
     if (grpc_lite_test_fault_enabled("rst-submit-fatal")) {
         rv = NGHTTP2_ERR_NOMEM;
@@ -1108,7 +1198,7 @@ static bool drain_pending_connection_data_for_reuse(h2_connection *connection, u
         }
 
         total_read += (size_t) nread;
-        ssize_t rv = nghttp2_session_mem_recv(connection->session, buffer, (size_t) nread);
+        ssize_t rv = connection_session_mem_recv(connection, buffer, (size_t) nread);
         if (rv < 0) {
             snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "nghttp2_session_mem_recv failed during persistent preflight: %s", nghttp2_strerror((int) rv));
             mark_connection_dead(connection, (int) rv);
@@ -1188,6 +1278,8 @@ static bool preflight_socket_connection_for_reuse(h2_connection *connection, uin
 
 bool preflight_persistent_connection(h2_connection *connection, uint64_t deadline_abs_us)
 {
+    bool preflight_ok;
+
     if (!connection_usable(connection)) {
         return false;
     }
@@ -1195,9 +1287,22 @@ bool preflight_persistent_connection(h2_connection *connection, uint64_t deadlin
         return true;
     }
     if (connection->ssl != NULL) {
-        return preflight_tls_connection_for_reuse(connection, deadline_abs_us);
+        preflight_ok = preflight_tls_connection_for_reuse(connection, deadline_abs_us);
+    } else {
+        preflight_ok = preflight_socket_connection_for_reuse(connection, deadline_abs_us);
     }
-    return preflight_socket_connection_for_reuse(connection, deadline_abs_us);
+    if (!preflight_ok) {
+        return false;
+    }
+    /* The drain itself can move a previously clean inactive connection into a
+     * partial frame header/payload. No nghttp2 frame callback exists for a
+     * 1-8 byte header prefix, so enforce the byte-level gate at admission. */
+    if (!grpc_h2_receive_allows_reuse_after_abandonment(&connection->receive_boundary)) {
+        set_connection_error_detail(connection, "persistent preflight ended at incomplete HTTP/2 receive boundary");
+        mark_connection_dead(connection, 0);
+        return false;
+    }
+    return true;
 }
 
 void remove_unusable_persistent_connection(const char *key, size_t key_len, h2_connection *connection)
@@ -1689,6 +1794,26 @@ ssize_t connection_recv(h2_connection *connection, uint8_t *data, size_t length,
     }
 }
 
+ssize_t connection_session_mem_recv(h2_connection *connection, const uint8_t *data, size_t length)
+{
+    ssize_t rv;
+
+    if (connection == NULL || connection->session == NULL || (data == NULL && length > 0)) {
+        return NGHTTP2_ERR_INVALID_ARGUMENT;
+    }
+    /* Account the complete input before entering nghttp2 so callbacks observe
+     * the receive boundary represented by this invocation. None of the
+     * production receive callbacks returns NGHTTP2_ERR_PAUSE; any negative
+     * result is connection-fatal at every caller. */
+    grpc_h2_receive_boundary_state_consume(&connection->receive_boundary, data, length);
+    rv = nghttp2_session_mem_recv(connection->session, data, length);
+    if (rv >= 0 && (size_t) rv != length) {
+        set_connection_error_detail(connection, "nghttp2_session_mem_recv did not consume the complete receive buffer");
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return rv;
+}
+
 h2_connection *create_h2_connection(const char *host, zend_long port, const char *authority, size_t authority_len, const char *tls_verify_name, size_t tls_verify_name_len, bool use_tls, const char *root_certs, size_t root_certs_len, const char *cert_chain, size_t cert_chain_len, const char *private_key, size_t private_key_len, bool persistent, uint64_t deadline_abs_us, char *error_detail, size_t error_detail_len, const char **error_message)
 {
     h2_connection *connection;
@@ -1965,7 +2090,7 @@ ssize_t send_callback(nghttp2_session *session, const uint8_t *data, size_t leng
     return (ssize_t) length;
 }
 
-int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us)
+static int send_pending_h2_frames_until(h2_connection *connection, grpc_call *call, uint64_t deadline_abs_us, bool propagate_timeout)
 {
     int rv;
 
@@ -1979,7 +2104,7 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
         return NGHTTP2_ERR_INVALID_ARGUMENT;
     }
     connection->current_io_call = call;
-    connection->current_write_deadline_abs_us = call != NULL ? call->deadline_abs_us : fallback_deadline_abs_us;
+    connection->current_write_deadline_abs_us = deadline_abs_us;
     connection->current_write_timed_out = false;
     /* Coalesce for plaintext too: nghttp2 emits frames (or frame header and
      * payload) as separate chunks, and with TCP_NODELAY each direct send()
@@ -1996,7 +2121,17 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
         uint64_t deadline_abs_us = connection->current_write_deadline_abs_us > 0
             ? connection->current_write_deadline_abs_us
             : connection->setup_deadline_abs_us;
-        if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
+        /* Test the post-nghttp2 / pre-socket flush failure edge only after
+         * the terminal RST_STREAM has produced coalesced wire bytes. */
+        if (connection->write_buffer_len > 0
+            && grpc_lite_test_fault_enabled("terminal-status-rst-flush-fatal")
+            && call != NULL
+            && call->invalid_grpc_status) {
+            errno = EPIPE;
+            connection->last_io_errno = errno;
+            snprintf(connection->last_error_detail, sizeof(connection->last_error_detail), "send failed: %s", strerror(errno));
+            rv = NGHTTP2_ERR_CALLBACK_FAILURE;
+        } else if (h2_connection_flush_write_buffer(connection, deadline_abs_us, timed_out) != SUCCESS) {
             rv = NGHTTP2_ERR_CALLBACK_FAILURE;
         }
     }
@@ -2005,10 +2140,17 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
          * or discard coalesced bytes nghttp2 already accounted as sent; either
          * way the session state no longer matches the wire, so the connection
          * must never be reused. */
+        connection->close_after_pending_flush = false;
         mark_connection_dead(connection, rv);
+    } else if (connection->close_after_pending_flush) {
+        /* Any client- or nghttp2-owned target RST/control frame is now on the
+         * wire. The inbound parser is still between complete frame boundaries,
+         * so no existing sibling may drive this session. */
+        connection->close_after_pending_flush = false;
+        mark_connection_dead(connection, 0);
     }
     if (rv != 0 && call != NULL) {
-        if (connection->current_write_timed_out) {
+        if (propagate_timeout && connection->current_write_timed_out) {
             call->timed_out = true;
         }
         call->last_io_errno = connection->last_io_errno;
@@ -2021,6 +2163,33 @@ int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *c
     connection->write_coalescing = false;
     connection->write_buffer_len = 0;
     return rv;
+}
+
+int flush_terminal_quarantine(h2_connection *connection, grpc_call *call)
+{
+    /* The peer has left the inbound parser between complete frame boundaries.
+     * Only give the queued target RST/control frames a short best-effort window;
+     * this transport-action grace is independent of the call deadline and
+     * must not reclassify the target as DEADLINE_EXCEEDED if it expires. */
+    return send_pending_h2_frames_until(
+        connection,
+        call,
+        monotonic_us() + GRPC_LITE_CANCEL_RST_WRITE_GRACE_US,
+        false
+    );
+}
+
+int send_pending_h2_frames_with_deadline(h2_connection *connection, grpc_call *call, uint64_t fallback_deadline_abs_us)
+{
+    if (connection != NULL && connection->close_after_pending_flush) {
+        return flush_terminal_quarantine(connection, call);
+    }
+    return send_pending_h2_frames_until(
+        connection,
+        call,
+        call != NULL ? call->deadline_abs_us : fallback_deadline_abs_us,
+        true
+    );
 }
 
 int send_pending_h2_frames(h2_connection *connection, grpc_call *call)
@@ -2044,17 +2213,24 @@ size_t remaining_request_bytes(grpc_call *call)
 ssize_t data_source_read_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
     grpc_call *call = source != NULL ? (grpc_call *) source->ptr : NULL;
+    h2_connection *connection = (h2_connection *) user_data;
     size_t remaining;
     size_t to_send;
     (void) session;
     (void) stream_id;
     (void) buf;
-    (void) user_data;
 
     *data_flags = 0;
     if (call == NULL) {
         *data_flags = NGHTTP2_DATA_FLAG_EOF;
         return 0;
+    }
+    if (connection != NULL && connection->close_after_pending_flush) {
+        /* Do not newly drive application DATA after an incomplete inbound
+         * receive boundary made the connection terminal. Deferring every DATA
+         * provider lets nghttp2 advance to the queued target RST_STREAM and
+         * other control frames without widening the quarantine blast radius. */
+        return NGHTTP2_ERR_DEFERRED;
     }
     remaining = remaining_request_bytes(call);
     to_send = remaining < length ? remaining : length;
@@ -2158,6 +2334,11 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t
     if (stream_id != call->stream_id || len == 0) {
         return 0;
     }
+    if (!call->response_header_phase.final_response_headers_seen) {
+        call->response_header_protocol_error = true;
+        call->discard_response_body = true;
+        return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_PROTOCOL_ERROR);
+    }
 
     if (call->direct_response_payload && call->decode_response_incrementally && call->queue_response_payloads) {
         if (grpc_protocol_process_response_data_direct(session, call, data, len) != 0) {
@@ -2176,10 +2357,210 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t
     return 0;
 }
 
+int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    (void) session;
+
+    if (call == NULL || frame->hd.type != NGHTTP2_HEADERS || frame->hd.stream_id != call->stream_id) {
+        return 0;
+    }
+    grpc_response_header_block_phase phase = grpc_response_header_phase_begin(&call->response_header_phase);
+    call->response_header_block_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
+    call->response_header_block_protocol_valid = phase != GRPC_RESPONSE_HEADER_BLOCK_TRAILING
+        || grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream);
+    if (!call->response_header_block_protocol_valid) {
+        /* RFC 9113 requires trailer HEADERS to terminate the stream.  nghttp2
+         * rejects this block after exposing its fields, so quarantine those
+         * fields before they can commit a grpc-status or metadata. */
+        call->response_header_protocol_error = true;
+        call->discard_response_body = true;
+        if ((frame->hd.flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+            return grpc_protocol_apply_response_header_terminal_action(
+                session,
+                call,
+                NGHTTP2_PROTOCOL_ERROR
+            );
+        }
+    }
+    return 0;
+}
+
+static void grpc_protocol_mark_incomplete_response_header_block(grpc_call *call)
+{
+    if (call == NULL) {
+        return;
+    }
+    call->response_header_block_incomplete = true;
+    /* A stream RST cannot complete the connection-global inbound HPACK block.
+     * Stop admission and make an otherwise live connection terminal after any
+     * already-owned control frame has had a bounded flush opportunity. */
+    if (connection_io_allowed(call->connection)) {
+        mark_connection_close_after_pending_flush(call->connection);
+    }
+}
+
+static bool grpc_call_receive_allows_reuse_after_abandonment(grpc_call *call)
+{
+    if (call == NULL) {
+        return false;
+    }
+    if (call->connection != NULL) {
+        return grpc_h2_receive_allows_reuse_after_abandonment(&call->connection->receive_boundary);
+    }
+#ifdef PHP_GRPC_LITE_ENABLE_BENCH
+    return grpc_h2_receive_allows_reuse_after_abandonment(&call->bench.receive_boundary);
+#else
+    return false;
+#endif
+}
+
+void grpc_protocol_mark_response_header_terminal_action(grpc_call *call)
+{
+    if (!grpc_call_receive_allows_reuse_after_abandonment(call)) {
+        grpc_protocol_mark_incomplete_response_header_block(call);
+    }
+}
+
+void grpc_protocol_finish_rejected_response_header_block(grpc_call *call, uint8_t frame_flags)
+{
+    if (call == NULL || (frame_flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+        return;
+    }
+    /* nghttp2 omits on_frame_recv for rejected HEADERS. A complete rejected
+     * block still leaves the HPACK decoder synchronized, so close its semantic
+     * phase here and keep abandonment detection reserved for genuinely open
+     * blocks waiting on CONTINUATION. */
+    (void) grpc_response_header_phase_end(&call->response_header_phase);
+    call->response_header_block_end_stream = false;
+    call->response_header_block_protocol_valid = false;
+}
+
+int grpc_protocol_apply_response_header_terminal_action(nghttp2_session *session, grpc_call *call, uint32_t error_code)
+{
+    /* The caller owns the public failure taxonomy and selects the RST code.
+     * This helper owns only the shared stream / connection terminal action. */
+    grpc_protocol_mark_response_header_terminal_action(call);
+    if (call == NULL) {
+        return 0;
+    }
+    return grpc_protocol_submit_rst_stream_in_callback(session, call, error_code);
+}
+
+int grpc_protocol_handle_response_header_field_route(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, grpc_response_header_field_class field_class, bool rejection_owned_by_nghttp2)
+{
+    grpc_response_header_field_route route;
+    int rv;
+
+    if (call == NULL) {
+        return 0;
+    }
+    route = grpc_response_header_route_field(call->response_header_phase.block_phase, field_class);
+    if (route != GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR) {
+        return 0;
+    }
+    /* All field producers fail closed through this classification. Exposed
+     * fields have already passed the shared wire budget owner. Strict HTTP
+     * messaging rejection is not exposed, and nghttp2 owns its queued RST. */
+    call->response_header_block_protocol_valid = false;
+    call->response_header_protocol_error = true;
+    call->discard_response_body = true;
+    grpc_protocol_mark_response_header_terminal_action(call);
+    if (rejection_owned_by_nghttp2) {
+        return 0;
+    }
+    if ((frame_flags & NGHTTP2_FLAG_END_HEADERS) != 0) {
+        /* Let nghttp2 finish the HPACK block and perform its frame-end HTTP
+         * messaging rejection instead of interrupting a complete block. */
+        return 0;
+    }
+    rv = grpc_protocol_apply_response_header_terminal_action(
+        session,
+        call,
+        NGHTTP2_PROTOCOL_ERROR
+    );
+    if (rv != 0) {
+        return rv;
+    }
+    return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+}
+
+int grpc_protocol_account_response_header_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags, size_t namelen, size_t valuelen)
+{
+    int rv;
+
+    if (call == NULL || call->metadata_too_large) {
+        return 0;
+    }
+    if (grpc_response_header_budget_account_field(
+            &call->wire_response_header_entry_count,
+            &call->wire_response_header_bytes,
+            call->max_response_metadata_bytes,
+            namelen,
+            valuelen)) {
+        return 0;
+    }
+
+    call->metadata_too_large = true;
+    call->discard_response_body = true;
+    rv = grpc_protocol_apply_response_header_terminal_action(
+        session,
+        call,
+        NGHTTP2_CANCEL
+    );
+    if (rv != 0) {
+        return rv;
+    }
+    /* Stop decoding the remainder of this header block. Complete blocks keep
+     * the connection reusable; incomplete blocks entered terminal quarantine
+     * above. The explicit action selects CANCEL instead of nghttp2's default
+     * callback-failure reset code. */
+    return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+}
+
+int grpc_protocol_observe_response_status_field(nghttp2_session *session, grpc_call *call, uint8_t frame_flags)
+{
+    bool first_initial_status_field;
+
+    if (call == NULL
+        || call->response_header_phase.block_phase != GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
+        return 0;
+    }
+
+    first_initial_status_field = !call->initial_grpc_status_seen;
+    call->initial_grpc_status_seen = true;
+    call->initial_headers_end_stream = call->response_header_block_end_stream;
+    if (grpc_response_header_phase_on_trailers_only_status_field(
+            &call->response_header_phase,
+            call->response_header_block_end_stream)) {
+        /* grpc-status, grpc-message, and grpc-status-details-bin all select
+         * one Trailers-Only role for the completed block. */
+        grpc_protocol_mark_response_metadata_as_trailing(call);
+    }
+    if (call->response_header_block_end_stream || !first_initial_status_field) {
+        return 0;
+    }
+
+    /* A status field in non-terminal initial response HEADERS can never be
+     * committed as gRPC status. Queue the stream-local failure as soon as the
+     * field is decoded; waiting for frame completion would let a peer omit the
+     * required CONTINUATION and retain a deadline-less call indefinitely. */
+    call->invalid_grpc_status = true;
+    call->discard_response_body = true;
+    return grpc_protocol_apply_response_header_terminal_action(
+        session,
+        call,
+        NGHTTP2_CANCEL
+    );
+}
+
 int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    grpc_response_header_field_class field_class;
+    grpc_response_header_field_route field_route;
     bool trailing;
     (void) session;
     (void) flags;
@@ -2189,13 +2570,69 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
     if (frame->hd.stream_id != call->stream_id) {
         return 0;
     }
-    trailing = frame->headers.cat != NGHTTP2_HCAT_RESPONSE;
-    if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && call->grpc_status >= 0) {
-        trailing = true;
+    if (frame->hd.type != NGHTTP2_HEADERS) {
+        return 0;
     }
+    {
+        int rv = grpc_protocol_account_response_header_field(session, call, frame->hd.flags, namelen, valuelen);
+        if (rv != 0) {
+            return rv;
+        }
+        if (call->metadata_too_large) {
+            return 0;
+        }
+    }
+    field_class = grpc_response_header_classify_reported_field(name, namelen, false);
+    field_route = grpc_response_header_route_field(call->response_header_phase.block_phase, field_class);
+    if (field_route == GRPC_RESPONSE_HEADER_FIELD_ROUTE_TERMINAL_PROTOCOL_ERROR) {
+        return grpc_protocol_handle_response_header_field_route(
+            session,
+            call,
+            frame->hd.flags,
+            field_class,
+            false
+        );
+    }
+    if (field_route == GRPC_RESPONSE_HEADER_FIELD_ROUTE_IGNORE) {
+        return 0;
+    }
+    if (field_route == GRPC_RESPONSE_HEADER_FIELD_ROUTE_STATUS) {
+        char status_buf[16];
+        int http_status;
+        size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
+        memcpy(status_buf, value, copy_len);
+        status_buf[copy_len] = '\0';
+        http_status = atoi(status_buf);
+        grpc_response_header_block_phase phase = grpc_response_header_phase_on_status(&call->response_header_phase, http_status);
+        if (phase == GRPC_RESPONSE_HEADER_BLOCK_INFORMATIONAL && call->response_header_block_end_stream) {
+            call->response_header_block_protocol_valid = false;
+            call->response_header_protocol_error = true;
+            call->discard_response_body = true;
+            if ((frame->hd.flags & NGHTTP2_FLAG_END_HEADERS) == 0) {
+                return grpc_protocol_apply_response_header_terminal_action(
+                    session,
+                    call,
+                    NGHTTP2_PROTOCOL_ERROR
+                );
+            }
+        } else if (phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
+            call->http_status = http_status;
+        }
+        return 0;
+    }
+    if (!call->response_header_block_protocol_valid
+        || call->response_header_phase.block_phase == GRPC_RESPONSE_HEADER_BLOCK_NONE
+        || field_route != GRPC_RESPONSE_HEADER_FIELD_ROUTE_PROCESS) {
+        return 0;
+    }
+    trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     if (namelen == sizeof("grpc-status") - 1 && memcmp(name, "grpc-status", namelen) == 0) {
-        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
+        }
+        if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
+            return 0;
         }
         if (call->grpc_status_seen) {
             call->invalid_grpc_status = true;
@@ -2205,15 +2642,16 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
         if (call->grpc_status < 0) {
             call->invalid_grpc_status = true;
         }
-        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            grpc_protocol_mark_response_metadata_as_trailing(call);
-        }
         /* Status is not Custom-Metadata. It is consumed into call state and
          * intentionally not re-exposed through PHP metadata maps. */
         return 0;
     } else if (namelen == sizeof("grpc-message") - 1 && memcmp(name, "grpc-message", namelen) == 0) {
-        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
+        }
+        if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
+            return 0;
         }
         if (call->grpc_message != NULL) {
             zend_string_release(call->grpc_message);
@@ -2223,16 +2661,14 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
          * surfaced as status details, not as PHP metadata. */
         return 0;
     } else if (namelen == sizeof("grpc-status-details-bin") - 1 && memcmp(name, "grpc-status-details-bin", namelen) == 0) {
-        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-            call->initial_grpc_status_seen = true;
+        int rv = grpc_protocol_observe_response_status_field(session, call, frame->hd.flags);
+        if (rv != 0) {
+            return rv;
         }
-        trailing = true;
-    } else if (namelen == sizeof(":status") - 1 && memcmp(name, ":status", namelen) == 0) {
-        char status_buf[16];
-        size_t copy_len = valuelen < sizeof(status_buf) - 1 ? valuelen : sizeof(status_buf) - 1;
-        memcpy(status_buf, value, copy_len);
-        status_buf[copy_len] = '\0';
-        call->http_status = atoi(status_buf);
+        if (!grpc_response_header_phase_allows_status_fields(&call->response_header_phase, call->response_header_block_end_stream)) {
+            return 0;
+        }
+        trailing = grpc_response_header_phase_metadata_is_trailing(&call->response_header_phase);
     } else if (namelen == sizeof("content-type") - 1 && memcmp(name, "content-type", namelen) == 0) {
         call->content_type_seen = true;
         if (call->content_type != NULL) {
@@ -2260,6 +2696,75 @@ int on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, con
     return 0;
 }
 
+int on_invalid_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    int rv;
+    (void) value;
+    (void) flags;
+
+    if (call == NULL
+        || frame->hd.type != NGHTTP2_HEADERS
+        || frame->hd.stream_id != call->stream_id) {
+        return 0;
+    }
+    if (grpc_lite_trace_file_path() != NULL) {
+        /* Value-free callback observation for the wire-budget cutoff oracle. */
+        grpc_lite_trace_response_invalid_header(call);
+    }
+    /* Invalid regular fields are intentionally ignored semantically, but the
+     * HPACK decode work still belongs to this call's wire header budget. */
+    rv = grpc_protocol_account_response_header_field(session, call, frame->hd.flags, namelen, valuelen);
+    if (rv != 0 || call->metadata_too_large) {
+        return rv;
+    }
+    return grpc_protocol_handle_response_header_field_route(
+        session,
+        call,
+        frame->hd.flags,
+        grpc_response_header_classify_reported_field(name, namelen, true),
+        false
+    );
+}
+
+int on_invalid_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame, int lib_error_code, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    int rv;
+
+    if (call == NULL
+        || frame->hd.stream_id != call->stream_id
+        || frame->hd.type != NGHTTP2_HEADERS) {
+        return 0;
+    }
+    if (call->metadata_too_large
+        || lib_error_code == NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE) {
+        /* The field callback already classified this stream and selected its
+         * RST code. Preserve that producer-owned taxonomy (including the
+         * wire-budget RESOURCE_EXHAUSTED case, whose invalid-header stop is
+         * reported here as HTTP_HEADER by nghttp2) and only re-apply the
+         * shared incomplete-block lifecycle. */
+        grpc_protocol_mark_response_header_terminal_action(call);
+        grpc_protocol_finish_rejected_response_header_block(call, frame->hd.flags);
+        return 0;
+    }
+    /* Strict-invalid pseudo/header-name and semantic HTTP messaging failures
+     * bypass both application field callbacks. nghttp2 owns the queued RST;
+     * the shared default route owns call classification and incomplete HPACK
+     * connection terminalization without submitting a duplicate RST. */
+    rv = grpc_protocol_handle_response_header_field_route(
+        session,
+        call,
+        frame->hd.flags,
+        GRPC_RESPONSE_HEADER_FIELD_REJECTED,
+        true
+    );
+    grpc_protocol_finish_rejected_response_header_block(call, frame->hd.flags);
+    return rv;
+}
+
 int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *user_data)
 {
     h2_connection *connection = (h2_connection *) user_data;
@@ -2272,7 +2777,37 @@ int on_stream_close_callback(nghttp2_session *session, int32_t stream_id, uint32
     if (stream_id == call->stream_id) {
         call->stream_closed = true;
         call->stream_error_code = error_code;
+        if (error_code == NGHTTP2_PROTOCOL_ERROR
+            && !call->stream_reset_seen
+            && !call->malformed_response_frame
+            && !call->response_header_phase.final_response_headers_seen) {
+            /* DATA frames do not use nghttp2's invalid-non-DATA callback.
+             * Preserve a final fallback for a protocol close before any final
+             * response headers, including zero-length DATA after 1xx. */
+            call->response_header_protocol_error = true;
+            call->discard_response_body = true;
+        }
         unregister_grpc_call_stream(call);
+    }
+    return 0;
+}
+
+int on_frame_send_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
+{
+    h2_connection *connection = (h2_connection *) user_data;
+    grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    (void) session;
+
+    if (call != NULL
+        && frame->hd.type == NGHTTP2_RST_STREAM
+        && frame->rst_stream.error_code == NGHTTP2_PROTOCOL_ERROR
+        && !call->response_header_phase.final_response_headers_seen
+        && !call->malformed_response_frame) {
+        /* nghttp2 rejects invalid DATA without invoking the invalid-frame or
+         * received-frame callbacks.  Its automatically generated outbound
+         * PROTOCOL_ERROR reset is therefore the observable rejection point. */
+        call->response_header_protocol_error = true;
+        call->discard_response_body = true;
     }
     return 0;
 }
@@ -2281,6 +2816,7 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
 {
     h2_connection *connection = (h2_connection *) user_data;
     grpc_call *call = grpc_call_from_stream_id(connection, frame->hd.stream_id);
+    grpc_response_header_block_phase ended_header_phase = GRPC_RESPONSE_HEADER_BLOCK_NONE;
     (void) session;
 
     grpc_lite_trace_inbound_frame(connection, frame);
@@ -2308,29 +2844,35 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
     if (call == NULL) {
         return 0;
     }
+    if (frame->hd.type == NGHTTP2_HEADERS && frame->hd.stream_id == call->stream_id) {
+        ended_header_phase = call->response_header_phase.block_phase;
+    }
     if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
-        && frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+        && ended_header_phase == GRPC_RESPONSE_HEADER_BLOCK_FINAL_INITIAL) {
         call->initial_headers_end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
         if (!call->content_type_seen && !(call->grpc_status_seen && call->initial_headers_end_stream)) {
             call->invalid_content_type = true;
             call->discard_response_body = true;
         }
-        if (call->initial_grpc_status_seen && !call->initial_headers_end_stream) {
-            call->invalid_grpc_status = true;
-            call->discard_response_body = true;
-        }
     } else if (frame->hd.type == NGHTTP2_HEADERS
         && frame->hd.stream_id == call->stream_id
-        && frame->headers.cat == NGHTTP2_HCAT_HEADERS) {
+        && ended_header_phase == GRPC_RESPONSE_HEADER_BLOCK_TRAILING) {
         /* Trailing HEADERS block (with or without grpc-status). Only an
          * END_STREAM HEADERS terminates the stream; recording anything else
          * here would let a non-terminal HEADERS suppress the missing-trailers
          * INTERNAL classification in status_core.c even though the stream
          * actually ended on a DATA frame. */
-        if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
+        if (call->response_header_block_protocol_valid
+            && (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
             call->trailing_headers_seen = true;
         }
+    } else if (frame->hd.type == NGHTTP2_DATA
+        && frame->hd.stream_id == call->stream_id
+        && !call->response_header_phase.final_response_headers_seen) {
+        call->response_header_protocol_error = true;
+        call->discard_response_body = true;
+        return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_PROTOCOL_ERROR);
     } else if (frame->hd.type == NGHTTP2_RST_STREAM && frame->hd.stream_id == call->stream_id) {
         call->stream_reset_seen = true;
         call->stream_error_code = frame->rst_stream.error_code;
@@ -2338,6 +2880,11 @@ int on_frame_recv_callback(nghttp2_session *session, const nghttp2_frame *frame,
         call->malformed_response_frame = true;
         call->discard_response_body = true;
         return grpc_protocol_submit_rst_stream_in_callback(session, call, NGHTTP2_PROTOCOL_ERROR);
+    }
+    if (frame->hd.type == NGHTTP2_HEADERS && frame->hd.stream_id == call->stream_id) {
+        (void) grpc_response_header_phase_end(&call->response_header_phase);
+        call->response_header_block_end_stream = false;
+        call->response_header_block_protocol_valid = false;
     }
     return 0;
 }
@@ -2384,9 +2931,6 @@ zend_string *grpc_protocol_decode_message(const uint8_t *value, size_t valuelen)
 
 static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code)
 {
-    if (call->grpc_message != NULL && ZSTR_LEN(call->grpc_message) > 0) {
-        return zend_string_copy(call->grpc_message);
-    }
     if (code == GRPC_STATUS_DEADLINE_EXCEEDED && call->timed_out) {
         /* Deadline expiry is the primary call outcome. Errors recorded while
          * tearing the stream down afterwards (e.g. a fatal RST_STREAM submit
@@ -2394,8 +2938,46 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
          * failures and must not replace the deadline details. */
         return zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
     }
+    if (call->response_header_protocol_error) {
+        return zend_string_init("malformed HTTP/2 response header sequence", sizeof("malformed HTTP/2 response header sequence") - 1, 0);
+    }
+    if (code == GRPC_STATUS_RESOURCE_EXHAUSTED && call->metadata_too_large) {
+        return zend_string_init("response header/metadata budget exceeded", sizeof("response header/metadata budget exceeded") - 1, 0);
+    }
+    if (code == GRPC_STATUS_UNKNOWN && call->invalid_grpc_status) {
+        /* The malformed status lifecycle is the primary call failure.  A
+         * later failure while flushing its terminal RST_STREAM is retained
+         * as a connection diagnostic, but must not take ownership of public
+         * details when the status code already resolves from this flag. */
+        return zend_string_init("invalid grpc-status trailer", sizeof("invalid grpc-status trailer") - 1, 0);
+    }
+    if (call->grpc_message != NULL && ZSTR_LEN(call->grpc_message) > 0) {
+        return zend_string_copy(call->grpc_message);
+    }
     if (call->stream_refused_seen) {
         return zend_string_init("HTTP/2 stream refused by GOAWAY", sizeof("HTTP/2 stream refused by GOAWAY") - 1, 0);
+    }
+    /* DATA-policy failures own the public status/details even when preserving
+     * the dirty receive-boundary invariant makes their connection terminal.
+     * The connection diagnostic remains available internally, but is a
+     * secondary teardown result like a failed terminal RST flush. */
+    if (code == GRPC_STATUS_RESOURCE_EXHAUSTED && call->response_queue_limit_exceeded) {
+        return zend_string_init("server streaming read-ahead queue limit exceeded", sizeof("server streaming read-ahead queue limit exceeded") - 1, 0);
+    }
+    if (code == GRPC_STATUS_RESOURCE_EXHAUSTED && call->response_message_too_large) {
+        return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
+    }
+    if (code == GRPC_STATUS_INTERNAL && call->malformed_response_frame) {
+        return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
+    }
+    if (code == GRPC_STATUS_INTERNAL && call->unsupported_response_encoding) {
+        if (call->grpc_encoding != NULL && ZSTR_LEN(call->grpc_encoding) > 0) {
+            return strpprintf(0, "unsupported grpc-encoding: %s", ZSTR_VAL(call->grpc_encoding));
+        }
+        return zend_string_init("unsupported grpc-encoding", sizeof("unsupported grpc-encoding") - 1, 0);
+    }
+    if (code == GRPC_STATUS_INTERNAL && call->compressed_response_seen) {
+        return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
     }
     if (call->last_io_error_detail[0] != '\0') {
         return zend_string_init(call->last_io_error_detail, strlen(call->last_io_error_detail), 0);
@@ -2412,9 +2994,6 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
         }
         return zend_string_init("invalid gRPC content-type", sizeof("invalid gRPC content-type") - 1, 0);
     }
-    if (call->invalid_grpc_status) {
-        return zend_string_init("invalid grpc-status trailer", sizeof("invalid grpc-status trailer") - 1, 0);
-    }
     switch (code) {
         case GRPC_STATUS_DEADLINE_EXCEEDED:
             return zend_string_init("HTTP/2 transport deadline exceeded", sizeof("HTTP/2 transport deadline exceeded") - 1, 0);
@@ -2424,23 +3003,8 @@ static zend_string *grpc_lite_status_details_from_call(grpc_call *call, int code
             }
             return zend_string_copy(zend_empty_string);
         case GRPC_STATUS_RESOURCE_EXHAUSTED:
-            if (call->response_queue_limit_exceeded) {
-                return zend_string_init("server streaming read-ahead queue limit exceeded", sizeof("server streaming read-ahead queue limit exceeded") - 1, 0);
-            }
             return zend_string_init("received message exceeds maximum size", sizeof("received message exceeds maximum size") - 1, 0);
         case GRPC_STATUS_INTERNAL:
-            if (call->malformed_response_frame) {
-                return zend_string_init("malformed gRPC response frame", sizeof("malformed gRPC response frame") - 1, 0);
-            }
-            if (call->unsupported_response_encoding) {
-                if (call->grpc_encoding != NULL && ZSTR_LEN(call->grpc_encoding) > 0) {
-                    return strpprintf(0, "unsupported grpc-encoding: %s", ZSTR_VAL(call->grpc_encoding));
-                }
-                return zend_string_init("unsupported grpc-encoding", sizeof("unsupported grpc-encoding") - 1, 0);
-            }
-            if (call->compressed_response_seen) {
-                return zend_string_init("compressed gRPC messages are not supported", sizeof("compressed gRPC messages are not supported") - 1, 0);
-            }
             if (call->stream_reset_seen) {
                 return strpprintf(0, "HTTP/2 stream reset: %u", call->stream_error_code);
             }

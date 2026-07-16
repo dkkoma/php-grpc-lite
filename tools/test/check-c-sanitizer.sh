@@ -67,6 +67,7 @@ docker compose run --build --rm \
         test_name="$(basename "$test_source" .c)"
         case "$test_name" in
             test_protocol_core) core_source=/workspace/src/protocol_core.c ;;
+            test_response_header_phase) core_source=/workspace/src/response_header_phase.c ;;
             test_status_core) core_source=/workspace/src/status_core.c ;;
             test_transport_core) core_source=/workspace/src/transport_core.c ;;
             *) echo "missing core source mapping for $test_name" >&2; exit 1 ;;
@@ -88,7 +89,7 @@ docker compose run --build --rm \
     test -f vendor/autoload.php || { echo "vendor/autoload.php is missing; run composer install" >&2; exit 1; }
 
     "${php_sanitized[@]}" -r '\''
-        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065, 50066, 50067, 50068, 50069, 50070] as $port) {
+        foreach ([50051, 50052, 50053, 50054, 50055, 50056, 50057, 50058, 50059, 50060, 50061, 50062, 50063, 50064, 50065, 50066, 50067, 50068, 50069, 50070, 50071] as $port) {
             $connected = false;
             $lastError = "";
             for ($attempt = 1; $attempt <= 30; $attempt++) {

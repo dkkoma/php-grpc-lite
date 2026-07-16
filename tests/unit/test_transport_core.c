@@ -96,6 +96,227 @@ static void test_effective_limits(void)
     ASSERT_SIZE(GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY, h2_write_coalesce_capacity_for_max_frame_size(GRPC_LITE_HTTP2_MAX_FRAME_SIZE));
 }
 
+static void test_response_header_budget(void)
+{
+    size_t entry_count = 0;
+    size_t bytes = 0;
+
+    for (size_t i = 0; i < GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES; i++) {
+        ASSERT_BOOL(true, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, 1, 1));
+    }
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES, entry_count);
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES * 2, bytes);
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, 1, 1));
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES, entry_count);
+    ASSERT_SIZE(GRPC_LITE_MAX_RESPONSE_METADATA_ENTRIES * 2, bytes);
+
+    entry_count = 0;
+    bytes = 0;
+    ASSERT_BOOL(true, grpc_response_header_budget_account_field(&entry_count, &bytes, 8, 3, 5));
+    ASSERT_SIZE(1, entry_count);
+    ASSERT_SIZE(8, bytes);
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, 8, 1, 0));
+    ASSERT_SIZE(1, entry_count);
+    ASSERT_SIZE(8, bytes);
+
+    entry_count = 0;
+    bytes = 0;
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, SIZE_MAX, 1));
+    ASSERT_SIZE(0, entry_count);
+    ASSERT_SIZE(0, bytes);
+
+    entry_count = 1;
+    bytes = SIZE_MAX;
+    ASSERT_BOOL(false, grpc_response_header_budget_account_field(&entry_count, &bytes, SIZE_MAX, 1, 0));
+    ASSERT_SIZE(1, entry_count);
+    ASSERT_SIZE(SIZE_MAX, bytes);
+}
+
+static size_t append_test_frame(uint8_t *buffer, uint32_t payload_len, uint8_t type, uint8_t flags, uint8_t payload_byte)
+{
+    buffer[0] = (uint8_t) ((payload_len >> 16) & 0xff);
+    buffer[1] = (uint8_t) ((payload_len >> 8) & 0xff);
+    buffer[2] = (uint8_t) (payload_len & 0xff);
+    buffer[3] = type;
+    buffer[4] = flags;
+    buffer[5] = 0;
+    buffer[6] = 0;
+    buffer[7] = 0;
+    buffer[8] = 1;
+    memset(buffer + GRPC_LITE_HTTP2_FRAME_HEADER_SIZE, payload_byte, payload_len);
+    return GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + payload_len;
+}
+
+static void test_receive_boundary_reuse_predicate(void)
+{
+    grpc_h2_receive_boundary_state state;
+
+    grpc_h2_receive_boundary_state_reset(&state);
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    state.frame_header_bytes = 1;
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    state.frame_header_bytes = 0;
+    state.frame_payload_remaining = 1;
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    state.frame_payload_remaining = 0;
+    state.header_block_in_flight = true;
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    state.frame_header_bytes = 1;
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(NULL));
+}
+
+static void test_receive_boundary_partial_headers_payload(void)
+{
+    grpc_h2_receive_boundary_state state;
+    uint8_t frame[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 3];
+    size_t frame_len = append_test_frame(frame, 3, 0x1, 0x4, 0x82);
+
+    for (size_t header_bytes = 1; header_bytes < GRPC_LITE_HTTP2_FRAME_HEADER_SIZE; header_bytes++) {
+        grpc_h2_receive_boundary_state_reset(&state);
+        grpc_h2_receive_boundary_state_consume(&state, frame, header_bytes);
+        ASSERT_SIZE(header_bytes, state.frame_header_bytes);
+        ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    }
+
+    grpc_h2_receive_boundary_state_reset(&state);
+    grpc_h2_receive_boundary_state_consume(&state, frame, GRPC_LITE_HTTP2_FRAME_HEADER_SIZE);
+    ASSERT_SIZE(0, state.frame_header_bytes);
+    ASSERT_UINT32(3, state.frame_payload_remaining);
+    ASSERT_UINT32(0x1, state.frame_type);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    grpc_h2_receive_boundary_state_consume(&state, frame + GRPC_LITE_HTTP2_FRAME_HEADER_SIZE, 1);
+    ASSERT_UINT32(2, state.frame_payload_remaining);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    grpc_h2_receive_boundary_state_consume(&state, frame + GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 1, 2);
+    ASSERT_UINT32(0, state.frame_payload_remaining);
+    ASSERT_BOOL(false, state.header_block_in_flight);
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    ASSERT_SIZE(frame_len, sizeof(frame));
+}
+
+static void test_receive_boundary_fragmented_header_block(void)
+{
+    grpc_h2_receive_boundary_state state;
+    uint8_t headers[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 1];
+    uint8_t continuation[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE];
+    uint8_t final_continuation[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 2];
+    size_t headers_len = append_test_frame(headers, 1, 0x1, 0, 0x82);
+    size_t continuation_len = append_test_frame(continuation, 0, 0x9, 0, 0);
+    size_t final_len = append_test_frame(final_continuation, 2, 0x9, 0x4, 0x84);
+
+    grpc_h2_receive_boundary_state_reset(&state);
+    grpc_h2_receive_boundary_state_consume(&state, headers, headers_len);
+    ASSERT_SIZE(0, state.frame_header_bytes);
+    ASSERT_UINT32(0, state.frame_payload_remaining);
+    ASSERT_BOOL(true, state.header_block_in_flight);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    grpc_h2_receive_boundary_state_consume(&state, continuation, continuation_len);
+    ASSERT_BOOL(true, state.header_block_in_flight);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    grpc_h2_receive_boundary_state_consume(
+        &state,
+        final_continuation,
+        GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 1
+    );
+    ASSERT_UINT32(1, state.frame_payload_remaining);
+    ASSERT_UINT32(0x9, state.frame_type);
+    ASSERT_BOOL(true, state.header_block_in_flight);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    grpc_h2_receive_boundary_state_consume(
+        &state,
+        final_continuation + GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 1,
+        final_len - GRPC_LITE_HTTP2_FRAME_HEADER_SIZE - 1
+    );
+    ASSERT_BOOL(false, state.header_block_in_flight);
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+}
+
+static void test_receive_boundary_partial_data_and_zero_length_frames(void)
+{
+    grpc_h2_receive_boundary_state state;
+    uint8_t data_frame[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 4];
+    uint8_t empty_headers[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE];
+    uint8_t empty_continuation[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE];
+    uint8_t empty_data[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE];
+    size_t data_len = append_test_frame(data_frame, 4, 0x0, 0, 0x42);
+
+    grpc_h2_receive_boundary_state_reset(&state);
+    grpc_h2_receive_boundary_state_consume(&state, data_frame, GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 2);
+    ASSERT_UINT32(2, state.frame_payload_remaining);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    grpc_h2_receive_boundary_state_consume(
+        &state,
+        data_frame + GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 2,
+        data_len - GRPC_LITE_HTTP2_FRAME_HEADER_SIZE - 2
+    );
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    append_test_frame(empty_headers, 0, 0x1, 0x4, 0);
+    grpc_h2_receive_boundary_state_consume(&state, empty_headers, sizeof(empty_headers));
+    ASSERT_BOOL(false, state.header_block_in_flight);
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    append_test_frame(empty_headers, 0, 0x1, 0, 0);
+    grpc_h2_receive_boundary_state_consume(&state, empty_headers, sizeof(empty_headers));
+    ASSERT_BOOL(true, state.header_block_in_flight);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    append_test_frame(empty_continuation, 0, 0x9, 0x4, 0);
+    grpc_h2_receive_boundary_state_consume(&state, empty_continuation, sizeof(empty_continuation));
+    ASSERT_BOOL(false, state.header_block_in_flight);
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    append_test_frame(empty_data, 0, 0x0, 0, 0);
+    grpc_h2_receive_boundary_state_consume(&state, empty_data, sizeof(empty_data));
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+}
+
+static void test_receive_boundary_multiple_frames_and_chunk_splits(void)
+{
+    grpc_h2_receive_boundary_state state;
+    uint8_t wire[(GRPC_LITE_HTTP2_FRAME_HEADER_SIZE * 3) + 5];
+    uint8_t next_frame[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE + 1];
+    size_t wire_len = 0;
+    size_t next_len;
+    size_t offset;
+    static const size_t chunks[] = {1, 2, 7, 3, 5, 4, 9, 6};
+
+    wire_len += append_test_frame(wire + wire_len, 0, 0x4, 0, 0);
+    wire_len += append_test_frame(wire + wire_len, 2, 0x1, 0x4, 0x82);
+    wire_len += append_test_frame(wire + wire_len, 3, 0x0, 0, 0x42);
+    ASSERT_SIZE(sizeof(wire), wire_len);
+
+    grpc_h2_receive_boundary_state_reset(&state);
+    grpc_h2_receive_boundary_state_consume(&state, wire, wire_len);
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    grpc_h2_receive_boundary_state_reset(&state);
+    offset = 0;
+    for (size_t index = 0; offset < wire_len; index++) {
+        size_t chunk = chunks[index % (sizeof(chunks) / sizeof(chunks[0]))];
+        if (chunk > wire_len - offset) {
+            chunk = wire_len - offset;
+        }
+        grpc_h2_receive_boundary_state_consume(&state, wire + offset, chunk);
+        offset += chunk;
+    }
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+
+    next_len = append_test_frame(next_frame, 1, 0x0, 0, 0x24);
+    grpc_h2_receive_boundary_state_consume(&state, next_frame, 4);
+    ASSERT_SIZE(4, state.frame_header_bytes);
+    ASSERT_BOOL(false, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+    grpc_h2_receive_boundary_state_consume(&state, next_frame + 4, next_len - 4);
+    ASSERT_BOOL(true, grpc_h2_receive_allows_reuse_after_abandonment(&state));
+}
+
 static void test_authority_identity(void)
 {
     char authority[32];
@@ -166,6 +387,12 @@ static void test_control_character_detection(void)
 int main(void)
 {
     test_effective_limits();
+    test_response_header_budget();
+    test_receive_boundary_reuse_predicate();
+    test_receive_boundary_partial_headers_payload();
+    test_receive_boundary_fragmented_header_block();
+    test_receive_boundary_partial_data_and_zero_length_frames();
+    test_receive_boundary_multiple_frames_and_chunk_splits();
     test_authority_identity();
     test_grpc_path_validation();
     test_channel_input_validation();

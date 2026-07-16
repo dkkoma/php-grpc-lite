@@ -18,6 +18,7 @@ docker compose run --rm dev bash -lc '
         test_name="$(basename "$test_source" .c)"
         case "$test_name" in
             test_protocol_core) core_source=/workspace/src/protocol_core.c ;;
+            test_response_header_phase) core_source=/workspace/src/response_header_phase.c ;;
             test_status_core) core_source=/workspace/src/status_core.c ;;
             test_transport_core) core_source=/workspace/src/transport_core.c ;;
             *) echo "missing core source mapping for $test_name" >&2; exit 1 ;;

@@ -6,8 +6,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "../transport_core.h"
+
 #ifdef PHP_GRPC_LITE_ENABLE_BENCH
 typedef struct {
+    size_t invalid_header_callback_count;
     size_t data_read_length_calls;
     size_t data_frames_sent;
     size_t data_bytes_sent;
@@ -47,6 +50,12 @@ typedef struct {
     bool no_copy;
     bool poll_loop;
     bool discard_response_body;
+    /* Session-scoped receive parser mirror. This is intentionally not reset
+     * between iterations that share one nghttp2 session. */
+    grpc_h2_receive_boundary_state receive_boundary;
+    /* Connection/session lifecycle marker. Unlike call-local header state,
+     * this remains sticky across iterations in one diagnostic batch. */
+    bool connection_header_block_incomplete;
     bool last_send_wouldblock;
     uint64_t call_started_us;
     uint64_t first_data_sent_us;

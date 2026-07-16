@@ -200,6 +200,13 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
 
     while (!call.stream_closed) {
         ssize_t nread;
+        if (!connection_io_allowed(connection)) {
+            /* A sibling stream can make the shared connection terminal while
+             * this call drives nghttp2 callbacks. Do not re-enter socket I/O
+             * after decoder synchronization has been lost. */
+            grpc_call_note_connection_broken(&call);
+            break;
+        }
         uint8_t *recv_buf = h2_connection_recv_scratch(connection);
         connection->current_io_call = &call;
         nread = connection_recv(connection, recv_buf, connection->recv_scratch_len, call.deadline_abs_us);
@@ -224,7 +231,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             break;
         }
         connection->current_read_call = &call;
-        rv = nghttp2_session_mem_recv(connection->session, recv_buf, (size_t) nread);
+        rv = (int) connection_session_mem_recv(connection, recv_buf, (size_t) nread);
         connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(connection, rv);
@@ -236,7 +243,14 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             zend_throw_exception(NULL, "nghttp2_session_mem_recv failed", 0);
             return FAILURE;
         }
-        if (nghttp2_session_want_write(connection->session)) {
+        if (connection->close_after_pending_flush) {
+            rv = flush_terminal_quarantine(connection, &call);
+            if (rv != 0) {
+                mark_connection_dead(connection, rv);
+                grpc_call_note_connection_broken(&call);
+                break;
+            }
+        } else if (nghttp2_session_want_write(connection->session)) {
             rv = send_pending_h2_frames(connection, &call);
             if (rv != 0) {
                 mark_connection_dead(connection, rv);

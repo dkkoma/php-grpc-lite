@@ -28,7 +28,7 @@ if test "$PHP_GRPC" != "no"; then
     AC_MSG_ERROR([php-grpc-lite requires a compiler that supports -fvisibility=hidden])
   ])
   CFLAGS="$grpc_lite_save_CFLAGS"
-  PHP_GRPC_SOURCES="grpc.c src/protocol_core.c src/status_core.c src/transport_core.c src/tls_config.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/wrapper_adapter.c"
+  PHP_GRPC_SOURCES="grpc.c src/protocol_core.c src/response_header_phase.c src/status_core.c src/transport_core.c src/tls_config.c src/surface.c src/transport.c src/unary_call.c src/server_streaming_call.c src/wrapper_adapter.c"
   if test "$PHP_GRPC_BENCH" != "no"; then
     PHP_GRPC_SOURCES="$PHP_GRPC_SOURCES src/diagnostic/diagnostic.c src/diagnostic/bench.c"
   fi
