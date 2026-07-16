@@ -128,13 +128,88 @@ bool grpc_response_header_budget_account_field(size_t *entry_count, size_t *byte
     return true;
 }
 
-bool grpc_inbound_header_frame_requires_connection_terminal(bool is_headers, bool end_headers, bool has_live_call)
+#define GRPC_LITE_HTTP2_FRAME_TYPE_HEADERS 0x1
+#define GRPC_LITE_HTTP2_FRAME_TYPE_CONTINUATION 0x9
+#define GRPC_LITE_HTTP2_FLAG_END_HEADERS 0x4
+
+static void grpc_h2_receive_boundary_complete_frame(grpc_h2_receive_boundary_state *state)
 {
-    /* A live call owns its fragmented response block through the semantic
-     * header path.  Without one, nghttp2 may intentionally hide the fields
-     * while still leaving the connection-global HPACK decoder waiting for a
-     * CONTINUATION, so connection lifecycle must fail closed at frame start. */
-    return is_headers && !end_headers && !has_live_call;
+    bool end_headers = (state->frame_flags & GRPC_LITE_HTTP2_FLAG_END_HEADERS) != 0;
+
+    if (state->frame_type == GRPC_LITE_HTTP2_FRAME_TYPE_HEADERS) {
+        state->header_block_in_flight = !end_headers;
+    } else if (state->frame_type == GRPC_LITE_HTTP2_FRAME_TYPE_CONTINUATION
+        && state->header_block_in_flight
+        && end_headers) {
+        state->header_block_in_flight = false;
+    }
+
+    state->frame_payload_remaining = 0;
+    state->frame_type = 0;
+    state->frame_flags = 0;
+}
+
+void grpc_h2_receive_boundary_state_reset(grpc_h2_receive_boundary_state *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
+}
+
+void grpc_h2_receive_boundary_state_consume(grpc_h2_receive_boundary_state *state, const uint8_t *data, size_t len)
+{
+    if (state == NULL || data == NULL) {
+        return;
+    }
+
+    while (len > 0) {
+        if (state->frame_payload_remaining > 0) {
+            size_t consumed = len < state->frame_payload_remaining
+                ? len
+                : (size_t) state->frame_payload_remaining;
+            state->frame_payload_remaining -= (uint32_t) consumed;
+            data += consumed;
+            len -= consumed;
+            if (state->frame_payload_remaining == 0) {
+                grpc_h2_receive_boundary_complete_frame(state);
+            }
+            continue;
+        }
+
+        if (state->frame_header_bytes < GRPC_LITE_HTTP2_FRAME_HEADER_SIZE) {
+            size_t needed = GRPC_LITE_HTTP2_FRAME_HEADER_SIZE - state->frame_header_bytes;
+            size_t consumed = len < needed ? len : needed;
+            memcpy(state->frame_header + state->frame_header_bytes, data, consumed);
+            state->frame_header_bytes += consumed;
+            data += consumed;
+            len -= consumed;
+            if (state->frame_header_bytes < GRPC_LITE_HTTP2_FRAME_HEADER_SIZE) {
+                continue;
+            }
+
+            state->frame_payload_remaining = ((uint32_t) state->frame_header[0] << 16)
+                | ((uint32_t) state->frame_header[1] << 8)
+                | (uint32_t) state->frame_header[2];
+            state->frame_type = state->frame_header[3];
+            state->frame_flags = state->frame_header[4];
+            state->frame_header_bytes = 0;
+            if (state->frame_payload_remaining == 0) {
+                grpc_h2_receive_boundary_complete_frame(state);
+            }
+        }
+    }
+}
+
+bool grpc_h2_receive_allows_reuse_after_abandonment(const grpc_h2_receive_boundary_state *state)
+{
+    /* A call may leave its connection reusable only when the receive parser
+     * is between complete frames and is not waiting for continuation of an
+     * inbound response header block. This byte-level invariant also covers
+     * states before nghttp2 can emit any semantic header callback. */
+    return state != NULL
+        && state->frame_header_bytes == 0
+        && state->frame_payload_remaining == 0
+        && !state->header_block_in_flight;
 }
 
 bool contains_nul_or_control(const char *value, size_t value_len)

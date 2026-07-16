@@ -231,7 +231,7 @@ static int grpc_lite_unary_call_perform_core_on_connection(h2_connection *connec
             break;
         }
         connection->current_read_call = &call;
-        rv = nghttp2_session_mem_recv(connection->session, recv_buf, (size_t) nread);
+        rv = (int) connection_session_mem_recv(connection, recv_buf, (size_t) nread);
         connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(connection, rv);

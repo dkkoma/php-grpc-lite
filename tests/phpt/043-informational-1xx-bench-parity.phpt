@@ -56,6 +56,28 @@ grpc_lite_phpt_assert_same(true, $liveAbandonment['connection_header_block_incom
 grpc_lite_phpt_assert_same(true, $liveAbandonment['incomplete_header_fd_nonblocking'], 'live incomplete block diagnostic enables finite terminal finish');
 grpc_lite_phpt_assert_true($liveAbandonment['total_us'] < 1_000_000, 'live incomplete block deadline batch is finite');
 
+$partialFrameAbandonment = $runBatch('partial-headers-payload-deadline', timeoutUs: 300_000);
+grpc_lite_phpt_assert_same(0, $partialFrameAbandonment['ok'], 'partial HEADERS payload deadline batch ok count');
+grpc_lite_phpt_assert_same(1, $partialFrameAbandonment['failed'], 'partial HEADERS payload deadline batch failed count');
+grpc_lite_phpt_assert_same(1, $partialFrameAbandonment['submitted'], 'partial HEADERS payload deadline batch submitted count');
+grpc_lite_phpt_assert_same(true, $partialFrameAbandonment['timed_out'], 'partial HEADERS payload diagnostic records deadline');
+grpc_lite_phpt_assert_same(-1, $partialFrameAbandonment['http_status'], 'partial HEADERS payload diagnostic invokes no status-field callback');
+grpc_lite_phpt_assert_same(8, $partialFrameAbandonment['stream_error_code'], 'partial HEADERS payload diagnostic sends CANCEL');
+grpc_lite_phpt_assert_same(true, $partialFrameAbandonment['connection_header_block_incomplete'], 'partial HEADERS payload diagnostic marks session terminal');
+grpc_lite_phpt_assert_same(true, $partialFrameAbandonment['incomplete_header_fd_nonblocking'], 'partial HEADERS payload diagnostic enables finite terminal finish');
+grpc_lite_phpt_assert_true($partialFrameAbandonment['total_us'] < 1_000_000, 'partial HEADERS payload deadline batch is finite');
+
+$cleanBoundaryAbandonment = $runBatch('clean-headers-boundary-deadline', timeoutUs: 300_000);
+grpc_lite_phpt_assert_same(0, $cleanBoundaryAbandonment['ok'], 'clean HEADERS boundary deadline batch ok count');
+grpc_lite_phpt_assert_same(1, $cleanBoundaryAbandonment['failed'], 'clean HEADERS boundary deadline batch failed count');
+grpc_lite_phpt_assert_same(1, $cleanBoundaryAbandonment['submitted'], 'clean HEADERS boundary deadline batch submitted count');
+grpc_lite_phpt_assert_same(true, $cleanBoundaryAbandonment['timed_out'], 'clean HEADERS boundary diagnostic records deadline');
+grpc_lite_phpt_assert_same(200, $cleanBoundaryAbandonment['http_status'], 'clean HEADERS boundary diagnostic completes response status callback');
+grpc_lite_phpt_assert_same(8, $cleanBoundaryAbandonment['stream_error_code'], 'clean HEADERS boundary diagnostic sends CANCEL');
+grpc_lite_phpt_assert_same(false, $cleanBoundaryAbandonment['connection_header_block_incomplete'], 'clean HEADERS boundary diagnostic keeps session reusable');
+grpc_lite_phpt_assert_same(false, $cleanBoundaryAbandonment['incomplete_header_fd_nonblocking'], 'clean HEADERS boundary diagnostic does not enter incomplete-header terminal finish');
+grpc_lite_phpt_assert_true($cleanBoundaryAbandonment['total_us'] < 1_000_000, 'clean HEADERS boundary deadline batch is finite');
+
 $nonterminalStatus = $runBatch('post-informational-nonterminal-status');
 grpc_lite_phpt_assert_same(0, $nonterminalStatus['ok'], 'nonterminal grpc-status batch ok count');
 grpc_lite_phpt_assert_same(1, $nonterminalStatus['failed'], 'nonterminal grpc-status batch failed count');

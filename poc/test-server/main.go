@@ -23,6 +23,7 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 	"golang.org/x/net/http2/hpack"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -685,6 +686,69 @@ type incompleteHeaderRstProbeStore struct {
 	byAuthority map[string]*incompleteHeaderRstProbe
 }
 
+type latePartialFrameHeaderProbe struct {
+	ready   chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	success bool
+}
+
+func (p *latePartialFrameHeaderProbe) complete(success bool) {
+	p.mu.Lock()
+	p.success = success
+	p.mu.Unlock()
+	p.once.Do(func() { close(p.ready) })
+}
+
+func (p *latePartialFrameHeaderProbe) passed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.success
+}
+
+type latePartialFrameHeaderProbeStore struct {
+	mu          sync.Mutex
+	byAuthority map[string]*latePartialFrameHeaderProbe
+}
+
+func newLatePartialFrameHeaderProbeStore() *latePartialFrameHeaderProbeStore {
+	return &latePartialFrameHeaderProbeStore{byAuthority: make(map[string]*latePartialFrameHeaderProbe)}
+}
+
+func (s *latePartialFrameHeaderProbeStore) begin(authority string) {
+	s.mu.Lock()
+	s.byAuthority[authority] = &latePartialFrameHeaderProbe{ready: make(chan struct{})}
+	s.mu.Unlock()
+}
+
+func (s *latePartialFrameHeaderProbeStore) complete(authority string, success bool) {
+	s.mu.Lock()
+	probe := s.byAuthority[authority]
+	s.mu.Unlock()
+	if probe != nil {
+		probe.complete(success)
+	}
+}
+
+func (s *latePartialFrameHeaderProbeStore) waitAndConsume(authority string) bool {
+	s.mu.Lock()
+	probe := s.byAuthority[authority]
+	s.mu.Unlock()
+	if probe == nil {
+		return false
+	}
+	select {
+	case <-probe.ready:
+	case <-time.After(2 * time.Second):
+	}
+	s.mu.Lock()
+	if s.byAuthority[authority] == probe {
+		delete(s.byAuthority, authority)
+	}
+	s.mu.Unlock()
+	return probe.passed()
+}
+
 func newIncompleteHeaderRstProbeStore() *incompleteHeaderRstProbeStore {
 	return &incompleteHeaderRstProbeStore{
 		byAuthority: make(map[string]*incompleteHeaderRstProbe),
@@ -727,17 +791,18 @@ func serveInformationalAdversarialH2C(addr string) {
 	}
 	log.Printf("listening on %s (raw h2c informational adversarial fixture)", addr)
 	incompleteRstProbes := newIncompleteHeaderRstProbeStore()
+	latePartialFrameHeaderProbes := newLatePartialFrameHeaderProbeStore()
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
 			log.Printf("accept %s error: %v", addr, err)
 			continue
 		}
-		go handleInformationalAdversarialH2C(conn, incompleteRstProbes)
+		go handleInformationalAdversarialH2C(conn, incompleteRstProbes, latePartialFrameHeaderProbes)
 	}
 }
 
-func handleInformationalAdversarialH2C(conn net.Conn, incompleteRstProbes *incompleteHeaderRstProbeStore) {
+func handleInformationalAdversarialH2C(conn net.Conn, incompleteRstProbes *incompleteHeaderRstProbeStore, latePartialFrameHeaderProbes *latePartialFrameHeaderProbeStore) {
 	defer conn.Close()
 	if !readClientPreface(conn) {
 		return
@@ -753,6 +818,9 @@ func handleInformationalAdversarialH2C(conn net.Conn, incompleteRstProbes *incom
 	resourceProbeCancelObserved := false
 	statusProbeStreamID := uint32(0)
 	statusProbeCancelObserved := false
+	cleanBoundaryProbeStreamID := uint32(0)
+	cleanBoundaryCancelObserved := false
+	latePartialFrameHeaderStreams := make(map[uint32]string)
 	heldSiblingStreamID := uint32(0)
 	incompleteStreamProbes := make(map[uint32]*incompleteHeaderRstProbe)
 	defer func() {
@@ -778,12 +846,55 @@ func handleInformationalAdversarialH2C(conn net.Conn, incompleteRstProbes *incom
 			}
 			return
 		}
+		if control == "await-late-partial-frame-header" {
+			if latePartialFrameHeaderProbes.waitAndConsume(request["x-bench-probe-authority"]) {
+				writeRawGrpcOK(framer, streamID, false)
+			} else {
+				writeRawGrpcFixtureError(framer, streamID, "late partial frame-header prefix was not acknowledged after CANCEL")
+			}
+			return
+		}
+		if control == "require-prior-clean-boundary-cancel" {
+			if cleanBoundaryProbeStreamID != 0 && cleanBoundaryCancelObserved {
+				writeRawGrpcOK(framer, streamID, false)
+			} else {
+				writeRawGrpcFixtureError(framer, streamID, "expected clean-boundary CANCEL was not observed on this connection")
+			}
+			cleanBoundaryProbeStreamID = 0
+			cleanBoundaryCancelObserved = false
+			return
+		}
 		if expectedRstCode, incomplete := rawResponseIncompleteExpectedRst(control); incomplete {
 			incompleteStreamProbes[streamID] = incompleteRstProbes.begin(request[":authority"], heldSiblingStreamID, expectedRstCode)
 			// Keep the peer silent long enough to prove that a deadline-less
 			// client terminates itself, while bounding a regression in the test
 			// suite instead of retaining the fixture connection indefinitely.
 			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		}
+		if control == "partial-headers-payload-deadline" {
+			if err := writeRawPartialHeadersPayload(conn, streamID); err != nil {
+				log.Printf("partial HEADERS payload fixture write failed: %v", err)
+			}
+			return
+		}
+		if control == "partial-data-compressed-message" {
+			if err := writeRawPartialCompressedDataPayload(conn, framer, streamID); err != nil {
+				log.Printf("partial DATA compressed-message fixture write failed: %v", err)
+			}
+			return
+		}
+		if control == "clean-headers-boundary-deadline" {
+			cleanBoundaryProbeStreamID = streamID
+			cleanBoundaryCancelObserved = false
+			writeRawGrpcInitial(framer, streamID, "application/grpc")
+			return
+		}
+		if control == "late-partial-frame-header-after-clean-cancel" {
+			authority := request[":authority"]
+			latePartialFrameHeaderStreams[streamID] = authority
+			latePartialFrameHeaderProbes.begin(authority)
+			writeRawGrpcInitial(framer, streamID, "application/grpc")
+			return
 		}
 		if control == "live-incomplete-informational-deadline" {
 			if err := writeRawIncompleteInformational(conn, streamID); err != nil {
@@ -883,11 +994,26 @@ func handleInformationalAdversarialH2C(conn net.Conn, incompleteRstProbes *incom
 					_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 				}
 			}
+			if authority, ok := latePartialFrameHeaderStreams[streamID]; ok {
+				success := false
+				if f.ErrCode == http2.ErrCodeCancel {
+					if err := writeRawPartialFrameHeaderPrefix(conn); err != nil {
+						log.Printf("late partial frame-header fixture write failed: %v", err)
+					} else {
+						success = waitTCPWriteQueueEmpty(conn, 500*time.Millisecond)
+					}
+				}
+				latePartialFrameHeaderProbes.complete(authority, success)
+				delete(latePartialFrameHeaderStreams, streamID)
+			}
 			if streamID == resourceProbeStreamID && f.ErrCode == http2.ErrCodeCancel {
 				resourceProbeCancelObserved = true
 			}
 			if streamID == statusProbeStreamID && f.ErrCode == http2.ErrCodeCancel {
 				statusProbeCancelObserved = true
+			}
+			if streamID == cleanBoundaryProbeStreamID && f.ErrCode == http2.ErrCodeCancel {
+				cleanBoundaryCancelObserved = true
 			}
 			if mainStreamID, ok := pendingPushedResponses[streamID]; ok {
 				if f.ErrCode == http2.ErrCodeProtocol {
@@ -1177,6 +1303,112 @@ func writeRawGrpcOKThenLateIncompleteHeaders(conn net.Conn, streamID uint32) err
 	return nil
 }
 
+func writeRawPartialHeadersPayload(conn net.Conn, streamID uint32) error {
+	const frameHeaderLen = 9
+	const partialPayloadLen = 1
+
+	var wire bytes.Buffer
+	framer := http2.NewFramer(&wire, nil)
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID: streamID,
+		BlockFragment: encodeHeaders([]hpack.HeaderField{
+			{Name: ":status", Value: "200"},
+			{Name: "content-type", Value: "application/grpc"},
+		}),
+		EndHeaders: true,
+		PadLength:  8,
+	}); err != nil {
+		return err
+	}
+
+	// A padded HEADERS payload starts with its pad length. Send the complete
+	// frame header and only that byte, leaving every HPACK byte withheld. The
+	// client therefore enters the frame receive state before any header-field
+	// callback can begin, and remains there until its deadline expires.
+	prefixLen := frameHeaderLen + partialPayloadLen
+	payload := wire.Bytes()
+	if len(payload) <= prefixLen {
+		return fmt.Errorf("partial HEADERS fixture is too short: got %d bytes", len(payload))
+	}
+	written, err := io.CopyN(conn, bytes.NewReader(payload), int64(prefixLen))
+	if err != nil {
+		return err
+	}
+	if written != int64(prefixLen) {
+		return fmt.Errorf("short partial HEADERS write: wrote %d of %d bytes", written, prefixLen)
+	}
+	return nil
+}
+
+func writeRawPartialCompressedDataPayload(conn net.Conn, framer *http2.Framer, streamID uint32) error {
+	const frameHeaderLen = 9
+	const grpcHeaderLen = 5
+
+	writeRawGrpcInitial(framer, streamID, "application/grpc")
+
+	var wire bytes.Buffer
+	dataFramer := http2.NewFramer(&wire, nil)
+	// The first five payload bytes are a complete compressed gRPC message
+	// header. Withhold one declared DATA payload byte so the client chooses its
+	// semantic CANCEL while the HTTP/2 receive parser is still mid-frame.
+	payload := []byte{1, 0, 0, 0, 0, 0}
+	if err := dataFramer.WriteData(streamID, false, payload); err != nil {
+		return err
+	}
+	prefixLen := frameHeaderLen + grpcHeaderLen
+	written, err := io.CopyN(conn, bytes.NewReader(wire.Bytes()), int64(prefixLen))
+	if err != nil {
+		return err
+	}
+	if written != int64(prefixLen) {
+		return fmt.Errorf("short partial DATA write: wrote %d of %d bytes", written, prefixLen)
+	}
+	return nil
+}
+
+func writeRawPartialFrameHeaderPrefix(conn net.Conn) error {
+	// DATA length=1, type=DATA. Withhold the ninth byte so the client enters the
+	// frame header without allowing nghttp2 to emit on_begin_frame.
+	prefix := []byte{0, 0, 1, 0, 0, 0, 0, 0}
+	written, err := conn.Write(prefix)
+	if err != nil {
+		return err
+	}
+	if written != len(prefix) {
+		return fmt.Errorf("short partial frame-header write: wrote %d of %d bytes", written, len(prefix))
+	}
+	return nil
+}
+
+func waitTCPWriteQueueEmpty(conn net.Conn, timeout time.Duration) bool {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return false
+	}
+	_ = tcpConn.SetNoDelay(true)
+	rawConn, err := tcpConn.SyscallConn()
+	if err != nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		queued := -1
+		var ioctlErr error
+		if err := rawConn.Control(func(fd uintptr) {
+			queued, ioctlErr = unix.IoctlGetInt(int(fd), unix.TIOCOUTQ)
+		}); err != nil || ioctlErr != nil {
+			return false
+		}
+		if queued == 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func writeRawIncompleteInformational(conn net.Conn, streamID uint32) error {
 	framer := http2.NewFramer(conn, nil)
 	// Start a valid informational response block while the stream still has a
@@ -1243,6 +1475,8 @@ func rawResponseIncompleteExpectedRst(control string) (http2.ErrCode, bool) {
 		return http2.ErrCodeProtocol, true
 	case "informational-incomplete-entry-budget",
 		"informational-incomplete-invalid-entry-budget",
+		"partial-headers-payload-deadline",
+		"partial-data-compressed-message",
 		"live-incomplete-informational-deadline",
 		"live-incomplete-trailing-explicit-cancel",
 		"post-informational-incomplete-grpc-status",

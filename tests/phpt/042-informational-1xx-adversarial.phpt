@@ -192,6 +192,7 @@ foreach ([
     ['post-informational-incomplete-uppercase-regular-before-status', 'incomplete uppercase-regular-before-status block', 0, Grpc\STATUS_INTERNAL, 'malformed HTTP/2 response header sequence'],
     ['informational-incomplete-entry-budget', 'incomplete informational entry budget block', 0, Grpc\STATUS_RESOURCE_EXHAUSTED, 'response header/metadata budget exceeded'],
     ['informational-incomplete-invalid-entry-budget', 'incomplete invalid informational entry budget block', 0, Grpc\STATUS_RESOURCE_EXHAUSTED, 'response header/metadata budget exceeded'],
+    ['partial-data-compressed-message', 'partial DATA compressed message', 0, Grpc\STATUS_INTERNAL, 'compressed gRPC messages are not supported'],
 ] as [$control, $label, $expectedCount, $expectedStatus, $expectedDetails]) {
     $assertIncompleteUnary($client(), $control, $label, $expectedStatus, $expectedDetails);
     $assertIncompleteStream($client(), $control, $label, $expectedCount, $expectedStatus, $expectedDetails);
@@ -209,14 +210,14 @@ foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] a
         $incompleteConnectionPrefaces++;
     }
 }
-grpc_lite_phpt_assert_same(24, count($incompleteRstFrames), 'incomplete block traces contain one RST_STREAM each');
+grpc_lite_phpt_assert_same(26, count($incompleteRstFrames), 'incomplete receive traces contain one RST_STREAM each');
 $incompleteRstCodes = array_count_values(array_map(
     static fn (array $frame): mixed => $frame['error_code'] ?? null,
     $incompleteRstFrames,
 ));
 grpc_lite_phpt_assert_same(14, $incompleteRstCodes[1] ?? 0, 'incomplete malformed blocks emit PROTOCOL_ERROR');
-grpc_lite_phpt_assert_same(10, $incompleteRstCodes[8] ?? 0, 'incomplete status and budget blocks emit CANCEL');
-grpc_lite_phpt_assert_same(48, $incompleteConnectionPrefaces, 'incomplete blocks quarantine twenty-four connections before follow-up');
+grpc_lite_phpt_assert_same(12, $incompleteRstCodes[8] ?? 0, 'incomplete status, budget, and DATA cases emit CANCEL');
+grpc_lite_phpt_assert_same(52, $incompleteConnectionPrefaces, 'incomplete receive cases quarantine twenty-six connections before follow-up');
 
 $readLateTrace = static function (string $label) use ($traceFile): array {
     $records = [];
@@ -260,6 +261,76 @@ $assertLateTrace = static function (array $records, string $label, bool $expectU
         grpc_lite_phpt_assert_same(0, count($connectionDestroys), "$label keeps the healthy connection cached");
     }
 };
+
+file_put_contents($traceFile, '');
+$partialDataClient = $client();
+[$partialDataResponse, $partialDataStatus] = $partialDataClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['partial-data-compressed-message'],
+])->wait();
+grpc_lite_phpt_assert_same(null, $partialDataResponse, 'partial DATA semantic reset response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_INTERNAL, $partialDataStatus->code, 'partial DATA semantic reset status');
+grpc_lite_phpt_assert_same('compressed gRPC messages are not supported', $partialDataStatus->details, 'partial DATA semantic reset details');
+$partialDataRecords = $readLateTrace('partial DATA semantic reset');
+$partialDataPrefaces = 0;
+$partialDataInboundHeaders = [];
+$partialDataInboundData = [];
+$partialDataRstFrames = [];
+$partialDataEnd = null;
+$partialDataConnectionDestroys = [];
+foreach ($partialDataRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $partialDataPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_in') {
+        if (($record['frame_type'] ?? null) === 'HEADERS') {
+            $partialDataInboundHeaders[] = $record;
+        }
+        if (($record['frame_type'] ?? null) === 'DATA') {
+            $partialDataInboundData[] = $record;
+        }
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $partialDataRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $partialDataEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $partialDataConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $partialDataPrefaces, 'partial DATA semantic reset opens one connection');
+grpc_lite_phpt_assert_same(1, count($partialDataInboundHeaders), 'partial DATA semantic reset completes initial HEADERS');
+grpc_lite_phpt_assert_same(0, count($partialDataInboundData), 'partial DATA semantic reset never completes inbound DATA');
+grpc_lite_phpt_assert_same(1, count($partialDataRstFrames), 'partial DATA semantic reset emits one RST_STREAM');
+grpc_lite_phpt_assert_same(8, $partialDataRstFrames[0]['error_code'] ?? null, 'partial DATA semantic reset RST_STREAM is CANCEL');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $partialDataRstFrames[0]['rpc_method'] ?? null, 'partial DATA semantic reset RST_STREAM belongs to target');
+grpc_lite_phpt_assert_same(Grpc\STATUS_INTERNAL, $partialDataEnd['status_code'] ?? null, 'partial DATA semantic reset rpc.end keeps INTERNAL');
+grpc_lite_phpt_assert_same(1, count($partialDataConnectionDestroys), 'partial DATA semantic reset destroys connection before follow-up');
+grpc_lite_phpt_assert_same(true, $partialDataConnectionDestroys[0]['dead'] ?? null, 'partial DATA semantic reset destroys a dead connection');
+
+file_put_contents($traceFile, '');
+[$partialDataFollowUpResponse, $partialDataFollowUpStatus] = $partialDataClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
+])->wait();
+grpc_lite_phpt_assert_true($partialDataFollowUpResponse instanceof \Helloworld\BenchReply, 'partial DATA semantic reset fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $partialDataFollowUpStatus->code, 'partial DATA semantic reset fresh follow-up status');
+$partialDataFollowUpRecords = $readLateTrace('partial DATA semantic reset follow-up');
+$partialDataFollowUpPrefaces = 0;
+$partialDataFollowUpEnd = null;
+foreach ($partialDataFollowUpRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $partialDataFollowUpPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $partialDataFollowUpEnd = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $partialDataFollowUpPrefaces, 'partial DATA semantic reset follow-up opens fresh connection');
+grpc_lite_phpt_assert_same(false, $partialDataFollowUpEnd['persistent_reused'] ?? null, 'partial DATA semantic reset follow-up does not reuse poisoned connection');
 
 $lateUnaryClient = $client();
 file_put_contents($traceFile, '');
@@ -358,6 +429,219 @@ grpc_lite_phpt_assert_same(1, $abandonedFollowUpPrefaces, 'live incomplete block
 grpc_lite_phpt_assert_same(false, $abandonedFollowUpEnd['persistent_reused'] ?? null, 'live incomplete block follow-up does not reuse poisoned connection');
 
 file_put_contents($traceFile, '');
+$partialFrameClient = $client();
+[$partialFrameResponse, $partialFrameStatus] = $partialFrameClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['partial-headers-payload-deadline'],
+], ['timeout' => 300_000])->wait();
+grpc_lite_phpt_assert_same(null, $partialFrameResponse, 'partial HEADERS payload deadline response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $partialFrameStatus->code, 'partial HEADERS payload deadline status');
+grpc_lite_phpt_assert_same('HTTP/2 transport deadline exceeded', $partialFrameStatus->details, 'partial HEADERS payload deadline details');
+
+$partialFrameRecords = $readLateTrace('partial HEADERS payload deadline');
+$partialFramePrefaces = 0;
+$partialFrameInboundHeaders = [];
+$partialFrameRstFrames = [];
+$partialFrameEnd = null;
+$partialFrameConnectionDestroys = [];
+foreach ($partialFrameRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $partialFramePrefaces++;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_in'
+        && ($record['frame_type'] ?? null) === 'HEADERS') {
+        $partialFrameInboundHeaders[] = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $partialFrameRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $partialFrameEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $partialFrameConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $partialFramePrefaces, 'partial HEADERS payload target opens one connection');
+grpc_lite_phpt_assert_same(0, count($partialFrameInboundHeaders), 'partial HEADERS payload never completes an inbound HEADERS frame');
+grpc_lite_phpt_assert_same(1, count($partialFrameRstFrames), 'partial HEADERS payload deadline emits one RST_STREAM');
+grpc_lite_phpt_assert_same(8, $partialFrameRstFrames[0]['error_code'] ?? null, 'partial HEADERS payload deadline RST_STREAM is CANCEL');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $partialFrameRstFrames[0]['rpc_method'] ?? null, 'partial HEADERS payload RST_STREAM belongs to target');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $partialFrameEnd['status_code'] ?? null, 'partial HEADERS payload rpc.end keeps deadline status');
+grpc_lite_phpt_assert_same(false, $partialFrameEnd['persistent_reused'] ?? null, 'partial HEADERS payload target opened the connection');
+grpc_lite_phpt_assert_same(1, count($partialFrameConnectionDestroys), 'partial HEADERS payload destroys abandoned connection');
+grpc_lite_phpt_assert_same(true, $partialFrameConnectionDestroys[0]['dead'] ?? null, 'partial HEADERS payload destroys a dead connection');
+
+file_put_contents($traceFile, '');
+[$partialFrameFollowUpResponse, $partialFrameFollowUpStatus] = $partialFrameClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['require-prior-incomplete-status-cancel'],
+], ['timeout' => 2_000_000])->wait();
+grpc_lite_phpt_assert_true($partialFrameFollowUpResponse instanceof \Helloworld\BenchReply, 'partial HEADERS payload fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $partialFrameFollowUpStatus->code, 'partial HEADERS payload fresh follow-up status');
+$partialFrameFollowUpRecords = $readLateTrace('partial HEADERS payload follow-up');
+$partialFrameFollowUpPrefaces = 0;
+$partialFrameFollowUpEnd = null;
+foreach ($partialFrameFollowUpRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $partialFrameFollowUpPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $partialFrameFollowUpEnd = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $partialFrameFollowUpPrefaces, 'partial HEADERS payload follow-up opens fresh connection');
+grpc_lite_phpt_assert_same(false, $partialFrameFollowUpEnd['persistent_reused'] ?? null, 'partial HEADERS payload follow-up does not reuse poisoned connection');
+
+file_put_contents($traceFile, '');
+$cleanBoundaryClient = $client();
+[$cleanBoundaryResponse, $cleanBoundaryStatus] = $cleanBoundaryClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['clean-headers-boundary-deadline'],
+], ['timeout' => 300_000])->wait();
+grpc_lite_phpt_assert_same(null, $cleanBoundaryResponse, 'clean HEADERS boundary deadline response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $cleanBoundaryStatus->code, 'clean HEADERS boundary deadline status');
+grpc_lite_phpt_assert_same('HTTP/2 transport deadline exceeded', $cleanBoundaryStatus->details, 'clean HEADERS boundary deadline details');
+
+$cleanBoundaryRecords = $readLateTrace('clean HEADERS boundary deadline');
+$cleanBoundaryPrefaces = 0;
+$cleanBoundaryInboundHeaders = [];
+$cleanBoundaryRstFrames = [];
+$cleanBoundaryEnd = null;
+$cleanBoundaryConnectionDestroys = [];
+foreach ($cleanBoundaryRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $cleanBoundaryPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_in'
+        && ($record['frame_type'] ?? null) === 'HEADERS') {
+        $cleanBoundaryInboundHeaders[] = $record;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $cleanBoundaryRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $cleanBoundaryEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $cleanBoundaryConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $cleanBoundaryPrefaces, 'clean HEADERS boundary target opens one connection');
+grpc_lite_phpt_assert_same(1, count($cleanBoundaryInboundHeaders), 'clean HEADERS boundary completes one inbound HEADERS frame');
+grpc_lite_phpt_assert_same(4, (($cleanBoundaryInboundHeaders[0]['flags'] ?? 0) & 4), 'clean HEADERS boundary frame has END_HEADERS');
+grpc_lite_phpt_assert_same(1, count($cleanBoundaryRstFrames), 'clean HEADERS boundary deadline emits one RST_STREAM');
+grpc_lite_phpt_assert_same(8, $cleanBoundaryRstFrames[0]['error_code'] ?? null, 'clean HEADERS boundary deadline RST_STREAM is CANCEL');
+grpc_lite_phpt_assert_same('/helloworld.Greeter/BenchUnary', $cleanBoundaryRstFrames[0]['rpc_method'] ?? null, 'clean HEADERS boundary RST_STREAM belongs to target');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $cleanBoundaryEnd['status_code'] ?? null, 'clean HEADERS boundary rpc.end keeps deadline status');
+grpc_lite_phpt_assert_same(false, $cleanBoundaryEnd['persistent_reused'] ?? null, 'clean HEADERS boundary target opened the connection');
+grpc_lite_phpt_assert_same(0, count($cleanBoundaryConnectionDestroys), 'clean HEADERS boundary keeps connection cached');
+
+file_put_contents($traceFile, '');
+[$cleanBoundaryFollowUpResponse, $cleanBoundaryFollowUpStatus] = $cleanBoundaryClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['require-prior-clean-boundary-cancel'],
+], ['timeout' => 2_000_000])->wait();
+grpc_lite_phpt_assert_true($cleanBoundaryFollowUpResponse instanceof \Helloworld\BenchReply, 'clean HEADERS boundary same-connection follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $cleanBoundaryFollowUpStatus->code, 'clean HEADERS boundary same-connection follow-up status');
+$cleanBoundaryFollowUpRecords = $readLateTrace('clean HEADERS boundary follow-up');
+$cleanBoundaryFollowUpPrefaces = 0;
+$cleanBoundaryFollowUpEnd = null;
+$cleanBoundaryFollowUpConnectionDestroys = [];
+foreach ($cleanBoundaryFollowUpRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $cleanBoundaryFollowUpPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $cleanBoundaryFollowUpEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $cleanBoundaryFollowUpConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(0, $cleanBoundaryFollowUpPrefaces, 'clean HEADERS boundary follow-up does not open a new connection');
+grpc_lite_phpt_assert_same(true, $cleanBoundaryFollowUpEnd['persistent_reused'] ?? null, 'clean HEADERS boundary follow-up reuses clean connection');
+grpc_lite_phpt_assert_same(0, count($cleanBoundaryFollowUpConnectionDestroys), 'clean HEADERS boundary follow-up keeps connection cached');
+
+file_put_contents($traceFile, '');
+$latePartialHeaderAuthority = 'late-partial-frame-header-target.test';
+$latePartialHeaderClient = new GreeterClient('test-server:50071', [
+    'credentials' => ChannelCredentials::createInsecure(),
+    'grpc.default_authority' => $latePartialHeaderAuthority,
+]);
+[$latePartialHeaderResponse, $latePartialHeaderStatus] = $latePartialHeaderClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['late-partial-frame-header-after-clean-cancel'],
+], ['timeout' => 300_000])->wait();
+grpc_lite_phpt_assert_same(null, $latePartialHeaderResponse, 'late partial frame-header target response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_DEADLINE_EXCEEDED, $latePartialHeaderStatus->code, 'late partial frame-header target status');
+grpc_lite_phpt_assert_same('HTTP/2 transport deadline exceeded', $latePartialHeaderStatus->details, 'late partial frame-header target details');
+
+$latePartialHeaderRecords = $readLateTrace('late partial frame-header target');
+$latePartialHeaderPrefaces = 0;
+$latePartialHeaderRstFrames = [];
+$latePartialHeaderConnectionDestroys = [];
+foreach ($latePartialHeaderRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $latePartialHeaderPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'wire.frame_out'
+        && ($record['frame_type'] ?? null) === 'RST_STREAM') {
+        $latePartialHeaderRstFrames[] = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $latePartialHeaderConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $latePartialHeaderPrefaces, 'late partial frame-header target opens one connection');
+grpc_lite_phpt_assert_same(1, count($latePartialHeaderRstFrames), 'late partial frame-header target emits one RST_STREAM');
+grpc_lite_phpt_assert_same(8, $latePartialHeaderRstFrames[0]['error_code'] ?? null, 'late partial frame-header target RST_STREAM is CANCEL');
+grpc_lite_phpt_assert_same(0, count($latePartialHeaderConnectionDestroys), 'late partial frame-header target is clean when cancelled');
+
+// Use another authority/cache identity as an out-of-band barrier. The fixture
+// returns only after observing exact CANCEL and TIOCOUTQ confirms that the
+// eight-byte prefix reached the target client's kernel receive queue.
+$latePartialHeaderBarrierClient = $client();
+[$latePartialHeaderBarrierResponse, $latePartialHeaderBarrierStatus] = $latePartialHeaderBarrierClient->BenchUnary(new BenchRequest(), [
+    'x-bench-raw-response' => ['await-late-partial-frame-header'],
+    'x-bench-probe-authority' => [$latePartialHeaderAuthority],
+], ['timeout' => 2_000_000])->wait();
+grpc_lite_phpt_assert_true($latePartialHeaderBarrierResponse instanceof \Helloworld\BenchReply, 'late partial frame-header barrier response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $latePartialHeaderBarrierStatus->code, 'late partial frame-header barrier status');
+
+file_put_contents($traceFile, '');
+[$latePartialHeaderFollowUpResponse, $latePartialHeaderFollowUpStatus] = $latePartialHeaderClient->BenchUnary(new BenchRequest(), [], ['timeout' => 2_000_000])->wait();
+grpc_lite_phpt_assert_true($latePartialHeaderFollowUpResponse instanceof \Helloworld\BenchReply, 'late partial frame-header fresh follow-up response');
+grpc_lite_phpt_assert_same(Grpc\STATUS_OK, $latePartialHeaderFollowUpStatus->code, 'late partial frame-header fresh follow-up status');
+$latePartialHeaderFollowUpRecords = $readLateTrace('late partial frame-header follow-up');
+$latePartialHeaderFollowUpPrefaces = 0;
+$latePartialHeaderFollowUpPreflightBytes = 0;
+$latePartialHeaderFollowUpEnd = null;
+$latePartialHeaderFollowUpConnectionDestroys = [];
+foreach ($latePartialHeaderFollowUpRecords as $record) {
+    if (($record['event'] ?? null) === 'wire.connection_preface') {
+        $latePartialHeaderFollowUpPrefaces++;
+    }
+    if (($record['event'] ?? null) === 'wire.socket_preflight_read'
+        && ($record['result_len'] ?? 0) > 0) {
+        $latePartialHeaderFollowUpPreflightBytes += $record['result_len'];
+    }
+    if (($record['event'] ?? null) === 'rpc.end'
+        && ($record['rpc_kind'] ?? null) === 'unary') {
+        $latePartialHeaderFollowUpEnd = $record;
+    }
+    if (($record['event'] ?? null) === 'transport.connection_destroy') {
+        $latePartialHeaderFollowUpConnectionDestroys[] = $record;
+    }
+}
+grpc_lite_phpt_assert_same(1, $latePartialHeaderFollowUpPrefaces, 'late partial frame-header follow-up opens fresh connection');
+grpc_lite_phpt_assert_same(8, $latePartialHeaderFollowUpPreflightBytes, 'late partial frame-header preflight consumes exact prefix');
+grpc_lite_phpt_assert_same(false, $latePartialHeaderFollowUpEnd['persistent_reused'] ?? null, 'late partial frame-header follow-up rejects poisoned connection');
+grpc_lite_phpt_assert_same(1, count($latePartialHeaderFollowUpConnectionDestroys), 'late partial frame-header preflight destroys poisoned connection');
+grpc_lite_phpt_assert_same(true, $latePartialHeaderFollowUpConnectionDestroys[0]['dead'] ?? null, 'late partial frame-header preflight marks poisoned connection dead');
+
+file_put_contents($traceFile, '');
 $cancelClient = $client();
 $cancelRequest = new BenchRequest();
 $cancelRequest->setMessageCount(1);
@@ -434,7 +718,7 @@ grpc_lite_phpt_assert_same('response header/metadata budget exceeded', $targetSt
 $siblingResponses->next();
 grpc_lite_phpt_assert_same(false, $siblingResponses->valid(), 'terminal quarantine sibling has no further message');
 grpc_lite_phpt_assert_same(Grpc\STATUS_UNAVAILABLE, $siblingCall->getStatus()->code, 'terminal quarantine sibling status');
-grpc_lite_phpt_assert_same('incomplete HTTP/2 response header block', $siblingCall->getStatus()->details, 'terminal quarantine sibling details');
+grpc_lite_phpt_assert_same('incomplete HTTP/2 receive boundary', $siblingCall->getStatus()->details, 'terminal quarantine sibling details');
 $multiplexRecords = [];
 foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
     $record = json_decode($line, true);

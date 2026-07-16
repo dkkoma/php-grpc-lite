@@ -341,26 +341,27 @@ static int bench_finish_response_header_terminal_action(grpc_call *call, int cal
     return callback_result;
 }
 
-static void bench_finish_abandoned_response_header_block(nghttp2_session *session, grpc_call *call)
+static void bench_finish_abandoned_receive_state(nghttp2_session *session, grpc_call *call)
 {
+    bool receive_allows_reuse;
     bool terminal_action_already_owned;
     int rv = 0;
 
     if (session == NULL
         || call == NULL
-        || call->stream_closed
-        || !grpc_response_header_phase_requires_connection_terminal_on_abandonment(&call->response_header_phase)) {
+        || call->stream_closed) {
         return;
     }
 
+    receive_allows_reuse = grpc_h2_receive_allows_reuse_after_abandonment(&call->bench.receive_boundary);
     terminal_action_already_owned = call->response_header_block_incomplete;
-    if (!terminal_action_already_owned) {
-        grpc_protocol_mark_abandoned_response_header_block(call);
+    if (!receive_allows_reuse && !terminal_action_already_owned) {
+        grpc_protocol_mark_response_header_terminal_action(call);
     }
     if (!terminal_action_already_owned && call->timed_out && call->stream_id > 0) {
         rv = nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, call->stream_id, NGHTTP2_CANCEL);
     }
-    if (bench_finish_response_header_terminal_action(call, rv) != 0) {
+    if (!receive_allows_reuse && bench_finish_response_header_terminal_action(call, rv) != 0) {
         return;
     }
     if (call->timed_out) {
@@ -381,10 +382,9 @@ static int bench_on_begin_frame_callback(nghttp2_session *session, const nghttp2
         return 0;
     }
     has_live_call = hd->stream_id == call->stream_id && !call->stream_closed;
-    if (grpc_inbound_header_frame_requires_connection_terminal(
-            hd->type == NGHTTP2_HEADERS,
-            (hd->flags & NGHTTP2_FLAG_END_HEADERS) != 0,
-            has_live_call)) {
+    if ((hd->type == NGHTTP2_HEADERS || hd->type == NGHTTP2_CONTINUATION)
+        && !has_live_call
+        && !grpc_h2_receive_allows_reuse_after_abandonment(&call->bench.receive_boundary)) {
         /* The completed call keeps its status. This sticky session marker
          * prevents a later iteration from entering the poisoned decoder. */
         call->bench.connection_header_block_incomplete = true;
@@ -414,7 +414,6 @@ static int bench_on_begin_headers_callback(nghttp2_session *session, const nghtt
                 grpc_protocol_apply_response_header_terminal_action(
                     session,
                     call,
-                    frame->hd.flags,
                     NGHTTP2_PROTOCOL_ERROR
                 )
             );
@@ -493,7 +492,6 @@ static int bench_on_header_callback(nghttp2_session *session, const nghttp2_fram
                     grpc_protocol_apply_response_header_terminal_action(
                         session,
                         call,
-                        frame->hd.flags,
                         NGHTTP2_PROTOCOL_ERROR
                     )
                 );
@@ -631,7 +629,7 @@ static int bench_on_invalid_frame_recv_callback(nghttp2_session *session, const 
     if (frame->hd.stream_id == call->stream_id && frame->hd.type == NGHTTP2_HEADERS) {
         if (call->metadata_too_large
             || lib_error_code == NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE) {
-            grpc_protocol_mark_response_header_terminal_action(call, frame->hd.flags);
+            grpc_protocol_mark_response_header_terminal_action(call);
             rv = bench_finish_response_header_terminal_action(call, 0);
             grpc_protocol_finish_rejected_response_header_block(call, frame->hd.flags);
             return rv;
@@ -1103,6 +1101,18 @@ static ssize_t bench_data_source_read_callback(nghttp2_session *session, int32_t
     return (ssize_t) copied;
 }
 
+static ssize_t bench_session_mem_recv(nghttp2_session *session, grpc_call *call, const uint8_t *data, size_t len)
+{
+    ssize_t rv;
+
+    grpc_h2_receive_boundary_state_consume(&call->bench.receive_boundary, data, len);
+    rv = nghttp2_session_mem_recv(session, data, len);
+    if (rv >= 0 && (size_t) rv != len) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    return rv;
+}
+
 static int receive_available(nghttp2_session *session, grpc_call *call, char *recv_buf, size_t recv_buf_len)
 {
     size_t reads = 0;
@@ -1125,7 +1135,7 @@ static int receive_available(nghttp2_session *session, grpc_call *call, char *re
             bytes += (size_t) nread;
             call->bytes_received += (size_t) nread;
             mem_recv_started = monotonic_us();
-            rv = nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread);
+            rv = (int) bench_session_mem_recv(session, call, (const uint8_t *) recv_buf, (size_t) nread);
             mem_recv_elapsed = monotonic_us() - mem_recv_started;
             call->bench.call_mem_recv_us += mem_recv_elapsed;
             if (mem_recv_elapsed > call->bench.call_max_mem_recv_us) {
@@ -1794,7 +1804,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
         if (poll_loop) {
             rv = drive_stream_poll(session, &call, recv_buf, recv_buf_len);
             if (rv != 0) {
-                bench_finish_abandoned_response_header_block(session, &call);
+                bench_finish_abandoned_receive_state(session, &call);
                 failed++;
                 break;
             }
@@ -1816,7 +1826,7 @@ PHP_FUNCTION(grpc_lite_bench_unary_batch)
                     break;
                 }
                 call.bytes_received += (size_t) nread;
-                rv = nghttp2_session_mem_recv(session, (const uint8_t *) recv_buf, (size_t) nread);
+                rv = (int) bench_session_mem_recv(session, &call, (const uint8_t *) recv_buf, (size_t) nread);
                 if (rv < 0) {
                     failed++;
                     break;

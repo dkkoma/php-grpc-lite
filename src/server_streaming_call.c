@@ -314,7 +314,7 @@ static int server_streaming_call_next_resource_core(zval *server_streaming_resou
             break;
         }
         state->call.connection->current_read_call = call;
-        rv = nghttp2_session_mem_recv(state->call.connection->session, recv_buf, (size_t) nread);
+        rv = (int) connection_session_mem_recv(state->call.connection, recv_buf, (size_t) nread);
         state->call.connection->current_read_call = NULL;
         if (rv < 0) {
             mark_connection_dead(state->call.connection, rv);

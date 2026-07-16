@@ -46,15 +46,6 @@ grpc_response_header_block_phase grpc_response_header_phase_end(grpc_response_he
     return ended_phase;
 }
 
-bool grpc_response_header_phase_requires_connection_terminal_on_abandonment(const grpc_response_header_phase_state *state)
-{
-    /* The normal frame-recv path, plus the rejected-frame fallback for
-     * complete invalid HEADERS, synchronously returns each complete block to
-     * NONE. Any other phase therefore still owns a connection-global HPACK
-     * block which cannot survive losing its live call owner. */
-    return state != NULL && state->block_phase != GRPC_RESPONSE_HEADER_BLOCK_NONE;
-}
-
 bool grpc_response_header_phase_allows_status_fields(const grpc_response_header_phase_state *state, bool end_stream)
 {
     return state != NULL

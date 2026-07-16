@@ -24,6 +24,16 @@
 #define GRPC_LITE_AUTHORITY_BUFFER_SIZE 512
 #define GRPC_LITE_H2_WRITE_COALESCE_MIN_CAPACITY 65536
 #define GRPC_LITE_H2_WRITE_COALESCE_MAX_CAPACITY (1024 * 1024)
+#define GRPC_LITE_HTTP2_FRAME_HEADER_SIZE 9
+
+typedef struct {
+    uint8_t frame_header[GRPC_LITE_HTTP2_FRAME_HEADER_SIZE];
+    size_t frame_header_bytes;
+    uint32_t frame_payload_remaining;
+    uint8_t frame_type;
+    uint8_t frame_flags;
+    bool header_block_in_flight;
+} grpc_h2_receive_boundary_state;
 
 void build_authority(char *buffer, size_t buffer_len, const char *host, int64_t port, const char *authority, size_t authority_len);
 size_t effective_max_receive_message_bytes(int64_t max_receive_message_length);
@@ -33,7 +43,14 @@ size_t h2_write_coalesce_capacity_for_max_frame_size(uint32_t max_frame_size);
 uint32_t effective_http2_max_header_list_size(int64_t configured);
 size_t effective_max_response_metadata_bytes(int64_t soft_limit, int64_t hard_limit);
 bool grpc_response_header_budget_account_field(size_t *entry_count, size_t *bytes, size_t max_bytes, size_t namelen, size_t valuelen);
-bool grpc_inbound_header_frame_requires_connection_terminal(bool is_headers, bool end_headers, bool has_live_call);
+/* Connection/session-scoped mirror of bytes handed to
+ * nghttp2_session_mem_recv(). Callers account before entering nghttp2 so
+ * callbacks observe the current invocation's complete byte boundary; a
+ * mem_recv error makes that session terminal. Do not reset this state between
+ * calls or iterations on the same HTTP/2 session. */
+void grpc_h2_receive_boundary_state_reset(grpc_h2_receive_boundary_state *state);
+void grpc_h2_receive_boundary_state_consume(grpc_h2_receive_boundary_state *state, const uint8_t *data, size_t len);
+bool grpc_h2_receive_allows_reuse_after_abandonment(const grpc_h2_receive_boundary_state *state);
 bool contains_nul_or_control(const char *value, size_t value_len);
 bool contains_authority_forbidden_char(const char *value, size_t value_len);
 const char *validate_grpc_path(const char *path, size_t path_len);
